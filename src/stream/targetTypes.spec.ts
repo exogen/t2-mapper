@@ -3,9 +3,14 @@ import type { ParsedData } from "t2-demo-parser";
 import { LiveStreamAdapter } from "./liveStreaming";
 import type { RelayClient } from "./relayClient";
 import { WatchStateAccumulator } from "../../relay/watchState";
+import type { WatchTargetEntry } from "../../relay/types";
 import { streamEntityToGameEntity } from "./entityBridge";
 import { flagLabel } from "../state/flagTeam";
 import { decodeCheckpoint, encodeCheckpoint } from "./checkpointCodec";
+import { IFF_GREEN, IFF_RED } from "./entityClassification";
+import { buildCatchupPayload } from "../../relay/watchCatchup";
+import { GAME_PROTOCOL_VERSION } from "../../relay/shared";
+import { GhostStateAccumulator, createLiveParser } from "t2-demo-parser";
 
 class TargetStream extends LiveStreamAdapter {
   constructor() {
@@ -43,8 +48,26 @@ class TargetStream extends LiveStreamAdapter {
       parsedData: { targetId },
     });
   }
-  seed(entry: Parameters<TargetStream["seedTargetInfo"]>[0]) {
-    this.seedTargetInfo(entry);
+  seed(entry: WatchTargetEntry) {
+    this.conn.targets.seed(entry);
+  }
+  /**
+   * Join late from the relay's catch-up, keeping the stub ghost classes.
+   */
+  hydrateFrom(relay: WatchStateAccumulator) {
+    const registry = this.registry;
+    this.hydrate(
+      buildCatchupPayload({
+        packetParser: createLiveParser({
+          protocolVersion: GAME_PROTOCOL_VERSION,
+        }).packetParser,
+        ghostState: new GhostStateAccumulator(),
+        watchState: relay,
+        epoch: 1,
+        serverAddress: "test:28000",
+      }),
+    );
+    this.registry = registry;
   }
   mountImage(index: number, dataBlockId: number) {
     this.processGhostUpdate({
@@ -59,10 +82,8 @@ class TargetStream extends LiveStreamAdapter {
     entity.className = "Player";
   }
   team() {
-    if (!this.teamScores.length)
-      this.teamScores = [
-        { teamId: 1, name: "Storm", score: 0, playerCount: 0 },
-      ];
+    if (!this.conn.teamScores.length)
+      this.conn.teamScores = [{ teamId: 1, name: "Storm", score: 0 }];
     return this.buildCachedHudState().teamScores[0];
   }
   entity(index = 0) {
@@ -476,5 +497,33 @@ it("restores target types and pending strings from serialized seek checkpoints",
       { type: "NetStringEvent", id: 12, value: "Flag" },
     );
     expect([stream.label(0), stream.label(1)]).toEqual(["Flag", "Rabbit Flag"]);
+  }
+});
+
+it("colors IFF from the sensor group colors, streamed or caught up", () => {
+  const { stream, relay, receive } = fixture();
+  receive(
+    { type: "SetSensorGroupEvent", sensorGroup: 1 },
+    {
+      type: "SensorGroupColorEvent",
+      sensorGroup: 1,
+      colors: [{ index: 2, r: 200, g: 10, b: 10 }],
+    },
+    ...[2, 1, 3, 0].map((sensorGroup, i) => ({
+      type: "TargetInfoEvent",
+      targetId: 40 + i,
+      sensorGroup,
+    })),
+  );
+  const joiner = new TargetStream();
+  joiner.hydrateFrom(relay);
+  for (const target of [stream, joiner]) {
+    for (let i = 0; i < 4; i++) target.spawn(i, 40 + i, 2);
+    expect([0, 1, 2, 3].map((i) => target.entity(i).iffColor)).toEqual([
+      { r: 200, g: 10, b: 10 },
+      IFF_GREEN,
+      IFF_RED,
+      undefined,
+    ]);
   }
 });

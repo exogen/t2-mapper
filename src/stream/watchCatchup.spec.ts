@@ -7,11 +7,12 @@ import {
   createLiveParser,
   BlockTypePacket,
 } from "t2-demo-parser";
-import type { PacketData, PacketParser } from "t2-demo-parser";
+import type { PacketData, PacketParser, ParsedData } from "t2-demo-parser";
 import { LiveStreamAdapter } from "./liveStreaming";
 import type { RelayClient } from "./relayClient";
 import type { ImageSlot, ThreadState } from "./types";
 import { WatchStateAccumulator } from "../../relay/watchState";
+import type { ConnectionState } from "../../relay/connectionState";
 import { PlayerResolver } from "../../relay/playerReference";
 import { buildCatchupPayload } from "../../relay/watchCatchup";
 import { GAME_PROTOCOL_VERSION } from "../../relay/shared";
@@ -29,26 +30,43 @@ import {
  *
  * Both sides use identical machinery on identical bytes, so any
  * difference isolates a hydration bug: a GhostStateAccumulator merge
- * rule, a missing payload field, or watchState drift from
- * StreamEngine.handleServerMessage.
+ * rule, a missing payload field, or a difference in how the relay and the
+ * browser react to their shared ConnectionState (server names, match end,
+ * the control object's sensor group).
  */
 
 const DEMO_DIR = path.resolve(
   import.meta.dirname,
   "../../../t2-demo-parser/data",
 );
-const DEMO_FILE = "uploads_6_SterIO_2025_LT_Pub_SH.rec";
-const CUTOVER_BLOCKS = 15_000;
-const CONTINUE_BLOCKS = 10_000;
+
+/**
+ * Recordings to replay: where the late joiner hydrates, how far both then
+ * stream, and which shared fields (populatedFields) hold nothing at the
+ * join. Every other field must hold something; between them, the cases
+ * cover every field.
+ */
+const CASES = [
+  {
+    name: "a player's recording, joined mid-match",
+    file: "uploads_6_SterIO_2025_LT_Pub_SH.rec",
+    cutover: 15_000,
+    continued: 10_000,
+    emptyAtCutover: ["pendingTags", "loadInfo"],
+  },
+  {
+    // The loading screen, and skin strings still in flight at the join.
+    name: "a recording from connect",
+    file: "auto-capture_2025-05-16_05-04_DemoBot-Mia_CTFGame_Firestorm.rec",
+    cutover: 1_500,
+    continued: 3_500,
+    emptyAtCutover: ["playerSensorGroup", "identities"],
+  },
+];
 
 /** Client-simulated classes whose per-tick state legitimately depends on
  *  when the client joined (positions advanced locally, transient lifetimes). */
 const CLIENT_SIMULATED = /Projectile|Explosion|Debris|Item|ParticleEmission/;
-
-function demoPath(): string | null {
-  const p = path.join(DEMO_DIR, DEMO_FILE);
-  return fs.existsSync(p) ? p : null;
-}
 
 const fakeRelay = {} as unknown as RelayClient;
 
@@ -206,6 +224,42 @@ describe("live wire protocol propagation", () => {
     expect(adapter.missionSequence).toBe("22");
   });
 
+  it("hydrates the loading-screen text the relay saw before MissionStartPhase1", () => {
+    const watchState = new WatchStateAccumulator();
+    watchState.applyPacket({
+      gameState: {},
+      events: [
+        ["MsgLoadInfo", "", "Surreal", "Surreal", "Capture the Flag"],
+        ["MsgLoadRulesLine", "", "R1"],
+        ["MsgLoadInfoDone", ""],
+      ].map((args) => ({
+        parsedData: {
+          type: "RemoteCommandEvent",
+          funcName: "ServerMessage",
+          args,
+        },
+      })),
+    } as unknown as PacketData);
+    watchState.applyMissionStart("MissionStartPhase1", ["3", "Surreal"]);
+    const payload = buildCatchupPayload({
+      packetParser: createLiveParser({ protocolVersion: GAME_PROTOCOL_VERSION })
+        .packetParser,
+      ghostState: new GhostStateAccumulator(),
+      watchState,
+      epoch: 1,
+      serverAddress: "test:28000",
+    });
+    const adapter = new LiveStreamAdapter(fakeRelay, { mode: "watch" });
+    adapter.hydrate(
+      deserializeCatchupPayload(serializeCatchupPayload(payload)),
+    );
+    expect(adapter.getSnapshot().loadInfo).toEqual({
+      quoteLines: [],
+      objectiveLines: [],
+      rulesLines: ["R1"],
+    });
+  });
+
   const parserOf = (adapter: LiveStreamAdapter) =>
     (adapter as unknown as { packetParser: PacketParser }).packetParser;
 
@@ -337,12 +391,94 @@ function project(entity: Record<string, unknown>, comparePosition: boolean) {
   };
 }
 
+/**
+ * Connection state a late joiner must share with a from-start watcher.
+ * Clock anchors and flag drop times depend on when each heard them (the
+ * relay keeps wall time), so only durations and dropped teams compare.
+ */
+function sharedState(adapter: LiveStreamAdapter) {
+  const { conn } = adapter as unknown as { conn: ConnectionState };
+  const { clock, flagDroppedAtSec, matchEndedAtSec, ...state } = conn.save();
+  return {
+    ...state,
+    clockDurationMs: clock?.durationMs ?? null,
+    flagDropTeams: Object.keys(flagDroppedAtSec).sort(),
+    matchEnded: matchEndedAtSec != null,
+    loadInfo: conn.loadInfo.info,
+  };
+}
+
+/**
+ * Which shared fields hold something, so comparing them means something.
+ */
+function populatedFields(state: ReturnType<typeof sharedState>) {
+  const { targets } = state;
+  return {
+    netStrings: state.netStrings.size > 0,
+    targets: [
+      targets.rawNames,
+      targets.types,
+      targets.skins,
+      targets.teams,
+      targets.renderFlags,
+    ].every((values) => values.size > 0),
+    targetGenerations: targets.generations.size > 0,
+    pendingTags: [
+      targets.pendingNameTags,
+      targets.pendingTypeTags,
+      targets.pendingSkinTags,
+      targets.pendingSkinPrefTags,
+    ].some((tags) => tags.size > 0),
+    sensorGroupColors: state.sensorGroupColors.size > 0,
+    playerSensorGroup: state.playerSensorGroup > 0,
+    roster: state.playerRoster.size > 0,
+    teamScores: state.teamScores.length > 0,
+    flags: state.flags.size > 0,
+    flagDrops: state.flagDropTeams.length > 0,
+    identities: (state.playerIdentity.generations?.size ?? 0) > 0,
+    clock: state.clockDurationMs != null,
+    missionInfo: [
+      state.missionDisplayName,
+      state.missionTypeDisplayName,
+      state.gameClassName,
+      state.serverDisplayName,
+    ].every(Boolean),
+    loadInfo: state.loadInfo != null,
+  };
+}
+
+/**
+ * Server state the recordings don't exercise by the join: a mission drop
+ * with a server name, CTF teams, a dropped flag and a freed target.
+ */
+function serverStateBurst(unusedTargetId: number): ParsedData[] {
+  return [
+    ...[
+      ["MsgClientReady", "", "CTFGame"],
+      ["MsgMissionDropInfo", "", "Test Mission", "Capture the Flag", "Server"],
+      ["MsgCTFAddTeam", "", "1", "Storm", "<At Base>", "0"],
+      ["MsgCTFAddTeam", "", "2", "Inferno", "<At Base>", "0"],
+      ["MsgCTFFlagDropped", "", "Somebody", "Inferno", "2"],
+    ].map((args) => ({
+      type: "RemoteCommandEvent",
+      funcName: "ServerMessage",
+      args,
+    })),
+    { type: "TargetFreeEvent", targetId: unusedTargetId },
+  ];
+}
+
 describe("watch catch-up equivalence", () => {
-  it(
-    "late joiner at block K converges with a from-start watcher",
-    { timeout: 240_000, skip: !demoPath() },
-    async () => {
-      const buffer = fs.readFileSync(demoPath()!);
+  it.for(CASES)(
+    "late joiner at block $cutover converges with a from-start watcher ($name)",
+    { timeout: 240_000 },
+    async (
+      { file, cutover: cutoverBlocks, continued, emptyAtCutover },
+      context,
+    ) => {
+      const demoFile = path.join(DEMO_DIR, file);
+      if (!fs.existsSync(demoFile)) context.skip();
+      const buffer = fs.readFileSync(demoFile);
       const demo = new DemoParser(buffer);
       const { initialBlock } = await demo.load();
 
@@ -373,9 +509,19 @@ describe("watch catch-up equivalence", () => {
         events: [],
         ghosts: initialBlock.initialGhosts,
       } as unknown as PacketData);
-      for (const [id, value] of initialBlock.taggedStrings) {
-        sim.watchState.netStrings.set(id, value);
-      }
+      // Seeded like a demo's own start (DemoStreamAdapter.resetToStart).
+      const relayState = (
+        sim.watchState as unknown as { state: ConnectionState }
+      ).state;
+      relayState.seedTables({
+        taggedStrings: initialBlock.taggedStrings,
+        targetEntries: initialBlock.targetEntries.map((entry) => ({
+          ...entry,
+          typeDescription: entry.typeDescription ?? "",
+        })),
+        sensorGroupColors: initialBlock.sensorGroupColors,
+      });
+      sim.watchState.playerSensorGroup = initialBlock.sensorGroup;
       sim.watchState.controlObjectGhostIndex =
         initialBlock.controlObjectGhostIndex;
       sim.watchState.controlObjectData = initialBlock.controlObjectData;
@@ -409,10 +555,10 @@ describe("watch catch-up equivalence", () => {
           packets.push(block.data.slice());
         }
       }
-      expect(packets.length).toBeGreaterThan(CUTOVER_BLOCKS + 1000);
+      expect(packets.length).toBeGreaterThan(cutoverBlocks + 1000);
 
-      const cutover = Math.min(CUTOVER_BLOCKS, packets.length);
-      const end = Math.min(cutover + CONTINUE_BLOCKS, packets.length);
+      const cutover = Math.min(cutoverBlocks, packets.length);
+      const end = Math.min(cutover + continued, packets.length);
 
       // Feed 1..K to the relay sim and the reference watcher.
       for (let i = 0; i < cutover; i++) {
@@ -421,10 +567,36 @@ describe("watch catch-up equivalence", () => {
         sim.ghostState.applyPacket(parsed);
         reference.feedPacket(packets[i]);
       }
+      // The same burst for the relay and the reference, just before K.
+      const targetIds = sim.watchState
+        .getTargetEntries()
+        .map((entry) => entry.targetId);
+      const burst = serverStateBurst(Math.max(-1, ...targetIds) + 1);
+      sim.watchState.applyPacket({
+        gameState: {},
+        ghosts: [],
+        events: burst.map((parsedData) => ({ parsedData })),
+      } as unknown as PacketData);
+      const engine = reference as unknown as {
+        processEvent(
+          event: { classId: number; parsedData: ParsedData },
+          eventName: undefined,
+        ): void;
+      };
+      for (const parsedData of burst)
+        engine.processEvent({ classId: 0, parsedData }, undefined);
 
       // Late joiner hydrates from the relay's state at K (epoch 2).
       const lateJoiner = new LiveStreamAdapter(fakeRelay, { mode: "watch" });
       lateJoiner.hydrate(buildPayload(2));
+      // The catch-up alone carries the whole connection state.
+      const populated = populatedFields(sharedState(reference));
+      expect(
+        Object.entries(populated)
+          .filter(([, isPopulated]) => !isPopulated)
+          .map(([field]) => field),
+      ).toEqual(emptyAtCutover);
+      expect(sharedState(lateJoiner)).toEqual(sharedState(reference));
       expect(lateJoiner.getSnapshot().flagTargets).toEqual(
         reference.getSnapshot().flagTargets,
       );
@@ -466,32 +638,8 @@ describe("watch catch-up equivalence", () => {
         ).toEqual(project(refEntity, true));
       }
 
-      // Shared state: net strings, target tables, roster/scores. Roster
-      // equality doubles as a drift check on the relay's ported
-      // handleServerMessage logic in watchState.
-      const refShared = reference as unknown as {
-        netStrings: Map<number, string>;
-        targetRawNames: Map<number, string>;
-        targetTypes: Map<number, string>;
-        targetSkins: Map<number, string>;
-        targetSkinPrefs: Map<number, string>;
-        targetRenderFlags: Map<number, number>;
-        targetTeams: Map<number, number>;
-        playerRoster: Map<number, unknown>;
-        teamScores: unknown[];
-        playerSensorGroup: number;
-      };
-      const lateShared = lateJoiner as unknown as typeof refShared;
-      expect(lateShared.netStrings).toEqual(refShared.netStrings);
-      expect(lateShared.targetRawNames).toEqual(refShared.targetRawNames);
-      expect(lateShared.targetTypes).toEqual(refShared.targetTypes);
-      expect(lateShared.targetSkins).toEqual(refShared.targetSkins);
-      expect(lateShared.targetSkinPrefs).toEqual(refShared.targetSkinPrefs);
-      expect(lateShared.targetRenderFlags).toEqual(refShared.targetRenderFlags);
-      expect(lateShared.targetTeams).toEqual(refShared.targetTeams);
-      expect(lateShared.playerRoster).toEqual(refShared.playerRoster);
-      expect(lateShared.teamScores).toEqual(refShared.teamScores);
-      expect(lateShared.playerSensorGroup).toBe(refShared.playerSensorGroup);
+      // And all the connection state again, after both streamed on.
+      expect(sharedState(lateJoiner)).toEqual(sharedState(reference));
       expect(lateJoiner.getSnapshot().flagTargets).toEqual(
         reference.getSnapshot().flagTargets,
       );

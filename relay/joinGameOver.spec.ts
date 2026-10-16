@@ -8,6 +8,7 @@ import type { DemoStreamEntry } from "./demoStart.js";
 import {
   JOIN_GAME_OVER_WINDOW_MS,
   JoinGameOverFilter,
+  type JoinGameOverOutcome,
 } from "./joinGameOver.js";
 import { MOVE_TICK_MS } from "./moveList.js";
 import {
@@ -58,7 +59,9 @@ const welcomePage = (seq: number): ServerEvent[] => [
   command(seq + 2, 0, "\x011"),
 ];
 
-function filter(entries: DemoStreamEntry[]): boolean[] {
+function filter(
+  entries: DemoStreamEntry[],
+): (JoinGameOverOutcome | undefined)[] {
   const join = JoinGameOverFilter.forRecording(undefined, CONNECT_SEQUENCE);
   return entries.map((entry) => join.apply(entry));
 }
@@ -100,7 +103,12 @@ describe("JoinGameOverFilter", () => {
       MOVE,
       page,
     ];
-    expect(filter(entries)).toEqual([false, false, false, true]);
+    expect(filter(entries)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      "rewritten",
+    ]);
     // The message type is now the command's own tag, ServerMessage.
     expect(commands(entries)).toEqual([["\x010", "\x010"]]);
     const changed = changedBits(before, page.data);
@@ -113,7 +121,7 @@ describe("JoinGameOverFilter", () => {
       received(1, { events: [cameraGhost(0)] }),
       received(2, { camera: true, events: welcomePage(1) }),
     ];
-    expect(filter(entries)).toEqual([false, true]);
+    expect(filter(entries)).toEqual([undefined, "rewritten"]);
   });
 
   it("leaves a welcome page that arrives before the camera", () => {
@@ -121,7 +129,7 @@ describe("JoinGameOverFilter", () => {
       received(1, { events: [cameraGhost(0), ...welcomePage(1)] }),
       received(2, { camera: true }),
     ];
-    expect(filter(entries)).toEqual([false, false]);
+    expect(filter(entries)).toEqual([undefined, undefined]);
     expect(commands(entries)).toEqual([["\x010", "\x011"]]);
   });
 
@@ -142,7 +150,7 @@ describe("JoinGameOverFilter", () => {
         ],
       }),
     ];
-    expect(filter(entries)).toEqual([false, false]);
+    expect(filter(entries)).toEqual([undefined, undefined]);
   });
 
   it("leaves a welcome page after the first 30 seconds", () => {
@@ -161,10 +169,10 @@ describe("JoinGameOverFilter", () => {
       received(2, { camera: true, events: [endGhosting(1)] }),
       received(3, { events: welcomePage(2) }),
     ];
-    expect(filter(entries)).toEqual([false, false, false]);
+    expect(filter(entries)).toEqual([undefined, undefined, undefined]);
   });
 
-  it("leaves a page that a later packet releases from the event queue", () => {
+  it("reports a page that a later packet releases from the event queue as left", () => {
     // Event 3 arrives before event 2; its bits stay in the earlier packet.
     const early = received(3, {
       camera: true,
@@ -183,7 +191,27 @@ describe("JoinGameOverFilter", () => {
       early,
       late,
     ];
-    expect(filter(entries)).toEqual([false, false, false, false]);
+    expect(filter(entries)).toEqual([undefined, undefined, undefined, "left"]);
     expect(commands(entries)).toEqual([["\x010", "\x011"]]);
+  });
+
+  it("stops at a packet it can't parse and records the rest as it is", () => {
+    const page = received(3, { camera: true, events: welcomePage(1) });
+    const before = page.data.slice();
+    const entries: DemoStreamEntry[] = [
+      received(1, { events: [cameraGhost(0)] }),
+      {
+        kind: "packet",
+        // Cut through the welcome page's command.
+        data: serverPacket(2, { camera: true, events: welcomePage(1) }).slice(
+          0,
+          -2,
+        ),
+        dispatched: true,
+      },
+      page,
+    ];
+    expect(filter(entries)).toEqual([undefined, "stopped", undefined]);
+    expect(page.data).toEqual(before);
   });
 });

@@ -13,11 +13,16 @@
  *   entry to match, and purges both from the Cloudflare edge cache. By
  *   default it holds back demos whose cast or commentary sidecars would
  *   drift: the cut and the dropped ticks move the demo's clock.
+ * - With `--reapply`, `prepare` also converts each applied demo's original
+ *   again (from the mirror or originals/, never the bucket's copy, which
+ *   is its upgrade) into reupgraded/, and `apply` replaces an applied
+ *   upgrade with a re-upgrade that differs, passed its checks and keeps
+ *   the demo's clock exactly; the replaced upgrade moves to superseded/.
  *
  * Both resume where they stopped; a result made by other converter code is
- * prepared again, and an applied demo is never prepared again. Seek
- * checkpoints of replaced demos are regenerated afterwards by
- * demos:backfill-checkpoints.
+ * prepared again, and an applied demo is only prepared again with
+ * `--reapply`. Seek checkpoints of replaced demos are regenerated
+ * afterwards by demos:backfill-checkpoints.
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -29,12 +34,17 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
+  type HeadObjectCommandOutput,
 } from "@aws-sdk/client-s3";
 import type { DemoMetadata } from "../relay/demoRecorder.js";
 import { updateDemoIndex } from "../relay/demoIndexStorage.js";
 import { DEMO_TICK_MS } from "../relay/demoWriter.js";
-import { unquoteEtag } from "../relay/objectEtag.js";
+import { fileEtags, unquoteEtag } from "../relay/objectEtag.js";
 import { PURGE_BATCH_SIZE, purgeBatch } from "./lib/cloudflarePurge.js";
+import {
+  timingChanges,
+  upgradeChanges,
+} from "./lib/compareRelayDemoUpgrades.js";
 import { listAllObjects, r2Client } from "./lib/r2.js";
 import { playLikeTribes2 } from "./lib/tribes2Playback.js";
 import {
@@ -58,6 +68,7 @@ const { values, positionals } = parseArgs({
     filter: { type: "string" },
     skip: { type: "string" },
     force: { type: "boolean", default: false },
+    reapply: { type: "boolean", default: false },
     timed: { type: "string", default: "hold" },
     "no-purge": { type: "boolean", default: false },
     help: { type: "boolean", default: false },
@@ -72,15 +83,19 @@ if (
 ) {
   console.log(
     [
-      "Usage: npm run demos:migrate -- prepare --work=DIR [--mirror=DIR] [--jobs=N] [--filter=TEXT] [--skip=A,B] [--force]",
-      "       npm run demos:migrate -- apply --work=DIR [--filter=TEXT] [--skip=A,B] [--timed=hold|all] [--no-purge]",
+      "Usage: npm run demos:migrate -- prepare --work=DIR [--mirror=DIR] [--jobs=N] [--filter=TEXT] [--skip=A,B] [--force] [--reapply]",
+      "       npm run demos:migrate -- apply --work=DIR [--filter=TEXT] [--skip=A,B] [--timed=hold|all] [--no-purge] [--reapply]",
       "",
       "  --work=DIR      Upgraded demos and per-demo results (results/<name>.json)",
       "  --mirror=DIR    prepare: a demos:backup mirror to read originals from",
       "  --jobs=N        prepare: parallel worker processes (default: 1)",
       "  --filter=TEXT   Only demos whose key contains TEXT",
       "  --skip=A,B      Leave out demos whose key contains any of these",
-      "  --force         prepare: redo demos already prepared (never applied ones)",
+      "  --force         prepare: redo demos already prepared (applied ones only",
+      "                  with --reapply)",
+      "  --reapply       prepare: convert applied demos' originals again, into",
+      "                  reupgraded/; apply: replace each applied upgrade whose",
+      "                  re-upgrade differs, passed and keeps its timing",
       "  --timed=MODE    apply: hold (default) skips demos whose cast/commentary",
       "                  would drift by over 250 ms; all applies them too",
       "  --no-purge      apply: skip the Cloudflare purge (needs CLOUDFLARE_ZONE_ID",
@@ -93,6 +108,8 @@ const workDir = path.resolve(values.work);
 const upgradedDir = path.join(workDir, "upgraded");
 const resultsDir = path.join(workDir, "results");
 const originalsDir = path.join(workDir, "originals");
+const reupgradedDir = path.join(workDir, "reupgraded");
+const supersededDir = path.join(workDir, "superseded");
 
 /**
  * Public base URL of the bucket's demo prefix, for the edge purge.
@@ -100,6 +117,32 @@ const originalsDir = path.join(workDir, "originals");
 const DEMOS_BASE_URL = (
   process.env.DEMOS_BASE_URL || "https://demos.tribes2.online/demos"
 ).replace(/\/+$/, "");
+
+/**
+ * An upgraded file's size and hashes; uploaded whole, its ETag is the MD5.
+ */
+interface UpgradedFile {
+  bytes: number;
+  md5: string;
+  sha256: string;
+}
+
+const sha256Hex = (bytes: Uint8Array) =>
+  createHash("sha256").update(bytes).digest("hex");
+
+const exists = (file: string) =>
+  fs.access(file).then(
+    () => true,
+    () => false,
+  );
+
+function describeFile(bytes: Uint8Array): UpgradedFile {
+  return {
+    bytes: bytes.length,
+    md5: createHash("md5").update(bytes).digest("hex"),
+    sha256: sha256Hex(bytes),
+  };
+}
 
 /**
  * One demo's progress through the migration.
@@ -124,8 +167,47 @@ interface MigrationResult {
   report?: RelayDemoUpgrade;
   problems?: string[];
   error?: string;
-  upgraded?: { bytes: number; md5: string; sha256: string };
+  upgraded?: UpgradedFile;
   applied?: { etag: string; at: string; sidecar: boolean; purged: boolean };
+  /**
+   * An applied demo's original converted again by other converter code
+   * (prepare --reapply) into a file that differs from the applied upgrade,
+   * kept in reupgraded/ for apply --reapply.
+   */
+  reapply?: {
+    converter: string;
+    status: "ready" | "failed";
+    report?: RelayDemoUpgrade;
+    upgraded?: UpgradedFile;
+    problems?: string[];
+    error?: string;
+  };
+  /**
+   * The converter code that converted an applied demo's original again
+   * into the applied upgrade's exact bytes.
+   */
+  rechecked?: { converter: string; at: string };
+  /**
+   * Upgrades a re-apply replaced, oldest first, as `applied`, `converter`,
+   * `upgraded` and `report` described them; each file is kept in
+   * superseded/<name>.<etag>.
+   */
+  superseded?: {
+    etag: string;
+    at: string;
+    converter: string;
+    upgraded: UpgradedFile;
+    report: RelayDemoUpgrade;
+  }[];
+}
+
+/**
+ * A demos:backup manifest's record of one mirrored object.
+ */
+interface MirrorEntry {
+  etag: string;
+  size: number;
+  sha256?: string;
 }
 
 /**
@@ -269,6 +351,7 @@ async function prepare(): Promise<void> {
       ...(values.filter ? [`--filter=${values.filter}`] : []),
       ...(values.skip ? [`--skip=${values.skip}`] : []),
       ...(values.force ? ["--force"] : []),
+      ...(values.reapply ? ["--reapply"] : []),
     ];
     const exits = await Promise.all(
       Array.from(
@@ -290,11 +373,11 @@ async function prepare(): Promise<void> {
 
   const converter = await converterVersion();
   const [shard, shards] = (values.shard ?? "0/1").split("/").map(Number);
-  const mirror = new Map<string, { etag: string; size: number }>();
+  const mirror = new Map<string, MirrorEntry>();
   if (values.mirror) {
     const manifest = JSON.parse(
       await fs.readFile(path.join(values.mirror, "manifest.json"), "utf8"),
-    ) as { objects: { key: string; etag: string; size: number }[] };
+    ) as { objects: (MirrorEntry & { key: string })[] };
     for (const object of manifest.objects) mirror.set(object.key, object);
   }
 
@@ -304,7 +387,10 @@ async function prepare(): Promise<void> {
     const etag = unquoteEtag(listedEtag);
     const previous = await readResult(filename);
     // An applied demo's record is the migration's: apply checks it.
-    if (previous?.applied) continue;
+    if (previous?.applied) {
+      if (values.reapply) await reupgrade(previous, etag, converter, mirror);
+      continue;
+    }
     if (
       previous &&
       previous.etag === etag &&
@@ -349,11 +435,7 @@ async function prepare(): Promise<void> {
         result.status = result.problems.length === 0 ? "unchanged" : "failed";
       } else {
         const upgraded = new Uint8Array(await fs.readFile(output));
-        result.upgraded = {
-          bytes: upgraded.length,
-          md5: createHash("md5").update(upgraded).digest("hex"),
-          sha256: createHash("sha256").update(upgraded).digest("hex"),
-        };
+        result.upgraded = describeFile(upgraded);
         const { problems } = await validateRelayDemoUpgrade(
           original,
           upgraded,
@@ -388,6 +470,153 @@ async function download(key: string, etag: string): Promise<Uint8Array> {
   return response.Body!.transformToByteArray();
 }
 
+/**
+ * prepare --reapply for an applied demo: convert its original again, and
+ * keep a file that differs from the applied upgrade in reupgraded/, ready
+ * for apply --reapply if it passes its checks and keeps the applied
+ * upgrade's timing exactly. Writes nothing unless the bucket holds the
+ * applied upgrade.
+ */
+async function reupgrade(
+  previous: MigrationResult,
+  listedEtag: string,
+  converter: string,
+  mirror: Map<string, MirrorEntry>,
+): Promise<void> {
+  const { key, filename, applied, upgraded, report } = previous;
+  if (!applied || !upgraded || !report) return;
+  const checkedBy =
+    previous.reapply?.converter ??
+    previous.rechecked?.converter ??
+    previous.converter;
+  if (checkedBy === converter && !values.force) return;
+  if (listedEtag !== applied.etag) {
+    // Apply uploads the upgrade again over a restored original, and
+    // records a re-apply that stopped after its upload.
+    const holds =
+      listedEtag === previous.etag
+        ? "the original again"
+        : previous.reapply?.status === "ready" &&
+            listedEtag === previous.reapply.upgraded?.md5
+          ? "its re-upgrade (apply --reapply records it)"
+          : undefined;
+    console.log(
+      `${filename}: not re-upgraded, the bucket holds ${holds ?? "neither the original nor the upgrade"}`,
+    );
+    if (!holds) process.exitCode = 1;
+    return;
+  }
+  let original: Uint8Array;
+  try {
+    original = await readOriginal(previous, mirror);
+  } catch (error) {
+    console.log(`${filename}: not re-upgraded — ${String(error)}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const reapply: NonNullable<MigrationResult["reapply"]> = {
+    converter,
+    status: "failed",
+  };
+  const candidate = path.join(reupgradedDir, filename);
+  let unchanged = false;
+  try {
+    await fs.mkdir(reupgradedDir, { recursive: true });
+    await fs.rm(candidate, { force: true });
+    const next = await upgradeRelayDemo(original, candidate);
+    reapply.report = next;
+    // Nothing to rewrite leaves no file, whatever the report counts.
+    if (!(await exists(candidate))) {
+      reapply.problems = ["the converter now leaves the original as it is"];
+    } else {
+      const bytes = new Uint8Array(await fs.readFile(candidate));
+      reapply.upgraded = describeFile(bytes);
+      unchanged = reapply.upgraded.sha256 === upgraded.sha256;
+      if (!unchanged) {
+        const moved = timingChanges(report, next);
+        const { problems } = await validateRelayDemoUpgrade(
+          original,
+          bytes,
+          next,
+          filename,
+        );
+        reapply.problems = [
+          ...(moved.length > 0
+            ? [`timing differs from the applied upgrade: ${moved.join(", ")}`]
+            : []),
+          ...problems,
+        ];
+        reapply.status = reapply.problems.length === 0 ? "ready" : "failed";
+      }
+    }
+  } catch (error) {
+    reapply.error = String(error);
+  }
+
+  const result: MigrationResult = {
+    ...previous,
+    timed: timedKeys.get(key) ?? { cast: false, commentary: false },
+  };
+  if (unchanged) {
+    result.reapply = undefined;
+    result.rechecked = { converter, at: new Date().toISOString() };
+  } else {
+    result.reapply = reapply;
+    result.rechecked = undefined;
+  }
+  await writeResult(result);
+  if (unchanged) await fs.rm(candidate, { force: true });
+  console.log(
+    `${filename}: re-upgrade ${unchanged ? "unchanged" : reapply.status}` +
+      (reapply.report ? ` (${reapply.report.generation})` : "") +
+      (reapply.error ? ` — ${reapply.error}` : "") +
+      (reapply.problems?.length ? ` — ${reapply.problems.join("; ")}` : ""),
+  );
+}
+
+/**
+ * An applied demo's original, from the mirror or originals/, checked to be
+ * the version it was prepared from: the bucket now holds its upgrade.
+ */
+async function readOriginal(
+  result: MigrationResult,
+  mirror: Map<string, MirrorEntry>,
+): Promise<Uint8Array> {
+  const backedUp = mirror.get(result.key);
+  if (
+    values.mirror &&
+    backedUp?.etag === result.etag &&
+    backedUp.size === result.bytes
+  ) {
+    const bytes = new Uint8Array(
+      await fs.readFile(path.join(values.mirror, result.key)),
+    );
+    if (
+      bytes.length !== result.bytes ||
+      (backedUp.sha256 !== undefined && sha256Hex(bytes) !== backedUp.sha256)
+    )
+      throw new Error(
+        "the mirror's copy of the original differs from its manifest",
+      );
+    return bytes;
+  }
+  const kept = path.join(originalsDir, result.filename);
+  const hashes = await fileEtags(kept).catch(() => undefined);
+  if (
+    hashes &&
+    (result.etag.includes("-") ? hashes.multipartEtag : hashes.md5) ===
+      result.etag
+  ) {
+    const bytes = new Uint8Array(await fs.readFile(kept));
+    if (bytes.length === result.bytes && sha256Hex(bytes) === hashes.sha256)
+      return bytes;
+  }
+  throw new Error(
+    `no copy of the original (ETag ${result.etag}) in ${values.mirror ? "the mirror or " : ""}originals/`,
+  );
+}
+
 async function summarize(): Promise<void> {
   const converter = await converterVersion();
   const results = (
@@ -414,6 +643,39 @@ async function summarize(): Promise<void> {
   console.log(
     `  generations: ${JSON.stringify(Object.fromEntries(generations))}`,
   );
+  const reupgrades = (status: "ready" | "failed") =>
+    results.filter((result) => result.reapply?.status === status).length;
+  const rechecked = results.filter((result) => result.rechecked).length;
+  const reapplied = results.filter(
+    (result) => result.superseded?.length,
+  ).length;
+  if (
+    values.reapply ||
+    reupgrades("ready") ||
+    reupgrades("failed") ||
+    rechecked ||
+    reapplied
+  ) {
+    const unchecked = results.filter(
+      (result) =>
+        result.applied &&
+        (result.reapply?.converter ??
+          result.rechecked?.converter ??
+          result.converter) !== converter,
+    ).length;
+    console.log(
+      `  applied demos re-upgraded: ${reupgrades("ready")} ready, ` +
+        `${reupgrades("failed")} failed, ${rechecked} unchanged` +
+        (unchecked ? `; ${unchecked} by other converter code` : "") +
+        `; ${reapplied} re-applied`,
+    );
+  }
+  const timedNote = (result: MigrationResult) =>
+    result.timed.commentary
+      ? ", has commentary"
+      : result.timed.cast
+        ? ", has cast"
+        : "";
   for (const result of results) {
     const { report } = result;
     if (result.status !== "failed" && !drifts(result)) continue;
@@ -425,14 +687,31 @@ async function summarize(): Promise<void> {
               ? `, ${formatDemoTime(report.droppedTicks * DEMO_TICK_MS)} dropped`
               : "")
           : "") +
-        (result.timed.commentary
-          ? ", has commentary"
-          : result.timed.cast
-            ? ", has cast"
-            : "") +
+        timedNote(result) +
         (result.error ? `, ERROR: ${result.error}` : "") +
         (result.problems?.length
           ? `, PROBLEMS: ${result.problems.join("; ")}`
+          : ""),
+    );
+  }
+  for (const result of results) {
+    const { reapply, report, upgraded } = result;
+    if (!reapply) continue;
+    console.log(
+      `  ${result.filename}: re-upgrade ${reapply.status}` +
+        (upgraded && reapply.upgraded
+          ? `, ${upgraded.bytes} → ${reapply.upgraded.bytes} bytes`
+          : "") +
+        (report && reapply.report && reapply.status === "ready"
+          ? upgradeChanges(report, reapply.report)
+              .map((change) => `, ${change}`)
+              .join("")
+          : "") +
+        timedNote(result) +
+        (reapply.converter !== converter ? ", by other converter code" : "") +
+        (reapply.error ? `, ERROR: ${reapply.error}` : "") +
+        (reapply.problems?.length
+          ? `, PROBLEMS: ${reapply.problems.join("; ")}`
           : ""),
     );
   }
@@ -455,6 +734,7 @@ async function apply(): Promise<void> {
   let pendingIndex: MigrationResult[] = [];
   let pendingPurge: MigrationResult[] = [];
   let applied = 0;
+  let reapplied = 0;
 
   // A failed flush is reported as its own: every applied demo's record is
   // patched again, and an unpurged one purged, the next time apply runs.
@@ -533,15 +813,34 @@ async function apply(): Promise<void> {
         );
         const current = unquoteEtag(head.ETag);
         if (result.applied && current !== result.applied.etag) {
-          if (current !== result.etag) {
+          if (
+            result.reapply?.status === "ready" &&
+            current === result.reapply.upgraded?.md5
+          ) {
+            // A re-apply that stopped between its upload and its result.
+            if (!values.reapply) {
+              failures.push(
+                `${filename}: the bucket holds its re-upgrade; apply --reapply records it`,
+              );
+              continue;
+            }
+            if (head.ContentLength !== result.reapply.upgraded.bytes)
+              throw new Error(
+                "the bucket's copy does not match the re-upgrade",
+              );
+            await promoteReapply(result);
+            reapplied++;
+            console.log(`${filename}: re-applied in an earlier run; recorded`);
+          } else if (current !== result.etag) {
             failures.push(
               `${filename}: the bucket holds neither the original nor the upgrade`,
             );
             continue;
+          } else {
+            // Something put the original back: upload the upgrade again.
+            console.log(`${filename}: reverted since apply; applying again`);
+            result.applied = undefined;
           }
-          // Something put the original back: upload the upgrade again.
-          console.log(`${filename}: reverted since apply; applying again`);
-          result.applied = undefined;
         }
         if (!result.applied) {
           if (current !== result.etag && current !== result.upgraded.md5) {
@@ -591,6 +890,22 @@ async function apply(): Promise<void> {
             `${filename}: applied, ${result.bytes} → ${result.upgraded.bytes} bytes`,
           );
         }
+        if (values.reapply && result.reapply?.status === "ready") {
+          // A refused re-apply leaves the applied upgrade, whose records
+          // still need what follows.
+          if (result.reapply.converter !== converter) {
+            failures.push(
+              `${filename}: re-upgraded by other converter code; prepare --reapply again`,
+            );
+          } else {
+            const before = result.upgraded.bytes;
+            await reapplyUpgrade(key, result, head);
+            reapplied++;
+            console.log(
+              `${filename}: re-applied, ${before} → ${result.upgraded.bytes} bytes`,
+            );
+          }
+        }
         if (!result.applied.sidecar) {
           result.applied.sidecar = await patchSidecar(`${key}.json`, result);
           await writeResult(result);
@@ -609,6 +924,7 @@ async function apply(): Promise<void> {
   }
 
   console.log(`\nApplied ${applied} demos in this run`);
+  if (values.reapply) console.log(`Re-applied ${reapplied} demos in this run`);
   if (held.length > 0)
     console.log(
       `Held back ${held.length} demos whose cast/commentary would drift (--timed=all applies them):\n  ${held.join("\n  ")}`,
@@ -620,8 +936,106 @@ async function apply(): Promise<void> {
 }
 
 /**
+ * Replace an applied upgrade with its re-upgrade, only over the applied
+ * version and keeping its headers, then record it.
+ */
+async function reapplyUpgrade(
+  key: string,
+  result: MigrationResult,
+  head: HeadObjectCommandOutput,
+): Promise<void> {
+  const { filename, applied, reapply, upgraded, report } = result;
+  if (!applied || !reapply?.upgraded || !reapply.report || !upgraded || !report)
+    throw new Error("no re-upgrade to apply");
+  const moved = timingChanges(report, reapply.report);
+  if (moved.length > 0)
+    throw new Error(`the re-upgrade changes its timing: ${moved.join(", ")}`);
+  const body = new Uint8Array(
+    await fs.readFile(path.join(reupgradedDir, filename)),
+  );
+  if (sha256Hex(body) !== reapply.upgraded.sha256)
+    throw new Error("the re-upgraded file differs from the one prepared");
+  // superseded/ keeps this file as the copy of what the bucket holds now.
+  if (
+    sha256Hex(await fs.readFile(path.join(upgradedDir, filename))) !==
+    upgraded.sha256
+  )
+    throw new Error("the upgraded file differs from the one applied");
+  await client.send(
+    new PutObjectCommand({
+      Bucket: config.bucket,
+      Key: key,
+      Body: body,
+      ContentType: head.ContentType,
+      CacheControl: head.CacheControl,
+      Metadata: head.Metadata,
+      IfMatch: `"${applied.etag}"`,
+    }),
+  );
+  const uploaded = await client.send(
+    new HeadObjectCommand({ Bucket: config.bucket, Key: key }),
+  );
+  if (
+    uploaded.ContentLength !== reapply.upgraded.bytes ||
+    unquoteEtag(uploaded.ETag) !== reapply.upgraded.md5
+  )
+    throw new Error("the bucket's copy does not match after upload");
+  await promoteReapply(result);
+}
+
+/**
+ * Record the re-upgrade the bucket now holds as the demo's upgrade: it
+ * moves into upgraded/, and the upgrade it replaced into superseded/ and
+ * `superseded`. Finishes one that stopped part way.
+ */
+async function promoteReapply(result: MigrationResult): Promise<void> {
+  const { filename, applied, reapply, upgraded, report } = result;
+  if (!applied || !reapply?.upgraded || !reapply.report || !upgraded || !report)
+    throw new Error("no re-upgrade to record");
+  const upgradedFile = path.join(upgradedDir, filename);
+  const candidate = path.join(reupgradedDir, filename);
+  const moving = await exists(candidate);
+  if (
+    sha256Hex(await fs.readFile(moving ? candidate : upgradedFile)) !==
+    reapply.upgraded.sha256
+  )
+    throw new Error("the re-upgraded file differs from the one prepared");
+  if (moving) {
+    const kept = path.join(supersededDir, `${filename}.${applied.etag}`);
+    await fs.mkdir(supersededDir, { recursive: true });
+    if (!(await exists(kept))) await fs.rename(upgradedFile, kept);
+    await fs.rename(candidate, upgradedFile);
+  }
+  result.superseded = [
+    ...(result.superseded ?? []),
+    {
+      etag: applied.etag,
+      at: applied.at,
+      converter: result.converter,
+      upgraded,
+      report,
+    },
+  ];
+  result.converter = reapply.converter;
+  result.upgraded = reapply.upgraded;
+  result.report = reapply.report;
+  result.problems = reapply.problems;
+  result.applied = {
+    etag: reapply.upgraded.md5,
+    at: new Date().toISOString(),
+    sidecar: false,
+    purged: false,
+  };
+  result.reapply = undefined;
+  result.rechecked = undefined;
+  await writeResult(result);
+}
+
+/**
  * A demo's record with the upgraded file's size and length, and its games'
- * starts on the upgraded clock; the record itself once it has them.
+ * starts on the upgraded clock; the record itself once it has them. A
+ * re-applied upgrade keeps the clock of the one it replaced, so a record
+ * already on that clock only takes its size.
  */
 function patchRecord(
   record: DemoMetadata,
@@ -635,6 +1049,8 @@ function patchRecord(
       record.durationMs === report.newLengthMs)
   )
     return record;
+  if (result.superseded?.length && record.durationMs === report.newLengthMs)
+    return { ...record, bytes: upgraded.bytes };
   return {
     ...record,
     bytes: upgraded.bytes,

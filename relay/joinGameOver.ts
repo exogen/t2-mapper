@@ -66,6 +66,12 @@ export function isGameOverMessage(
 }
 
 /**
+ * What the filter made of a recording entry: a welcome page rewritten, one
+ * it had to leave as it is, or a stream it stopped following.
+ */
+export type JoinGameOverOutcome = "rewritten" | "left" | "stopped";
+
+/**
  * Where a recording's stream starts: the connection state its start block
  * holds.
  */
@@ -111,12 +117,13 @@ export class JoinGameOverFilter {
 
   /**
    * Take the recording's next entry, rewriting a packet in place when it
-   * carries a welcome page that would strand playback. Returns whether it
-   * did.
+   * carries a welcome page that would strand playback. A page is left when
+   * its event arrived out of order, in a packet already recorded, or isn't
+   * packed as tags.
    */
-  apply(entry: DemoStreamEntry): boolean {
+  apply(entry: DemoStreamEntry): JoinGameOverOutcome | undefined {
     const parser = this.parser;
-    if (!parser) return false;
+    if (!parser) return undefined;
     if (entry.kind !== "packet") {
       if (entry.kind === "sent") {
         parser.onSendPacketTrigger();
@@ -124,18 +131,21 @@ export class JoinGameOverFilter {
         this.elapsedMs += MOVE_TICK_MS;
         if (this.elapsedMs >= JOIN_GAME_OVER_WINDOW_MS) this.parser = null;
       }
-      return false;
+      return undefined;
     }
     try {
       return this.applyPacket(parser, entry.data);
     } catch {
       // A stream the parser can't follow is recorded as it is.
       this.parser = null;
-      return false;
+      return "stopped";
     }
   }
 
-  private applyPacket(parser: PacketParser, data: Uint8Array): boolean {
+  private applyPacket(
+    parser: PacketParser,
+    data: Uint8Array,
+  ): JoinGameOverOutcome | undefined {
     // Guaranteed events released from the queue were read from earlier
     // packets, whose bits are already recorded.
     const queued = new Set<NetEventInfo>(
@@ -144,12 +154,12 @@ export class JoinGameOverFilter {
     const packet = parser.parsePacket(data);
     if (packet.parseFault) {
       this.parser = null;
-      return false;
+      return "stopped";
     }
     // The control object is read before the packet's events.
     if (packet.gameState.controlObjectGhostIndex !== undefined)
       this.hasCamera = true;
-    let rewrote = false;
+    let outcome: JoinGameOverOutcome | undefined;
     for (const event of packet.events) {
       const parsed = event.parsedData;
       if (parsed?.type === "NetStringEvent") {
@@ -162,18 +172,20 @@ export class JoinGameOverFilter {
       } else if (
         parsed?.type === "RemoteCommandEvent" &&
         this.hasCamera &&
-        !queued.has(event) &&
         this.isWelcomePage(parsed as RemoteCommandEventData)
       ) {
-        rewrote =
+        const rewritten =
+          !queued.has(event) &&
           swapMessageType(
             data,
             event.dataBitsStart,
             parsed as RemoteCommandEventData,
-          ) || rewrote;
+          );
+        if (rewritten) outcome ??= "rewritten";
+        else outcome = "left";
       }
     }
-    return rewrote;
+    return outcome;
   }
 
   private isWelcomePage({ argv }: RemoteCommandEventData): boolean {

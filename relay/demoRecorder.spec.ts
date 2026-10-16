@@ -347,7 +347,7 @@ describe("DemoRecorder", () => {
     vi.spyOn(JoinGameOverFilter.prototype, "apply").mockImplementation(
       (entry) => {
         filtered.push(entry.kind);
-        return entry.kind === "packet";
+        return entry.kind === "packet" ? "rewritten" : undefined;
       },
     );
     const recorder = createRecorder();
@@ -362,6 +362,28 @@ describe("DemoRecorder", () => {
     expect(info).toHaveBeenCalledWith(
       expect.objectContaining({ atMs: 32 }),
       "Rewrote a welcome page that would leave Tribes2.exe on the debrief screen",
+    );
+  });
+
+  it("warns when the welcome-page filter leaves a page or stops", async () => {
+    const warn = vi.spyOn(demoLog, "warn").mockImplementation(() => {});
+    vi.spyOn(demoStart, "planDemoStart").mockReturnValue({ skip: 1 });
+    vi.spyOn(JoinGameOverFilter.prototype, "apply")
+      .mockReturnValueOnce("left")
+      .mockReturnValueOnce("stopped");
+    const recorder = createRecorder();
+    recorder.onPacket(buildPingPacket(1), false);
+    recorder.setMissionName("Katabatic");
+    recorder.onPacket(buildPingPacket(2), false);
+    recorder.onPacket(buildPingPacket(3), false);
+    await recorder.finalize("test");
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ atMs: 0 }),
+      "Left a welcome page in place: Tribes2.exe playback will stay on the debrief screen",
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ atMs: 0 }),
+      "Stopped checking for welcome pages: the stream didn't parse",
     );
   });
 

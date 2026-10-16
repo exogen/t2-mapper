@@ -313,6 +313,24 @@ it.each(["classic", "broadcast"] as const)(
   },
 );
 
+it.each(["PracticeCTF", "LCTF", "SCtF"])(
+  "shows %s hundreds as captures",
+  (missionType) => {
+    state.scoreStyle = "competition";
+    state.missionType = missionType;
+    state.snapshot.teamScores[0].score = 104;
+    state.snapshot.teamScores[1].score = 213;
+    for (const variant of ["classic", "broadcast"] as const) {
+      const html = renderToStaticMarkup(
+        <MatchHUD onOpenScoreScreen={() => {}} variant={variant} />,
+      );
+      expect(html).toMatch(/>1<\/(?:div|td)>/);
+      expect(html).toMatch(/>2<\/(?:div|td)>/);
+      expect(html).not.toMatch(/>(?:104|213)<\/(?:div|td)>/);
+    }
+  },
+);
+
 it.each(["TR2", "Rabbit", "Arena", "CnH", null])(
   "keeps raw scores for %s even with Competition selected",
   (missionType) => {

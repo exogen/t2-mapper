@@ -50,6 +50,8 @@ export interface ServerMessageChanges {
   readonly joinedClientId?: number;
   /** The adapter propagates this rename to its target tables / rendered entities. */
   readonly renamedPlayer?: ServerMessageRosterEntry;
+  /** Resolved before the rename, including older demo rosters without target IDs. */
+  readonly renamedTargetId?: number;
 }
 
 const NO_CHANGES: ServerMessageChanges = {};
@@ -60,23 +62,21 @@ const NO_CHANGES: ServerMessageChanges = {};
  * and consume effects immediately, before the next message. Identity detection,
  * time sources, target/entity updates and notification hooks remain local.
  *
- * The team factory preserves adapter fields: browser teams start with
- * playerCount=0, while relay payloads contain only the protocol fields.
- * null means the message belongs to the adapter; malformed recognized messages
- * return no effects and leave state untouched.
+ * Teams hold only the protocol fields; callers derive the rest (like player
+ * counts) as they read them. null means the message belongs to the adapter;
+ * malformed recognized messages return no effects and leave state untouched.
  */
-export function applyServerMessageState<Team extends ServerMessageTeamScore>(
+export function applyServerMessageState(
   msgType: string,
   args: string[],
   resolve: ResolveNetString,
   state: {
     playerRoster: Map<number, ServerMessageRosterEntry>;
-    teamScores: Team[];
+    teamScores: ServerMessageTeamScore[];
     flags: Map<number, FlagState>;
     playerIdentity: PlayerIdentityState;
     resolvePlayers?: () => PlayerResolver;
   },
-  createTeam: (entry: ServerMessageTeamScore) => Team,
 ): ServerMessageChanges | null {
   const { playerRoster, teamScores, flags, playerIdentity } = state;
   const resolvePlayers =
@@ -123,13 +123,11 @@ export function applyServerMessageState<Team extends ServerMessageTeamScore>(
         team.name = decoded.name;
         if (decoded.score != null) team.score = decoded.score;
       } else {
-        teamScores.push(
-          createTeam({
-            teamId: decoded.teamId,
-            name: decoded.name,
-            score: decoded.score ?? 0,
-          }),
-        );
+        teamScores.push({
+          teamId: decoded.teamId,
+          name: decoded.name,
+          score: decoded.score ?? 0,
+        });
       }
       return { teamScoresChanged: true, matchStarted, flagsChanged };
     }
@@ -210,13 +208,20 @@ export function applyServerMessageState<Team extends ServerMessageTeamScore>(
       // Empty/markup-only names cannot match score rows. Ignore them on
       // both sides so catch-up does not erase a name the browser retained.
       if (!entry || !name) return NO_CHANGES;
-      refreshFlagCarriers(flags, resolvePlayers());
+      const players = resolvePlayers();
+      refreshFlagCarriers(flags, players);
+      const targetId =
+        entry.targetId ??
+        players.players.find((player) => player.clientId === clientId)
+          ?.targetId;
       entry.name = name;
       entry.rawName = rawName;
       return {
         rosterChanged: true,
         rosterMetadataChanged: true,
         renamedPlayer: entry,
+        renamedTargetId:
+          targetId != null && targetId >= 0 ? targetId : undefined,
       };
     }
     case "MsgClientJoinTeam": {

@@ -98,7 +98,7 @@ function checkpointData(
       encodeCheckpoint({
         cursor: { moveTicks: tick },
         simulation: {
-          state: { entities: new Map(), flagDroppedAtSec },
+          state: { entities: new Map(), conn: { flagDroppedAtSec } },
           shared: new Map(),
         },
         parser: { ghosts: new Map() },
@@ -157,7 +157,9 @@ describe("checkpoint sidecar loading", () => {
       JSON.stringify(original),
       buffer,
     );
-    expect(checkpoint.simulation.state.flagDroppedAtSec).toEqual({ 1: 30 });
+    expect(checkpoint.simulation.state.conn.flagDroppedAtSec).toEqual({
+      1: 30,
+    });
   });
   it("rejects changed timestamps and corrupt payloads", async () => {
     const buffer = new ArrayBuffer(3);

@@ -1,4 +1,3 @@
-import { restoreFlagStates } from "../../relay/flagState";
 import {
   createLiveParser,
   passiveObserverProtocolState,
@@ -87,7 +86,7 @@ export class LiveStreamAdapter extends StreamEngine {
 
   constructor(relay: RelayClient, options?: { mode?: "play" | "watch" }) {
     super();
-    this.playerIdentity.scope = crypto.randomUUID();
+    this.conn.playerIdentity.scope = crypto.randomUUID();
     this.setPlayerPredictionEnabled(true);
     this.relay = relay;
     this.mode = options?.mode ?? "play";
@@ -294,20 +293,13 @@ export class LiveStreamAdapter extends StreamEngine {
     this.registry = registry;
     this.connectSynced = true;
 
-    // Shared state, seeded exactly as demo reset does (demoStreaming.ts).
-    for (const [id, value] of payload.taggedStrings) {
-      this.netStrings.set(id, value);
-    }
-    for (const entry of payload.targetEntries) this.seedTargetInfo(entry);
-    for (const c of payload.sensorGroupColors) {
-      let map = this.sensorGroupColors.get(c.group);
-      if (!map) {
-        map = new Map();
-        this.sensorGroupColors.set(c.group, map);
-      }
-      map.set(c.targetGroup, { r: c.r, g: c.g, b: c.b });
-    }
-    this.playerSensorGroup = payload.playerSensorGroup;
+    // Connection tables, seeded as demo reset does (demoStreaming.ts),
+    // before the ghosts they name and color.
+    this.conn.seedTables({
+      ...payload,
+      targetGenerations: payload.hudState.targetGenerations,
+    });
+    this.conn.playerSensorGroup = payload.playerSensorGroup;
     for (const [id, block] of payload.dataBlocks) {
       if (block.className) this.dataBlockClassNames.set(id, block.className);
     }
@@ -337,81 +329,19 @@ export class LiveStreamAdapter extends StreamEngine {
 
     // Roster/scores/clock (a late joiner can't recover these live).
     const hud = payload.hudState;
-    this.playerIdentity = {
-      scope: hud.playerIdentity?.scope ?? crypto.randomUUID(),
-      generations: hud.playerIdentity
-        ? new Map(hud.playerIdentity.generations)
-        : null,
-    };
-    this.targetGenerations = new Map(hud.targetGenerations);
-    for (const entity of this.entities.values()) {
-      if (entity.targetId != null && entity.targetId >= 0)
-        entity.targetGeneration =
-          this.targetGenerations.get(entity.targetId) ?? 0;
-    }
-    this.flagDroppedAtSec = Object.fromEntries(
-      Object.entries(hud.flagDropElapsedSec ?? {}).map(([team, elapsed]) => [
-        team,
-        this.getTimeSec() - elapsed!,
-      ]),
-    );
-    for (const entry of hud.playerRoster) {
-      this.playerRoster.set(entry.clientId, {
-        name: entry.name,
-        rawName: entry.rawName,
-        guid: entry.guid,
-        clientGeneration: entry.clientGeneration,
-        isAdmin: entry.isAdmin,
-        isSuperAdmin: entry.isSuperAdmin,
-        isSmurf: entry.isSmurf,
-        targetId: entry.targetId,
-        teamId: entry.teamId,
-        score: entry.score,
-        ping: entry.ping,
-        packetLoss: entry.packetLoss,
-        kills: entry.kills,
-      });
-    }
+    this.conn.hydrateHud(hud);
     this.onRosterChanged();
-    // playerCount is recomputed from the roster on every HUD rebuild.
-    this.flagStates = restoreFlagStates(
-      hud.flags,
-      hud.teamScores,
-      this.playerIdentity.scope,
-      hud.playerRoster,
-    );
-    this.teamScores = hud.teamScores.map(({ teamId, name, score }) => ({
-      teamId,
-      name,
-      score,
-      playerCount: 0,
-    }));
     this.onTeamScoresChanged();
-    if (hud.clock) {
-      this.clockAnchorStreamSec =
-        this.getTimeSec() - hud.clock.elapsedMs / 1000;
-      this.clockDurationMs = hud.clock.durationMs;
-    }
-    // Mission change first: its handler resets per-mission info in the
-    // stores, so the hud values pushed below must come after or they'd
-    // be wiped (a mid-mission catch-up never re-sends them).
+    if (hud.matchEnded) this.endMatch();
+    // Mission change before the info push: its handler resets per-mission
+    // info in the stores, which onMissionInfoChange then refills (a
+    // mid-mission catch-up never re-sends it).
     this.hydratedEpoch = payload.epoch;
     if (payload.missionName) {
       this.onMissionChange?.(payload.missionName);
       if (this.missionSequence)
         this.onMissionIdentity?.(this.missionSequence, payload.missionName);
     }
-
-    this.missionDisplayName = hud.missionDisplayName ?? null;
-    this.missionTypeDisplayName = hud.missionTypeDisplayName ?? null;
-    this.gameClassName = hud.gameClassName ?? null;
-    this.serverDisplayName = hud.serverDisplayName ?? null;
-    this.serverLoadInfo = hud.loadInfo ?? null;
-    if (hud.matchEnded) this.endMatch();
-    // Older relays don't send matchStarted; a running clock in the
-    // payload proves the match is underway just as well.
-    this.matchStarted =
-      hud.matchStarted ?? (hud.clock != null && hud.clock.durationMs > 60_000);
     if (!hud.missionDisplayName) {
       // Should repopulate via MsgMissionDropInfo shortly (e.g. attach
       // landed mid mission-change); logged to trace occurrences where
@@ -479,9 +409,7 @@ export class LiveStreamAdapter extends StreamEngine {
       ) {
         this.missionName = newMissionName;
         this.missionSequence = seq || null;
-        // Mission-scoped, like the relay's beginMissionChange.
-        this.matchStarted = false;
-        this.flagStates.clear();
+        this.conn.beginMissionChange();
         this.clearAllEntities();
         this._ready = false;
         this._snapshot = null;
@@ -504,12 +432,6 @@ export class LiveStreamAdapter extends StreamEngine {
         this.controlPlayerGhostId = undefined;
         this.lastControlType = "camera";
         this.isPiloting = false;
-        // Clear stale mission info — new values arrive via MsgClientReady
-        // and MsgMissionDropInfo after the mission finishes loading.
-        this.missionDisplayName = null;
-        this.missionTypeDisplayName = null;
-        this.gameClassName = null;
-        this.serverDisplayName = null;
         this.onMissionChange?.(newMissionName);
       }
       if (newMissionName && seq) this.onMissionIdentity?.(seq, newMissionName);
@@ -851,7 +773,7 @@ export class LiveStreamAdapter extends StreamEngine {
         const targetId = event.parsedData.targetId as number | undefined;
         const nameTag = event.parsedData.nameTag as number | undefined;
         if (targetId != null && nameTag != null) {
-          const resolved = this.netStrings.get(nameTag);
+          const resolved = this.conn.netStrings.get(nameTag);
           if (resolved) {
             const name = stripTaggedStringMarkup(resolved);
             log.info(
@@ -964,15 +886,15 @@ export class LiveStreamAdapter extends StreamEngine {
       entities,
       flagTargets,
       playerTargets,
-      playerIdentityScope: this.playerIdentity.scope,
-      flags: Array.from(this.flagStates.values()),
+      playerIdentityScope: this.conn.playerIdentity.scope,
+      flags: Array.from(this.conn.flags.values()),
       controlPlayerGhostId: this.controlPlayerGhostId,
-      flagDroppedAtSec: this.flagDroppedAtSec,
+      flagDroppedAtSec: this.conn.flagDroppedAtSec,
       flagReturnDelaySec: flagReturnDelaySec(
         this.gameClassName,
         this.missionTypeDisplayName,
       ),
-      playerSensorGroup: this.playerSensorGroup,
+      playerSensorGroup: this.conn.playerSensorGroup,
       status: this.lastStatus,
       chatMessages,
       serverEvents,

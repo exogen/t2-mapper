@@ -1590,8 +1590,16 @@ describe("watch mission controls", () => {
         { tournament: false, minPlayerCount: 1, adminVotes: 1 },
       ],
     });
-    session.watchState.missionTypeDisplayName = "CTF";
-    events();
+    events(
+      remote(
+        "ServerMessage",
+        "MsgMissionDropInfo",
+        "",
+        "Katabatic",
+        "CTF",
+        "Test Server",
+      ),
+    );
     expect(session.streamDelayMs).toBe(0);
     events(chat("-rec"));
     expect(session.controls.recording).toBe(true);

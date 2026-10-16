@@ -30,6 +30,8 @@ import { StreamEngine, type MutableEntity } from "./StreamEngine";
 import { flagReturnDelaySec } from "./flagReturnTimer";
 import { assertDemoBlockParsed } from "./demoParseError";
 import { collisionState } from "../collision/collisionContext";
+import { decodeFlagStatus } from "../../relay/serverMessageDecode";
+import { refreshFlagCarriers, type FlagState } from "../../relay/flagState";
 
 interface DemoMissionInfo {
   /** Mission display name from readplayerinfo row 2 (e.g. "S5-WoodyMyrk"). */
@@ -125,6 +127,7 @@ interface ParsedDemoValues {
     activeSlot: number;
   } | null;
   teamScores: TeamScore[];
+  flags: FlagState[];
   playerRoster: Map<
     number,
     {
@@ -157,6 +160,7 @@ export function parseDemoValues(demoValues: string[]): ParsedDemoValues {
     backpackHud: null,
     inventoryHud: null,
     teamScores: [],
+    flags: [],
     playerRoster: new Map(),
     chatMessages: [],
     clockTimeMin: null,
@@ -296,6 +300,20 @@ export function parseDemoValues(demoValues: string[]): ParsedDemoValues {
         score: parseInt(scoreObjs[base + 1], 10) || 0,
         playerCount: playerCountByTeam.get(teamId) ?? 0,
       });
+      // recordings.cs saves each team's name, score, FLAG label and location.
+      const rawName = scoreObjs[base + 3];
+      const location = stripTaggedStringMarkup(rawName ?? "").trim();
+      if (location) {
+        const status = decodeFlagStatus(location);
+        result.flags.push({
+          teamId,
+          status,
+          ...(status === "held" && {
+            // ctfFlagTaken/ctfAddTeam display the carrier's nameBase.
+            carrier: { kind: "name", rawName, match: "base" } as const,
+          }),
+        });
+      }
     }
   } else if (gameType === "TR2Game" && objCount >= 4) {
     for (let t = 0; t < 2; t++) {
@@ -347,6 +365,19 @@ export function parseDemoValues(demoValues: string[]): ParsedDemoValues {
 
 /** Checkpoint cadence in recorded simulation ticks; each tick is 32 ms. */
 export const DEMO_CHECKPOINT_TICKS = 1_000;
+
+/**
+ * Whether a decoded checkpoint object has exactly the current fields.
+ */
+function sameKeys(value: object | undefined, current: object): boolean {
+  if (!value) return false;
+  const keys = Object.keys(value);
+  const expected = Object.keys(current);
+  return (
+    keys.length === expected.length &&
+    keys.every((key) => expected.includes(key))
+  );
+}
 
 // Optional metadata must not turn startup into a scan of the recording.
 const METADATA_PROBE_MAX_SEC = 2;
@@ -476,11 +507,11 @@ export class DemoStreamAdapter extends StreamEngine {
   /** Import already validated, collision-correct checkpoints for this recording. */
   importCheckpoints(checkpoints: readonly DemoSeekCheckpoint[]): void {
     const owner = this.parser.createCheckpoint().owner;
-    const stateKeys = Object.keys(this.captureSimulationState().state);
+    const current = this.captureSimulationState().state;
     const imported = new Map<number, DemoSeekCheckpoint>();
     for (const checkpoint of checkpoints) {
       const tick = checkpoint.cursor.moveTicks;
-      const keys = Object.keys(checkpoint.simulation.state);
+      const { state } = checkpoint.simulation;
       if (
         !Number.isSafeInteger(tick) ||
         tick < 0 ||
@@ -503,8 +534,9 @@ export class DemoStreamAdapter extends StreamEngine {
         !(checkpoint.simulation.players instanceof Map) ||
         !(checkpoint.simulation.images instanceof Map) ||
         !(checkpoint.parser.ghosts instanceof Map) ||
-        keys.length !== stateKeys.length ||
-        keys.some((key) => !stateKeys.includes(key))
+        !sameKeys(state, current) ||
+        !sameKeys(state.conn, current.conn) ||
+        !sameKeys(state.conn?.targets, current.conn.targets)
       )
         throw new Error("Invalid seek checkpoint");
       imported.set(tick, {
@@ -557,8 +589,11 @@ export class DemoStreamAdapter extends StreamEngine {
         connectedClientId: info.recorderName
           ? info.recorderClientId
           : (this.recorderFallback?.clientId ?? null),
-        serverDisplayName:
-          info.serverDisplayName ?? this.serverNameFallback ?? null,
+        conn: {
+          ...state.conn,
+          serverDisplayName:
+            info.serverDisplayName ?? this.serverNameFallback ?? null,
+        },
       },
     });
     this.exhausted = false;
@@ -759,25 +794,15 @@ export class DemoStreamAdapter extends StreamEngine {
       ? info.recorderClientId
       : (this.recorderFallback?.clientId ?? null);
 
-    // Seed net strings from initial block
-    for (const [id, value] of this.initialBlock.taggedStrings) {
-      this.netStrings.set(id, value);
-    }
-    for (const entry of this.initialBlock.targetEntries) {
-      this.seedTargetInfo({
+    // Net strings, targets and IFF colors from the initial block.
+    this.conn.seedTables({
+      taggedStrings: this.initialBlock.taggedStrings,
+      targetEntries: this.initialBlock.targetEntries.map((entry) => ({
         ...entry,
         typeDescription: entry.typeDescription ?? "",
-      });
-    }
-    // Seed IFF color table from the initial block.
-    for (const c of this.initialBlock.sensorGroupColors) {
-      let map = this.sensorGroupColors.get(c.group);
-      if (!map) {
-        map = new Map();
-        this.sensorGroupColors.set(c.group, map);
-      }
-      map.set(c.targetGroup, { r: c.r, g: c.g, b: c.b });
-    }
+      })),
+      sensorGroupColors: this.initialBlock.sensorGroupColors,
+    });
 
     // Demo-specific state
     this.moveTicks = 0;
@@ -901,10 +926,10 @@ export class DemoStreamAdapter extends StreamEngine {
 
     // The recording connection's sensor group, which Tribes2.exe's HUD
     // colors by. SetSensorGroupEvents change it from here.
-    this.playerSensorGroup = initial.sensorGroup;
+    this.conn.playerSensorGroup = initial.sensorGroup;
     // Without one, derive it from the control player entity.
     if (
-      this.playerSensorGroup === 0 &&
+      this.conn.playerSensorGroup === 0 &&
       this.lastControlType === "player" &&
       this.latestControl.ghostIndex >= 0
     ) {
@@ -913,7 +938,7 @@ export class DemoStreamAdapter extends StreamEngine {
       );
       const ctrlEntity = ctrlId ? this.entities.get(ctrlId) : undefined;
       if (ctrlEntity?.sensorGroup != null && ctrlEntity.sensorGroup > 0) {
-        this.playerSensorGroup = ctrlEntity.sensorGroup;
+        this.conn.playerSensorGroup = ctrlEntity.sensorGroup;
       }
     }
 
@@ -938,12 +963,20 @@ export class DemoStreamAdapter extends StreamEngine {
       this.inventoryHud.slots = parsed.inventoryHud.slots;
       this.inventoryHud.activeSlot = parsed.inventoryHud.activeSlot;
     }
-    this.teamScores = parsed.teamScores;
-    this.playerRoster = new Map(parsed.playerRoster);
+    this.conn.teamScores = parsed.teamScores.map(({ teamId, name, score }) => ({
+      teamId,
+      name,
+      score,
+    }));
+    this.conn.playerRoster = new Map(parsed.playerRoster);
+    this.conn.flags = new Map(parsed.flags.map((flag) => [flag.teamId, flag]));
+    refreshFlagCarriers(this.conn.flags, this.conn.resolvePlayers());
     if (parsed.clockTimeMin != null) {
       // Reproduce clockHud.setTime(getTime()) at demo start (timeSec=0).
-      this.clockAnchorStreamSec = 0;
-      this.clockDurationMs = parsed.clockTimeMin * 60 * 1000;
+      this.conn.clock = {
+        anchorSec: 0,
+        durationMs: parsed.clockTimeMin * 60 * 1000,
+      };
     }
     // Seed chat messages from demoValues
     for (const rawLine of parsed.chatMessages) {
@@ -1051,7 +1084,7 @@ export class DemoStreamAdapter extends StreamEngine {
     );
     const player = controlId ? this.entities.get(controlId) : undefined;
     if (player?.className !== "Player" || player.targetId == null) return;
-    const matches = [...this.playerRoster].filter(
+    const matches = [...this.conn.playerRoster].filter(
       ([, entry]) => entry.targetId === player.targetId,
     );
     if (matches.length !== 1) return;
@@ -1461,15 +1494,15 @@ export class DemoStreamAdapter extends StreamEngine {
       entities,
       flagTargets,
       playerTargets,
-      playerIdentityScope: this.playerIdentity.scope,
-      flags: Array.from(this.flagStates.values()),
+      playerIdentityScope: this.conn.playerIdentity.scope,
+      flags: Array.from(this.conn.flags.values()),
       controlPlayerGhostId: this.controlPlayerGhostId,
-      flagDroppedAtSec: this.flagDroppedAtSec,
+      flagDroppedAtSec: this.conn.flagDroppedAtSec,
       flagReturnDelaySec: flagReturnDelaySec(
         this.gameClassName,
         this.missionTypeDisplayName,
       ),
-      playerSensorGroup: this.playerSensorGroup,
+      playerSensorGroup: this.conn.playerSensorGroup,
       status: this.lastStatus,
       chatMessages,
       serverEvents,

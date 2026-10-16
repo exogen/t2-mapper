@@ -12,7 +12,7 @@ class RosterStream extends LiveStreamAdapter {
     this.handleServerMessage(args);
   }
   get roster() {
-    return [...this.playerRoster].map(([clientId, entry]) => ({
+    return [...this.conn.playerRoster].map(([clientId, entry]) => ({
       clientId,
       ...entry,
     }));

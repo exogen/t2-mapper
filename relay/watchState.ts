@@ -1,30 +1,9 @@
 import { randomUUID } from "node:crypto";
-import {
-  PlayerResolver,
-  collectPlayerTargets,
-  type PlayerIdentityState,
-} from "./playerReference.js";
-import {
-  refreshFlagCarriers,
-  legacyFlagFields,
-  type FlagState,
-} from "./flagState.js";
 import type { PacketData, ParsedData, SensorGroupColor } from "t2-demo-parser";
-import { resolveNetString, stripTaggedStringMarkup } from "./shared.js";
-import { updateFlagDropTimes, type FlagDropTimes } from "./flagReturnState.js";
-import {
-  resolvePendingTargetStrings,
-  updateTargetString,
-} from "./targetStrings.js";
-import {
-  isServerMessageCommand,
-  LoadInfoCollector,
-} from "./serverMessageDecode.js";
-import {
-  applyServerMessageState,
-  type ServerMessageRosterEntry as RosterEntry,
-  type ServerMessageTeamScore as TeamScoreEntry,
-} from "./serverMessageState.js";
+import { ConnectionState } from "./connectionState.js";
+import { isServerMessageCommand } from "./serverMessageDecode.js";
+import type { ServerMessageRosterEntry as RosterEntry } from "./serverMessageState.js";
+import { stripTaggedStringMarkup } from "./shared.js";
 import type { WatchHudStatePayload, WatchTargetEntry } from "./types.js";
 
 /**
@@ -33,64 +12,18 @@ import type { WatchHudStatePayload, WatchTargetEntry } from "./types.js";
  * scores/clock, mission info, and the latest control object. Ghost
  * state lives separately in GhostStateAccumulator (t2-demo-parser).
  *
- * Roster, team and flag updates use the same server-message reducer as
- * browser playback. Connection identity, recording callbacks and the wall
- * clock stay relay-local.
+ * The protocol state is the same ConnectionState browser playback keeps.
+ * Connection identity, tournament detection, recording callbacks and the
+ * wall clock stay relay-local.
  */
 
 export class WatchStateAccumulator {
-  readonly netStrings = new Map<number, string>();
-  /** targetId → string tag, until its NetStringEvent arrives. */
-  private pendingNameTags = new Map<number, number>();
-  private pendingTypeTags = new Map<number, number>();
-  private pendingSkinTags = new Map<number, number>();
-  private pendingSkinPrefTags = new Map<number, number>();
-  private targetRawNames = new Map<number, string>();
-  private targetTypes = new Map<number, string>();
-  private targetSkins = new Map<number, string>();
-  private targetSkinPrefs = new Map<number, string>();
-  private targetTeams = new Map<number, number>();
-  private targetRenderFlags = new Map<number, number>();
-  /** group → targetGroup → color (SensorGroupColorEvent, StreamEngine.ts:753). */
-  private sensorGroupColors = new Map<
-    number,
-    Map<number, { r: number; g: number; b: number }>
-  >();
-  /** GameConnection's own sensor group, delivered by SetSensorGroupEvent.
-   *  The stock game sets it to our team (0 = observer), independently of
-   *  roster identity and the target/control object we are viewing. */
-  playerSensorGroup = 0;
+  private readonly state = new ConnectionState({
+    now: () => Date.now() / 1000,
+    identityScope: randomUUID(),
+  });
   /** Datablock class names from SimDataBlockEvents (for CRC + payload). */
   readonly dataBlockClassNames = new Map<number, string>();
-
-  private playerRoster = new Map<number, RosterEntry>();
-  private teamScores: TeamScoreEntry[] = [];
-  private flags = new Map<number, FlagState>();
-  private playerIdentity = {
-    scope: randomUUID(),
-    generations: new Map<number, number>(),
-  } satisfies PlayerIdentityState;
-  private targetGenerations = new Map<number, number>();
-  private flagDroppedAtSec: FlagDropTimes = {};
-  private clock: { durationMs: number; receivedAt: number } | null = null;
-  /** The match is underway (or seconds away): set by MsgMissionStart
-   *  (start/countdown — idle warmup sends neither), a running match
-   *  clock, or a team with points on the board (untimed servers send no
-   *  running clock). Never true while a server sits in pre-match warmup. */
-  matchStarted = false;
-  private loadInfo = new LoadInfoCollector();
-  private missionDisplayName: string | undefined;
-  private missionTypeDisplayName: string | undefined;
-  private gameClassName: string | undefined;
-  private matchEnded = false;
-  private matchEndedAt: number | null = null;
-
-  private endMatch(): void {
-    if (this.matchEnded) return;
-    this.matchEnded = true;
-    this.matchEndedAt = Date.now();
-  }
-  private serverDisplayName: string | undefined;
 
   missionName: string | null = null;
   missionSequence: string | null = null;
@@ -124,14 +57,46 @@ export class WatchStateAccumulator {
   constructor(initialRoster?: ReadonlyMap<number, RosterEntry>) {
     if (initialRoster)
       for (const [id, entry] of initialRoster) {
-        this.playerRoster.set(id, { ...entry });
-        this.playerIdentity.generations.set(id, entry.clientGeneration ?? 0);
+        this.state.playerRoster.set(id, { ...entry });
+        this.state.playerIdentity.generations?.set(
+          id,
+          entry.clientGeneration ?? 0,
+        );
       }
   }
 
-  /** Stream-authoritative server name (MsgMissionDropInfo), when known. */
+  get netStrings(): Map<number, string> {
+    return this.state.netStrings;
+  }
+
+  /**
+   * GameConnection's own sensor group (SetSensorGroupEvent); 0 = observer.
+   */
+  get playerSensorGroup(): number {
+    return this.state.playerSensorGroup;
+  }
+
+  set playerSensorGroup(sensorGroup: number) {
+    this.state.playerSensorGroup = sensorGroup;
+  }
+
+  /**
+   * The match is underway or seconds away (see ConnectionState).
+   */
+  get matchStarted(): boolean {
+    return this.state.matchStarted;
+  }
+
+  set matchStarted(started: boolean) {
+    this.state.matchStarted = started;
+  }
+
+  /**
+   * Stream-authoritative server name (MsgMissionDropInfo, or Classic's
+   * mod-info MsgLoadInfo), when known.
+   */
   get serverName(): string | undefined {
-    return this.serverDisplayName;
+    return this.state.serverDisplayName ?? undefined;
   }
 
   /**
@@ -139,25 +104,14 @@ export class WatchStateAccumulator {
    * or MsgLoadInfo), when known.
    */
   get missionType(): string | undefined {
-    return this.missionTypeDisplayName;
+    return this.state.missionTypeDisplayName ?? undefined;
   }
 
   /**
-   * Clear mission-scoped display state on an in-place mission cycle,
-   * mirroring the browser's MissionStartPhase1 handling
-   * (liveStreaming.ts) so late joiners see the same state as watchers
-   * who rode through the change. Fresh values arrive via MsgClientReady
-   * and MsgMissionDropInfo once the new mission loads.
+   * Clear mission-scoped display state on an in-place mission cycle.
    */
   beginMissionChange(): void {
-    this.flagDroppedAtSec = {};
-    this.flags.clear();
-    this.missionDisplayName = undefined;
-    this.missionTypeDisplayName = undefined;
-    this.gameClassName = undefined;
-    this.serverDisplayName = undefined;
-    this.matchStarted = false;
-    this.loadInfo.reset();
+    this.state.beginMissionChange();
   }
 
   /** Mission-phase metadata is shared by live and delayed catch-up state. */
@@ -180,7 +134,7 @@ export class WatchStateAccumulator {
   }
 
   resolveNetString(s: string): string {
-    return resolveNetString(s, this.netStrings);
+    return this.state.resolveNetString(s);
   }
 
   /** Notify in wire order, before a later event can rename or drop the same client. */
@@ -198,169 +152,33 @@ export class WatchStateAccumulator {
 
     for (const event of parsed.events) {
       const data = event.parsedData;
-      if (!data) continue;
-      switch (data.type) {
-        case "NetStringEvent":
-          this.handleNetString(data);
-          break;
-        case "TargetInfoEvent":
-          this.handleTargetInfo(data);
-          break;
-        case "SetSensorGroupEvent":
-          if (typeof data.sensorGroup === "number") {
-            this.playerSensorGroup = data.sensorGroup;
-          }
-          break;
-        case "SensorGroupColorEvent":
-          this.handleSensorGroupColor(data);
-          break;
-        case "TargetFreeEvent":
-          if (typeof data.targetId === "number") {
-            this.targetGenerations.set(
-              data.targetId,
-              (this.targetGenerations.get(data.targetId) ?? 0) + 1,
-            );
-            for (const player of this.playerRoster.values())
-              if (player.targetId === data.targetId) player.targetId = -1;
-            this.targetRawNames.delete(data.targetId);
-            this.targetTypes.delete(data.targetId);
-            this.pendingNameTags.delete(data.targetId);
-            this.pendingTypeTags.delete(data.targetId);
-            this.pendingSkinTags.delete(data.targetId);
-            this.pendingSkinPrefTags.delete(data.targetId);
-            this.targetSkins.delete(data.targetId);
-            this.targetSkinPrefs.delete(data.targetId);
-            this.targetTeams.delete(data.targetId);
-            this.targetRenderFlags.delete(data.targetId);
-          }
-          break;
-        case "SimDataBlockEvent": {
-          const objectId = data.objectId as number | undefined;
-          const className = data.dataBlockClassName as string | undefined;
-          if (objectId != null && className) {
-            this.dataBlockClassNames.set(objectId, className);
-          }
-          break;
+      if (!data || this.state.applyEvent(data)) continue;
+      if (data.type === "SimDataBlockEvent") {
+        const objectId = data.objectId as number | undefined;
+        const className = data.dataBlockClassName as string | undefined;
+        if (objectId != null && className) {
+          this.dataBlockClassNames.set(objectId, className);
         }
-        case "RemoteCommandEvent": {
-          const funcName = this.resolveNetString(
-            (data.funcName as string) ?? "",
-          );
-          const args = (data.args as string[]) ?? [];
-          if (funcName === "MissionEnd") {
-            this.endMatch();
-          } else if (isServerMessageCommand(funcName) && args.length >= 1) {
-            this.handleServerMessage(args, onRosterChange);
-          } else if (funcName === "BottomPrint" && args.length >= 1) {
-            if (
-              /Server is Running in Tournament Mode/i.test(
-                this.resolveNetString(args[0]),
-              )
-            ) {
-              this.tournamentMode = true;
-            }
+      } else if (data.type === "RemoteCommandEvent") {
+        const funcName = this.resolveNetString((data.funcName as string) ?? "");
+        const args = (data.args as string[]) ?? [];
+        if (funcName === "MissionEnd") {
+          this.state.endMatch();
+        } else if (isServerMessageCommand(funcName) && args.length >= 1) {
+          this.handleServerMessage(args, onRosterChange);
+        } else if (funcName === "BottomPrint" && args.length >= 1) {
+          if (
+            /Server is Running in Tournament Mode/i.test(
+              this.resolveNetString(args[0]),
+            )
+          ) {
+            this.tournamentMode = true;
           }
-          onRemoteCommand?.(
-            funcName,
-            args.map((arg) => this.resolveNetString(arg)),
-          );
-          break;
         }
-      }
-    }
-  }
-
-  private handleNetString(data: ParsedData): void {
-    const id = data.id as number | undefined;
-    const value = data.value as string | undefined;
-    if (id == null || typeof value !== "string") return;
-    this.netStrings.set(id, value);
-    resolvePendingTargetStrings(
-      this.targetRawNames,
-      this.pendingNameTags,
-      id,
-      value,
-    );
-    resolvePendingTargetStrings(
-      this.targetTypes,
-      this.pendingTypeTags,
-      id,
-      value,
-    );
-    resolvePendingTargetStrings(
-      this.targetSkins,
-      this.pendingSkinTags,
-      id,
-      value,
-    );
-    resolvePendingTargetStrings(
-      this.targetSkinPrefs,
-      this.pendingSkinPrefTags,
-      id,
-      value,
-    );
-  }
-
-  /** Uses the same target string resolution as browser playback. */
-  private handleTargetInfo(data: ParsedData): void {
-    const targetId = data.targetId as number | undefined;
-    if (targetId == null) return;
-    updateTargetString(
-      this.netStrings,
-      this.targetRawNames,
-      this.pendingNameTags,
-      targetId,
-      data.nameTag as number | undefined,
-    );
-    updateTargetString(
-      this.netStrings,
-      this.targetTypes,
-      this.pendingTypeTags,
-      targetId,
-      data.typeTag as number | undefined,
-    );
-    updateTargetString(
-      this.netStrings,
-      this.targetSkins,
-      this.pendingSkinTags,
-      targetId,
-      data.skinTag as number | undefined,
-    );
-    updateTargetString(
-      this.netStrings,
-      this.targetSkinPrefs,
-      this.pendingSkinPrefTags,
-      targetId,
-      data.skinPrefTag as number | undefined,
-    );
-    const sensorGroup = data.sensorGroup as number | undefined;
-    if (sensorGroup != null) this.targetTeams.set(targetId, sensorGroup);
-    const renderFlags = data.renderFlags as number | undefined;
-    if (renderFlags != null) this.targetRenderFlags.set(targetId, renderFlags);
-  }
-
-  private handleSensorGroupColor(data: ParsedData): void {
-    const sg = data.sensorGroup as number;
-    const colors = data.colors as
-      | Array<{
-          index: number;
-          default?: boolean;
-          r?: number;
-          g?: number;
-          b?: number;
-        }>
-      | undefined;
-    if (!colors) return;
-    let map = this.sensorGroupColors.get(sg);
-    if (!map) {
-      map = new Map();
-      this.sensorGroupColors.set(sg, map);
-    }
-    for (const c of colors) {
-      if (c.default) {
-        map.delete(c.index);
-      } else {
-        map.set(c.index, { r: c.r ?? 0, g: c.g ?? 0, b: c.b ?? 0 });
+        onRemoteCommand?.(
+          funcName,
+          args.map((arg) => this.resolveNetString(arg)),
+        );
       }
     }
   }
@@ -369,45 +187,22 @@ export class WatchStateAccumulator {
     args: string[],
     onRosterChange?: () => void,
   ): void {
-    const msgType = this.resolveNetString(args[0]);
-
-    this.flagDroppedAtSec = updateFlagDropTimes(
-      this.flagDroppedAtSec,
-      msgType,
-      args,
-      (s) => this.resolveNetString(s),
-      (this.matchEndedAt ?? Date.now()) / 1000,
-    );
-
-    const changes = applyServerMessageState(
-      msgType,
-      args,
-      (s) => this.resolveNetString(s),
-      {
-        playerRoster: this.playerRoster,
-        teamScores: this.teamScores,
-        flags: this.flags,
-        playerIdentity: this.playerIdentity,
-        resolvePlayers: () => this.resolvePlayers(),
-      },
-      (team) => team,
-    );
-    if (changes) {
-      if (changes.matchStarted) this.matchStarted = true;
-      if (changes.joinedClientId != null) {
-        this.identifySelf(changes.joinedClientId, args);
-      }
-      const renamed = changes.renamedPlayer;
-      if (renamed?.targetId != null) {
-        this.pendingNameTags.delete(renamed.targetId);
-        this.targetRawNames.set(renamed.targetId, renamed.rawName);
+    const effects = this.state.applyServerMessage(args);
+    if (effects) {
+      if (effects.joinedClientId != null) {
+        this.identifySelf(effects.joinedClientId, args);
       }
       // Capture aliases / peak player counts per event, before a later
       // message in the same packet can rename or drop this client.
-      if (changes.rosterMetadataChanged) onRosterChange?.();
+      if (effects.rosterMetadataChanged) onRosterChange?.();
+      if (effects.serverName) this.state.serverDisplayName = effects.serverName;
+      // First message of the mission-drop burst — the tournament banner,
+      // if any, follows in the same burst.
+      if (effects.missionDropReady) this.sawMissionDropReady = true;
       return;
     }
 
+    const msgType = this.resolveNetString(args[0]);
     if (msgType === "MsgVoteItem" && args.length >= 4) {
       // Wire: args[2]=key (echo of our GetVoteMenu key), args[3]=voteName.
       if (this.resolveNetString(args[2]) === "TourneyQuery") {
@@ -415,74 +210,18 @@ export class WatchStateAccumulator {
         if (voteName === "VoteFFAMode") this.tournamentMode = true;
         else if (voteName === "VoteTournamentMode") this.tournamentMode = false;
       }
-    } else if (msgType === "MsgSystemClock" && args.length >= 4) {
-      const timeRemainingMS = parseFloat(this.resolveNetString(args[3]));
-      this.clock = {
-        durationMs: Number.isFinite(timeRemainingMS) ? timeRemainingMS : 0,
-        receivedAt: this.matchEndedAt ?? Date.now(),
-      };
-      // A running match clock (late-join case): warmup joiners get 0,0
-      // and pre-start countdown ticks stay under ~30s.
-      if (Number.isFinite(timeRemainingMS) && timeRemainingMS > 60_000) {
-        this.matchStarted = true;
-      }
-    } else if (msgType === "MsgMissionStart") {
-      // Sent by DefaultGame::startMatch ("Match started!") and by the
-      // pre-start countdown ticks — never during idle warmup. Either
-      // way the match is underway or seconds from it.
-      this.matchStarted = true;
-    } else if (msgType === "MsgMissionDropInfo" && args.length >= 5) {
-      const missionDisplayName = stripTaggedStringMarkup(
-        this.resolveNetString(args[2]),
-      );
-      const missionTypeDisplayName = stripTaggedStringMarkup(
-        this.resolveNetString(args[3]),
-      );
-      const serverDisplayName = stripTaggedStringMarkup(
-        this.resolveNetString(args[4]),
-      );
-      this.missionDisplayName = missionDisplayName || this.missionDisplayName;
-      this.missionTypeDisplayName =
-        missionTypeDisplayName || this.missionTypeDisplayName;
-      this.serverDisplayName = serverDisplayName || this.serverDisplayName;
-    } else if (msgType === "MsgLoadInfo" && args.length >= 5) {
-      const missionDisplayName = stripTaggedStringMarkup(
-        this.resolveNetString(args[3]),
-      );
-      const missionTypeDisplayName = stripTaggedStringMarkup(
-        this.resolveNetString(args[4]),
-      );
-      this.missionDisplayName = missionDisplayName || this.missionDisplayName;
-      this.missionTypeDisplayName =
-        missionTypeDisplayName || this.missionTypeDisplayName;
-      this.loadInfo.begin();
-    } else if (LoadInfoCollector.handles(msgType)) {
-      this.loadInfo.apply(msgType, args, (s) => this.resolveNetString(s));
-    } else if (msgType === "MsgClientReady" && args.length >= 3) {
-      this.gameClassName = this.resolveNetString(args[2]) || this.gameClassName;
-      this.flags.clear();
-      if (this.matchEndedAt != null && this.clock)
-        this.clock.receivedAt += Date.now() - this.matchEndedAt;
-      this.matchEnded = false;
-      this.matchEndedAt = null;
-      // First message of the mission-drop burst — the tournament banner,
-      // if any, follows in the same burst.
-      this.sawMissionDropReady = true;
-      // Mission-scoped (mirrors the browser): a same-map restart skips
-      // beginMissionChange, so clear here too.
-      this.matchStarted = false;
     }
   }
 
   // ── Snapshot exports ──
 
   getTaggedStrings(): Array<[number, string]> {
-    return [...this.netStrings.entries()];
+    return this.state.taggedStringEntries();
   }
 
   /** Read-only roster view: preserves client identity without copying per packet. */
   getPlayerRoster(): ReadonlyMap<number, Readonly<RosterEntry>> {
-    return this.playerRoster;
+    return this.state.playerRoster;
   }
 
   /**
@@ -503,104 +242,21 @@ export class WatchStateAccumulator {
    *  own connection) stay at teamId 0 and don't count. */
   countActivePlayers(): number {
     let count = 0;
-    for (const entry of this.playerRoster.values()) {
+    for (const entry of this.state.playerRoster.values()) {
       if (entry.teamId > 0) count++;
     }
     return count;
   }
 
   getTargetEntries(): WatchTargetEntry[] {
-    const targetIds = new Set<number>([
-      ...this.targetRawNames.keys(),
-      ...this.targetTypes.keys(),
-      ...this.pendingNameTags.keys(),
-      ...this.pendingTypeTags.keys(),
-      ...this.pendingSkinTags.keys(),
-      ...this.pendingSkinPrefTags.keys(),
-      ...this.targetTeams.keys(),
-      ...this.targetRenderFlags.keys(),
-      ...this.targetSkins.keys(),
-      ...this.targetSkinPrefs.keys(),
-    ]);
-    return [...targetIds]
-      .sort((a, b) => a - b)
-      .map((targetId) => ({
-        targetId,
-        name: this.targetRawNames.get(targetId),
-        typeDescription: this.targetTypes.get(targetId),
-        nameTag: this.pendingNameTags.get(targetId),
-        typeTag: this.pendingTypeTags.get(targetId),
-        skinTag: this.pendingSkinTags.get(targetId),
-        skinPrefTag: this.pendingSkinPrefTags.get(targetId),
-        skin: this.targetSkins.get(targetId),
-        skinPref: this.targetSkinPrefs.get(targetId),
-        sensorGroup: this.targetTeams.get(targetId),
-        targetData: this.targetRenderFlags.get(targetId),
-      }));
+    return this.state.targets.entries();
   }
 
   getSensorGroupColors(): SensorGroupColor[] {
-    const flat: SensorGroupColor[] = [];
-    for (const [group, map] of this.sensorGroupColors) {
-      for (const [targetGroup, color] of map) {
-        flat.push({ group, targetGroup, ...color, a: 255 });
-      }
-    }
-    return flat;
-  }
-
-  private resolvePlayers(): PlayerResolver {
-    const players = Array.from(this.playerRoster, ([clientId, player]) => ({
-      clientId,
-      ...player,
-    }));
-    const targets = collectPlayerTargets(
-      this.targetRawNames,
-      this.targetTypes,
-      this.targetTeams,
-      this.targetGenerations,
-      players.flatMap((p) => (p.targetId != null ? [p.targetId] : [])),
-    );
-    return new PlayerResolver(this.playerIdentity.scope, players, targets);
+    return this.state.sensorGroupColorEntries();
   }
 
   getHudState(): WatchHudStatePayload {
-    const players = this.resolvePlayers();
-    refreshFlagCarriers(this.flags, players);
-    return {
-      playerIdentity: {
-        scope: this.playerIdentity.scope,
-        generations: Array.from(this.playerIdentity.generations),
-      },
-      targetGenerations: Array.from(this.targetGenerations),
-      flags: Array.from(this.flags.values()),
-      playerRoster: [...this.playerRoster.entries()].map(
-        ([clientId, entry]) => ({ clientId, ...entry }),
-      ),
-      teamScores: this.teamScores.map((entry) => ({
-        ...entry,
-        ...legacyFlagFields(this.flags.get(entry.teamId), players),
-      })),
-      flagDropElapsedSec: Object.fromEntries(
-        Object.entries(this.flagDroppedAtSec).map(([team, droppedAt]) => [
-          team,
-          (this.matchEndedAt ?? Date.now()) / 1000 - droppedAt!,
-        ]),
-      ),
-      clock: this.clock
-        ? {
-            durationMs: this.clock.durationMs,
-            elapsedMs:
-              (this.matchEndedAt ?? Date.now()) - this.clock.receivedAt,
-          }
-        : undefined,
-      missionDisplayName: this.missionDisplayName,
-      missionTypeDisplayName: this.missionTypeDisplayName,
-      gameClassName: this.gameClassName,
-      serverDisplayName: this.serverDisplayName,
-      matchEnded: this.matchEnded,
-      matchStarted: this.matchStarted,
-      loadInfo: this.loadInfo.info ?? undefined,
-    };
+    return this.state.hudState();
   }
 }

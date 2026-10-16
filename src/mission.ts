@@ -42,6 +42,7 @@ export const normalizedMissionTypes = {
 const missionTypeDisplayNames: Record<string, string> = {
   "capture the flag": "CTF",
   "capture the flag (practice)": "CTF (Practice)",
+  "spawn ctf": "SCtF",
   "capture and hold": "CnH",
   deathmatch: "DM",
   "team deathmatch": "TDM",

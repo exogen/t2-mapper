@@ -2,10 +2,10 @@
  * The checks an upgraded relay recording must pass before it replaces the
  * original (upgradeRelayDemo.ts). Tribes2.exe must play it to the end; it
  * must hold the original's packets and send markers in order, each packet
- * changed only where the upgrade says it changes them (the move ack, a
- * welcome page's message type), and its moves less only the cut and the
- * dropped ticks; upgrading it again must change nothing; and the demo
- * browser must describe it as it described the original.
+ * changed only where the upgrade says it changes them (the move ack, the
+ * camera's pitch, a welcome page's message type), and its moves less only
+ * the cut and the dropped ticks; upgrading it again must change nothing;
+ * and the demo browser must describe it as it described the original.
  */
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -29,6 +29,16 @@ import {
 import { NetStringTable, hasGameOverAnnouncement } from "../../relay/shared.js";
 import { analyzeDemo } from "./analyzeDemo.js";
 import { playLikeTribes2, type Tribes2Playback } from "./tribes2Playback.js";
+import { BitStreamWriter } from "../../relay/BitStreamWriter.js";
+import { writeBits } from "../../relay/protocol.js";
+import {
+  controlObjectLayouts,
+  hasVelocity,
+  readBitRange,
+  readU32At,
+  tickedCameraPitch,
+  type ControlObjectLayout,
+} from "./legacyControlObject.js";
 import {
   formatDemoTime,
   moveAckOffset,
@@ -37,6 +47,33 @@ import {
   upgradeRelayDemo,
   type RelayDemoUpgrade,
 } from "./upgradeRelayDemo.js";
+
+type PlayerLayout = Extract<ControlObjectLayout, { kind: "player" }>;
+
+function withoutVelocity(data: Uint8Array, layout: PlayerLayout): Uint8Array {
+  const copy = data.slice();
+  for (let i = 0; i < 3; i++)
+    writeBits(copy, layout.velocityAt + i * 32, 0, 32);
+  return copy;
+}
+
+/**
+ * The packet as the server writes it to a client whose prediction agrees:
+ * the control object's position as a bare compression point.
+ */
+function withoutPlayerState(
+  data: Uint8Array,
+  layout: PlayerLayout,
+): Uint8Array {
+  const writer = new BitStreamWriter(data.length);
+  const copy = (from: number, to: number) =>
+    writer.writeBitsBuffer(readBitRange(data, from, to), to - from);
+  copy(0, layout.fullStateAt);
+  writer.writeFlag(false);
+  copy(layout.positionAt, layout.positionAt + 3 * 32);
+  copy(layout.stateEnd, layout.contentEnd);
+  return writer.getBuffer();
+}
 
 export interface RelayDemoValidation {
   problems: string[];
@@ -117,9 +154,19 @@ export async function validateRelayDemoUpgrade(
       `header length ${header.demoLengthMs} ms, expected ${report.newLengthMs}`,
     );
 
-  const originalEntries = recordedEntries(
-    readBlocks(original, originalHeader.initialBlockSize),
+  const originalBlocks = readBlocks(original, originalHeader.initialBlockSize);
+  const originalEntries = recordedEntries(originalBlocks);
+  // The original's packets and sends by block index, and the control
+  // objects an upgrade of a recording that sent no moves rewrites.
+  const originalRestBlocks = [...originalBlocks.keys()].filter(
+    (i) =>
+      originalBlocks[i].type === BlockTypePacket ||
+      originalBlocks[i].type === BlockTypeSendPacket,
   );
+  const controlObjects =
+    report.generation === "unacked-moves"
+      ? await controlObjectLayouts(original)
+      : new Map<number, ControlObjectLayout>();
   const upgradedEntries = recordedEntries(
     readBlocks(upgraded, header.initialBlockSize),
   );
@@ -137,6 +184,14 @@ export async function validateRelayDemoUpgrade(
   const strings = new NetStringTable(initialBlock.taggedStrings);
   // Counted by packet, as upgradeRelayDemo reports them.
   let rewrittenPages = 0;
+  let clampedPitches = 0;
+  let unclampedPitches = 0;
+  let zeroedVelocities = 0;
+  let stuckVelocities = 0;
+  let omittedPlayerStates = 0;
+  let resentPlayerStates = 0;
+  // The player state the client last received in full.
+  let playerState: { ghostIndex: number; bits: Uint8Array } | undefined;
   let index = 0;
   for (
     let block = upgradedParser.nextBlock();
@@ -161,17 +216,59 @@ export async function validateRelayDemoUpgrade(
       upgradedEntry.dispatched !== originalEntry.dispatched
     )
       problem(`packet ${index - 1} dispatch changed`);
-    if (upgradedEntry.data.length !== originalEntry.data.length) {
-      problem(`packet ${index - 1} changed size`);
-      continue;
-    }
-    const changed = changedBits(originalEntry.data, upgradedEntry.data);
+    // The original, as the upgraded packet is laid out.
+    let recorded = originalEntry.data;
     const allowed: [number, number][] = [];
-    let hasPage = false;
     if (report.generation === "unacked-moves" && upgradedEntry.dispatched) {
       const ackAt = moveAckOffset(upgradedEntry.data);
       allowed.push([ackAt, ackAt + 32]);
+      const layout = controlObjects.get(
+        originalRestBlocks[skipped + index - 1],
+      );
+      if (layout?.kind !== "player") playerState = undefined;
+      if (layout?.kind === "camera") {
+        // The camera's pitch, as the server's ticks would have clamped it.
+        const pitch = readU32At(upgradedEntry.data, layout.pitchAt);
+        const before = readU32At(recorded, layout.pitchAt);
+        if (tickedCameraPitch(pitch) !== pitch) unclampedPitches++;
+        if (pitch === tickedCameraPitch(before)) {
+          allowed.push([layout.pitchAt, layout.pitchAt + 32]);
+          if (pitch !== before) clampedPitches++;
+        }
+      } else if (layout?.kind === "player") {
+        // The player's velocity zeroed, and its state sent only when the
+        // client did not already have it.
+        const hit = hasVelocity(recorded, layout.velocityAt);
+        if (hit) zeroedVelocities++;
+        const still = hit ? withoutVelocity(recorded, layout) : recorded;
+        const bits = readBitRange(still, layout.stateAt, layout.stateEnd);
+        const known =
+          playerState?.ghostIndex === layout.ghostIndex &&
+          Buffer.compare(playerState.bits, bits) === 0;
+        const full = new BitStream(
+          upgradedEntry.data,
+          layout.fullStateAt,
+        ).readFlag();
+        if (full) {
+          if (known) resentPlayerStates++;
+          if (hasVelocity(upgradedEntry.data, layout.velocityAt))
+            stuckVelocities++;
+          else if (hit)
+            allowed.push([layout.velocityAt, layout.velocityAt + 3 * 32]);
+          playerState = { ghostIndex: layout.ghostIndex, bits };
+        } else {
+          if (!known) problem(`packet ${index - 1} leaves out a player state`);
+          omittedPlayerStates++;
+          recorded = withoutPlayerState(recorded, layout);
+        }
+      }
     }
+    if (upgradedEntry.data.length !== recorded.length) {
+      problem(`packet ${index - 1} changed size`);
+      continue;
+    }
+    const changed = changedBits(recorded, upgradedEntry.data);
+    let hasPage = false;
     const parsed =
       block.parsed && "events" in block.parsed ? block.parsed : undefined;
     for (const event of parsed?.events ?? []) {
@@ -188,7 +285,7 @@ export async function validateRelayDemoUpgrade(
       const { argv } = data as RemoteCommandEventData;
       const [command, , body] = argv.map((arg) => strings.resolve(arg));
       const originalType = strings.get(
-        new BitStream(originalEntry.data, from).readInt(TAG_ID_BITS),
+        new BitStream(recorded, from).readInt(TAG_ID_BITS),
       );
       if (
         argv[0] === argv[1] &&
@@ -205,12 +302,30 @@ export async function validateRelayDemoUpgrade(
     );
     if (stray.length > 0)
       problem(
-        `packet ${index - 1} changed ${stray.length} bits outside the move ack and a welcome page's type`,
+        `packet ${index - 1} changed ${stray.length} bits outside the move ack, the control object and a welcome page's type`,
       );
   }
   if (rewrittenPages !== report.gameOversRewritten)
     problem(
       `${rewrittenPages} welcome pages rewritten, report says ${report.gameOversRewritten}`,
+    );
+  if (unclampedPitches > 0)
+    problem(`${unclampedPitches} camera pitches past the clamp`);
+  if (clampedPitches !== report.clampedPitches)
+    problem(
+      `${clampedPitches} camera pitches clamped, report says ${report.clampedPitches}`,
+    );
+  if (stuckVelocities > 0)
+    problem(`${stuckVelocities} player states keep a velocity`);
+  if (resentPlayerStates > 0)
+    problem(`${resentPlayerStates} player states the client already had`);
+  if (zeroedVelocities !== report.zeroedVelocities)
+    problem(
+      `${zeroedVelocities} player velocities zeroed, report says ${report.zeroedVelocities}`,
+    );
+  if (omittedPlayerStates !== report.omittedPlayerStates)
+    problem(
+      `${omittedPlayerStates} player states left out, report says ${report.omittedPlayerStates}`,
     );
 
   const moves = (entries: DemoStreamEntry[]) =>

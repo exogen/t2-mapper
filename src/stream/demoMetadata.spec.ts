@@ -164,6 +164,154 @@ function fixture(
   return { parser, nextBlock };
 }
 
+function ctfHud(firstFlag: string, secondFlag: string) {
+  return [
+    "", // Reticle
+    "", // Backpack
+    "0\t\t\t\t0\t0\t-1", // Weapons
+    "0\t\t\t\t0\t0\t-1", // Inventory
+    "1\tCTFGame\t8",
+    "Storm",
+    "0",
+    "FLAG",
+    firstFlag,
+    "Inferno",
+    "0",
+    "FLAG",
+    secondFlag,
+    "1\t15", // Clock
+    ...Array<string>(10).fill(""), // Chat
+    "-20",
+  ];
+}
+
+describe("initial objective HUD flag state", () => {
+  it("restores both flags from the saved HUD before any flag messages arrive", () => {
+    const { parser } = fixture(
+      [
+        ...Array.from({ length: 10 }, move),
+        serverMessage("MsgCTFFlagTaken", "", "Flyersfan", "Inferno", "2"),
+        ...Array.from({ length: 10 }, move),
+      ],
+      { metadata: ctfHud("<At Base>", "<At Base>") },
+    );
+    const stream = createRecordingFromParser(parser)
+      .streamingPlayback as DemoStreamAdapter;
+    const initialFlags = [
+      { teamId: 1, status: "home" },
+      { teamId: 2, status: "home" },
+    ];
+    expect(stream.getSnapshot().flags).toEqual(initialFlags);
+    expect(stream.getSnapshot().teamScores.map((team) => team.flag)).toEqual(
+      initialFlags,
+    );
+    expect(
+      stream.stepToTime(0.5).flags?.find((flag) => flag.teamId === 2),
+    ).toMatchObject({ status: "held" });
+    expect(stream.stepToTime(0).flags).toEqual(initialFlags);
+    stream.stepToTime(0.5);
+    stream.reset();
+    expect(stream.getSnapshot().flags).toEqual(initialFlags);
+  });
+
+  it("restores dropped and held flags without inventing a drop time", () => {
+    const rawName = "\x10\x0bTAG\x08Flyersfan\x11";
+    const { parser } = fixture([], {
+      roster: [roster(29905, 70, rawName)],
+      metadata: ctfHud("<In the Field>", "Flyersfan"),
+    });
+    parser.initialBlock.targetEntries[0].name = rawName;
+    const stream = createRecordingFromParser(parser)
+      .streamingPlayback as DemoStreamAdapter;
+    const snapshot = stream.getSnapshot();
+    expect(snapshot.flags).toEqual([
+      { teamId: 1, status: "field" },
+      {
+        teamId: 2,
+        status: "held",
+        carrier: expect.objectContaining({
+          kind: "player",
+          clientId: 29905,
+          rawName,
+        }),
+      },
+    ]);
+    expect(snapshot.flagDroppedAtSec).toEqual({});
+    expect(flagReturnSecondsRemaining(snapshot, 1, 0)).toBeNull();
+    const checkpoint = stream.captureCheckpoint();
+    expect(checkpoint.simulation.state.conn.flags.get(1)).toEqual({
+      teamId: 1,
+      status: "field",
+    });
+    expect(
+      checkpoint.simulation.state.conn.flags.get(2)?.carrier,
+    ).toMatchObject({ clientId: 29905 });
+  });
+
+  it("keeps blank flag locations unknown", () => {
+    const { parser } = fixture([], { metadata: ctfHud("", "<BLANK>") });
+    expect(
+      createRecordingFromParser(parser).streamingPlayback.getSnapshot().flags,
+    ).toEqual([]);
+  });
+
+  it.each([
+    { guid: "12345", targetId: "70" },
+    { guid: "0", targetId: "70" },
+    { guid: "12345", targetId: "" },
+    { guid: "0", targetId: "" },
+  ])(
+    "keeps a saved carrier through tag changes and renames: %o",
+    ({ guid, targetId }) => {
+      const original = "\x10\x0bTAG|\x08Alice\x11";
+      const renamed = "\x10\x08Bob\x0b[NEW]\x11";
+      const { parser } = fixture(
+        [
+          ...Array.from({ length: 10 }, move),
+          serverMessage("MsgClientNameChanged", "", original, renamed, "29905"),
+          ...Array.from({ length: 10 }, move),
+        ],
+        {
+          roster: [`${original}\t${guid}\t29905\t${targetId}\t1\t0\t91\t0`],
+          metadata: ctfHud("<At Base>", "Alice"),
+        },
+      );
+      parser.initialBlock.targetEntries[0].name = original;
+      const stream = createRecordingFromParser(parser).streamingPlayback;
+      expect(stream.getSnapshot().flags?.[1].carrier).toMatchObject({
+        kind: "player",
+        clientId: 29905,
+        rawName: original,
+      });
+      expect(stream.stepToTime(0.5).flags?.[1].carrier).toMatchObject({
+        kind: "player",
+        clientId: 29905,
+        rawName: renamed,
+      });
+    },
+  );
+
+  it("does not choose between players with the same base name", () => {
+    const first = "\x10\x0bONE|\x08Alice\x11";
+    const second = "\x10\x08Alice\x0b[TWO]\x11";
+    const { parser } = fixture([], {
+      roster: [roster(29905, 70, first), roster(29906, 71, second)],
+      secondPlayer: true,
+      metadata: ctfHud("<At Base>", "Alice"),
+    });
+    parser.initialBlock.targetEntries[0].name = first;
+    parser.initialBlock.targetEntries[1].name = second;
+    expect(
+      createRecordingFromParser(parser).streamingPlayback.getSnapshot()
+        .flags?.[1],
+    ).toEqual({
+      teamId: 2,
+      status: "held",
+      carrier: { kind: "name", rawName: "Alice", match: "base" },
+    });
+  });
+});
+
 describe("imported checkpoint playback", () => {
   it("seeks back to a checkpoint's flag timing, then times newly observed drops", async () => {
     const { parser } = fixture([
@@ -488,7 +636,7 @@ describe("bounded demo metadata fallback", () => {
     stream.setPlayerPredictionEnabled(true);
     stream.stepToTime(3);
     const checkpoint = stream.captureCheckpoint();
-    expect(checkpoint.simulation.state.serverDisplayName).toBeNull();
+    expect(checkpoint.simulation.state.conn.serverDisplayName).toBeNull();
     stream.importCheckpoints([checkpoint]);
     const changed = vi.fn();
     stream.onMissionInfoChange = changed;
@@ -579,7 +727,7 @@ describe("bounded demo metadata fallback", () => {
     const checkpoint = stream.captureCheckpoint();
     checkpoint.simulation.state.connectedPlayerName = null;
     checkpoint.simulation.state.connectedClientId = null;
-    checkpoint.simulation.state.serverDisplayName = null;
+    checkpoint.simulation.state.conn.serverDisplayName = null;
     stream.importCheckpoints([checkpoint]);
     stream.stepToTime(6);
     const restore = vi.spyOn(parser, "restoreCheckpoint");
@@ -602,7 +750,7 @@ describe("bounded demo metadata fallback", () => {
     const checkpoint = stream.captureCheckpoint();
     checkpoint.simulation.state.connectedPlayerName = "Later Player";
     checkpoint.simulation.state.connectedClientId = 29906;
-    checkpoint.simulation.state.serverDisplayName = "Later Server";
+    checkpoint.simulation.state.conn.serverDisplayName = "Later Server";
     stream.importCheckpoints([checkpoint]);
     stream.stepToTime(6);
 
@@ -640,7 +788,7 @@ describe("bounded demo metadata fallback", () => {
     const checkpoint = stream.captureCheckpoint();
     checkpoint.simulation.state.connectedPlayerName = "Later Player";
     checkpoint.simulation.state.connectedClientId = 29906;
-    checkpoint.simulation.state.serverDisplayName = "Later Server";
+    checkpoint.simulation.state.conn.serverDisplayName = "Later Server";
     stream.importCheckpoints([checkpoint]);
     stream.stepToTime(6);
 

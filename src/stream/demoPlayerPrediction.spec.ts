@@ -364,6 +364,29 @@ it("rejects an invalid import without retaining any partial checkpoints", async 
   expect(restored.checkpointTicks).toEqual([]);
 });
 
+type CheckpointConn = Record<string, unknown> & {
+  targets: Record<string, unknown>;
+};
+it.each<[string, (state: { conn?: CheckpointConn }) => void]>([
+  ["no connection state", (state) => delete state.conn],
+  ["an unknown connection field", (state) => (state.conn!.extra = 1)],
+  [
+    "a missing target table",
+    (state) => delete state.conn!.targets.pendingSkinPrefTags,
+  ],
+])("rejects a checkpoint with %s", async (_shape, mutate) => {
+  const blocks = Array.from({ length: 1100 }, move);
+  const checkpoint = await (
+    demo(blocks) as DemoStreamAdapter
+  ).captureCheckpointAt(900, async () => {});
+  mutate(checkpoint.simulation.state as unknown as { conn?: CheckpointConn });
+  const restored = demo(blocks) as DemoStreamAdapter;
+  expect(() => restored.importCheckpoints([checkpoint])).toThrow(
+    "Invalid seek checkpoint",
+  );
+  expect(restored.checkpointTicks).toEqual([]);
+});
+
 describe("demo player tick prediction", () => {
   it.each([2, 3])(
     "allows a seek after collision asset class %s fails without predicting through missing geometry",

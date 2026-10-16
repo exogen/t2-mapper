@@ -43,15 +43,17 @@ describe("WatchStateAccumulator load info", () => {
     });
   });
 
-  it("drops an empty burst and clears on a mission change", () => {
+  it("keeps the text through MissionStartPhase1 and drops an empty burst", () => {
     const ws = new WatchStateAccumulator();
     ws.applyPacket(loadInfo());
     ws.applyPacket(line("MsgLoadQuoteLine", "Q"));
     ws.applyPacket(serverMessage("MsgLoadInfoDone", ""));
     expect(ws.getHudState().loadInfo?.quoteLines).toEqual(["Q"]);
 
+    // Servers send the loading screen before Phase1, on connect
+    // (GameConnection::onConnect) and on a cycle (loadMission).
     ws.beginMissionChange();
-    expect(ws.getHudState().loadInfo).toBeUndefined();
+    expect(ws.getHudState().loadInfo?.quoteLines).toEqual(["Q"]);
 
     ws.applyPacket(loadInfo());
     ws.applyPacket(serverMessage("MsgLoadInfoDone", ""));

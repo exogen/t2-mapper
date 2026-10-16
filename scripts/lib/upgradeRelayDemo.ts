@@ -2,8 +2,9 @@
  * Rewrite a recording made by an older relay as the file today's relay
  * writes from the same connection, so recordings from before the
  * Tribes2.exe compatibility fixes play there too. Received packets keep
- * their bytes (but for the move ack below); the start, the moves and the
- * demo values come from the relay's own recording code:
+ * their bytes (but for the move ack and the control object below); the
+ * start, the moves and the demo values come from the relay's own
+ * recording code:
  *
  * - Until 2026-10-12 the relay sent the server no moves, and the recorder
  *   wrote a Move block per 32 ms of wall clock that no lastMoveAck ever
@@ -11,7 +12,8 @@
  *   object has processed 30 of them, and then never reads another block.
  *   The connection is replayed as if it had generated and sent its moves
  *   the way gameConnection.ts does, and each dispatched packet gets the
- *   move ack the server would have written for them.
+ *   move ack the server would have written for them and the control
+ *   object state their ticks would have left (legacyControlObject.ts).
  * - Until 2026-10-14 every recording began at the connection's first
  *   packet, T2CSRI handshake included. It now starts where planDemoStart
  *   puts it.
@@ -57,6 +59,11 @@ import {
 import { WatchStateAccumulator } from "../../relay/watchState.js";
 import { parseDemoHeaderDate } from "../../src/stream/demoDate";
 import { extractMissionInfo } from "../../src/stream/demoStreaming";
+import {
+  LegacyControlObject,
+  controlObjectLayouts,
+  type ControlObjectLayout,
+} from "./legacyControlObject.js";
 
 /**
  * Which relay wrote a recording, by what it left in the file: from
@@ -90,6 +97,19 @@ export interface RelayDemoUpgrade {
    * Dispatched packets given the move ack their sender would have written.
    */
   ackedPackets: number;
+  /**
+   * Camera packets given the pitch the server's ticks would have clamped.
+   */
+  clampedPitches: number;
+  /**
+   * Player packets whose velocity, set by a hit no tick spent, was zeroed.
+   */
+  zeroedVelocities: number;
+  /**
+   * Player packets reduced to the compression point, their state the one
+   * the client last received.
+   */
+  omittedPlayerStates: number;
   /**
    * Welcome pages rewritten so playback leaves the debrief screen.
    */
@@ -223,6 +243,9 @@ interface Replay {
   droppedTicks: number;
   droppedRuns: DroppedRun[];
   ackedPackets: number;
+  clampedPitches: number;
+  zeroedVelocities: number;
+  omittedPlayerStates: number;
 }
 
 /**
@@ -237,12 +260,15 @@ interface Replay {
  * data packet carries the moves moveWritePacket picks, and each
  * dispatched packet acknowledges what the server had received when it
  * wrote it: the moves of every packet its header reports delivered
- * (moveReadPacket, FUN_00601f30), none left queued.
+ * (moveReadPacket, FUN_00601f30), none left queued. The control object
+ * those moves ticked (`controlObjects`, its layouts by block index) is
+ * then what LegacyControlObject leaves of it.
  */
 function replayConnection(
   blocks: readonly RecordedBlock[],
   connectSequence: number,
   sendMoves: boolean,
+  controlObjects: ReadonlyMap<number, ControlObjectLayout> = new Map(),
 ): Replay {
   const protocol = new ConnectionProtocol();
   protocol.connectSequence = connectSequence;
@@ -263,9 +289,13 @@ function replayConnection(
     droppedTicks: 0,
     droppedRuns: [],
     ackedPackets: 0,
+    clampedPitches: 0,
+    zeroedVelocities: 0,
+    omittedPlayerStates: 0,
   };
+  const controlObject = new LegacyControlObject();
   let recordedMs = 0;
-  for (const block of blocks) {
+  for (const [index, block] of blocks.entries()) {
     if (block.type === BlockTypeMove) {
       const atMs = recordedMs;
       recordedMs += DEMO_TICK_MS;
@@ -292,7 +322,7 @@ function replayConnection(
       }
       replay.entries.push({ kind: "sent" });
     } else if (block.type === BlockTypePacket) {
-      const data = block.data.slice();
+      let data: Uint8Array = block.data.slice();
       const received = readPacketHeader(data);
       const dispatched =
         !!received &&
@@ -302,6 +332,11 @@ function replayConnection(
           writeBits(data, moveAckOffset(data), serverAck, 32);
           moveList.acknowledge(serverAck);
           replay.ackedPackets++;
+          const ticked = controlObject.tick(data, controlObjects.get(index));
+          data = ticked.data;
+          if (ticked.clampedPitch) replay.clampedPitches++;
+          if (ticked.zeroedVelocity) replay.zeroedVelocities++;
+          if (ticked.omittedState) replay.omittedPlayerStates++;
         }
         replay.maxAck = Math.max(replay.maxAck, readMoveAck(data));
       }
@@ -416,6 +451,9 @@ export async function upgradeRelayDemo(
     droppedTicks: 0,
     droppedRuns: [],
     ackedPackets: 0,
+    clampedPitches: 0,
+    zeroedVelocities: 0,
+    omittedPlayerStates: 0,
     gameOversRewritten: 0,
     clientId: { old: recorded.clientId, new: recorded.clientId },
   };
@@ -441,11 +479,19 @@ export async function upgradeRelayDemo(
   let replay = replayConnection(blocks, connectSequence, false);
   report.generation = "from-connect";
   if (replay.maxAck === 0 && replay.moves > 0) {
-    replay = replayConnection(blocks, connectSequence, true);
+    replay = replayConnection(
+      blocks,
+      connectSequence,
+      true,
+      await controlObjectLayouts(bytes),
+    );
     report.generation = "unacked-moves";
     report.droppedTicks = replay.droppedTicks;
     report.droppedRuns = replay.droppedRuns;
     report.ackedPackets = replay.ackedPackets;
+    report.clampedPitches = replay.clampedPitches;
+    report.zeroedVelocities = replay.zeroedVelocities;
+    report.omittedPlayerStates = replay.omittedPlayerStates;
   }
 
   const plan = planDemoStart(replay.entries, connectSequence);
@@ -473,7 +519,7 @@ export async function upgradeRelayDemo(
     connectSequence,
   );
   for (const entry of kept)
-    if (joinGameOver.apply(entry)) report.gameOversRewritten++;
+    if (joinGameOver.apply(entry) === "rewritten") report.gameOversRewritten++;
   report.newLengthMs =
     kept.filter((entry) => entry.kind === "move").length * DEMO_TICK_MS;
 
@@ -489,6 +535,9 @@ export async function upgradeRelayDemo(
       droppedTicks: 0,
       droppedRuns: [],
       ackedPackets: 0,
+      clampedPitches: 0,
+      zeroedVelocities: 0,
+      omittedPlayerStates: 0,
     };
   }
 
@@ -523,7 +572,7 @@ async function rewriteWelcomePages(
   );
   // The entries share the blocks' bytes, so a rewrite lands in the blocks.
   for (const entry of recordedEntries(blocks))
-    if (joinGameOver.apply(entry)) report.gameOversRewritten++;
+    if (joinGameOver.apply(entry) === "rewritten") report.gameOversRewritten++;
   if (report.gameOversRewritten === 0) return report;
   await writeDemoFile(
     outputPath,

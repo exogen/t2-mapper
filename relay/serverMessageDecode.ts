@@ -3,15 +3,41 @@ import type { ServerLoadInfo } from "./types.js";
 
 /**
  * Pure decoders for the roster/score/team family of `ServerMessage`
- * events, shared by the relay's `WatchStateAccumulator` and the browser's
- * `StreamEngine` so the wire-format decoding (arg indices, flag-status
- * strings, debrief column offsets, score guards) lives in exactly one
- * place. Each side keeps its own state storage and side-effect hooks
- * (generation counters, match-started signals) and calls these to decode.
+ * events, so the wire-format decoding (arg indices, flag-status strings,
+ * debrief column offsets, score guards) lives in exactly one place. The
+ * shared `ConnectionState` (relay and browser) and the offline timeline
+ * scanners decode through these and keep their own state.
  */
 
 export type FlagStatus = "home" | "field" | "held";
 export type ResolveNetString = (s: string) => string;
+
+/**
+ * Arguments must have their tagged-string references resolved first.
+ */
+export function isClassicModInfoMessage(args: readonly string[]): boolean {
+  return (
+    args.length >= 5 &&
+    args[0] === "MsgLoadInfo" &&
+    args[1] === "" &&
+    /^Classic {2}\d+\.\d+$/.test(stripTaggedStringMarkup(args[3]))
+  );
+}
+
+/**
+ * Recognize only messages with a known server-name field.
+ */
+export function getServerNameFromMessage(
+  args: readonly string[],
+): string | null {
+  if (
+    args.length < 5 ||
+    args[4].startsWith("\x01") ||
+    (args[0] !== "MsgMissionDropInfo" && !isClassicModInfoMessage(args))
+  )
+    return null;
+  return stripTaggedStringMarkup(args[4]).trim() || null;
+}
 
 /** Stock/Classic client wrappers forward these commands to clientCmdServerMessage. */
 export function isServerMessageCommand(command: string): boolean {
@@ -221,17 +247,12 @@ export function applyDebriefRowToRoster(
  * The loading-screen burst (loadingGui.cs sendLoadInfoToClient):
  * MsgLoadInfo opens it, quote/objective/rules lines fill it, and
  * MsgLoadInfoDone publishes it — or nothing, when the mission has no
- * text. Both sides feed it their MsgLoadInfo (which also carries names
- * they decode themselves) and route the rest through `apply`.
+ * text. `ConnectionState` begins it on MsgLoadInfo (which also carries
+ * the mission names it decodes) and routes the rest through `apply`.
  */
 export class LoadInfoCollector {
   private pending: ServerLoadInfo | null = null;
   private complete: ServerLoadInfo | null = null;
-  private readonly onDone?: (info: ServerLoadInfo | null) => void;
-
-  constructor(onDone?: (info: ServerLoadInfo | null) => void) {
-    this.onDone = onDone;
-  }
 
   saveState() {
     return structuredClone({ pending: this.pending, complete: this.complete });
@@ -255,12 +276,15 @@ export class LoadInfoCollector {
     this.pending = { quoteLines: [], objectiveLines: [], rulesLines: [] };
   }
 
-  /** One of the messages `handles` accepts. */
-  apply(msgType: string, args: string[], resolve: ResolveNetString): void {
+  /**
+   * One of the messages `handles` accepts. Returns whether it published
+   * a burst.
+   */
+  apply(msgType: string, args: string[], resolve: ResolveNetString): boolean {
     const section = LOAD_INFO_LINES[msgType];
     if (section) {
       if (args.length >= 3) this.pending?.[section].push(resolve(args[2]));
-      return;
+      return false;
     }
     if (msgType === "MsgLoadInfoDone" && this.pending) {
       const { quoteLines, objectiveLines, rulesLines } = this.pending;
@@ -269,11 +293,22 @@ export class LoadInfoCollector {
           ? this.pending
           : null;
       this.pending = null;
-      this.onDone?.(this.complete);
+      return true;
     }
+    return false;
   }
 
-  /** Mission change / full reset: forget both the burst and the result. */
+  /**
+   * A late joiner's copy of the last completed burst.
+   */
+  seed(info: ServerLoadInfo | null): void {
+    this.pending = null;
+    this.complete = info;
+  }
+
+  /**
+   * Full reset: forget both the burst and the result.
+   */
   reset(): void {
     this.pending = null;
     this.complete = null;

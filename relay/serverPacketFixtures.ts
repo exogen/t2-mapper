@@ -78,11 +78,39 @@ export const cameraGhost = (seq: number): ServerEvent => ({
 });
 
 /**
+ * A ghost as our own player, from an initial update that sets nothing.
+ */
+export const playerGhost = (seq: number, ghost = 0): ServerEvent => ({
+  seq,
+  className: "GhostAlwaysObjectEvent",
+  write(bs) {
+    bs.writeInt(ghost, 10);
+    bs.writeFlag(true); // object data
+    bs.writeInt(registry.getGhostClassId("Player")!, 7);
+    // Datablock, target, ShapeBase masks, impact, action, arm action.
+    for (let i = 0; i < 6; i++) bs.writeFlag(false);
+    bs.writeFlag(true); // controlled by this connection
+  },
+});
+
+/**
+ * Our player as the server sends it: on foot with 60 energy, still unless
+ * `velocity` says otherwise, as ghost 0 unless `ghost` does.
+ */
+export interface PlayerState {
+  ghost?: number;
+  position: readonly number[];
+  velocity?: readonly number[];
+}
+
+/**
  * A server data packet: dnet header, no rate info, the client half of
- * GameConnection::readPacket (FUN_005fb9f0) — the move ack, then ghost 0
- * as the control object when `camera` is set, or a compression point when
- * `compressionPoint` is — guaranteed events, no ghosts. `ackMask` bit k
- * reports our packet `ack - k` delivered (all of them by default).
+ * GameConnection::readPacket (FUN_005fb9f0) — the move ack, then the
+ * control object when `camera` (ghost 0 at the origin, looking at `pitch`)
+ * or `player` is set, or a compression point (the origin unless given)
+ * when `compressionPoint` is — guaranteed events, no ghosts.
+ * `ackMask` bit k reports our packet `ack - k` delivered (all of them by
+ * default).
  */
 export function serverPacket(
   seq: number,
@@ -90,8 +118,9 @@ export function serverPacket(
     ack?: number;
     ackMask?: number;
     lastMoveAck?: number;
-    camera?: boolean;
-    compressionPoint?: boolean;
+    camera?: boolean | { pitch: number };
+    player?: PlayerState;
+    compressionPoint?: boolean | readonly number[];
     events?: ServerEvent[];
   } = {},
 ): Uint8Array {
@@ -109,16 +138,36 @@ export function serverPacket(
   bs.writeFlag(false);
   bs.writeU32(opts.lastMoveAck ?? 0);
   for (let i = 0; i < 5; i++) bs.writeFlag(false); // damage flash … jammed
-  bs.writeFlag(!!(opts.camera || opts.compressionPoint));
+  bs.writeFlag(!!(opts.camera || opts.player || opts.compressionPoint));
   if (opts.camera) {
     bs.writeFlag(true); // the control object's packet data
     bs.writeInt(0, 10);
-    // Energy, recharge rate, position, rotation, then the camera mode.
-    for (let i = 0; i < 7; i++) writeF32(bs, 0);
+    // Energy, recharge rate, position, pitch, yaw, then the camera mode.
+    for (let i = 0; i < 5; i++) writeF32(bs, 0);
+    writeF32(bs, opts.camera === true ? 0 : opts.camera.pitch);
+    writeF32(bs, 0);
     bs.writeInt(0, 3);
+  } else if (opts.player) {
+    const { ghost = 0, position, velocity = [0, 0, 0] } = opts.player;
+    bs.writeFlag(true); // the control object's packet data
+    bs.writeInt(ghost, 10);
+    writeF32(bs, 60); // energy
+    writeF32(bs, 0.256); // recharge rate
+    bs.writeInt(1, 3); // state
+    bs.writeFlag(false); // recovering
+    bs.writeFlag(false); // jump delay
+    bs.writeFlag(true); // on foot
+    for (const value of [...position, ...velocity]) writeF32(bs, value);
+    bs.writeInt(0, 4); // ticks since a jump surface
+    for (let i = 0; i < 3; i++) writeF32(bs, 0); // head, rotation
+    bs.writeFlag(false); // no object of its own
+    bs.writeFlag(false); // disableMove
+    bs.writeFlag(false); // pilot
   } else if (opts.compressionPoint) {
     bs.writeFlag(false); // no control object: a compression point
-    for (let i = 0; i < 3; i++) bs.writeU32(0);
+    const point =
+      opts.compressionPoint === true ? [0, 0, 0] : opts.compressionPoint;
+    for (const value of point) writeF32(bs, value);
   }
   bs.writeFlag(false); // target visibility
   bs.writeFlag(false); // fov

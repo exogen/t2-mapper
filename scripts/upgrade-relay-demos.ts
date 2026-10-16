@@ -48,6 +48,9 @@ for (const file of positionals) {
         (report.droppedTicks ? `, ${report.droppedTicks} ticks dropped` : "") +
         `)` +
         (report.ackedPackets ? `, ${report.ackedPackets} packets acked` : "") +
+        (report.clampedPitches
+          ? `, ${report.clampedPitches} camera pitches clamped`
+          : "") +
         (report.clientId.new !== report.clientId.old
           ? `, client id ${report.clientId.old} → ${report.clientId.new}`
           : "") +

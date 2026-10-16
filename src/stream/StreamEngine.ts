@@ -1,32 +1,13 @@
 import {
-  refreshFlagCarriers,
-  legacyFlagFields,
-  restoreFlagStates,
-  type FlagState,
-} from "../../relay/flagState";
-import {
-  PlayerResolver,
-  collectPlayerTargets,
-  type PlayerIdentityState,
-  type PlayerRecord,
-} from "../../relay/playerReference";
-import {
-  resolvePendingTargetStrings,
-  updateTargetString,
-} from "../../relay/targetStrings";
+  ConnectionState,
+  type ConnectionEventEffect,
+} from "../../relay/connectionState";
+import { refreshFlagCarriers } from "../../relay/flagState";
+import type { PlayerRecord } from "../../relay/playerReference";
 import { DebrisHistory, debrisRetention } from "./debrisHistory";
-import {
-  updateFlagDropTimes,
-  type FlagDropTimes,
-} from "../../relay/flagReturnState";
-import type { WatchTargetEntry } from "../../relay/types";
 import { THRUST_BACKWARD, THRUST_DOWN, THRUST_FORWARD } from "./types";
 import { GroundEffectHistory, type GroundActor } from "./groundEffectHistory";
 import { timelineRandom } from "./timelineRandom";
-import {
-  getServerNameFromMessage,
-  isClassicModInfoMessage,
-} from "./serverMessageMetadata";
 import {
   decodeVehicleSteering,
   wheelRotationAt,
@@ -118,14 +99,7 @@ import {
   forceFieldAlpha,
   forceFieldPositionForState,
 } from "./forceFieldState";
-import {
-  isServerMessageCommand,
-  LoadInfoCollector,
-} from "../../relay/serverMessageDecode";
-import {
-  applyServerMessageState,
-  type ServerMessageRosterEntry,
-} from "../../relay/serverMessageState";
+import { isServerMessageCommand } from "../../relay/serverMessageDecode";
 import type {
   ServerLoadInfo,
   BackpackHudState,
@@ -164,10 +138,6 @@ import { DEFAULT_WORLD_GRAVITY, worldGravityToMS2 } from "./worldGravity";
 import type {
   ParsedData,
   GhostAlwaysObjectEventData,
-  NetStringEventData,
-  TargetInfoEventData,
-  SetSensorGroupEventData,
-  SensorGroupColorEventData,
   RemoteCommandEventData,
   Sim3DAudioEventData,
   Sim2DAudioEventData,
@@ -208,10 +178,14 @@ export interface MutableEntity {
   playerName?: string;
   /** TargetInfoEvent's resolved typeTag (e.g. "Flag", "_ClientConnection"). */
   targetTypeName?: string;
-  /** The name as sent, color codes included (see targetRawNames). */
+  /**
+   * The name as sent, color codes included (see TargetTable.rawNames).
+   */
   playerRawName?: string;
-  /** Generation of `targetId` when this entity took it (see
-   *  targetGenerations). */
+  /**
+   * Generation of `targetId` when this entity took it (see
+   * TargetTable.generations).
+   */
   targetGeneration?: number;
   /** Player skin (team skin like "base", "baseb"). */
   skinName?: string;
@@ -533,32 +507,17 @@ export abstract class StreamEngine implements StreamingPlayback {
   private _chatSnapshot: ChatMessage[] = [];
   protected audioEvents: PendingAudioEvent[] = [];
 
-  // ── Net strings ──
-  protected netStrings = new Map<number, string>();
-
-  // ── Target system ──
-  /** Target names as sent, color codes included — the official clan
-   *  tag is the color-7 segments, the base name the color-6 ones. */
-  protected targetRawNames = new Map<number, string>();
-  protected targetTypes = new Map<number, string>();
-  /** How many times each target id has been freed (TargetFreeEvent).
-   *  Target ids are recycled, so an id plus its generation is what
-   *  names one occupant. */
-  protected targetGenerations = new Map<number, number>();
-  protected targetSkins = new Map<number, string>();
-  protected targetSkinPrefs = new Map<number, string>();
-  protected targetTeams = new Map<number, number>();
-  protected targetRenderFlags = new Map<number, number>();
-  /** targetId → string tag, until its NetStringEvent arrives. */
-  protected pendingNameTags = new Map<number, number>();
-  protected pendingTypeTags = new Map<number, number>();
-  protected pendingSkinTags = new Map<number, number>();
-  protected pendingSkinPrefTags = new Map<number, number>();
-  protected sensorGroupColors = new Map<
-    number,
-    Map<number, { r: number; g: number; b: number }>
-  >();
-  protected playerSensorGroup = 0;
+  // ── Connection state ──
+  /**
+   * Net strings, targets, sensor colors, roster, scores, flags, clock and
+   * mission info: the same ConnectionState the relay keeps for catch-up, so a
+   * late joiner matches a client that watched it all.
+   */
+  protected readonly conn = new ConnectionState({
+    now: () => this.getTimeSec(),
+    identityScope: "demo",
+    playerTargetIds: () => this.playerGhostTargetIds(),
+  });
 
   // ── Control object ──
   protected lastStatus = { health: 1, energy: 1, heat: 0 };
@@ -622,49 +581,72 @@ export abstract class StreamEngine implements StreamingPlayback {
     playerTargets: PlayerRecord[];
     playerRoster: PlayerRosterEntry[];
   } | null = null;
-  protected teamScores: TeamScore[] = [];
-  protected flagStates = new Map<number, FlagState>();
-  protected playerIdentity: PlayerIdentityState = {
-    scope: "demo",
-    generations: new Map(),
-  };
-  protected flagDroppedAtSec: FlagDropTimes = {};
-  protected playerRoster = new Map<number, ServerMessageRosterEntry>();
-  /** Stream time (seconds) when the clock was last set. */
-  protected clockAnchorStreamSec: number | null = null;
-  /** Duration in ms passed to setTime (0 = count-up, >0 = count-down). */
-  protected clockDurationMs: number = 0;
 
   // ── Mission info (from server messages) ──
   /** Completed server loading-screen info (set on MsgLoadInfoDone). */
-  serverLoadInfo: ServerLoadInfo | null = null;
-  private loadInfo = new LoadInfoCollector((info) => {
-    this.serverLoadInfo = info;
-    this.onMissionInfoChange?.();
-  });
+  get serverLoadInfo(): ServerLoadInfo | null {
+    return this.conn.loadInfo.info;
+  }
 
   /** Mission display name (e.g. "Riverdance"), from MsgMissionDropInfo/MsgLoadInfo. */
-  missionDisplayName: string | null = null;
+  get missionDisplayName(): string | null {
+    return this.conn.missionDisplayName;
+  }
+
+  set missionDisplayName(name: string | null) {
+    this.conn.missionDisplayName = name;
+  }
+
   /** Game type display name (e.g. "Capture the Flag"), from MsgMissionDropInfo/MsgLoadInfo. */
-  missionTypeDisplayName: string | null = null;
+  get missionTypeDisplayName(): string | null {
+    return this.conn.missionTypeDisplayName;
+  }
+
+  set missionTypeDisplayName(name: string | null) {
+    this.conn.missionTypeDisplayName = name;
+  }
+
   /** Game class name (e.g. "CTFGame"), from MsgClientReady. */
-  gameClassName: string | null = null;
+  get gameClassName(): string | null {
+    return this.conn.gameClassName;
+  }
+
+  set gameClassName(name: string | null) {
+    this.conn.gameClassName = name;
+  }
+
+  /**
+   * Server name from MsgMissionDropInfo, or Classic's mod-info MsgLoadInfo.
+   */
+  get serverDisplayName(): string | null {
+    return this.conn.serverDisplayName;
+  }
+
+  set serverDisplayName(name: string | null) {
+    this.conn.serverDisplayName = name;
+  }
+
   /** Viewer's match-over interval: set by MissionEnd, cleared when
    *  the next mission's MsgClientReady drops the player in. */
-  matchEnded = false;
+  get matchEnded(): boolean {
+    return this.conn.matchEnded;
+  }
+
   /** Stream timestamp of the first end notification, retained across seeks. */
-  protected matchEndedAtSec: number | null = null;
+  protected get matchEndedAtSec(): number | null {
+    return this.conn.matchEndedAtSec;
+  }
+
   private endedEntities: StreamEntity[] | null = null;
 
   /** Hold the final scene; debrief UI messages can also arrive during play. */
   protected endMatch(): void {
-    if (this.matchEnded) return;
-    this.matchEnded = true;
-    this.matchEndedAtSec = this.getTimeSec();
+    if (!this.conn.endMatch()) return;
     // Keep receiving protocol/HUD updates, but preserve the final world even
     // if late ghost updates or deletes arrive during the debrief.
     this.endedEntities = structuredClone(this.buildEntityList());
   }
+
   /**
    * The match has been seen running: MsgMissionStart (countdown/start),
    * a running clock > 60 s, or a team with points on the board (late
@@ -672,10 +654,9 @@ export abstract class StreamEngine implements StreamingPlayback {
    * the next mission drops us in. Gates the auto score screen so joining
    * an already-ended match doesn't count as witnessing its end.
    */
-  matchStarted = false;
-
-  /** Server name from MsgMissionDropInfo. */
-  serverDisplayName: string | null = null;
+  get matchStarted(): boolean {
+    return this.conn.matchStarted;
+  }
   /** Server-assigned name of the connected/recording player. */
   connectedPlayerName: string | null = null;
   /** Client ID of the connected player (from MsgClientJoin "Welcome" message). */
@@ -849,7 +830,6 @@ export abstract class StreamEngine implements StreamingPlayback {
       shared.set(id, { threads, clientAnimation, imageSlots, sceneData });
       if (playerPrediction) players.set(id, playerPrediction.saveState());
     }
-    const playersForCheckpoint = this.resolvePlayers();
     return {
       state: structuredClone({
         entities,
@@ -866,20 +846,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         serverEvents: this.serverEvents,
         chatMessageIdCounter: this.chatMessageIdCounter,
         audioEvents: this.audioEvents,
-        netStrings: this.netStrings,
-        targetRawNames: this.targetRawNames,
-        targetTypes: this.targetTypes,
-        targetGenerations: this.targetGenerations,
-        targetSkins: this.targetSkins,
-        targetSkinPrefs: this.targetSkinPrefs,
-        targetTeams: this.targetTeams,
-        targetRenderFlags: this.targetRenderFlags,
-        pendingNameTags: this.pendingNameTags,
-        pendingTypeTags: this.pendingTypeTags,
-        pendingSkinTags: this.pendingSkinTags,
-        pendingSkinPrefTags: this.pendingSkinPrefTags,
-        sensorGroupColors: this.sensorGroupColors,
-        playerSensorGroup: this.playerSensorGroup,
+        conn: this.conn.save(),
         lastStatus: this.lastStatus,
         predictedEnergy: this.predictedEnergy,
         predictedHeat: this.predictedHeat,
@@ -904,27 +871,6 @@ export abstract class StreamEngine implements StreamingPlayback {
         weaponsHud: this.weaponsHud,
         backpackHud: this.backpackHud,
         inventoryHud: this.inventoryHud,
-        teamScores: this.teamScores.map((team) => ({
-          ...team,
-          ...legacyFlagFields(
-            this.flagStates.get(team.teamId),
-            playersForCheckpoint,
-          ),
-        })),
-        flagStates: this.flagStates,
-        playerIdentity: this.playerIdentity,
-        flagDroppedAtSec: this.flagDroppedAtSec,
-        playerRoster: this.playerRoster,
-        clockAnchorStreamSec: this.clockAnchorStreamSec,
-        clockDurationMs: this.clockDurationMs,
-        serverLoadInfo: this.serverLoadInfo,
-        missionDisplayName: this.missionDisplayName,
-        missionTypeDisplayName: this.missionTypeDisplayName,
-        gameClassName: this.gameClassName,
-        matchEnded: this.matchEnded,
-        matchEndedAtSec: this.matchEndedAtSec,
-        matchStarted: this.matchStarted,
-        serverDisplayName: this.serverDisplayName,
         connectedPlayerName: this.connectedPlayerName,
         connectedClientId: this.connectedClientId,
         pendingExplosions: this.pendingExplosions,
@@ -939,7 +885,6 @@ export abstract class StreamEngine implements StreamingPlayback {
           images.map((image) => image?.saveState()),
         ]),
       ),
-      loadInfo: this.loadInfo.saveState(),
       groundEffects: this.groundEffectHistory.save(),
       debris: this.debrisHistory.save(),
     };
@@ -948,7 +893,7 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected restoreSimulationState(
     checkpoint: ReturnType<StreamEngine["captureSimulationState"]>,
   ): void {
-    const state = structuredClone(checkpoint.state);
+    const { conn, ...state } = structuredClone(checkpoint.state);
     this.groundEffectHistory.restore(checkpoint.groundEffects);
     this.debrisHistory.restore(checkpoint.debris);
     // Every restore creates new render lifetimes. Reusing checkpoint IDs would
@@ -960,27 +905,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     for (const entity of checkpoint.endedEntities ?? [])
       if (!ids.has(entity.id)) ids.set(entity.id, allocateEntityId());
     Object.assign(this, state);
-    this.playerIdentity = state.playerIdentity ?? {
-      scope: "demo",
-      generations: null,
-    };
-    this.flagStates = restoreFlagStates(
-      state.flagStates?.values(),
-      state.teamScores,
-      this.playerIdentity.scope,
-      Array.from(state.playerRoster, ([clientId, entry]) => ({
-        clientId,
-        ...entry,
-      })),
-    );
-    this.teamScores = state.teamScores.map(
-      ({ teamId, name, score, playerCount }) => ({
-        teamId,
-        name,
-        score,
-        playerCount,
-      }),
-    );
+    this.conn.restore(conn);
     this.endedEntities =
       checkpoint.endedEntities?.map((entity) => ({
         ...entity,
@@ -1046,7 +971,6 @@ export abstract class StreamEngine implements StreamingPlayback {
     this._serverEventsSnapshotGen = -1;
     this._serverEventsSnapshot = [];
     this.invalidateHudCache();
-    this.loadInfo.restoreState(checkpoint.loadInfo);
     this.onMissionInfoChange?.();
   }
 
@@ -1057,7 +981,7 @@ export abstract class StreamEngine implements StreamingPlayback {
    *  Does NOT reset the ID counter — IDs must never be reused to avoid
    *  stale entity collisions in the render store after seeks. */
   protected clearAllEntities(): void {
-    this.flagDroppedAtSec = {};
+    this.conn.flagDroppedAtSec = {};
     this.endedEntities = null;
     // A reset invalidates every ghost, so the world is incomplete again
     // until the server says otherwise.
@@ -1074,8 +998,7 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   protected resetSharedState(): void {
     this._hudCache = null;
-    this.serverLoadInfo = null;
-    this.loadInfo.reset();
+    this.conn.reset();
     this.clearAllEntities();
     this.tickCount = 0;
     this.pendingPlayerMoves = [];
@@ -1095,20 +1018,6 @@ export abstract class StreamEngine implements StreamingPlayback {
     this._serverEventsSnapshotGen = -1;
     this._serverEventsSnapshot = [];
     this.audioEvents = [];
-    this.netStrings.clear();
-    this.pendingNameTags.clear();
-    this.pendingTypeTags.clear();
-    this.pendingSkinTags.clear();
-    this.pendingSkinPrefTags.clear();
-    this.targetRawNames.clear();
-    this.targetTypes.clear();
-    this.targetGenerations.clear();
-    this.targetSkins.clear();
-    this.targetSkinPrefs.clear();
-    this.targetTeams.clear();
-    this.targetRenderFlags.clear();
-    this.sensorGroupColors.clear();
-    this.playerSensorGroup = 0;
     this.lastStatus = { health: 1, energy: 1, heat: 0 };
     this.predictedEnergy = null;
     this.predictedHeat = 0;
@@ -1133,21 +1042,8 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.weaponsHud = { slots: new Map(), activeIndex: -1 };
     this.backpackHud = { packIndex: -1, active: false, text: "" };
     this.inventoryHud = { slots: new Map(), activeSlot: -1 };
-    this.teamScores = [];
-    this.flagStates.clear();
-    this.playerIdentity.generations = new Map();
-    this.playerRoster.clear();
-    this.clockAnchorStreamSec = null;
-    this.clockDurationMs = 0;
-    this.matchEnded = false;
-    this.matchEndedAtSec = null;
-    this.matchStarted = false;
     this.pendingExplosions = [];
     this.worldGravity = DEFAULT_WORLD_GRAVITY;
-    this.missionDisplayName = null;
-    this.missionTypeDisplayName = null;
-    this.gameClassName = null;
-    this.serverDisplayName = null;
     // Note: connectedPlayerName and connectedClientId are NOT cleared here —
     // they are connection-level state set once from the "Welcome" MsgClientJoin,
     // and should persist across mission changes.
@@ -1156,11 +1052,11 @@ export abstract class StreamEngine implements StreamingPlayback {
   // ── Net string resolution ──
 
   protected resolveNetString(s: string): string {
-    return resolveNetStringHelper(s, this.netStrings);
+    return resolveNetStringHelper(s, this.conn.netStrings);
   }
 
   protected formatRemoteArgs(template: string, args: string[]): string {
-    return formatRemoteArgsHelper(template, args, this.netStrings);
+    return formatRemoteArgsHelper(template, args, this.conn.netStrings);
   }
 
   // ── Control object processing ──
@@ -1205,7 +1101,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       const entityId = this.entityIdByGhostIndex.get(nextGhostIndex);
       const entity = entityId ? this.entities.get(entityId) : undefined;
       if (entity?.sensorGroup != null && entity.sensorGroup > 0) {
-        this.playerSensorGroup = entity.sensorGroup;
+        this.conn.playerSensorGroup = entity.sensorGroup;
       }
     }
 
@@ -1327,168 +1223,9 @@ export abstract class StreamEngine implements StreamingPlayback {
       return;
     }
 
-    if (type === "NetStringEvent" || eventName === "NetStringEvent") {
-      const evt = data as NetStringEventData;
-      const id = evt.id;
-      const value = evt.value;
-      if (id != null && typeof value === "string") {
-        this.netStrings.set(id, value);
-        const sync = (targetId: number) => {
-          this.onRosterChanged();
-          this.syncTargetEntities(targetId);
-          if (((this.targetRenderFlags.get(targetId) ?? 0) & 0x2) !== 0)
-            this.onTeamScoresChanged();
-        };
-        resolvePendingTargetStrings(
-          this.targetRawNames,
-          this.pendingNameTags,
-          id,
-          value,
-          sync,
-        );
-        resolvePendingTargetStrings(
-          this.targetTypes,
-          this.pendingTypeTags,
-          id,
-          value,
-          sync,
-        );
-        resolvePendingTargetStrings(
-          this.targetSkins,
-          this.pendingSkinTags,
-          id,
-          value,
-          sync,
-        );
-        resolvePendingTargetStrings(
-          this.targetSkinPrefs,
-          this.pendingSkinPrefTags,
-          id,
-          value,
-          sync,
-        );
-      }
-      return;
-    }
-
-    if (type === "TargetFreeEvent" || eventName === "TargetFreeEvent") {
-      // The slot is free: whatever wears this id next is somebody else,
-      // and nothing about the old holder (name, skin, team, flag bits)
-      // may leak onto it — the re-issue's TargetInfoEvent starts clean.
-      const targetId = (data as { targetId?: number }).targetId;
-      if (targetId != null) {
-        this.onRosterChanged();
-        if (((this.targetRenderFlags.get(targetId) ?? 0) & 0x2) !== 0)
-          this.onTeamScoresChanged();
-        this.targetGenerations.set(
-          targetId,
-          (this.targetGenerations.get(targetId) ?? 0) + 1,
-        );
-        for (const player of this.playerRoster.values())
-          if (player.targetId === targetId) player.targetId = -1;
-        this.targetRawNames.delete(targetId);
-        this.targetTypes.delete(targetId);
-        this.pendingNameTags.delete(targetId);
-        this.pendingTypeTags.delete(targetId);
-        this.pendingSkinTags.delete(targetId);
-        this.pendingSkinPrefTags.delete(targetId);
-        this.targetSkins.delete(targetId);
-        this.targetSkinPrefs.delete(targetId);
-        this.targetTeams.delete(targetId);
-        this.targetRenderFlags.delete(targetId);
-        // TargetFreeEvent (0x00673180) calls GameBase::onTargetInfoChanged
-        // (0x005e3790), which detaches the ghost from this target slot.
-        for (const entity of this.entities.values()) {
-          if (entity.targetId !== targetId) continue;
-          entity.targetId = -1;
-          entity.targetGeneration = undefined;
-          this.applyEntityTargetInfo(entity);
-        }
-      }
-      return;
-    }
-
-    if (type === "TargetInfoEvent" || eventName === "TargetInfoEvent") {
-      const evt = data as TargetInfoEventData;
-      const targetId = evt.targetId;
-      if (targetId == null) return;
-      this.onRosterChanged();
-      updateTargetString(
-        this.netStrings,
-        this.targetRawNames,
-        this.pendingNameTags,
-        targetId,
-        evt.nameTag,
-      );
-      updateTargetString(
-        this.netStrings,
-        this.targetTypes,
-        this.pendingTypeTags,
-        targetId,
-        evt.typeTag,
-      );
-      updateTargetString(
-        this.netStrings,
-        this.targetSkins,
-        this.pendingSkinTags,
-        targetId,
-        evt.skinTag,
-      );
-      updateTargetString(
-        this.netStrings,
-        this.targetSkinPrefs,
-        this.pendingSkinPrefTags,
-        targetId,
-        evt.skinPrefTag,
-      );
-      const sensorGroup = evt.sensorGroup;
-      if (sensorGroup != null) {
-        this.targetTeams.set(targetId, sensorGroup);
-      }
-      const renderFlags = evt.renderFlags;
-      if (renderFlags != null) {
-        this.targetRenderFlags.set(targetId, renderFlags);
-      }
-      if (
-        evt.nameTag != null ||
-        evt.typeTag != null ||
-        evt.skinTag != null ||
-        sensorGroup != null ||
-        renderFlags != null
-      )
-        this.onTeamScoresChanged();
-      this.syncTargetEntities(targetId);
-      return;
-    }
-
-    if (type === "SetSensorGroupEvent" || eventName === "SetSensorGroupEvent") {
-      const evt = data as SetSensorGroupEventData;
-      const sg = evt.sensorGroup;
-      if (sg != null) this.playerSensorGroup = sg;
-      return;
-    }
-
-    if (
-      type === "SensorGroupColorEvent" ||
-      eventName === "SensorGroupColorEvent"
-    ) {
-      const evt = data as SensorGroupColorEventData;
-      const sg = evt.sensorGroup;
-      const colors = evt.colors;
-      if (colors) {
-        let map = this.sensorGroupColors.get(sg);
-        if (!map) {
-          map = new Map();
-          this.sensorGroupColors.set(sg, map);
-        }
-        for (const c of colors) {
-          if (c.default) {
-            map.delete(c.index);
-          } else {
-            map.set(c.index, { r: c.r ?? 0, g: c.g ?? 0, b: c.b ?? 0 });
-          }
-        }
-      }
+    const connectionEffect = this.conn.applyEvent(data, eventName);
+    if (connectionEffect) {
+      this.applyConnectionEffect(connectionEffect);
       return;
     }
 
@@ -1521,7 +1258,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         // into colored segments (mirrors the demo chat path). The sender's
         // clan color and any mid-message colors survive to the UI.
         const colored = extractWavTag(
-          formatRemoteArgsColored(args[3], args.slice(4), this.netStrings),
+          formatRemoteArgsColored(args[3], args.slice(4), this.conn.netStrings),
         );
         const wavPath = colored.wavPath;
         const segments = parseColorSegments(colored.text);
@@ -1663,7 +1400,8 @@ export abstract class StreamEngine implements StreamingPlayback {
     const previousFlagPlayerTarget =
       prevEntity?.type === "Player" &&
       prevEntity.targetId != null &&
-      ((this.targetRenderFlags.get(prevEntity.targetId) ?? 0) & 0x2) !== 0
+      ((this.conn.targets.renderFlags.get(prevEntity.targetId) ?? 0) & 0x2) !==
+        0
         ? prevEntity.targetId
         : undefined;
 
@@ -1743,7 +1481,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       const flagPlayerTarget =
         entity.type === "Player" &&
         entity.targetId != null &&
-        ((this.targetRenderFlags.get(entity.targetId) ?? 0) & 0x2) !== 0
+        ((this.conn.targets.renderFlags.get(entity.targetId) ?? 0) & 0x2) !== 0
           ? entity.targetId
           : undefined;
       // A scoped player excludes its own target from the original flags.
@@ -2364,7 +2102,7 @@ export abstract class StreamEngine implements StreamingPlayback {
             // Resolve skin from net string tag or inline name.
             let skinName: string | undefined;
             if (img.skinTagIndex != null) {
-              skinName = this.netStrings.get(img.skinTagIndex);
+              skinName = this.conn.netStrings.get(img.skinTagIndex);
             } else if (img.skinName) {
               skinName = img.skinName;
             }
@@ -2947,14 +2685,15 @@ export abstract class StreamEngine implements StreamingPlayback {
     // Target system
     if (typeof data.targetId === "number") {
       entity.targetId = data.targetId;
-      entity.targetGeneration = this.targetGenerations.get(data.targetId) ?? 0;
+      entity.targetGeneration =
+        this.conn.targets.generations.get(data.targetId) ?? 0;
       this.applyEntityTargetInfo(entity);
       if (
         entity.sensorGroup != null &&
         entity.ghostIndex === this.latestControl.ghostIndex &&
         this.lastControlType === "player"
       ) {
-        this.playerSensorGroup = entity.sensorGroup;
+        this.conn.playerSensorGroup = entity.sensorGroup;
       }
     }
 
@@ -3895,13 +3634,14 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected resolveIffColor(
     targetSensorGroup: number,
   ): { r: number; g: number; b: number } | undefined {
-    if (this.playerSensorGroup === 0) return undefined;
-    const colorMap = this.sensorGroupColors.get(this.playerSensorGroup);
+    const playerSensorGroup = this.conn.playerSensorGroup;
+    if (playerSensorGroup === 0) return undefined;
+    const colorMap = this.conn.sensorGroupColors.get(playerSensorGroup);
     if (colorMap) {
       const color = colorMap.get(targetSensorGroup);
       if (color) return color;
     }
-    if (targetSensorGroup === this.playerSensorGroup) return IFF_GREEN;
+    if (targetSensorGroup === playerSensorGroup) return IFF_GREEN;
     if (targetSensorGroup !== 0) return IFF_RED;
     return undefined;
   }
@@ -3941,143 +3681,41 @@ export abstract class StreamEngine implements StreamingPlayback {
   }
 
   protected handleServerMessage(args: string[]): void {
-    if (args.length < 1) return;
-    const msgType = this.resolveNetString(args[0]);
-
-    this.flagDroppedAtSec = updateFlagDropTimes(
-      this.flagDroppedAtSec,
-      msgType,
-      args,
-      (s) => this.resolveNetString(s),
-      this.matchEndedAtSec ?? this.getTimeSec(),
-    );
-
-    const changes = applyServerMessageState(
-      msgType,
-      args,
-      (s) => this.resolveNetString(s),
-      {
-        playerRoster: this.playerRoster,
-        teamScores: this.teamScores,
-        flags: this.flagStates,
-        playerIdentity: this.playerIdentity,
-        resolvePlayers: () => this.resolvePlayers(),
-      },
-      (team) => ({ ...team, playerCount: 0 }),
-    );
-    if (changes) {
-      if (changes.matchStarted) this.matchStarted = true;
-      if (changes.teamScoresChanged || changes.flagsChanged)
-        this.onTeamScoresChanged();
-      if (changes.rosterChanged) this.onRosterChanged();
-      const renamed = changes.renamedPlayer;
-      if (renamed?.targetId != null) {
-        // Update every body sharing this client's target immediately; the
-        // matching TargetInfoEvent can arrive a packet later.
-        this.pendingNameTags.delete(renamed.targetId);
-        this.targetRawNames.set(renamed.targetId, renamed.rawName);
-        this.syncTargetEntities(renamed.targetId);
-      }
-      if (changes.joinedClientId != null && !this.connectedPlayerName) {
-        const name = this.playerRoster.get(changes.joinedClientId)!.name;
-        const msgFormat = stripTaggedStringMarkup(
-          this.resolveNetString(args[1]),
-        );
-        // Own-join detection is connection-specific; silent roster sync
-        // joins must not identify the connected player.
-        if (name && msgFormat.includes("Welcome to Tribes")) {
-          this.updateConnectedPlayerName(name, changes.joinedClientId);
-          this.onMissionInfoChange?.();
-        }
-      }
-      return;
-    }
-
-    if (msgType === "MsgSystemClock" && args.length >= 4) {
-      // Wire order: args[2]=timeLimitMinutes, args[3]=timeRemainingMS.
-      // Binary-verified (HudClock 0x004fe7e0/0x004fe8a0): the client
-      // calls clockHud.setTime(timeRemainingMS / 60000), which stores a
-      // single deadline; each frame renders abs(now - deadline) — so
-      // 0 counts up from 00:00 (untimed/joiner sync), N counts down and
-      // passes through zero into count-up overtime. args[2] is dead
-      // data on the client ($Hud::TimeLimit, never read).
-      const timeRemainingMS = parseFloat(this.resolveNetString(args[3]));
-      this.clockAnchorStreamSec = this.matchEndedAtSec ?? this.getTimeSec();
-      this.clockDurationMs = Number.isFinite(timeRemainingMS)
-        ? timeRemainingMS
-        : 0;
-      // A running match clock (late-join case): warmup joiners get 0,0
-      // and pre-start countdown ticks stay under ~30s.
-      if (Number.isFinite(timeRemainingMS) && timeRemainingMS > 60_000) {
-        this.matchStarted = true;
-      }
-    } else if (msgType === "MsgMissionStart") {
-      // Sent for the pre-start countdown ticks and "Match started!" —
-      // idle warmup sends neither.
-      this.matchStarted = true;
-    } else if (msgType === "MsgMissionDropInfo" && args.length >= 5) {
-      // messageClient(%cl, 'MsgMissionDropInfo', ..., $MissionDisplayName, $MissionTypeDisplayName, $ServerName)
-      const resolvedArgs = args.map((arg) => this.resolveNetString(arg));
-      const missionDisplayName = stripTaggedStringMarkup(resolvedArgs[2]);
-      const missionTypeDisplayName = stripTaggedStringMarkup(resolvedArgs[3]);
-      const serverDisplayName = getServerNameFromMessage(resolvedArgs) ?? "";
-      log.info(
-        "mission drop info: mission=%s gameType=%s server=%s",
-        missionDisplayName,
-        missionTypeDisplayName,
-        serverDisplayName,
-      );
-      this.missionDisplayName = missionDisplayName || this.missionDisplayName;
-      this.missionTypeDisplayName =
-        missionTypeDisplayName || this.missionTypeDisplayName;
-      this.updateServerDisplayName(serverDisplayName);
-      this.onMissionInfoChange?.();
-    } else if (msgType === "MsgLoadInfo" && args.length >= 5) {
-      // messageClient(%cl, 'MsgLoadInfo', "", $CurrentMission, $MissionDisplayName, $MissionTypeDisplayName)
-      const resolvedArgs = args.map((arg) => this.resolveNetString(arg));
-      const missionDisplayName = stripTaggedStringMarkup(resolvedArgs[3]);
-      const missionTypeDisplayName = stripTaggedStringMarkup(resolvedArgs[4]);
-      // Classic's sendModInfoToClient reuses this command for
-      // ($CurrentMission, "Classic  1.1", $Host::GameName), then sends
-      // the regular mission info again seven seconds later. Match its
-      // versioned label (including the two spaces), not arbitrary maps
-      // whose names begin with "Classic".
-      const classicModInfo = isClassicModInfoMessage(resolvedArgs);
-      if (classicModInfo) {
-        this.updateServerDisplayName(
-          getServerNameFromMessage(resolvedArgs) ?? "",
-        );
-        log.info("Classic load info: server=%s", this.serverDisplayName);
-      } else {
-        log.info(
-          "load info: mission=%s gameType=%s",
-          missionDisplayName,
-          missionTypeDisplayName,
-        );
-        this.missionDisplayName = missionDisplayName || this.missionDisplayName;
-        this.missionTypeDisplayName =
-          missionTypeDisplayName || this.missionTypeDisplayName;
-      }
-      this.loadInfo.begin();
-      this.onMissionInfoChange?.();
-    } else if (LoadInfoCollector.handles(msgType)) {
-      this.loadInfo.apply(msgType, args, (s) => this.resolveNetString(s));
-    } else if (msgType === "MsgClientReady" && args.length >= 3) {
-      // messageClient(%cl, 'MsgClientReady', "", %game.class)
-      const gameClassName = this.resolveNetString(args[2]);
-      log.info("client ready: gameClass=%s", gameClassName);
-      this.gameClassName = gameClassName || this.gameClassName;
-      this.flagStates.clear();
+    const effects = this.conn.applyServerMessage(args);
+    if (!effects) return;
+    if (effects.teamScoresChanged || effects.flagsChanged)
       this.onTeamScoresChanged();
-      // Dropping into a (new) mission ends any match-over interval.
-      if (this.matchEndedAtSec != null && this.clockAnchorStreamSec != null)
-        this.clockAnchorStreamSec += this.getTimeSec() - this.matchEndedAtSec;
-      this.matchEnded = false;
-      this.matchEndedAtSec = null;
-      this.endedEntities = null;
-      this.matchStarted = false;
-      this.onMissionInfoChange?.();
+    if (effects.rosterChanged) this.onRosterChanged();
+    // Update every body sharing this client's target immediately; the
+    // matching TargetInfoEvent can arrive a packet later.
+    if (effects.renamedTargetId != null)
+      this.syncTargetEntities(effects.renamedTargetId);
+    if (effects.joinedClientId != null && !this.connectedPlayerName) {
+      const name = this.conn.playerRoster.get(effects.joinedClientId)!.name;
+      const msgFormat = stripTaggedStringMarkup(this.resolveNetString(args[1]));
+      // Own-join detection is connection-specific; silent roster sync
+      // joins must not identify the connected player.
+      if (name && msgFormat.includes("Welcome to Tribes")) {
+        this.updateConnectedPlayerName(name, effects.joinedClientId);
+        this.onMissionInfoChange?.();
+      }
     }
+    if (effects.serverName) this.updateServerDisplayName(effects.serverName);
+    if (effects.missionDropReady) {
+      this.onTeamScoresChanged();
+      this.endedEntities = null;
+    }
+    if (effects.missionInfoChanged)
+      log.info(
+        "%s: mission=%s gameType=%s gameClass=%s server=%s",
+        this.resolveNetString(args[0]),
+        this.missionDisplayName,
+        this.missionTypeDisplayName,
+        this.gameClassName,
+        this.serverDisplayName,
+      );
+    if (effects.missionInfoChanged || effects.loadInfoChanged)
+      this.onMissionInfoChange?.();
   }
 
   // ── HUD-cache invalidation hooks (bump the generation counters) ──
@@ -4178,57 +3816,51 @@ export abstract class StreamEngine implements StreamingPlayback {
     this._inventoryHudGen++;
   }
 
-  protected seedTargetInfo(entry: WatchTargetEntry): void {
-    const id = entry.targetId;
-    if (entry.name != null) this.targetRawNames.set(id, entry.name);
-    if (entry.typeDescription != null)
-      this.targetTypes.set(id, entry.typeDescription);
-    if (entry.skin != null) this.targetSkins.set(id, entry.skin);
-    if (entry.skinPref != null) this.targetSkinPrefs.set(id, entry.skinPref);
-    updateTargetString(
-      this.netStrings,
-      this.targetRawNames,
-      this.pendingNameTags,
-      id,
-      entry.nameTag,
-    );
-    updateTargetString(
-      this.netStrings,
-      this.targetTypes,
-      this.pendingTypeTags,
-      id,
-      entry.typeTag,
-    );
-    updateTargetString(
-      this.netStrings,
-      this.targetSkins,
-      this.pendingSkinTags,
-      id,
-      entry.skinTag,
-    );
-    updateTargetString(
-      this.netStrings,
-      this.targetSkinPrefs,
-      this.pendingSkinPrefTags,
-      id,
-      entry.skinPrefTag,
-    );
-    if (entry.sensorGroup != null) this.targetTeams.set(id, entry.sensorGroup);
-    if (entry.targetData != null)
-      this.targetRenderFlags.set(id, entry.targetData);
-  }
-
   private applyEntityTargetInfo(entity: MutableEntity): void {
     const targetId = entity.targetId ?? -1;
-    const rawName = this.targetRawNames.get(targetId);
+    const targets = this.conn.targets;
+    const rawName = targets.rawNames.get(targetId);
     entity.playerRawName = rawName;
     entity.playerName =
       rawName == null ? undefined : stripTaggedStringMarkup(rawName).trim();
-    entity.targetTypeName = this.targetTypes.get(targetId);
-    entity.sensorGroup = this.targetTeams.get(targetId);
-    entity.targetRenderFlags = this.targetRenderFlags.get(targetId);
-    entity.skinName = this.targetSkins.get(targetId) || undefined;
-    entity.skinPrefName = this.targetSkinPrefs.get(targetId) || undefined;
+    entity.targetTypeName = targets.types.get(targetId);
+    entity.sensorGroup = targets.teams.get(targetId);
+    entity.targetRenderFlags = targets.renderFlags.get(targetId);
+    entity.skinName = targets.skins.get(targetId) || undefined;
+    entity.skinPrefName = targets.skinPrefs.get(targetId) || undefined;
+  }
+
+  /**
+   * Entity and HUD-cache reactions to a shared target-system event.
+   */
+  private applyConnectionEffect(effect: ConnectionEventEffect): void {
+    switch (effect.kind) {
+      case "netString":
+        for (const targetId of effect.resolvedTargets) {
+          this.onRosterChanged();
+          this.syncTargetEntities(targetId);
+          if (((this.conn.targets.renderFlags.get(targetId) ?? 0) & 0x2) !== 0)
+            this.onTeamScoresChanged();
+        }
+        break;
+      case "targetInfo":
+        this.onRosterChanged();
+        if (effect.hudChanged) this.onTeamScoresChanged();
+        this.syncTargetEntities(effect.targetId);
+        break;
+      case "targetFree":
+        this.onRosterChanged();
+        if (effect.hadFlagBit) this.onTeamScoresChanged();
+        // TargetFreeEvent (0x00673180) calls GameBase::onTargetInfoChanged
+        // (0x005e3790), which detaches the ghost from this target slot.
+        for (const entity of this.entities.values()) {
+          if (entity.targetId !== effect.targetId) continue;
+          entity.targetId = -1;
+          entity.targetGeneration = undefined;
+          this.applyEntityTargetInfo(entity);
+        }
+        break;
+    }
   }
 
   private syncTargetEntities(targetId: number): void {
@@ -4381,12 +4013,13 @@ export abstract class StreamEngine implements StreamingPlayback {
    * Returns null if no clock has been set.
    */
   protected computeMatchClockMs(timeSec: number): number | null {
-    if (this.clockAnchorStreamSec == null) return null;
+    const clock = this.conn.clock;
+    if (!clock) return null;
     const elapsedMs =
-      ((this.matchEndedAtSec ?? timeSec) - this.clockAnchorStreamSec) * 1000;
-    // actualTimeMS = -clockDurationMs + elapsed
+      ((this.conn.matchEndedAtSec ?? timeSec) - clock.anchorSec) * 1000;
+    // actualTimeMS = -durationMs + elapsed
     // duration=0 → positive (count-up), duration>0 → starts negative (count-down)
-    return -this.clockDurationMs + elapsedMs;
+    return -clock.durationMs + elapsedMs;
   }
 
   /**
@@ -4397,55 +4030,35 @@ export abstract class StreamEngine implements StreamingPlayback {
    */
   private buildFlagTargets(): FlagTargetInfo[] {
     const clientTargetIds = new Set<number>();
-    for (const entry of this.playerRoster.values()) {
+    for (const entry of this.conn.playerRoster.values()) {
       if (entry.targetId != null) clientTargetIds.add(entry.targetId);
     }
-    for (const entity of this.entities.values()) {
-      if (entity.type === "Player" && entity.targetId != null) {
-        clientTargetIds.add(entity.targetId);
-      }
-    }
+    for (const targetId of this.playerGhostTargetIds())
+      clientTargetIds.add(targetId);
+    const targets = this.conn.targets;
     const flags: FlagTargetInfo[] = [];
-    for (const [targetId, renderFlags] of this.targetRenderFlags) {
+    for (const [targetId, renderFlags] of targets.renderFlags) {
       if ((renderFlags & 0x2) === 0) continue;
       if (clientTargetIds.has(targetId)) continue;
-      if (this.targetTypes.get(targetId) === "_ClientConnection") continue;
+      if (targets.types.get(targetId) === "_ClientConnection") continue;
       flags.push({
         targetId,
-        name: this.targetRawNames.get(targetId),
-        typeName: this.targetTypes.get(targetId),
-        teamId: this.targetTeams.get(targetId),
-        skinName: this.targetSkins.get(targetId)?.toLowerCase(),
+        name: targets.rawNames.get(targetId),
+        typeName: targets.types.get(targetId),
+        teamId: targets.teams.get(targetId),
+        skinName: targets.skins.get(targetId)?.toLowerCase(),
       });
     }
     return flags;
   }
 
-  private buildPlayerTargets(): PlayerRecord[] {
-    const ids = Array.from(this.playerRoster.values()).flatMap((p) =>
-      p.targetId != null ? [p.targetId] : [],
-    );
+  /**
+   * Targets of scoped Player ghosts; demo PLAYERLIST entries can lack them.
+   */
+  private *playerGhostTargetIds(): Iterable<number> {
     for (const entity of this.entities.values())
       if (entity.type === "Player" && entity.targetId != null)
-        ids.push(entity.targetId);
-    return collectPlayerTargets(
-      this.targetRawNames,
-      this.targetTypes,
-      this.targetTeams,
-      this.targetGenerations,
-      ids,
-    );
-  }
-
-  private resolvePlayers(targets = this.buildPlayerTargets()): PlayerResolver {
-    return new PlayerResolver(
-      this.playerIdentity.scope,
-      Array.from(this.playerRoster, ([clientId, player]) => ({
-        clientId,
-        ...player,
-      })),
-      targets,
-    );
+        yield entity.targetId;
   }
 
   /** Build HUD arrays for snapshot. */
@@ -4483,11 +4096,19 @@ export abstract class StreamEngine implements StreamingPlayback {
     playerTargets: PlayerRecord[];
     playerRoster: PlayerRosterEntry[];
   } {
-    const playerTargets = this.buildPlayerTargets();
-    refreshFlagCarriers(this.flagStates, this.resolvePlayers(playerTargets));
-    const teamScores = this.teamScores.map((ts) => ({
+    const playerTargets = this.conn.playerTargets();
+    refreshFlagCarriers(
+      this.conn.flags,
+      this.conn.resolvePlayers(playerTargets),
+    );
+    const teamCounts = new Map<number, number>();
+    for (const { teamId } of this.conn.playerRoster.values()) {
+      if (teamId > 0) teamCounts.set(teamId, (teamCounts.get(teamId) ?? 0) + 1);
+    }
+    const teamScores: TeamScore[] = this.conn.teamScores.map((ts) => ({
       ...ts,
-      flag: this.flagStates.get(ts.teamId),
+      playerCount: teamCounts.get(ts.teamId) ?? 0,
+      flag: this.conn.flags.get(ts.teamId),
     }));
     const flagTargets = this.buildFlagTargets();
     for (const flag of flagTargets) {
@@ -4495,16 +4116,9 @@ export abstract class StreamEngine implements StreamingPlayback {
       const team = teamScores.find((t) => t.teamId === flag.teamId);
       if (team) team.skinName = flag.skinName;
     }
-    const teamCounts = new Map<number, number>();
-    for (const { teamId } of this.playerRoster.values()) {
-      if (teamId > 0) teamCounts.set(teamId, (teamCounts.get(teamId) ?? 0) + 1);
-    }
-    for (const ts of teamScores) {
-      ts.playerCount = teamCounts.get(ts.teamId) ?? 0;
-    }
 
     const playerRoster: PlayerRosterEntry[] = [];
-    for (const [clientId, entry] of this.playerRoster) {
+    for (const [clientId, entry] of this.conn.playerRoster) {
       playerRoster.push({ clientId, ...entry });
     }
     return { teamScores, flagTargets, playerTargets, playerRoster };

@@ -9,7 +9,9 @@ import {
   BlockTypePacket,
   BlockTypeSendPacket,
   DemoParser,
+  type CameraPacketData,
   type PacketData,
+  type PlayerPacketData,
   type RemoteCommandEventData,
 } from "t2-demo-parser";
 import {
@@ -32,9 +34,15 @@ import {
   command,
   gravityEvent,
   netString,
+  playerGhost,
   serverPacket,
+  type PlayerState,
   type ServerEvent,
 } from "../../relay/serverPacketFixtures.js";
+import {
+  controlObjectLayouts,
+  type ControlObjectLayout,
+} from "./legacyControlObject";
 import {
   readBlocks,
   readMoveAck,
@@ -418,24 +426,80 @@ describe("upgradeRelayDemo", () => {
 });
 
 /**
- * A recording from connect that gets a camera, then `ticks` ticks of
- * moves, each followed by our packet and the server's next.
+ * A recording from connect that gets a camera, then a tick of moves per
+ * camera pitch, each followed by our packet and the server's next.
  */
-function cameraRecording(ticks: number): Uint8Array {
+function cameraRecording(pitches: readonly number[]): Uint8Array {
   const blocks = [
     ...legacyOpening(),
     MOVE,
     SENT,
     ...received(serverPacket(4, { ack: 5, events: [cameraGhost(11)] })),
   ];
-  for (let i = 0; i < ticks; i++)
+  for (const [i, pitch] of pitches.entries())
     blocks.push(
       MOVE,
       SENT,
-      ...received(serverPacket(5 + i, { ack: 6 + i, camera: true })),
+      ...received(serverPacket(5 + i, { ack: 6 + i, camera: { pitch } })),
     );
   return oldRecording(blocks);
 }
+
+/**
+ * The observer's pitch on High Octane maps, past the camera's clamp.
+ */
+const STEEP_PITCH = 1.484838843345642;
+
+function writeF32At(data: Uint8Array, offset: number, value: number): void {
+  const view = new DataView(new ArrayBuffer(4));
+  view.setFloat32(0, value, true);
+  writeBits(data, offset, view.getUint32(0, true), 32);
+}
+
+/**
+ * The last packet whose control object state has `kind`'s layout, by
+ * block index.
+ */
+async function lastControlObject<Kind extends ControlObjectLayout["kind"]>(
+  bytes: Uint8Array,
+  kind: Kind,
+): Promise<[number, Extract<ControlObjectLayout, { kind: Kind }>]> {
+  const layouts = [...(await controlObjectLayouts(bytes))].filter(
+    ([, layout]) => layout.kind === kind,
+  );
+  return layouts.at(-1) as [
+    number,
+    Extract<ControlObjectLayout, { kind: Kind }>,
+  ];
+}
+
+/**
+ * A recording from connect whose server spawns our player, then a tick of
+ * moves per player state, each followed by our packet and the server's
+ * next.
+ */
+function playerRecording(states: readonly PlayerState[]): Uint8Array {
+  const blocks = [
+    ...legacyOpening(),
+    MOVE,
+    SENT,
+    ...received(serverPacket(4, { ack: 5, events: [playerGhost(11)] })),
+  ];
+  for (const [i, player] of states.entries())
+    blocks.push(
+      MOVE,
+      SENT,
+      ...received(serverPacket(5 + i, { ack: 6 + i, player })),
+    );
+  return oldRecording(blocks);
+}
+
+const SPAWN = [10.5, -20.25, 130];
+const RESPAWN = [-40, 50.5, 120.75];
+/**
+ * A hit's velocity, which a server that never ticks the player keeps.
+ */
+const KNOCKBACK = [9.5, 0, 1.75];
 
 /**
  * The demo with its blocks changed by `change`.
@@ -466,9 +530,151 @@ async function repack(
   );
 }
 
+describe("upgradeRelayDemo camera", () => {
+  it("clamps the camera pitch the server never ticked", async () => {
+    const { report, output } = await upgrade(
+      cameraRecording([STEEP_PITCH, -1.5, 1.2, STEEP_PITCH]),
+    );
+    expect(report).toMatchObject({
+      generation: "unacked-moves",
+      clampedPitches: 3,
+    });
+    const { packets } = await readDemo(output);
+    expect(
+      packets.flatMap((packet) => {
+        const camera = packet.gameState.controlObjectData as
+          CameraPacketData | undefined;
+        return camera?.rotX ?? [];
+      }),
+    ).toEqual([1.3962, -1.3962, 1.2, 1.3962].map(Math.fround));
+  });
+
+  it("clamps no camera pitch in a recording whose moves the server acknowledged", async () => {
+    const blocks = [
+      ...legacyOpening([2, 3]),
+      MOVE,
+      SENT,
+      ...received(
+        serverPacket(4, { ack: 5, lastMoveAck: 4, events: [cameraGhost(11)] }),
+      ),
+      MOVE,
+      SENT,
+      ...received(
+        serverPacket(5, {
+          ack: 6,
+          lastMoveAck: 5,
+          camera: { pitch: STEEP_PITCH },
+        }),
+      ),
+    ];
+    const { report, output } = await upgrade(oldRecording(blocks));
+    expect(report).toMatchObject({
+      generation: "from-connect",
+      clampedPitches: 0,
+    });
+    const { packets } = await readDemo(output);
+    const camera = packets.at(-1)!.gameState
+      .controlObjectData as CameraPacketData;
+    expect(camera.rotX).toBe(Math.fround(STEEP_PITCH));
+  });
+});
+
+describe("upgradeRelayDemo player", () => {
+  it("zeroes a frozen player's velocity and sends a state the client has as the compression point", async () => {
+    const { report, output } = await upgrade(
+      playerRecording([
+        { position: SPAWN },
+        { position: SPAWN },
+        { position: SPAWN, velocity: KNOCKBACK },
+        { position: RESPAWN, velocity: KNOCKBACK },
+        { position: RESPAWN },
+      ]),
+    );
+    expect(report).toMatchObject({
+      generation: "unacked-moves",
+      zeroedVelocities: 2,
+      omittedPlayerStates: 3,
+    });
+    const { blocks, packets } = await readDemo(output);
+    const players = packets.slice(-5).map(({ gameState }) => ({
+      full: gameState.controlObjectGhostIndex !== undefined,
+      state: gameState.controlObjectData as PlayerPacketData | undefined,
+      compressionPoint: gameState.compressionPoint,
+    }));
+    expect(players.map(({ full }) => full)).toEqual([
+      true,
+      false,
+      false,
+      true,
+      false,
+    ]);
+    for (const { state } of [players[0], players[3]])
+      expect(state?.velocity).toEqual({ x: 0, y: 0, z: 0 });
+    expect(players[3].state?.position).toEqual({
+      x: RESPAWN[0],
+      y: RESPAWN[1],
+      z: RESPAWN[2],
+    });
+    // Exactly what the server writes to a client whose prediction agrees.
+    const data = blocks
+      .filter((block) => block.type === BlockTypePacket)
+      .slice(-5)
+      .map((block) => block.data);
+    for (const [i, position] of [
+      [1, SPAWN],
+      [2, SPAWN],
+      [4, RESPAWN],
+    ] as const)
+      expect(Buffer.from(data[i])).toEqual(
+        Buffer.from(
+          serverPacket(5 + i, {
+            ack: 6 + i,
+            lastMoveAck: readMoveAck(data[i]),
+            compressionPoint: position,
+          }),
+        ),
+      );
+  });
+
+  it("sends a player's state in full when the camera was the control object", async () => {
+    const player = { ghost: 1, position: SPAWN };
+    const blocks = [
+      ...legacyOpening(),
+      MOVE,
+      SENT,
+      ...received(
+        serverPacket(4, {
+          ack: 5,
+          events: [cameraGhost(11), playerGhost(12, 1)],
+        }),
+      ),
+    ];
+    for (const [i, control] of [
+      { player },
+      { player },
+      { camera: true },
+      { player },
+      { player },
+    ].entries())
+      blocks.push(
+        MOVE,
+        SENT,
+        ...received(serverPacket(5 + i, { ack: 6 + i, ...control })),
+      );
+    const { report, output } = await upgrade(oldRecording(blocks));
+    expect(report.omittedPlayerStates).toBe(2);
+    const { packets } = await readDemo(output);
+    expect(
+      packets
+        .slice(-5)
+        .map(({ gameState }) => gameState.controlObjectGhostIndex),
+    ).toEqual([1, undefined, 0, 1, undefined]);
+  });
+});
+
 describe("validateRelayDemoUpgrade", () => {
-  async function upgradeCameraRecording() {
-    const original = cameraRecording(40);
+  async function upgradeCameraRecording(pitches = Array(40).fill(0)) {
+    const original = cameraRecording(pitches);
     const { report, output } = await upgrade(original);
     return {
       original,
@@ -476,6 +682,165 @@ describe("validateRelayDemoUpgrade", () => {
       upgraded: new Uint8Array(await fs.readFile(output)),
     };
   }
+
+  it("passes clamped camera pitches", async () => {
+    const { original, report, upgraded } = await upgradeCameraRecording(
+      Array(40).fill(STEEP_PITCH),
+    );
+    expect(report.clampedPitches).toBe(40);
+    const { problems } = await validateRelayDemoUpgrade(
+      original,
+      upgraded,
+      report,
+      "camera.rec",
+    );
+    expect(problems).toEqual([]);
+  });
+
+  it("fails an upgrade that left a camera pitch past the clamp", async () => {
+    const { original, report, upgraded } = await upgradeCameraRecording(
+      Array(40).fill(STEEP_PITCH),
+    );
+    const [index, { pitchAt }] = await lastControlObject(upgraded, "camera");
+    const unclamped = await repack(upgraded, (blocks) => {
+      writeF32At(blocks[index].data, pitchAt, STEEP_PITCH);
+    });
+    const { problems } = await validateRelayDemoUpgrade(
+      original,
+      unclamped,
+      report,
+      "camera.rec",
+    );
+    expect(problems).toEqual(
+      expect.arrayContaining([
+        "1 camera pitches past the clamp",
+        "39 camera pitches clamped, report says 40",
+      ]),
+    );
+  });
+
+  it("fails an upgrade that changed a camera pitch to anything but its clamp", async () => {
+    const { original, report, upgraded } = await upgradeCameraRecording(
+      Array(40).fill(STEEP_PITCH),
+    );
+    const [index, { pitchAt }] = await lastControlObject(upgraded, "camera");
+    const tilted = await repack(upgraded, (blocks) => {
+      writeF32At(blocks[index].data, pitchAt, 1);
+    });
+    const { problems } = await validateRelayDemoUpgrade(
+      original,
+      tilted,
+      report,
+      "camera.rec",
+    );
+    expect(problems).toContainEqual(
+      expect.stringMatching(/bits outside the move ack, the control object/),
+    );
+  });
+
+  async function upgradePlayerRecording(states: readonly PlayerState[]) {
+    const original = playerRecording(states);
+    const { report, output } = await upgrade(original);
+    return {
+      original,
+      report,
+      upgraded: new Uint8Array(await fs.readFile(output)),
+    };
+  }
+
+  /**
+   * Validate the upgrade of `states` with one of its packets replaced:
+   * `replace` gets the packet's state, sequence and move ack.
+   */
+  async function replacingPlayerPacket(
+    states: readonly PlayerState[],
+    which: number,
+    replace: (
+      state: PlayerState,
+      seq: number,
+      lastMoveAck: number,
+    ) => Uint8Array,
+  ) {
+    const { original, report, upgraded } = await upgradePlayerRecording(states);
+    const { header } = await new DemoParser(upgraded).load();
+    const packets = [
+      ...readBlocks(upgraded, header.initialBlockSize).entries(),
+    ].filter(([, block]) => block.type === BlockTypePacket);
+    const [index, block] = packets.at(which - states.length)!;
+    const lastMoveAck = readMoveAck(block.data);
+    const tampered = await repack(upgraded, (blocks) => {
+      blocks[index].data = replace(states[which], 5 + which, lastMoveAck);
+    });
+    return (
+      await validateRelayDemoUpgrade(original, tampered, report, "player.rec")
+    ).problems;
+  }
+
+  const FROZEN: PlayerState[] = [
+    { position: SPAWN, velocity: KNOCKBACK },
+    { position: SPAWN },
+    { position: RESPAWN },
+    { position: RESPAWN, velocity: KNOCKBACK },
+  ];
+
+  it("passes a frozen player's upgrade", async () => {
+    const { original, report, upgraded } = await upgradePlayerRecording(FROZEN);
+    expect(report).toMatchObject({
+      zeroedVelocities: 2,
+      omittedPlayerStates: 2,
+    });
+    const { problems } = await validateRelayDemoUpgrade(
+      original,
+      upgraded,
+      report,
+      "player.rec",
+    );
+    expect(problems).toEqual([]);
+  });
+
+  it("fails an upgrade that leaves out a player state the client never had", async () => {
+    const problems = await replacingPlayerPacket(
+      FROZEN,
+      2,
+      ({ position }, seq, lastMoveAck) =>
+        serverPacket(seq, {
+          ack: seq + 1,
+          lastMoveAck,
+          compressionPoint: position,
+        }),
+    );
+    expect(problems).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/leaves out a player state$/),
+        "3 player states left out, report says 2",
+      ]),
+    );
+  });
+
+  it("fails an upgrade that sends a player state the client already had", async () => {
+    const problems = await replacingPlayerPacket(
+      FROZEN,
+      1,
+      ({ position }, seq, lastMoveAck) =>
+        serverPacket(seq, { ack: seq + 1, lastMoveAck, player: { position } }),
+    );
+    expect(problems).toEqual(
+      expect.arrayContaining([
+        "1 player states the client already had",
+        "1 player states left out, report says 2",
+      ]),
+    );
+  });
+
+  it("fails an upgrade whose player keeps a velocity no tick spent", async () => {
+    const problems = await replacingPlayerPacket(
+      FROZEN,
+      0,
+      (state, seq, lastMoveAck) =>
+        serverPacket(seq, { ack: seq + 1, lastMoveAck, player: state }),
+    );
+    expect(problems).toContain("1 player states keep a velocity");
+  });
 
   it("passes an upgrade Tribes2.exe plays to the end", async () => {
     const { original, report, upgraded } = await upgradeCameraRecording();

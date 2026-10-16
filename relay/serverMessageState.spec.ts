@@ -1,5 +1,5 @@
 import type { FlagState } from "./flagState.js";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   applyServerMessageState,
   type ServerMessageChanges,
@@ -7,31 +7,17 @@ import {
   type ServerMessageTeamScore,
 } from "./serverMessageState.js";
 
-interface BrowserTeam extends ServerMessageTeamScore {
-  playerCount: number;
-}
-
 function harness(strings: Record<string, string> = {}) {
   const state = {
     playerRoster: new Map<number, ServerMessageRosterEntry>(),
-    teamScores: [] as BrowserTeam[],
+    teamScores: [] as ServerMessageTeamScore[],
     flags: new Map<number, FlagState>(),
     playerIdentity: { scope: "test", generations: new Map<number, number>() },
   };
   const resolve = (value: string) => strings[value] ?? value;
-  const createTeam = vi.fn((entry: ServerMessageTeamScore): BrowserTeam => ({
-    ...entry,
-    playerCount: 0,
-  }));
   const message = (type: string, ...data: string[]) =>
-    applyServerMessageState(
-      type,
-      [type, "", ...data],
-      resolve,
-      state,
-      createTeam,
-    );
-  return { state, message, resolve, createTeam };
+    applyServerMessageState(type, [type, "", ...data], resolve, state);
+  return { state, message, resolve };
 }
 
 function player(overrides: Partial<ServerMessageRosterEntry> = {}) {
@@ -112,12 +98,12 @@ describe("applyServerMessageState", () => {
   });
 
   it("leaves unrelated server messages to the caller", () => {
-    const { state, message, createTeam } = harness();
+    const { state, message } = harness();
     state.playerRoster.set(7, player());
     expect(message("MsgSystemClock", "20", "120000")).toBeNull();
     expect(message("CommunityExtension", "7", "999")).toBeNull();
     expect(state.playerRoster.get(7)?.score).toBe(100);
-    expect(createTeam).not.toHaveBeenCalled();
+    expect(state.teamScores).toEqual([]);
   });
 
   it.each([
@@ -139,14 +125,11 @@ describe("applyServerMessageState", () => {
     "SetLineHud",
     "MsgDebriefAddLine",
   ])("recognizes an incomplete %s without mutating state", (type) => {
-    const { state, resolve, createTeam } = harness();
+    const { state, resolve } = harness();
     state.playerRoster.set(7, player());
     const before = structuredClone(state);
-    expect(
-      applyServerMessageState(type, [type], resolve, state, createTeam),
-    ).toEqual({});
+    expect(applyServerMessageState(type, [type], resolve, state)).toEqual({});
     expect(state).toEqual(before);
-    expect(createTeam).not.toHaveBeenCalled();
   });
 
   it("resolves join identity fields and resets an existing player rep", () => {
@@ -305,7 +288,6 @@ describe("applyServerMessageState", () => {
         teamId: 1,
         name: "Storm",
         score: 0,
-        playerCount: 8,
       });
       expect(message(type, "@team", "@score")).toMatchObject({
         teamScoresChanged: true,
@@ -315,7 +297,6 @@ describe("applyServerMessageState", () => {
         teamId: 1,
         name: "Storm",
         score: 3,
-        playerCount: 8,
       });
       expect(message(type, "2", "1")).toMatchObject({ matchStarted: true });
       expect(state.teamScores).toHaveLength(1);
@@ -323,26 +304,18 @@ describe("applyServerMessageState", () => {
     },
   );
 
-  it("uses the caller's team factory only on insertion and preserves extra fields", () => {
-    const { state, message, createTeam } = harness();
+  it("adds a team once, then updates it in place", () => {
+    const { state, message } = harness();
     expect(
       message("MsgCTFAddTeam", "1", "\x02Storm", "Alice", "3"),
     ).toMatchObject({ teamScoresChanged: true, matchStarted: true });
-    expect(createTeam).toHaveBeenCalledOnce();
-    expect(state.teamScores[0]).toEqual({
-      teamId: 1,
-      name: "Storm",
-      score: 3,
-      playerCount: 0,
-    });
-    state.teamScores[0].playerCount = 8;
+    expect(state.teamScores).toEqual([{ teamId: 1, name: "Storm", score: 3 }]);
+    const team = state.teamScores[0];
     message("MsgSiegeAddTeam", "1", "Defenders", "1");
-    expect(state.teamScores[0]).toMatchObject({
-      name: "Defenders",
-      score: 3,
-      playerCount: 8,
-    });
-    expect(createTeam).toHaveBeenCalledOnce();
+    expect(state.teamScores).toEqual([
+      { teamId: 1, name: "Defenders", score: 3 },
+    ]);
+    expect(state.teamScores[0]).toBe(team);
   });
 
   it.each(["MsgCnHAddTeam", "MsgHuntAddTeam"])(
@@ -357,11 +330,11 @@ describe("applyServerMessageState", () => {
   );
 
   it("rejects invalid add-team identities and retains an existing score on malformed input", () => {
-    const { state, message, createTeam } = harness();
+    const { state, message } = harness();
     expectNoEffects(message("MsgCnHAddTeam", "0", "Observers", "0"));
     expectNoEffects(message("MsgCnHAddTeam", "bad", "Storm", "0"));
-    expect(createTeam).not.toHaveBeenCalled();
-    state.teamScores.push({ teamId: 1, name: "Old", score: 9, playerCount: 4 });
+    expect(state.teamScores).toEqual([]);
+    state.teamScores.push({ teamId: 1, name: "Old", score: 9 });
     message("MsgCTFAddTeam", "1", "Storm", "<At Base>", "bad");
     expect(state.teamScores[0]).toMatchObject({
       name: "Storm",
@@ -378,7 +351,6 @@ describe("applyServerMessageState", () => {
       teamId: 2,
       name: "Inferno",
       score: 0,
-      playerCount: 4,
     });
     message("MsgCTFFlagTaken", "@actor", "1", "@team");
     expect(state.flags.get(2)).toMatchObject({

@@ -489,14 +489,28 @@ export class DemoRecorder {
   private writeEntry(entry: DemoStreamEntry): void {
     const writer = this.writer;
     if (!writer || this.capped) return;
-    if (this.joinGameOver?.apply(entry)) {
-      log.info(
-        {
-          address: this.opts.address,
-          atMs: this.moveCount * DEMO_TICK_MS,
-        },
-        "Rewrote a welcome page that would leave Tribes2.exe on the debrief screen",
-      );
+    const outcome = this.joinGameOver?.apply(entry);
+    if (outcome) {
+      const context = {
+        address: this.opts.address,
+        atMs: this.moveCount * DEMO_TICK_MS,
+      };
+      if (outcome === "rewritten") {
+        log.info(
+          context,
+          "Rewrote a welcome page that would leave Tribes2.exe on the debrief screen",
+        );
+      } else if (outcome === "left") {
+        log.warn(
+          context,
+          "Left a welcome page in place: Tribes2.exe playback will stay on the debrief screen",
+        );
+      } else {
+        log.warn(
+          context,
+          "Stopped checking for welcome pages: the stream didn't parse",
+        );
+      }
     }
     try {
       writer.writeEntry(entry);

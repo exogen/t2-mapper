@@ -19,13 +19,15 @@ import { hasGameOverAnnouncement, isRealMatchStart } from "./matchEvents";
 import { assertDemoBlockParsed } from "./demoParseError";
 import { GeneratorTimeline } from "./generatorTimeline";
 import { parseDemoValues } from "./demoStreaming";
-import { isServerMessageCommand } from "../../relay/serverMessageDecode";
 import {
   applyServerMessageState,
   type ServerMessageRosterEntry,
   type ServerMessageTeamScore,
 } from "../../relay/serverMessageState";
-import { getServerNameFromMessage } from "./serverMessageMetadata";
+import {
+  getServerNameFromMessage,
+  isServerMessageCommand,
+} from "../../relay/serverMessageDecode";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 
 const log = createLogger("demoTimelineScanner");
@@ -173,7 +175,7 @@ export async function scanDemoTimelineParser(
   const registry = parser.getRegistry();
   const parsedDemoValues = parseDemoValues(initialBlock.demoValues);
   const rosterState = {
-    flags: new Map(),
+    flags: new Map(parsedDemoValues.flags.map((flag) => [flag.teamId, flag])),
     playerIdentity: { scope: "demo", generations: new Map<number, number>() },
     playerRoster: new Map<number, ServerMessageRosterEntry>(
       parsedDemoValues.playerRoster,
@@ -389,7 +391,6 @@ export async function scanDemoTimelineParser(
             args,
             (arg) => resolveNetString(arg, netStrings),
             rosterState,
-            (entry) => entry,
           );
         }
         if (

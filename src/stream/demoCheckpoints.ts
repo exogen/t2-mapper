@@ -5,9 +5,10 @@ import { TICK_DURATION_MS } from "./streamHelpers";
 
 // New writes use this version. Raise the minimum for incompatible state
 // changes, or when older sidecars would restore wrong state (v12 holds sensor
-// group 0 until the recorder spawns; 13 seeds it from the start block).
-export const DEMO_CHECKPOINT_VERSION = 13;
-const MIN_SUPPORTED_CHECKPOINT_VERSION = 13;
+// group 0 until the recorder spawns; 13 seeds it from the start block; 14
+// keeps connection state in one ConnectionState).
+export const DEMO_CHECKPOINT_VERSION = 14;
+const MIN_SUPPORTED_CHECKPOINT_VERSION = 14;
 export const DEMO_CHECKPOINT_SUFFIX = ".checkpoints.json";
 const CHECKPOINT_INTERVAL_TICKS = (12 * 60 * 1000) / TICK_DURATION_MS;
 

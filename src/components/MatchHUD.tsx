@@ -98,6 +98,18 @@ function teamColor(
   return rgbString(color.color);
 }
 
+/**
+ * Mission types scored 100 per flag capture. TacoServer's LCTF and Spawn
+ * CtF send CTFGame as their class, for the client's objective HUD, so they
+ * arrive as CTF; LCTF and SCtF cover a server that sends the real class.
+ */
+const CAPTURE_SCORED_MISSION_TYPES = new Set([
+  "CTF",
+  "PracticeCTF",
+  "LCTF",
+  "SCtF",
+]);
+
 function displayedScore(score: number, competitionScores: boolean) {
   return competitionScores ? Math.floor(score / 100) : score;
 }
@@ -439,7 +451,9 @@ export function MatchHUD({
   const { observerTeamColors, scoreStyle } = useSettings();
   const missionType = useMissionType();
   const competitionScores =
-    scoreStyle === "competition" && missionType === "CTF";
+    scoreStyle === "competition" &&
+    missionType != null &&
+    CAPTURE_SCORED_MISSION_TYPES.has(missionType);
   if (variant === "classic" && !teamScores?.length) return null;
   // Sort: friendly team first (if known), then by teamId.
   const sorted = [...(teamScores ?? [])].sort((a, b) => {

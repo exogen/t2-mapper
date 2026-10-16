@@ -26,11 +26,10 @@ const gameBasePath = path.resolve(dirname, "..", "docs", "base");
 /** Private-member access for probing; mirrors the real field types. */
 interface SessionInternals {
   connection: GameConnection | null;
-  watchState: Pick<WatchStateAccumulator, "resolveNetString"> & {
-    targetRenderFlags: Map<number, number>;
-    targetNames: Map<number, string>;
-    targetTeams: Map<number, number>;
-  };
+  watchState: Pick<
+    WatchStateAccumulator,
+    "resolveNetString" | "getTargetEntries"
+  >;
   handleResponderEvent: (data: Record<string, unknown>) => void;
 }
 
@@ -82,18 +81,18 @@ internals.handleResponderEvent = (data) => {
 session.start();
 
 const flagName = (id: number) => {
-  const ws = internals.watchState;
-  const team = ws.targetTeams.get(id);
-  return `target ${id} "${ws.targetNames.get(id) ?? "?"}" sensorGroup=${team}`;
+  const entry = internals.watchState
+    .getTargetEntries()
+    .find((target) => target.targetId === id);
+  return `target ${id} "${entry?.name ?? "?"}" sensorGroup=${entry?.sensorGroup}`;
 };
 
 /** Flag-marked target ids (renderFlags bit 0x2). */
 function flagTargets(): number[] {
-  const out: number[] = [];
-  for (const [id, flags] of internals.watchState.targetRenderFlags) {
-    if (flags & 0x2) out.push(id);
-  }
-  return out.sort((a, b) => a - b);
+  return internals.watchState
+    .getTargetEntries()
+    .filter((target) => ((target.targetData ?? 0) & 0x2) !== 0)
+    .map((target) => target.targetId);
 }
 
 const startedAt = Date.now();
@@ -118,11 +117,12 @@ const timer = setInterval(async () => {
   // Control group: a couple of non-flag team targets (players/assets have
   // canObserve datablocks) to separate the canObserve gate from the
   // sensor-group gate.
-  const ws = internals.watchState;
   const controls: number[] = [];
-  for (const [id, group] of ws.targetTeams) {
+  const targets = internals.watchState.getTargetEntries();
+  for (const { targetId, sensorGroup } of targets) {
     if (controls.length >= 3) break;
-    if ((group === 1 || group === 2) && !flags.includes(id)) controls.push(id);
+    if ((sensorGroup === 1 || sensorGroup === 2) && !flags.includes(targetId))
+      controls.push(targetId);
   }
   for (const id of [...flags, ...controls]) {
     probed.add(id);
