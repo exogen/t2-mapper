@@ -80,6 +80,7 @@ export interface EngineStoreState {
     recording: StreamRecording | null,
     demoBuffer?: ArrayBuffer | null,
   ): void;
+  refreshRecordingDuration(recording: StreamRecording): void;
   setDemoBuffer(recording: StreamRecording, demoBuffer: ArrayBuffer): void;
   setDownloadComplete(complete: boolean): void;
   seekPlayback(timeSec: number): void;
@@ -183,6 +184,7 @@ const initialState: Omit<
   | "clearRuntime"
   | "applyRuntimeBatch"
   | "setRecording"
+  | "refreshRecordingDuration"
   | "setDemoBuffer"
   | "setDownloadComplete"
   | "seekPlayback"
@@ -376,6 +378,15 @@ export const engineStore = createStore<EngineStoreState>()(
       }));
     },
 
+    refreshRecordingDuration(recording) {
+      set((state) => {
+        if (state.playback.recording !== recording) return state;
+        const durationMs = Math.max(0, recording.duration * 1000);
+        if (durationMs === state.playback.durationMs) return state;
+        return { playback: { ...state.playback, durationMs } };
+      });
+    },
+
     setDemoBuffer(recording, demoBuffer) {
       set((state) =>
         state.playback.recording === recording && recording.source === "demo"
@@ -395,7 +406,11 @@ export const engineStore = createStore<EngineStoreState>()(
       set((state) => {
         if (!state.playback.recording || !Number.isFinite(timeSec))
           return state;
-        const target = clamp(timeSec, 0, state.playback.durationMs / 1000);
+        // With no header duration, the total grows as bytes arrive. Preserve
+        // timestamp links beyond that prefix until the actual end is known.
+        const target = state.playback.downloadComplete
+          ? clamp(timeSec, 0, state.playback.durationMs / 1000)
+          : Math.max(0, timeSec);
         const playback: PlaybackSliceState = {
           ...state.playback,
           status: "seeking",
@@ -442,7 +457,9 @@ export const engineStore = createStore<EngineStoreState>()(
           ...state,
           playback: {
             ...state.playback,
-            seekTime: pending,
+            seekTime: state.playback.downloadComplete
+              ? clamp(pending, 0, state.playback.durationMs / 1000)
+              : pending,
             pendingSeekSec: null,
           },
         };

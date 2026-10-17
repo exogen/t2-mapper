@@ -22,6 +22,48 @@ afterEach(() => {
 });
 
 describe("seek transport state", () => {
+  it("refreshes a growing duration without resetting the active transport", () => {
+    let duration = 0;
+    demo = {
+      ...recording(),
+      get duration() {
+        return duration;
+      },
+    };
+    state().setRecording(demo);
+    state().setPlaybackStatus("playing");
+    state().setPlaybackRate(2);
+    const previous = state().playback;
+
+    duration = 12.032;
+    state().refreshRecordingDuration(demo);
+
+    expect(state().playback).toEqual({ ...previous, durationMs: 12_032 });
+    state().seekPlayback(10);
+    expect(state().playback).toMatchObject({
+      seekTime: 10,
+      resumeAfterSeek: "playing",
+      rate: 2,
+    });
+    const seeking = state().playback;
+    duration = 20;
+    state().refreshRecordingDuration(demo);
+    expect(state().playback).toEqual({ ...seeking, durationMs: 20_000 });
+  });
+
+  it("rejects duration updates from an unloaded or replaced recording", () => {
+    state().setRecording(null);
+    const unloaded = state().playback;
+    state().refreshRecordingDuration(demo);
+    expect(state().playback).toBe(unloaded);
+
+    state().setRecording(recording());
+    const replacement = state().playback;
+    demo.duration = 123;
+    state().refreshRecordingDuration(demo);
+    expect(state().playback).toBe(replacement);
+  });
+
   it.each(["playing", "paused", "stopped"] as const)(
     "suspends %s playback until reconstruction completes",
     (status) => {
@@ -133,6 +175,47 @@ describe("seek transport state", () => {
     });
     state().completePlaybackSeek(demo, seekNonce);
     expect(state().playback.status).toBe("playing");
+  });
+
+  it("retains a timestamp beyond the growing duration until its data arrives", () => {
+    demo.duration = 2;
+    state().refreshRecordingDuration(demo);
+    state().setDownloadComplete(false);
+    demoLoadStore.setState({ downloadedSec: 2 });
+    state().seekPlayback(500);
+    const { seekNonce } = state().playback;
+    expect(state().playback).toMatchObject({
+      status: "seeking",
+      seekTime: 500,
+      pendingSeekSec: 500,
+    });
+    demo.duration = 600;
+    state().refreshRecordingDuration(demo);
+    demoLoadStore.setState({ downloadedSec: 600 });
+    state().fulfillPendingSeek();
+    expect(state().playback).toMatchObject({
+      status: "seeking",
+      seekTime: 500,
+      pendingSeekSec: null,
+      seekNonce,
+    });
+  });
+
+  it("clamps a pending timestamp when a short recording finishes downloading", () => {
+    demo.duration = 2;
+    state().refreshRecordingDuration(demo);
+    state().setDownloadComplete(false);
+    demoLoadStore.setState({ downloadedSec: 2 });
+    state().seekPlayback(500);
+    demo.duration = 200.032;
+    state().refreshRecordingDuration(demo);
+    state().setDownloadComplete(true);
+    state().fulfillPendingSeek();
+    expect(state().playback).toMatchObject({
+      status: "seeking",
+      seekTime: 200.032,
+      pendingSeekSec: null,
+    });
   });
 
   it("replaces a downloading target with an available target", () => {

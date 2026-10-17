@@ -1,4 +1,8 @@
-import { BlockTypeMove, BlockTypePacket, DemoParser } from "t2-demo-parser";
+import {
+  BlockTypeMove,
+  BlockTypePacket,
+  type DemoParser,
+} from "t2-demo-parser";
 import type {
   NetStringEventData,
   RemoteCommandEventData,
@@ -17,6 +21,7 @@ import { GhostMessage } from "./entityClassification";
 import { createLogger } from "../logger";
 import { hasGameOverAnnouncement, isRealMatchStart } from "./matchEvents";
 import { assertDemoBlockParsed } from "./demoParseError";
+import { loadDemoParser } from "./loadDemoParser";
 import { GeneratorTimeline } from "./generatorTimeline";
 import { parseDemoValues } from "./demoStreaming";
 import {
@@ -146,8 +151,10 @@ export async function scanDemoTimeline(
   signal?: AbortSignal,
   onServerName?: (name: string) => void,
 ): Promise<TimelineScanResult> {
+  signal?.throwIfAborted();
+  const parser = await loadDemoParser(new Uint8Array(buffer));
   return scanDemoTimelineParser(
-    new DemoParser(new Uint8Array(buffer)),
+    parser,
     recorderName,
     onProgress,
     signal,

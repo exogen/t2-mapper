@@ -75,7 +75,10 @@ export type SessionRecorderOptions = Pick<
 
 export interface DemoRecordingStats {
   enabled: boolean;
-  /** Live recorders by state (finalizing = in-flight finalize count). */
+  /**
+   * Live recorders by state, naming counted as buffering (finalizing =
+   * in-flight finalize count).
+   */
   buffering: number;
   recording: number;
   finalizing: number;
@@ -147,7 +150,8 @@ export class DemoCoordinator {
     let buffering = 0;
     let recording = 0;
     for (const recorder of this.recorders) {
-      if (recorder.state === "buffering") buffering++;
+      if (recorder.state === "buffering" || recorder.state === "naming")
+        buffering++;
       else if (recorder.state === "recording") recording++;
     }
     return {

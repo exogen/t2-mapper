@@ -185,6 +185,22 @@ function ctfHud(firstFlag: string, secondFlag: string) {
   ];
 }
 
+describe("recording duration", () => {
+  it("uses the known header duration before the whole demo is buffered", () => {
+    const { parser } = fixture([move()]);
+    expect(createRecordingFromParser(parser).duration).toBe(120);
+  });
+
+  it("tracks buffered ticks when the recording header has no duration", () => {
+    const { parser } = fixture(Array.from({ length: 10 }, move));
+    parser.header.demoLengthMs = 0;
+    const recording = createRecordingFromParser(parser);
+    expect(recording.duration).toBe(0.32);
+    Object.defineProperty(parser, "bufferedMoveTicks", { value: 100 });
+    expect(recording.duration).toBe(3.2);
+  });
+});
+
 describe("initial objective HUD flag state", () => {
   it("restores both flags from the saved HUD before any flag messages arrive", () => {
     const { parser } = fixture(

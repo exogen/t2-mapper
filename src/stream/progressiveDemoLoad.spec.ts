@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   scan: vi.fn(),
   recording: null as StreamRecording | null,
   complete: false,
+  headerDuration: 100,
+  bufferedSec: 2,
 }));
 vi.mock("t2-demo-parser", () => ({
   DemoParser: class {
@@ -51,12 +53,16 @@ const state = () => engineStore.getState();
 function recording() {
   return {
     source: "demo",
-    duration: 100,
+    get duration() {
+      return mocks.headerDuration || mocks.bufferedSec;
+    },
     streamingPlayback: {
       get streamComplete() {
         return mocks.complete;
       },
-      bufferedSec: 2,
+      get bufferedSec() {
+        return mocks.bufferedSec;
+      },
       findSceneReadyTime() {
         return 0;
       },
@@ -71,6 +77,8 @@ beforeEach(() => {
   unloadDemo();
   vi.clearAllMocks();
   mocks.complete = false;
+  mocks.headerDuration = 100;
+  mocks.bufferedSec = 2;
   mocks.recording = recording();
   mocks.finish.mockImplementation(() => {
     mocks.complete = true;
@@ -108,6 +116,63 @@ async function installPrefix() {
 }
 
 describe("installed progressive demos", () => {
+  it("publishes a growing fallback duration and the exact final fractional tail", async () => {
+    mocks.headerDuration = 0;
+    const { loading, controller } = await installPrefix();
+    expect(state().playback.durationMs).toBe(2_000);
+    state().setPlaybackStatus("playing");
+    state().setPlaybackRate(2);
+    const { seekNonce } = state().playback;
+
+    mocks.bufferedSec = 5.12;
+    controller.enqueue(new Uint8Array([4]));
+    await vi.waitFor(() => expect(state().playback.durationMs).toBe(5_120));
+    expect(state().playback).toMatchObject({
+      status: "playing",
+      rate: 2,
+      seekNonce,
+    });
+    state().seekPlayback(4);
+    expect(state().playback.seekTime).toBe(4);
+
+    mocks.bufferedSec = 5.28;
+    controller.enqueue(new Uint8Array([5]));
+    await vi.waitFor(() => expect(mocks.push).toHaveBeenCalledTimes(2));
+    expect(state().playback.durationMs).toBe(5_120);
+    mocks.finish.mockImplementation(() => {
+      mocks.complete = true;
+      mocks.bufferedSec = 5.312;
+    });
+    controller.close();
+    await loading;
+    expect(state().playback.durationMs).toBe(5_312);
+    expect(state().playback.downloadComplete).toBe(true);
+  });
+
+  it.each(["network failure", "replacement failure"])(
+    "publishes the final fallback duration after %s",
+    async (reason) => {
+      mocks.headerDuration = 0;
+      const { loading, controller } = await installPrefix();
+      mocks.finish.mockImplementation(() => {
+        mocks.complete = true;
+        mocks.bufferedSec = 2.048;
+      });
+      if (reason === "network failure") {
+        controller.error(new Error("connection lost"));
+      } else {
+        vi.mocked(fetch).mockRejectedValueOnce(new Error("offline"));
+        await loadDemoUrl("second.rec");
+      }
+      await loading;
+      expect(state().playback).toMatchObject({
+        recording: mocks.recording,
+        durationMs: 2_048,
+        downloadComplete: true,
+      });
+    },
+  );
+
   it("keeps a cancelled prefix playable and fulfills its seek if the replacement download fails", async () => {
     const { loading, cancel } = await installPrefix();
     state().setPlaybackStatus("playing");

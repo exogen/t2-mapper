@@ -4,7 +4,7 @@ import {
   BlockTypeInfo,
   BlockTypeMove,
   BlockTypePacket,
-  DemoParser,
+  type DemoParser,
 } from "t2-demo-parser";
 import type { ParsedData } from "t2-demo-parser";
 import {
@@ -29,6 +29,7 @@ import type { StreamRecording, StreamSnapshot, TeamScore } from "./types";
 import { StreamEngine, type MutableEntity } from "./StreamEngine";
 import { flagReturnDelaySec } from "./flagReturnTimer";
 import { assertDemoBlockParsed } from "./demoParseError";
+import { loadDemoParser } from "./loadDemoParser";
 import { collisionState } from "../collision/collisionContext";
 import { decodeFlagStatus } from "../../relay/serverMessageDecode";
 import { refreshFlagCarriers, type FlagState } from "../../relay/flagState";
@@ -1574,31 +1575,19 @@ export class DemoStreamAdapter extends StreamEngine {
 export async function createDemoStreamingRecording(
   data: ArrayBuffer,
   options: DemoStreamingOptions & {
-    /** Recover the playable prefix after an interrupted download. */
+    /** Recover unfinished recordings or interrupted downloads (default: true). */
     allowPartial?: boolean;
   } = {},
 ): Promise<StreamRecording> {
-  let parser = new DemoParser(new Uint8Array(data));
-  try {
-    await parser.load();
-  } catch (error) {
-    if (!options.allowPartial) throw error;
-    // Normal loads keep async decompression. For a truncated compressed
-    // stream, use the same recovery as progressive playback: finish() keeps
-    // complete blocks and bounds-checks the incomplete tail. Invalid headers
-    // and corrupt input still fail during load().
-    parser = new DemoParser(new Uint8Array(data), { incremental: true });
-    await parser.load();
-    parser.finish();
-  }
+  const parser = await loadDemoParser(new Uint8Array(data), options);
   return createRecordingFromParser(parser, options);
 }
 
 /**
  * Build a recording around an already-load()ed parser — the progressive
  * download path constructs an incremental parser from the first chunks
- * and keeps push()ing while this recording is already playing. Duration
- * comes from the header, so it is exact before the download finishes.
+ * and keeps push()ing while this recording is already playing. Unfinished
+ * recordings have no header duration; their duration grows with buffered ticks.
  */
 export function createRecordingFromParser(
   parser: DemoParser,
@@ -1612,7 +1601,11 @@ export function createRecordingFromParser(
 
   return {
     source: "demo",
-    duration: header.demoLengthMs / 1000,
+    get duration() {
+      return header.demoLengthMs > 0
+        ? header.demoLengthMs / 1000
+        : playback.bufferedSec;
+    },
     missionName: initialBlock.missionName ?? null,
     gameType: info.missionType,
     serverDisplayName: playback.serverDisplayName,

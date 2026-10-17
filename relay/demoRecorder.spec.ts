@@ -90,13 +90,14 @@ describe("DemoRecorder", () => {
       matchStarted?: () => boolean;
       recordContext?: () => { pinned: boolean; watchers: number };
       maxBytes?: number;
+      serverInfo?: () => ServerInfo | undefined;
     } = {},
   ) {
     return new DemoRecorder({
       dir,
       address: serverInfo.address,
       getConnectSequence: () => CONNECT_SEQUENCE,
-      getServerInfo: () => serverInfo,
+      getServerInfo: overrides.serverInfo ?? (() => serverInfo),
       getServerIdentity:
         overrides.serverIdentity ??
         (() => ({
@@ -479,7 +480,7 @@ describe("DemoRecorder", () => {
     ]);
   });
 
-  it("returns null and keeps no file when finalized while buffering", async () => {
+  it("returns null and keeps no file when finalized before Phase1", async () => {
     const recorder = createRecorder();
     recorder.onPacket(buildPingPacket(1), false);
     const result = await recorder.finalize("test");
@@ -523,7 +524,7 @@ describe("DemoRecorder", () => {
     });
     recorder.onPacket(buildPingPacket(1), false);
     recorder.setMissionName("Katabatic");
-    // Peak during the recording (pre-flush samples are discarded as the
+    // Peak during the recording (pre-Phase1 samples are discarded as the
     // previous mission's), then dip before finalize.
     recorder.onPacket(buildPingPacket(2), false);
     players = 0;
@@ -613,16 +614,233 @@ describe("DemoRecorder", () => {
     });
   });
 
-  it("sidecar uses finalize-time stream identity; the file keeps flush-time values", async () => {
-    // Nothing known at flush (fresh session, MsgMissionDropInfo not yet
-    // received) — the stream names the server mid-recording.
+  it("waits after Phase1 for the stream to name the server, then records under that name", async () => {
+    const info = vi.spyOn(demoLog, "info").mockImplementation(() => {});
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      // Phase1 clears the epoch's stream name; MsgMissionDropInfo names
+      // the server seconds later (here across a minute boundary).
+      let identity: ServerIdentity = {};
+      const recorder = createRecorder({ serverIdentity: () => identity });
+      const advance = (ms: number) => {
+        time += ms;
+        vi.setSystemTime(time);
+      };
+      time = Date.UTC(2026, 7, 20, 9, 5, 50);
+      advance(0);
+      recorder.onPacket(buildPingPacket(1), false);
+      recorder.onMove();
+      recorder.setMissionName("Katabatic", 41);
+      expect(recorder.state).toBe("naming");
+      expect(recorder.partialPath).toBeNull();
+      expect(await fsp.readdir(dir)).toEqual([]);
+      expect(info).not.toHaveBeenCalledWith(
+        expect.anything(),
+        "Demo recording started",
+      );
+
+      advance(20_000);
+      // The session accepts the naming packet before applying it.
+      recorder.onPacket(buildPingPacket(2), false);
+      recorder.onMove();
+      identity = { name: "| the cut |", gameType: "LCTF" };
+      recorder.sampleRecordedState();
+      expect(recorder.state).toBe("recording");
+      // Stamped at Phase1 (09:05), not when the name arrived (09:06).
+      expect(path.basename(recorder.partialPath!)).toMatch(
+        /^the-cut_20260820T0905_katabatic_[0-9a-f]{6}\.rec\.partial$/,
+      );
+      expect(info).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: "demo_recording_started",
+          serverName: "| the cut |",
+          missionSequence: 41,
+          bufferedEntries: 4,
+        }),
+        "Demo recording started",
+      );
+      recorder.onPacket(buildPingPacket(3), false);
+
+      const result = await recorder.finalize("test");
+      const filename = path.basename(result!.path);
+      const { initialBlock, blocks } = await parseDemoFile(result!.path);
+      expect(
+        blocks.filter((b) => b.type === BlockTypePacket).map((b) => b.data),
+      ).toEqual([1, 2, 3].map(buildPingPacket));
+      expect(extractMissionInfo(initialBlock.demoValues)).toMatchObject({
+        serverDisplayName: "| the cut |",
+        missionType: "LCTF",
+        missionDisplayName: "Katabatic",
+        recordingDate: "Aug-20-2026 9:05AM",
+      });
+      const sidecar = JSON.parse(
+        await fsp.readFile(`${result!.path}.json`, "utf8"),
+      );
+      expect(sidecar).toMatchObject({
+        filename,
+        server: "| the cut |",
+        recordedAt: "2026-08-20T09:05:50.000Z",
+        games: [
+          { mission: "Katabatic", missionSequence: 41, gameType: "LCTF" },
+        ],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("falls back to the cached server name when the stream never names it", async () => {
+    const recorder = createRecorder({ serverIdentity: () => ({}) });
+    recorder.onPacket(buildPingPacket(1), false);
+    recorder.setMissionName("Katabatic", 41);
+    expect(recorder.state).toBe("naming");
+    // Slow datablock downloads outlast the caps on waiting for Phase1.
+    time += 60_000;
+    recorder.onPacket(buildPingPacket(2), false);
+    expect(recorder.state).toBe("naming");
+    time += 121_000;
+    recorder.onPacket(buildPingPacket(3), false);
+    expect(recorder.state).toBe("recording");
+
+    const result = await recorder.finalize("test");
+    expect(path.basename(result!.path)).toMatch(
+      /^the-cut_\d{8}T\d{4}_katabatic_[0-9a-f]{6}\.rec$/,
+    );
+    const { initialBlock, blocks } = await parseDemoFile(result!.path);
+    // Phase1's mission, not the cache's map (the pre-Phase1 fallback).
+    expect(initialBlock.missionName).toBe("Katabatic");
+    expect(extractMissionInfo(initialBlock.demoValues).serverDisplayName).toBe(
+      "| the cut |",
+    );
+    expect(
+      blocks.filter((b) => b.type === BlockTypePacket).map((b) => b.data),
+    ).toEqual([1, 2, 3].map(buildPingPacket));
+    const sidecar = JSON.parse(
+      await fsp.readFile(`${result!.path}.json`, "utf8"),
+    );
+    expect(sidecar).toMatchObject({
+      server: "| the cut |",
+      games: [{ mission: "Katabatic", missionSequence: 41 }],
+    });
+  });
+
+  it("flushes and keeps a recording finalized while waiting for the server name", async () => {
+    const recorder = createRecorder({ serverIdentity: () => ({}) });
+    recorder.onPacket(buildPingPacket(1), false);
+    recorder.setMissionName("Katabatic", 41);
+    recorder.onPacket(buildPingPacket(2), false);
+    recorder.onMove();
+    expect(recorder.state).toBe("naming");
+
+    const result = await recorder.finalize("disconnected");
+    expect(result).not.toBeNull();
+    expect(recorder.state).toBe("done");
+    const { header, initialBlock, blocks } = await parseDemoFile(result!.path);
+    expect(initialBlock.missionName).toBe("Katabatic");
+    expect(
+      blocks.filter((b) => b.type === BlockTypePacket).map((b) => b.data),
+    ).toEqual([buildPingPacket(1), buildPingPacket(2)]);
+    expect(header.demoLengthMs).toBe(32);
+    expect(extractMissionInfo(initialBlock.demoValues).serverDisplayName).toBe(
+      "| the cut |",
+    );
+    const sidecar = JSON.parse(
+      await fsp.readFile(`${result!.path}.json`, "utf8"),
+    );
+    expect(sidecar).toMatchObject({
+      server: "| the cut |",
+      durationMs: 32,
+      games: [{ mission: "Katabatic", missionSequence: 41 }],
+    });
+  });
+
+  it("keeps Phase1's mission while naming, taking only its sequence from a repeat", async () => {
     let identity: ServerIdentity = {};
     const recorder = createRecorder({ serverIdentity: () => identity });
     recorder.onPacket(buildPingPacket(1), false);
+    recorder.setMissionName("Katabatic");
+    recorder.setMissionName("Katabatic", 41);
+    recorder.setMissionName("Damnation", 42);
+    expect(recorder.state).toBe("naming");
+    recorder.onPacket(buildPingPacket(2), false);
+    identity = { name: "| the cut |" };
+    recorder.sampleRecordedState();
+    expect(recorder.state).toBe("recording");
+
+    const result = await recorder.finalize("test");
+    const { initialBlock } = await parseDemoFile(result!.path);
+    expect(initialBlock.missionName).toBe("Katabatic");
+    const sidecar = JSON.parse(
+      await fsp.readFile(`${result!.path}.json`, "utf8"),
+    );
+    expect(sidecar.games).toMatchObject([
+      { mission: "Katabatic", missionSequence: 41 },
+    ]);
+  });
+
+  it("writes nothing when aborted while naming", async () => {
+    const recorder = createRecorder({ serverIdentity: () => ({}) });
+    recorder.onPacket(buildPingPacket(1), false);
+    recorder.setMissionName("Katabatic", 41);
+    expect(recorder.state).toBe("naming");
+    await recorder.abort({ discardStranded: true });
+    expect(recorder.state).toBe("aborted");
+    expect(await recorder.finalize("test")).toBeNull();
+    expect(await fsp.readdir(dir)).toEqual([]);
+  });
+
+  it("resets the keep gates at Phase1, not when the name arrives", async () => {
+    let identity: ServerIdentity = {};
+    let players = 24;
+    let started = true;
+    const recorder = createRecorder({
+      minPlayers: 2,
+      playerCount: () => players,
+      matchStarted: () => started,
+      serverIdentity: () => identity,
+    });
+    // The previous mission's debrief: discarded at Phase1.
+    recorder.onPacket(buildPingPacket(1), false);
+    players = 0;
+    started = false;
+    recorder.setMissionName("Katabatic", 41);
+    expect(recorder.state).toBe("naming");
+    // This mission, before MsgMissionDropInfo: kept through the flush.
+    players = 3;
+    started = true;
+    recorder.onPacket(buildPingPacket(2), false);
+    players = 0;
+    started = false;
+    identity = { name: "| the cut |" };
+    recorder.sampleRecordedState();
+    expect(recorder.state).toBe("recording");
+
+    const result = await recorder.finalize("test");
+    expect(result).not.toBeNull();
+    const sidecar = JSON.parse(
+      await fsp.readFile(`${result!.path}.json`, "utf8"),
+    );
+    expect(sidecar.reason).toBe(
+      "session recording, peak 3 players, match started",
+    );
+  });
+
+  it("falls back to the address when neither stream nor cache names the server; the sidecar takes a later stream name", async () => {
+    let identity: ServerIdentity = {};
+    const recorder = createRecorder({
+      serverIdentity: () => identity,
+      serverInfo: () => undefined,
+    });
+    recorder.onPacket(buildPingPacket(1), false);
     time += 100;
     recorder.setMissionName("Katabatic", 41);
+    expect(recorder.state).toBe("naming");
+    // No MsgMissionDropInfo within the buffering caps.
+    time += 181_000;
+    recorder.onPacket(buildPingPacket(2), false);
+    expect(recorder.state).toBe("recording");
     identity = { name: "| the cut |", gameType: "LCTF" };
-    for (let i = 2; i <= 5; i++) {
+    for (let i = 3; i <= 5; i++) {
       recorder.onPacket(buildPingPacket(i), false);
       time += 100;
     }
@@ -631,6 +849,9 @@ describe("DemoRecorder", () => {
     recorder.setMissionName("Katabatic", 42);
 
     const result = await recorder.finalize("test");
+    expect(path.basename(result!.path)).toMatch(
+      /^45-76-24-91-28000_\d{8}T\d{4}_katabatic_[0-9a-f]{6}\.rec$/,
+    );
     const { initialBlock } = await parseDemoFile(result!.path);
     const info = extractMissionInfo(initialBlock.demoValues);
     // In-file $DemoValues are baked at flush: address fallback, no type.
@@ -655,7 +876,11 @@ describe("DemoRecorder", () => {
 
   it("records the mission's tournament mode on the sidecar game", async () => {
     const recorder = createRecorder({
-      serverIdentity: () => ({ gameType: "CTF", tournament: true }),
+      serverIdentity: () => ({
+        name: serverInfo.name,
+        gameType: "CTF",
+        tournament: true,
+      }),
     });
     recorder.onPacket(buildPingPacket(1), false);
     recorder.setMissionName("Katabatic");
@@ -670,7 +895,7 @@ describe("DemoRecorder", () => {
     expect(sidecar.games[0].tournament).toBe(true);
   });
 
-  it("ignores pre-flush start signals (they belong to the prior mission)", async () => {
+  it("ignores pre-Phase1 start signals (they belong to the prior mission)", async () => {
     // Connecting into the previous mission's intermission debrief must
     // not mark the newly recorded mission's match as started.
     let started = true;
@@ -687,7 +912,7 @@ describe("DemoRecorder", () => {
     expect(recorder.state).toBe("aborted");
   });
 
-  it("ignores pre-flush player samples (previous mission's debrief)", async () => {
+  it("ignores pre-Phase1 player samples (previous mission's debrief)", async () => {
     // Connecting into a crowded intermission must not let its peak
     // player count pass the keep gate for a near-empty next mission.
     let count = 24;

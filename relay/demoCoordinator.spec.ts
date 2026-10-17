@@ -218,10 +218,11 @@ describe("demo retention at match end", () => {
     coordinator.observeMission(active, address, controls(true));
     active.onPacket(new Uint8Array([1, 2, 3]), true);
     active.setMissionName("Katabatic", 1);
-    const folder = path.dirname(active.partialPath!);
     now.mockReturnValue(startedAt + 10_000);
     coordinator.finalize(active, "disconnected");
     await vi.waitFor(() => expect(coordinator.getStats().finalizing).toBe(0));
+    // Disconnected before the stream named the server: finalize flushed it.
+    const folder = path.dirname(active.partialPath!);
     expect(
       JSON.parse(await fs.readFile(path.join(folder, "policy.json"), "utf8")),
     ).toMatchObject({ inactiveSince: startedAt + 10_000, complete: false });

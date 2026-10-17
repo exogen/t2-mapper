@@ -3477,6 +3477,29 @@ describe("WatchSession demo recording", () => {
     });
   }
 
+  /** MsgMissionDropInfo: the stream names the server (seconds after Phase1). */
+  function fireDropInfo(
+    session: any,
+    conn: FakeGameConnection,
+    missionName = "Katabatic",
+    serverName = "Test Server",
+  ): void {
+    session.parserKit.packetParser.parsePacket = () => ({
+      gameState: {},
+      ghosts: [],
+      events: [
+        {
+          parsedData: {
+            type: "RemoteCommandEvent",
+            funcName: "ServerMessage",
+            args: ["MsgMissionDropInfo", "", missionName, "CTF", serverName],
+          },
+        },
+      ],
+    });
+    conn.emit("packet", new Uint8Array([9, 9, 9]));
+  }
+
   function fireEndGhosting(session: any): void {
     session.handleResponderEvent({
       type: "GhostingMessageEvent",
@@ -3548,6 +3571,7 @@ describe("WatchSession demo recording", () => {
       connections[0].setStatus("connected");
       firePhase1(session, "Katabatic");
       session.watchState.matchStarted = true;
+      fireDropInfo(session, connections[0]);
       const original = session.recorder;
       const remote = (funcName: string, ...args: string[]) => ({
         parsedData: { type: "RemoteCommandEvent", funcName, args },
@@ -3601,6 +3625,7 @@ describe("WatchSession demo recording", () => {
           connections[1].setStatus("connected");
           firePhase1(session, "Katabatic");
           session.watchState.matchStarted = true;
+          fireDropInfo(session, connections[1]);
           await vi.waitFor(() => expect(original.state).toBe("done"));
           expect(finalized).toEqual([]);
           expect(
@@ -3699,7 +3724,16 @@ describe("WatchSession demo recording", () => {
     expect(manager.getStatusSummary()[0].recording).toBe(true);
 
     firePhase1(session, "Katabatic");
+    // Phase1 alone opens no file: the stream hasn't named the server yet.
+    expect(session.recorder.state).not.toBe("recording");
+    expect(session.recorder.partialPath).toBeNull();
+    expect(manager.getStatusSummary()[0].recording).toBe(true);
+
+    fireDropInfo(session, connections[0]);
     expect(session.recorder.state).toBe("recording");
+    expect(path.basename(session.recorder.partialPath)).toMatch(
+      /^test-server_\d{8}T\d{4}_katabatic_[0-9a-f]{6}\.rec\.partial$/,
+    );
     expect(manager.getStatusSummary()[0].recording).toBe(true);
     const statuses = ws
       .jsonMessages()
@@ -3910,9 +3944,14 @@ describe("WatchSession demo recording", () => {
     expect(connections).toHaveLength(1);
     expect(session.recorder).toBe(recorder);
 
-    // The new mission's Phase1 flushes the buffer under its name.
+    // The new mission's Phase1 starts the name wait; its MsgMissionDropInfo
+    // flushes the buffer under both names.
     firePhase1(session, "Damnation");
+    fireDropInfo(session, connections[0], "Damnation");
     expect(recorder.state).toBe("recording");
+    expect(path.basename(recorder.partialPath)).toMatch(
+      /^test-server_\d{8}T\d{4}_damnation_/,
+    );
 
     manager.shutdown();
   });
@@ -3968,6 +4007,7 @@ describe("WatchSession demo recording", () => {
     const session = getSession(manager);
     connections[0].setStatus("connected");
     firePhase1(session, "Katabatic");
+    fireDropInfo(session, connections[0]);
     expect(session.recorder.state).toBe("recording");
 
     // Empty roster the whole session → peak 0 < 2 → dropped at the end.

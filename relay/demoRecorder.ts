@@ -1,9 +1,11 @@
 /**
  * Per-connection demo recording lifecycle. Packets are buffered in
- * memory until MissionStartPhase1 supplies the mission name (needed
- * up-front in the initial block), then stream through DemoFileWriter,
- * starting after the T2CSRI handshake (demoStart.ts), with a welcome page
- * that would strand Tribes2.exe playback rewritten (joinGameOver.ts).
+ * memory until MissionStartPhase1 supplies the mission name and the
+ * server names itself (MsgMissionDropInfo, seconds later), both needed
+ * up-front in the initial block and the filename, then stream through
+ * DemoFileWriter, starting after the T2CSRI handshake (demoStart.ts), with
+ * a welcome page that would strand Tribes2.exe playback rewritten
+ * (joinGameOver.ts).
  * Move blocks are the connection's own moves, one per 32 ms client tick,
  * in order with its packets and send markers — they are the playback
  * clock.
@@ -27,20 +29,30 @@ import type { ServerInfo } from "./types.js";
 import { DemoPlayers, type DemoPlayerRoster } from "./demoPlayers.js";
 import { JoinGameOverFilter } from "./joinGameOver.js";
 
+/**
+ * "buffering" holds the stream in memory until MissionStartPhase1, and
+ * "naming" holds it from there until the server names itself.
+ */
 export type RecorderState =
-  "buffering" | "recording" | "finalizing" | "done" | "aborted";
+  "buffering" | "naming" | "recording" | "finalizing" | "done" | "aborted";
 
 /** Give up waiting for MissionStartPhase1 past these buffering caps. */
 const BUFFER_MAX_MS = 30_000;
 const BUFFER_MAX_BYTES = 2 * 1024 * 1024;
+/**
+ * Give up waiting for the server to name itself this long after Phase1, or
+ * past BUFFER_MAX_BYTES. MsgMissionDropInfo comes at the drop, after the
+ * datablocks: 1:15 after Phase1 at the slowest in the corpus.
+ */
+const NAME_WAIT_MAX_MS = 3 * 60_000;
 /** Deflate/fs backlog beyond this means the disk stalled — strand. */
 const MAX_STREAM_BACKLOG = 16 * 1024 * 1024;
 
 /**
  * Who we're connected to, as told by the server itself: name and
- * mission type from MsgMissionDropInfo/MsgLoadInfo, sticky across
- * mission-cycle reconnects. The server-list query only ever seeds
- * fields the stream hasn't spoken for yet (`mod` has no stream source).
+ * mission type from MsgMissionDropInfo/MsgLoadInfo. The server-list query
+ * only ever seeds the mission type until the stream speaks for it, and
+ * `mod`, which has no stream source; the name is the stream's alone.
  */
 export interface ServerIdentity {
   name?: string;
@@ -58,13 +70,14 @@ export interface DemoRecorderOptions {
   address: string;
   getConnectSequence: () => number;
   /**
-   * Used only for the buffering-cap fallback mission name — never for
-   * demo metadata (that comes from getServerIdentity).
+   * Used only for fallbacks past the buffering caps: the mission name
+   * when Phase1 never comes, and the server name when the stream never
+   * names the server. Demo metadata comes from getServerIdentity.
    */
   getServerInfo: () => ServerInfo | undefined;
   /**
-   * Sampled at flush for the in-file $DemoValues and again at finalize
-   * for the sidecar (by then the stream has named the server).
+   * Sampled to open the file once the stream has named the server, for
+   * the in-file $DemoValues, and again at finalize for the sidecar.
    */
   getServerIdentity: () => ServerIdentity;
   /** Current non-observer player count (sampled; the peak decides keep). */
@@ -219,6 +232,22 @@ export class DemoRecorder {
     mod: string;
     recorder: string;
   } | null = null;
+  /**
+   * Phase1's mission while "naming", for the file the stream's server
+   * name opens.
+   */
+  private pending: {
+    mission: string;
+    missionSequence?: number;
+    /**
+     * When Phase1 arrived: the recording's date.
+     */
+    date: Date;
+    /**
+     * Phase1 on the buffering clock, for NAME_WAIT_MAX_MS.
+     */
+    at: number;
+  } | null = null;
   private _failure: string | null = null;
   private strandedClose: Promise<void> | undefined;
 
@@ -229,6 +258,13 @@ export class DemoRecorder {
 
   get state(): RecorderState {
     return this._state;
+  }
+
+  /**
+   * The stream goes to the queue, not yet to a file.
+   */
+  private get holding(): boolean {
+    return this._state === "buffering" || this._state === "naming";
   }
 
   private get qualificationFailure():
@@ -246,7 +282,10 @@ export class DemoRecorder {
     return this._failure;
   }
 
-  /** On-disk spool while recording (null before Phase1 / after close). */
+  /**
+   * On-disk spool while recording (null before the file opens / after
+   * close).
+   */
   get partialPath(): string | null {
     return this.writer?.partialPath ?? null;
   }
@@ -265,21 +304,29 @@ export class DemoRecorder {
    * packets get the Packet block alone.
    */
   onPacket(data: Uint8Array, dispatched: boolean): boolean {
-    if (
-      this.capped ||
-      (this._state !== "buffering" && this._state !== "recording")
-    )
+    if (this.capped || (!this.holding && this._state !== "recording"))
       return false;
     this.sample();
     // Always copy: the input is a view over the dgram pool buffer, and
     // both the queue and the deflate stream hold bytes past this call.
     const copy = data.slice();
-    if (this._state === "buffering") {
+    if (this.holding) {
       const now = this.opts.now?.() ?? Date.now();
       this.t0 ??= now;
       this.queue.push({ kind: "packet", data: copy, dispatched });
       this.queuedBytes += copy.length;
-      if (
+      if (this.pending) {
+        if (
+          now - this.pending.at > NAME_WAIT_MAX_MS ||
+          this.queuedBytes > BUFFER_MAX_BYTES
+        ) {
+          log.warn(
+            { address: this.opts.address, mission: this.pending.mission },
+            "Server never named itself within buffering caps; recording under its listed name or address",
+          );
+          this.startPending();
+        }
+      } else if (
         now - this.t0 > BUFFER_MAX_MS ||
         this.queuedBytes > BUFFER_MAX_BYTES
       ) {
@@ -296,11 +343,15 @@ export class DemoRecorder {
     return true;
   }
 
-  /** Sample during/after applying a packet accepted by onPacket, including
-   * the last packet that trips the size cap. Never sample later packets. */
+  /**
+   * Sample during/after applying a packet accepted by onPacket, including
+   * the last packet that trips the size cap. Never sample later packets.
+   * Opens the file once the packet has named the server.
+   */
   sampleRecordedState(): void {
-    if (this._state === "buffering" || this._state === "recording")
-      this.sample();
+    if (!this.holding && this._state !== "recording") return;
+    this.sample();
+    if (this.pending && this.opts.getServerIdentity().name) this.startPending();
   }
 
   /**
@@ -356,7 +407,7 @@ export class DemoRecorder {
 
   private onConnectionEntry(kind: "sent" | "move"): void {
     if (this.capped) return;
-    if (this._state === "buffering") {
+    if (this.holding) {
       this.t0 ??= this.opts.now?.() ?? Date.now();
       this.queue.push({ kind });
     } else if (this._state === "recording") {
@@ -364,16 +415,21 @@ export class DemoRecorder {
     }
   }
 
-  /** Phase1 arrived: open the file and drain the buffered stream. */
+  /**
+   * Phase1 arrived: the recording's mission. The file opens once the
+   * stream has named the server too (sampleRecordedState).
+   */
   setMissionName(missionName: string, missionSequence?: number): void {
-    if (
-      this._state === "recording" &&
-      this.meta?.mission === missionName &&
-      this.meta.missionSequence === undefined
-    ) {
-      // Phase1 can arrive after the buffering-cap fallback already opened a file.
-      this.meta.missionSequence = missionSequence;
-    }
+    // Phase1 can come again for the recording's mission: after the
+    // buffering-cap fallback already opened a file, or while naming.
+    const claimed =
+      this._state === "recording"
+        ? this.meta
+        : this._state === "naming"
+          ? this.pending
+          : null;
+    if (claimed?.mission === missionName)
+      claimed.missionSequence ??= missionSequence;
     if (this._state !== "buffering") return;
     // Samples taken while buffering belong to the previous mission
     // (e.g. connecting into an intermission debrief) — the keep gates
@@ -387,10 +443,28 @@ export class DemoRecorder {
     // packets are the same mission the file records.)
     this.matchStarted = false;
     this.peakPlayers = 0;
-    this.flush(missionName, missionSequence);
+    this.pending = {
+      mission: missionName,
+      missionSequence,
+      date: new Date(),
+      at: this.opts.now?.() ?? Date.now(),
+    };
+    if (this.opts.getServerIdentity().name) this.startPending();
+    else this.setState("naming");
   }
 
-  private flush(missionName: string, missionSequence?: number): void {
+  private startPending(): void {
+    const pending = this.pending;
+    if (!pending) return;
+    this.pending = null;
+    this.flush(pending.mission, pending.missionSequence, pending.date);
+  }
+
+  private flush(
+    missionName: string,
+    missionSequence?: number,
+    date = new Date(),
+  ): void {
     const connectSequence = this.opts.getConnectSequence();
     const bufferedMs =
       this.t0 === null ? 0 : (this.opts.now?.() ?? Date.now()) - this.t0;
@@ -410,8 +484,8 @@ export class DemoRecorder {
       reconstructionError = err;
     }
     const identity = this.opts.getServerIdentity();
-    const date = new Date();
-    const serverName = identity.name ?? this.opts.address;
+    const serverName =
+      identity.name ?? this.opts.getServerInfo()?.name ?? this.opts.address;
     const demoValues = buildDemoValues({
       recorderName: this.opts.recorderName,
       clientId: this.opts.getRecorderClientId() ?? undefined,
@@ -558,12 +632,12 @@ export class DemoRecorder {
 
   /**
    * End the recording. Returns file info, or null when nothing worth
-   * keeping was written (still buffering, too short, or failed).
+   * keeping was written (no Phase1, too short, or failed).
    */
   async finalize(
     reason: string,
   ): Promise<{ path: string; durationMs: number } | null> {
-    if (this._state !== "buffering" && this._state !== "recording") {
+    if (!this.holding && this._state !== "recording") {
       await this.strandedClose;
       return null;
     }
@@ -575,6 +649,19 @@ export class DemoRecorder {
     // if no packet arrived since the last change. Capped files must retain
     // the roster/keep gates at their recorded cutoff, not the later live state.
     if (!this.capped) this.sample();
+    if (this.pending) {
+      if (!identity.name) {
+        log.info(
+          { address: this.opts.address, mission: this.pending.mission, reason },
+          "Recording ended before the server named itself; recording under its listed name or address",
+        );
+      }
+      this.startPending();
+      if (this._state !== "recording") {
+        await this.strandedClose;
+        return null;
+      }
+    }
     const writer = this.writer;
     if (this._state === "buffering" || !writer) {
       log.debug(
@@ -641,9 +728,9 @@ export class DemoRecorder {
   private async writeSidecar(
     finalPath: string,
     durationMs: number,
-    // Sampled at finalize entry: MsgMissionDropInfo arrives after
-    // recording starts, so finalize-time identity is stream-authoritative
-    // where flush-time values may still be seeds or fallbacks.
+    // Sampled at finalize entry: stream-authoritative where flush-time
+    // values may be fallbacks (no MsgMissionDropInfo within the buffering
+    // caps) or seeds.
     identity: ServerIdentity,
   ): Promise<void> {
     const meta = this.meta;
@@ -689,6 +776,7 @@ export class DemoRecorder {
     )
       return;
     this.setState("aborted");
+    this.pending = null;
     this.queue = [];
     this.queuedBytes = 0;
     await this.writer?.abort();

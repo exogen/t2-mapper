@@ -624,15 +624,16 @@ export class WatchSession {
         getConnectSequence: () => conn.connectSequence,
         getServerInfo: () => this.options.getCachedServer(this.key),
         getServerIdentity: () => {
-          // Stream-known values (watchState) win; the server-list cache
-          // fills gaps live at sample time — an entry may only appear on a
-          // later poll, `mod` has no stream source at all, and the cache
-          // covers a name across the reconnect gap before the new epoch's
-          // MsgMissionDropInfo re-learns it. gameType is mission-scoped, so
+          // The name is the stream's alone: the recorder opens its file
+          // once MsgMissionDropInfo names the server (Phase1 clears the
+          // epoch's name), falling back to the server list past its caps.
+          // The server-list cache fills the other gaps live at sample time
+          // — an entry may only appear on a later poll, and `mod` has no
+          // stream source at all. gameType is mission-scoped, so
           // watchState.missionType (reset each epoch) is authoritative.
           const info = this.options.getCachedServer(this.key);
           return {
-            name: this.watchState.serverName ?? info?.name,
+            name: this.watchState.serverName,
             gameType: this.watchState.missionType ?? info?.gameType,
             mod: info?.mod,
             // Detected from the stream (banner/vote), independent of the
@@ -1960,7 +1961,8 @@ export class WatchSession {
     if (this.destroyed || this.ending || this.rotating) return;
     // A cycle before Phase1 ever arrived (we joined mid-cycle): keep
     // buffering — the from-connect stream stays valid, and the new
-    // mission's Phase1 flushes it under its name.
+    // mission's Phase1 claims it. A recorder already naming has its
+    // mission, so it rotates like one recording.
     if (!this.watchState.missionName || this.recorder?.state === "buffering")
       return;
     this.finishMissionRecording("mission-change");

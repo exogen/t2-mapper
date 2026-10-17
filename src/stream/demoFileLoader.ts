@@ -301,6 +301,7 @@ async function streamDemoResponse(
     )
       return;
     parser.finish();
+    engineStore.getState().refreshRecordingDuration(recording);
     const buffer = assemble();
     engineStore.getState().setDemoBuffer(recording, buffer);
     engineStore.getState().setDownloadComplete(true);
@@ -382,6 +383,7 @@ async function streamDemoResponse(
         if (bufferedSec !== reportedBufferedSec) {
           reportedBufferedSec = bufferedSec;
           demoLoadStore.getState().setDownloadedSec(bufferedSec);
+          engineStore.getState().refreshRecordingDuration(recording);
           // A seek parked beyond the frontier executes the moment the
           // buffer reaches it.
           engineStore.getState().fulfillPendingSeek();
@@ -434,6 +436,7 @@ async function streamDemoResponse(
     // possible): install now — everything is parsed and playable.
     installRecording(recording, source, buffer);
   }
+  engineStore.getState().refreshRecordingDuration(recording);
   engineStore.getState().setDemoBuffer(recording, buffer);
   engineStore.getState().setDownloadComplete(true);
   void installCheckpoints(buffer, recording, source.checkpoints, token);
