@@ -27,6 +27,9 @@ export class WatchStateAccumulator {
 
   missionName: string | null = null;
   missionSequence: string | null = null;
+  /** Latest GravityEvent in native setGravity() units; unknown until received. */
+  worldGravity: number | undefined;
+  ghostingComplete = false;
   controlObjectGhostIndex = -1;
   controlObjectData: ParsedData | undefined;
   /**
@@ -112,6 +115,7 @@ export class WatchStateAccumulator {
    */
   beginMissionChange(): void {
     this.state.beginMissionChange();
+    this.ghostingComplete = false;
   }
 
   /** Mission-phase metadata is shared by live and delayed catch-up state. */
@@ -153,7 +157,17 @@ export class WatchStateAccumulator {
     for (const event of parsed.events) {
       const data = event.parsedData;
       if (!data || this.state.applyEvent(data)) continue;
-      if (data.type === "SimDataBlockEvent") {
+      if (data.type === "GravityEvent") {
+        if (typeof data.gravity === "number" && Number.isFinite(data.gravity)) {
+          this.worldGravity = data.gravity;
+        }
+      } else if (data.type === "GhostingMessageEvent") {
+        if (data.message === 0) {
+          this.ghostingComplete = true; // GhostAlwaysDone
+        } else if (data.message === 2) {
+          this.ghostingComplete = false; // EndGhosting
+        }
+      } else if (data.type === "SimDataBlockEvent") {
         const objectId = data.objectId as number | undefined;
         const className = data.dataBlockClassName as string | undefined;
         if (objectId != null && className) {

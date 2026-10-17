@@ -713,6 +713,7 @@ export class ConnectionState {
     const players = this.resolvePlayers();
     refreshFlagCarriers(this.flags, players);
     const nowSec = this.matchEndedAtSec ?? this.options.now();
+    const loadInfo = this.loadInfo.saveState();
     return {
       playerIdentity: {
         scope: this.playerIdentity.scope,
@@ -746,7 +747,8 @@ export class ConnectionState {
       serverDisplayName: this.serverDisplayName ?? undefined,
       matchEnded: this.matchEnded,
       matchStarted: this.matchStarted,
-      loadInfo: this.loadInfo.info ?? undefined,
+      loadInfo: loadInfo.complete ?? undefined,
+      pendingLoadInfo: loadInfo.pending ?? undefined,
     };
   }
 
@@ -822,7 +824,10 @@ export class ConnectionState {
     this.missionTypeDisplayName = hud.missionTypeDisplayName ?? null;
     this.gameClassName = hud.gameClassName ?? null;
     this.serverDisplayName = hud.serverDisplayName ?? null;
-    this.loadInfo.seed(hud.loadInfo ?? null);
+    this.loadInfo.restoreState({
+      complete: hud.loadInfo ?? null,
+      pending: hud.pendingLoadInfo ?? null,
+    });
     // Older relays don't send matchStarted; a running clock in the
     // payload proves the match is underway just as well.
     this.matchStarted =

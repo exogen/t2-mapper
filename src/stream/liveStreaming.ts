@@ -264,6 +264,14 @@ export class LiveStreamAdapter extends StreamEngine {
   hydrate(payload: WatchCatchupPayload): void {
     // Fresh engine state (clears entities, HUD, net strings, targets).
     this.reset();
+    if (
+      typeof payload.worldGravity === "number" &&
+      Number.isFinite(payload.worldGravity)
+    ) {
+      this.worldGravity = payload.worldGravity;
+      this.debrisHistory.setGravity(this.getTimeSec(), this.gravity);
+    }
+    if (payload.ghostingComplete) this.ghostAlwaysDoneSec = this.getTimeSec();
     // Fresh ready latch too: EVERY catch-up — the initial attach and
     // every reconnect re-hydration — is preceded by liveReady=false in
     // liveConnectionStore (onCatchup), and only the onReady edge sets

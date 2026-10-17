@@ -115,10 +115,11 @@ export interface WatchHudStatePayload {
   matchEnded?: boolean;
   matchStarted?: boolean;
   /**
-   * The mission's loading-screen text (MsgLoadInfo … MsgLoadInfoDone),
-   * sent once per client at join — a late joiner never sees it live.
+   * The last completed loading-screen text (MsgLoadInfo … MsgLoadInfoDone).
    */
   loadInfo?: ServerLoadInfo;
+  /** An unfinished loading-info burst, continued by subsequent packets. */
+  pendingLoadInfo?: ServerLoadInfo;
 }
 
 /**
@@ -179,6 +180,10 @@ export interface WatchCatchupPayload {
   missionName: string | null;
   /** Mission handshake sequence; absent on older relays. */
   missionSequence?: string | null;
+  /** Native setGravity() units; absent before GravityEvent or on older relays. */
+  worldGravity?: number;
+  /** Whether GhostAlwaysDone arrived for this mission. */
+  ghostingComplete?: boolean;
 
   // ── Live-only extensions (no .rec equivalent) ──
   /** Negotiated wire version; null for demo-derived state, absent on older relays (51). */

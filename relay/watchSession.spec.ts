@@ -24,6 +24,7 @@ import type { ServerMessage } from "./types";
 import { GAME_PROTOCOL_VERSION } from "./shared";
 import { relayLog } from "./logger";
 import { extractWavTag } from "../src/stream/streamHelpers";
+import { gravityEvent, serverPacket } from "./serverPacketFixtures";
 
 const missionCyclingReason =
   "Server is cycling missions.  Please try to connect in a moment.";
@@ -3300,6 +3301,28 @@ describe("WatchSession delayed transitions", () => {
       session.getChannelId(ws as unknown as WebSocket),
     );
     expect(catchup(joiner)).toMatchObject({ epoch: 1, missionName: "OldMap" });
+  });
+
+  it("hydrates delayed viewers with gravity at their playhead", () => {
+    const { manager, connections, session } = start();
+    const conn = connections[0];
+    conn.emit("packet", serverPacket(1, { events: [gravityEvent(0, -26.9)] }));
+    vi.advanceTimersByTime(delayMs);
+
+    const join = () => {
+      const viewer = new FakeWebSocket();
+      manager.watch(viewer as unknown as WebSocket, address);
+      return catchup(viewer);
+    };
+    expect(join().worldGravity).toBeCloseTo(-26.9);
+
+    // The live server changes gravity; a joining delayed viewer must still
+    // see the older value until that event reaches the delayed playhead.
+    conn.emit("packet", serverPacket(2, { events: [gravityEvent(1, 0)] }));
+    expect(session["watchState"].worldGravity).toBe(0);
+    expect(join().worldGravity).toBeCloseTo(-26.9);
+    vi.advanceTimersByTime(delayMs);
+    expect(join().worldGravity).toBe(0);
   });
 
   it("includes delayed mission-phase metadata in reconnect snapshots", () => {

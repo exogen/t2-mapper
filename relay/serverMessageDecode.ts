@@ -299,14 +299,6 @@ export class LoadInfoCollector {
   }
 
   /**
-   * A late joiner's copy of the last completed burst.
-   */
-  seed(info: ServerLoadInfo | null): void {
-    this.pending = null;
-    this.complete = info;
-  }
-
-  /**
    * Full reset: forget both the burst and the result.
    */
   reset(): void {

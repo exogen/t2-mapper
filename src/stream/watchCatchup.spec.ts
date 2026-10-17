@@ -367,6 +367,11 @@ function project(entity: Record<string, unknown>, comparePosition: boolean) {
     ...targetInfo(entity),
     mountObjectGhostIndex: entity.mountObjectGhostIndex,
     mountNode: entity.mountNode,
+    actionAnim: entity.actionAnim,
+    actionAtEnd: entity.actionAtEnd,
+    actionHoldAtEnd: entity.actionHoldAtEnd,
+    actionAnimPos: entity.actionAnimPos,
+    armAction: entity.armAction,
     health: entity.health,
     damageState: entity.damageState,
     // Catch-up carries wire state, not the client's earlier animation clocks
@@ -401,10 +406,11 @@ function sharedState(adapter: LiveStreamAdapter) {
   const { clock, flagDroppedAtSec, matchEndedAtSec, ...state } = conn.save();
   return {
     ...state,
+    gravity: adapter.gravity,
+    worldComplete: adapter.getSnapshot().ghostAlwaysDoneSec != null,
     clockDurationMs: clock?.durationMs ?? null,
     flagDropTeams: Object.keys(flagDroppedAtSec).sort(),
     matchEnded: matchEndedAtSec != null,
-    loadInfo: conn.loadInfo.info,
   };
 }
 
@@ -443,7 +449,7 @@ function populatedFields(state: ReturnType<typeof sharedState>) {
       state.gameClassName,
       state.serverDisplayName,
     ].every(Boolean),
-    loadInfo: state.loadInfo != null,
+    loadInfo: state.loadInfo.complete != null,
   };
 }
 
@@ -453,6 +459,8 @@ function populatedFields(state: ReturnType<typeof sharedState>) {
  */
 function serverStateBurst(unusedTargetId: number): ParsedData[] {
   return [
+    { type: "GravityEvent", gravity: -26.9 },
+    { type: "GhostingMessageEvent", message: 0 },
     ...[
       ["MsgClientReady", "", "CTFGame"],
       ["MsgMissionDropInfo", "", "Test Mission", "Capture the Flag", "Server"],
