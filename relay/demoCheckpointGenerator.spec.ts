@@ -214,8 +214,6 @@ describe("offline checkpoint generation", () => {
             description: "Match started",
           },
         ],
-        observerPerspective: true,
-        killEvents: [],
       });
       await writeDemo(lastTick, 1_000_000);
       const result = await generateDemoCheckpoints(

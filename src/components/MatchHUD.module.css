@@ -90,12 +90,12 @@
 
 .TeamNameFriendly {
   composes: TeamName;
-  color: #2de46a;
+  color: var(--team-name-friendly);
 }
 
 .TeamNameEnemy {
   composes: TeamName;
-  color: rgb(121, 203, 212);
+  color: var(--team-name-default);
 }
 
 .TeamScore {

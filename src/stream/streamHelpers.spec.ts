@@ -7,7 +7,64 @@ import {
   parseColorSegments,
   playerYawToQuaternion,
   streamTimeToTick,
+  formatRemoteArgs,
+  formatRemoteArgsColored,
+  formatServerMessageText,
 } from "./streamHelpers";
+
+describe.each([
+  ["plain", formatRemoteArgs],
+  ["colored", formatRemoteArgsColored],
+] as const)("%s message substitution", (_kind, format) => {
+  it.each(["$&", "$$", "$`", "$'", "Pilot%2", "100%9", "%1"])(
+    "preserves the literal player name %s",
+    (name) => {
+      expect(format("%1 killed %2. %1 wins!", [name, "Bob"], new Map())).toBe(
+        `${name} killed Bob. ${name} wins!`,
+      );
+    },
+  );
+
+  it("expands only single-digit arguments, like the game", () => {
+    expect(
+      format(
+        "%10 / %1 / %11 / %2 / %90",
+        ["One", "Two", "", "", "", "", "", "", "Nine", "Ten"],
+        new Map(),
+      ),
+    ).toBe("One0 / One / One1 / Two / Nine0");
+  });
+
+  it("drops missing arguments without consuming the following digit", () => {
+    expect(format("%1 / %2 / %90", ["One"], new Map())).toBe("One /  / 0");
+  });
+
+  it("resolves tagged templates and arguments without interpreting their contents", () => {
+    const strings = new Map([
+      [10, "%1 killed %2."],
+      [11, "Pilot%2"],
+      [12, "$&"],
+    ]);
+    expect(format("\x0110", ["\x0111", "\x0112"], strings)).toBe(
+      "Pilot%2 killed $&.",
+    );
+  });
+});
+
+it("shares substitution while preserving color only for colored messages", () => {
+  const template = "\x07%1 killed %2.~wfx/test.wav";
+  const args = ["\x10\bPilot%2\x0b.TAG\x11", "$&"];
+  const strings = new Map<number, string>();
+  expect(formatRemoteArgsColored(template, args, strings)).toBe(
+    "\x07\x10\bPilot%2\x0b.TAG\x11 killed $&.~wfx/test.wav",
+  );
+  expect(formatRemoteArgs(template, args, strings)).toBe(
+    "Pilot%2.TAG killed $&.~wfx/test.wav",
+  );
+  expect(
+    formatServerMessageText(["MsgLegitKill", template, ...args], strings),
+  ).toBe("Pilot%2.TAG killed $&.");
+});
 
 it("keeps exact tick boundaries stable without advancing fractional timestamps early", () => {
   for (const tick of [0, 10, 284, 1001, 1011, 62500, 112501]) {

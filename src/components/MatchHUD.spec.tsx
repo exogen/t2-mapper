@@ -259,25 +259,41 @@ it.each(["classic", "broadcast"] as const)(
   },
 );
 
-it("uses observer color preferences and keeps the recorder's friendly team first", () => {
-  state.observerTeamColors = "redGreen";
-  let html = renderToStaticMarkup(
-    <MatchHUD onOpenScoreScreen={() => {}} variant="broadcast" />,
-  );
-  expect(html.indexOf("--team-color:rgb(255, 0, 0)")).toBeLessThan(
-    html.indexOf("--team-color:rgb(0, 155, 53)"),
-  );
-  state.snapshot.playerSensorGroup = 2;
-  html = renderToStaticMarkup(
-    <MatchHUD onOpenScoreScreen={() => {}} variant="broadcast" />,
-  );
-  expect(html.indexOf("Rename team 2")).toBeLessThan(
-    html.indexOf("Rename team 1"),
-  );
-  expect(html.indexOf("--team-color:rgb(0, 155, 53)")).toBeLessThan(
-    html.indexOf("--team-color:rgb(255, 0, 0)"),
-  );
-});
+it.each(["classic", "broadcast"] as const)(
+  "keeps the intended colors and the recorder's friendly team first in %s",
+  (variant) => {
+    const render = () =>
+      renderToStaticMarkup(
+        <MatchHUD onOpenScoreScreen={() => {}} variant={variant} />,
+      );
+    const colors = (html: string) =>
+      [...html.matchAll(/--team-color:(rgb\([^)]+\))/g)].map(
+        (match) => match[1],
+      );
+    if (variant === "broadcast") {
+      for (const [scheme, expected] of [
+        ["blueOrange", ["rgb(40, 152, 255)", "rgb(255, 100, 15)"]],
+        ["greenRed", ["rgb(0, 212, 71)", "rgb(255, 60, 10)"]],
+        ["redGreen", ["rgb(255, 60, 10)", "rgb(0, 212, 71)"]],
+      ] as const) {
+        state.observerTeamColors = scheme;
+        expect(colors(render())).toEqual(expected);
+      }
+    }
+    state.snapshot.playerSensorGroup = 2;
+    const html = render();
+    expect(html.indexOf("Rename team 2")).toBeLessThan(
+      html.indexOf("Rename team 1"),
+    );
+    if (variant === "classic") {
+      expect(html).toContain("--team-name-friendly:rgb(45, 228, 106)");
+      expect(html).toContain("--team-name-default:rgb(121, 203, 212)");
+      expect(colors(html)).toEqual([]);
+    } else {
+      expect(colors(html)).toEqual(["rgb(0, 212, 71)", "rgb(255, 60, 10)"]);
+    }
+  },
+);
 
 it.each(["classic", "broadcast"] as const)(
   "shows CTF hundreds as captures in the %s HUD without changing the raw scores",

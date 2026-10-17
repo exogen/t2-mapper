@@ -414,8 +414,8 @@ it("labels saved flags outside the default number slots using their actual team"
 
 it.each([
   ["blueOrange", "rgb(40, 152, 255)", "rgb(255, 100, 15)"],
-  ["greenRed", "rgb(0, 155, 53)", "rgb(255, 0, 0)"],
-  ["redGreen", "rgb(255, 0, 0)", "rgb(0, 155, 53)"],
+  ["greenRed", "rgb(0, 212, 71)", "rgb(255, 60, 10)"],
+  ["redGreen", "rgb(255, 60, 10)", "rgb(0, 212, 71)"],
 ] as const)(
   "colors quick cam flags using the %s observer palette in both surfaces",
   (scheme, first, second) => {
@@ -446,8 +446,8 @@ it.each([1, 2])(
         Icon={LuUser}
       />,
     );
-    expect(friendly).toContain("color:rgb(0, 155, 53)");
-    expect(enemy).toContain("color:rgb(255, 0, 0)");
+    expect(friendly).toContain("color:rgb(0, 212, 71)");
+    expect(enemy).toContain("color:rgb(255, 60, 10)");
   },
 );
 
@@ -535,9 +535,9 @@ it("updates player icon affiliation in place and honors the engine's viewer-rela
   entity.teamId = 2;
   expect(render()).toContain("color:rgb(255, 100, 15)");
   fixture.playerSensorGroup = 2;
-  expect(render()).toContain("color:rgb(255, 0, 0)");
+  expect(render()).toContain("color:rgb(255, 60, 10)");
   entity.iffColor = { r: 0, g: 255, b: 0 };
-  expect(render()).toContain("color:rgb(0, 155, 53)");
+  expect(render()).toContain("color:rgb(0, 212, 71)");
 });
 
 it("keeps a waiting player's team color using their current roster entry", () => {
@@ -556,7 +556,7 @@ it("keeps a waiting player's team color using their current roster entry", () =>
     renderToStaticMarkup(<QuickCamIcon camera={playerCamera} Icon={LuUser} />);
   expect(render()).toContain("color:rgb(255, 100, 15)");
   fixture.playerSensorGroup = 2;
-  expect(render()).toContain("color:rgb(0, 155, 53)");
+  expect(render()).toContain("color:rgb(0, 212, 71)");
   fixture.playerRoster = [];
   expect(render()).toContain("color:rgb(200, 200, 200)");
 });

@@ -89,8 +89,6 @@ describe("demo loads during navigation", () => {
     mocks.readCheckpoints.mockResolvedValue([]);
     mocks.scan.mockResolvedValue({
       events: [],
-      killEvents: [],
-      observerPerspective: false,
     });
     vi.stubEnv("RELAY_URL", "wss://relay.example");
     mocks.install.mockImplementation((recording) => {

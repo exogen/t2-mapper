@@ -5,9 +5,24 @@
 
 .Filters {
   display: flex;
+  align-items: center;
   gap: 4px;
   flex-wrap: wrap;
   padding: 10px;
+}
+
+.Mine {
+  display: flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 10px 0;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.Mine input {
+  margin: 0;
 }
 
 .FilterButton {
@@ -70,7 +85,8 @@
 }
 
 @media (pointer: coarse) {
-  .Filters {
+  .Mine {
+    font-size: 13px;
   }
 
   .FilterButton {

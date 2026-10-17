@@ -36,7 +36,7 @@ function eventPlayerNames(event: TimelineEvent): (string | undefined)[] {
     case "flag-drop":
     case "flag-return":
       if (event.actor) return [event.actor];
-      return event.teamAffinity === "friendly" ? [recorder] : [];
+      return event.isRecorder ? [recorder] : [];
     case "flag-cap":
       return event.capturer ? [event.capturer] : [];
     case "rename":

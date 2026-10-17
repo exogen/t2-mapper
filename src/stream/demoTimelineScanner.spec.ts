@@ -253,6 +253,142 @@ describe("server metadata discovered during the timeline scan", () => {
   });
 });
 
+describe("original timeline messages", () => {
+  const message = (...args: string[]) => ({
+    type: BlockTypePacket,
+    parsed: {
+      events: [
+        {
+          parsedData: {
+            type: "RemoteCommandEvent",
+            funcName: "ServerMessage",
+            args,
+          },
+        },
+      ],
+    },
+  });
+
+  it.each([
+    ["match-start", ["MsgMissionStart", "Match started!"]],
+    [
+      "match-countdown",
+      ["MsgMissionStart", "The admin has forced the match to start."],
+    ],
+    ["match-end", ["MsgGameOver", "Match has ended."]],
+    [
+      "rename",
+      ["MsgClientNameChanged", "%1 changed name to %2.", "Alice", "Bob", "100"],
+    ],
+    [
+      "flag-grab",
+      ["MsgCTFFlagTaken", "%1 has taken the %2 flag!", "Alice", "Storm", "1"],
+    ],
+    [
+      "flag-drop",
+      ["MsgCTFFlagDropped", "You dropped the flag!", "0", "0", "1"],
+    ],
+    [
+      "flag-return",
+      [
+        "MsgCTFFlagReturned",
+        "The %2 flag was returned to base.",
+        "0",
+        "Storm",
+        "1",
+      ],
+    ],
+    [
+      "flag-cap",
+      ["MsgCTFFlagCapped", "You captured the %2 flag!", "0", "Storm", "1", "2"],
+    ],
+    [
+      "kill",
+      [
+        "MsgLegitKill",
+        "%1 ate %4's disc.",
+        "Bob",
+        "him",
+        "his",
+        "Alice",
+        "her",
+        "her",
+        "",
+        "disc",
+      ],
+    ],
+    [
+      "death",
+      [
+        "MsgSelfKill",
+        "%1 blew %2self up.",
+        "Alice",
+        "her",
+        "her",
+        "Alice",
+        "her",
+        "her",
+        "",
+        "mortar",
+      ],
+    ],
+  ])("keeps the server's original wording for %s", async (type, args) => {
+    const expected = args[1]
+      .replaceAll("%1", args[2] ?? "")
+      .replaceAll("%2", args[3] ?? "")
+      .replaceAll("%4", args[5] ?? "");
+    scan.blocks = [message(...args)];
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), "Alice");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type, originalMessage: expected });
+  });
+
+  it("resolves the original message at event time and strips color and sound cues", async () => {
+    scan.taggedStrings = new Map([
+      [10, "\x07%1 caught a disc from %4!~wvoice/announcer/test.wav"],
+      [11, "\x10\bAlice\x0b.TAG\x11"],
+      [12, "Bob"],
+    ]);
+    const kill = message(
+      "MsgLegitKill",
+      "\x0110",
+      "\x0111",
+      "her",
+      "her",
+      "\x0112",
+    );
+    scan.blocks = [
+      kill,
+      {
+        type: BlockTypePacket,
+        parsed: {
+          events: [
+            { parsedData: { type: "NetStringEvent", id: 12, value: "Carol" } },
+          ],
+        },
+      },
+      kill,
+    ];
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), null);
+    expect(events.map((event) => event.originalMessage)).toEqual([
+      "Alice.TAG caught a disc from Bob!",
+      "Alice.TAG caught a disc from Carol!",
+    ]);
+  });
+
+  it.each([undefined, "", "\x07  ", "~wvoice/announcer/test.wav"])(
+    "has no original message for a silent capture (%s)",
+    async (template) => {
+      scan.blocks = [
+        message("MsgCTFFlagCapped", ...(template == null ? [] : [template])),
+      ];
+      const { events } = await scanDemoTimeline(new ArrayBuffer(0), null);
+      expect(events).toHaveLength(1);
+      expect(events[0].originalMessage).toBeUndefined();
+    },
+  );
+});
+
 describe("generator timeline events", () => {
   const ghost = (
     index: number,
@@ -311,7 +447,7 @@ describe("generator timeline events", () => {
     ];
   });
 
-  describe("recorder filtering", () => {
+  describe("recorder attribution", () => {
     const alice = "\x10\bAlice\x0b.TAG\x11";
     const recorder = (teamId = 1, name = alice) => {
       scan.demoValues = [
@@ -349,7 +485,7 @@ describe("generator timeline events", () => {
       };
     });
 
-    it("keeps the recorder's destruction and repair, including shared repairs, plus unattributed transitions", async () => {
+    it("keeps everyone's destruction and repair, including shared repairs and unattributed transitions", async () => {
       scan.initialGhosts.push(player(), beam(), player(4, 61), beam(5, 4));
       scan.blocks = [
         offline("ALICE.TAG"),
@@ -364,7 +500,7 @@ describe("generator timeline events", () => {
         offline(),
       ];
       const result = await scanDemoTimeline(new ArrayBuffer(0), "Alice");
-      expect(result.observerPerspective).toBe(false);
+
       expect(
         genEvents(result.events).map(({ type, actor, isRecorder }) => [
           type,
@@ -374,20 +510,32 @@ describe("generator timeline events", () => {
       ).toEqual([
         ["generator-offline", "ALICE.TAG", true],
         ["generator-online", "Alice.TAG", true],
+        ["generator-online", "Bob", false],
+        ["generator-offline", "Bob", false],
         ["generator-online", undefined, false],
         ["generator-offline", undefined, false],
+      ]);
+      expect(
+        genEvents(result.events).map((event) => event.originalMessage),
+      ).toEqual([
+        "ALICE.TAG destroyed an enemy Main Generator!",
+        undefined,
+        undefined,
+        "Bob destroyed an enemy Main Generator!",
+        undefined,
+        undefined,
       ]);
     });
 
     it.each([
-      ["spectator", "Spectator", 0, undefined, true],
-      ["MapGenius observer", "MapGenius", 0, undefined, true],
-      ["later joins a team", "Alice", 0, 1, false],
-      ["ends as an observer", "Alice", 1, 0, false],
-      ["MapGenius-named player", "MapGenius", 1, undefined, false],
+      ["spectator", "Spectator", 0, undefined],
+      ["MapGenius observer", "MapGenius", 0, undefined],
+      ["later joins a team", "Alice", 0, 1],
+      ["ends as an observer", "Alice", 1, 0],
+      ["MapGenius-named player", "MapGenius", 1, undefined],
     ] as const)(
-      "uses the existing perspective rule when the recorder %s",
-      async (_scenario, name, startTeam, endTeam, observer) => {
+      "keeps all generator events when the recorder %s",
+      async (_scenario, name, startTeam, endTeam) => {
         recorder(startTeam, name === "Alice" ? alice : name);
         scan.blocks = [
           offline(alice),
@@ -414,14 +562,12 @@ describe("generator timeline events", () => {
               ]),
         ];
         const result = await scanDemoTimeline(new ArrayBuffer(0), name);
-        expect(result.observerPerspective).toBe(observer);
-        expect(genEvents(result.events).map((event) => event.actor)).toEqual(
-          observer
-            ? ["Alice.TAG", undefined, "Bob"]
-            : name === "Alice"
-              ? ["Alice.TAG", undefined]
-              : [undefined],
-        );
+
+        expect(genEvents(result.events).map((event) => event.actor)).toEqual([
+          "Alice.TAG",
+          undefined,
+          "Bob",
+        ]);
       },
     );
 
@@ -457,11 +603,13 @@ describe("generator timeline events", () => {
           undefined,
           "Renamed.TAG",
           undefined,
+          "Alice.TAG",
         ]);
         expect(genEvents(events).map((event) => event.isRecorder)).toEqual([
           true,
           false,
           true,
+          false,
           false,
         ]);
       },
@@ -503,11 +651,13 @@ describe("generator timeline events", () => {
         packet([shot(4, 2, classId)]),
         packet([offline(), impact(4, 20, field)]),
       ];
-      expect((await scanOffline())[0]).toMatchObject({
+      const event = (await scanOffline())[0];
+      expect(event).toMatchObject({
         actor: "Alice.TAG",
         actorInferred: true,
         description: "Alice.TAG destroyed the Team 1 generator",
       });
+      expect(event.originalMessage).toBeUndefined();
     });
 
     it.each(["first", "last"])(
@@ -716,11 +866,8 @@ describe("generator timeline events", () => {
       packet([ghost(1, "update", { damageState: 0, damageLevel: 0.5 })]),
       packet([ghost(1, "update", { damageState: 0, damageLevel: 0 })]),
     ];
-    const { events, observerPerspective } = await scanDemoTimeline(
-      new ArrayBuffer(0),
-      null,
-    );
-    expect(observerPerspective).toBe(true);
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), null);
+
     expect(events).toEqual([
       {
         timeSec: 0.032,
@@ -1164,6 +1311,7 @@ describe("generator timeline events", () => {
         actor: "Alice.TAG",
         description: "Alice.TAG destroyed the Team 1 generator",
         raw: { actor: "\x10\bAlice\x0b.TAG\x11" },
+        originalMessage: "Alice.TAG destroyed an enemy Main Generator!",
       });
     },
   );
@@ -1217,6 +1365,7 @@ describe("generator timeline events", () => {
     const { events } = await scanDemoTimeline(new ArrayBuffer(0), null);
     expect(events.length).toBeGreaterThan(0);
     expect(events.every((event) => !event.actor)).toBe(true);
+    expect(events.every((event) => !event.originalMessage)).toBe(true);
   });
 
   it("does not replace the first destruction's credit during an incomplete repair", async () => {
@@ -1360,7 +1509,7 @@ describe("generator timeline events", () => {
     expect(events[0].actor).toBeUndefined();
   });
 
-  it("filters a global destruction credit for another player, even for the recorder's generator", async () => {
+  it("keeps a global destruction credit for another player with its attribution", async () => {
     scan.demoValues = [
       "",
       "1",
@@ -1386,7 +1535,9 @@ describe("generator timeline events", () => {
     message.funcName = "ServerMessage";
     scan.blocks = [packet([ghost(1, "update", { damageState: 2 })], [message])];
     const { events } = await scanDemoTimeline(new ArrayBuffer(0), "Recorder");
-    expect(events).toEqual([]);
+    expect(events).toMatchObject([
+      { type: "generator-offline", actor: "Enemy", isRecorder: false },
+    ]);
   });
 
   it.each(["generator", "solar panel"])(
@@ -1446,7 +1597,11 @@ describe("generator timeline events", () => {
       const { events } = await scanDemoTimeline(new ArrayBuffer(0), "Old");
       expect(
         events.find((event) => event.type === "generator-offline"),
-      ).toMatchObject({ actor: "Renamed.TAG", raw: { actor: rawName } });
+      ).toMatchObject({
+        actor: "Renamed.TAG",
+        raw: { actor: rawName },
+        originalMessage: `You received a 5 point bonus for destroying an enemy ${kind}.`,
+      });
     },
   );
 
@@ -1538,6 +1693,123 @@ describe("timeline scan failures", () => {
   });
 });
 
+describe("self-weapon deaths and character pronouns", () => {
+  const death = (
+    type: string,
+    weapon: string,
+    pronoun = "him",
+    killer = "Player",
+  ) => ({
+    type: BlockTypePacket,
+    parsed: {
+      events: [
+        {
+          parsedData: {
+            type: "RemoteCommandEvent",
+            funcName: "ServerMessage",
+            args: [type, "", "Player", pronoun, "", killer, "", "", "", weapon],
+          },
+        },
+      ],
+    },
+  });
+
+  it.each([
+    ["MsgSelfKill", "disc"],
+    ["MsgSelfKill", "mortar"],
+    ["MsgSelfKill", "plasma"],
+    ["MsgSelfKill", "chaingun"],
+    ["MsgSelfKill", "satchelcharge"],
+    ["MsgTurretSelfKill", "turret"],
+    ["MsgCTurretKill", "spike turret"],
+    ["MsgExplosionKill", "explosion"],
+  ])("identifies own-weapon damage from %s (%s)", async (type, weapon) => {
+    scan.blocks = [death(type, weapon)];
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), "Player");
+    expect(events).toMatchObject([
+      {
+        type: "death",
+        deathMessage: type.toLowerCase(),
+        selfKill: true,
+        victimPronoun: "him",
+        isRecorder: true,
+        weapon,
+      },
+    ]);
+  });
+
+  it("retains event-time pronouns without needing a roster or player body", async () => {
+    scan.taggedStrings.set(10, "him");
+    scan.taggedStrings.set(11, "her");
+    scan.blocks = [
+      death("MsgSelfKill", "disc", "\x0110", ""),
+      death("MsgSelfKill", "mortar", "\x0111", ""),
+      death("MsgSelfKill", "mine", "him"),
+    ];
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), null);
+    expect(
+      events.map(({ victimPronoun, selfKill }) => [victimPronoun, selfKill]),
+    ).toEqual([
+      ["him", true],
+      ["her", true],
+      ["him", true],
+    ]);
+  });
+
+  it("uses female character pronouns even with the shared male heavy armor model", async () => {
+    scan.dataBlocks.set(100, { data: { shapeName: "heavy_male.dts" } });
+    scan.targetEntries = [{ targetId: 60, name: "Player", dataBlockId: 100 }];
+    scan.initialGhosts = [
+      {
+        index: 2,
+        type: "create",
+        classId: 25,
+        parsedData: { targetId: 60, dataBlockId: 100 },
+      },
+    ];
+    scan.blocks = [death("MsgSelfKill", "disc", "her")];
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), null);
+    expect(events).toMatchObject([{ selfKill: true, victimPronoun: "her" }]);
+  });
+
+  it.each([
+    ["MsgSelfKill", "ground"],
+    ["MsgSelfKill", "default"],
+    ["MsgSuicide", "suicide"],
+    ["MsgVehicleSpawnKill", "vehicle spawn"],
+    ["MsgVehicleCrash", "crash"],
+    ["MsgLavaKill", "lava"],
+  ])("keeps %s (%s) separate from own-weapon deaths", async (type, weapon) => {
+    scan.blocks = [death(type, weapon)];
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), null);
+    expect(events).toMatchObject([{ type: "death", selfKill: false }]);
+  });
+
+  it("does not turn a missing killer or a different player into a self kill", async () => {
+    scan.blocks = [
+      death("MsgTurretKill", "turret", "her", ""),
+      death("MsgExplosionKill", "explosion", "her", "Other"),
+    ];
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), null);
+    expect(events).toMatchObject([
+      { type: "death", selfKill: false, victimPronoun: "her" },
+      { type: "kill", killer: "Other", victim: "Player", victimPronoun: "her" },
+    ]);
+  });
+
+  it("distinguishes force-field powerups from vehicle spawns sharing the same message type", async () => {
+    scan.blocks = [
+      death("MsgVehicleSpawnKill", "ForceField"),
+      death("MsgVehicleSpawnKill", "default"),
+    ];
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), null);
+    expect(events.map((event) => event.description)).toEqual([
+      "Player was caught in a force field",
+      "Player was in a vehicle spawn field",
+    ]);
+  });
+});
+
 describe("confirmed kickoffs", () => {
   const message = (...args: string[]) => ({
     type: BlockTypePacket,
@@ -1553,6 +1825,98 @@ describe("confirmed kickoffs", () => {
       ],
     },
   });
+  const death = (victim: string, killer = "", damage = "default") =>
+    message("MsgLegitKill", "", victim, "", "", killer, "", "", "", damage);
+
+  it("omits pre-match spawn-selection deaths but keeps player kills and post-start deaths", async () => {
+    scan.blocks = [
+      death("Spawn selector"),
+      message("MsgMissionStart", "The admin has forced the match to start."),
+      death("Self", "Self"),
+      message("msgSuicide", "", "Suicide", "", "", "Suicide"),
+      death("Victim", "Killer", "disc"),
+      message("MsgMissionStart", "Match starts in 2 seconds."),
+      death("Another spawn selector"),
+      message("MsgMissionStart", "Match started!"),
+      death("After kickoff"),
+      message("MsgVehicleSpawnKill", "", "Spawn collision", "", "", ""),
+    ];
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), null);
+    expect(events).toMatchObject([
+      { type: "kill", killer: "Killer", victim: "Victim" },
+      { type: "match-start" },
+      {
+        type: "death",
+        victim: "After kickoff",
+        description: "After kickoff died",
+      },
+      {
+        type: "death",
+        victim: "Spawn collision",
+        description: "Spawn collision was in a vehicle spawn field",
+      },
+    ]);
+  });
+
+  it("preserves deaths in recordings that begin mid-match without a kickoff", async () => {
+    scan.blocks = [
+      death("Unknown cause", "", "Default"),
+      death("Turret victim", "", "turret"),
+      death("Player victim", "Killer", "default"),
+    ];
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), null);
+    expect(events).toMatchObject([
+      {
+        type: "death",
+        victim: "Unknown cause",
+        description: "Unknown cause died",
+        weapon: undefined,
+      },
+      {
+        type: "death",
+        victim: "Turret victim",
+        description: "Turret victim was shot by a base turret",
+      },
+      {
+        type: "kill",
+        killer: "Killer",
+        victim: "Player victim",
+        weapon: undefined,
+      },
+    ]);
+    expect(events.some((event) => event.description.includes("default"))).toBe(
+      false,
+    );
+  });
+
+  it.each(["game over", "mission change"])(
+    "only removes the next warmup's deaths after %s",
+    async (boundary) => {
+      scan.blocks = [
+        // This mission was already underway when recording began.
+        death("Earlier match"),
+        boundary === "game over"
+          ? message("MsgGameOver", "Match has ended.")
+          : {
+              type: BlockTypePacket,
+              parsed: {
+                events: [
+                  { parsedData: { type: "GhostingMessageEvent", message: 2 } },
+                ],
+              },
+            },
+        death("Next warmup"),
+        message("MsgMissionStart", "Match started!"),
+        death("Next match"),
+      ];
+      const { events } = await scanDemoTimeline(new ArrayBuffer(0), null);
+      expect(
+        events
+          .filter((event) => event.type === "death")
+          .map((event) => event.victim),
+      ).toEqual(["Earlier match", "Next match"]);
+    },
+  );
 
   it("skips welcome debrief messages and retains the real game-over announcement", async () => {
     scan.blocks = [
@@ -1645,6 +2009,164 @@ describe("flag team metadata", () => {
     ];
   }
 
+  it.each([
+    ["MsgCTFFlagReturned", "You returned your flag.", "flag-return"],
+    ["MsgCTFFlagDropped", "You dropped the flag.", "flag-drop"],
+    [
+      "MsgCTFFlagDropped",
+      "You have left the mission area and lost the flag.",
+      "flag-drop",
+    ],
+    ["MsgCTFFlagCapped", "You captured the flag!", "flag-cap"],
+  ])(
+    "attributes the recorder's private %s after a rename (%s)",
+    async (message, body, type) => {
+      recorder(1);
+      const rawName = "\x10\bNewName\x0b.TAG\x11";
+      scan.taggedStrings.set(10, `\x02${body}~wfx/misc/flag_return.wav`);
+      scan.blocks = [
+        packet("MsgClientNameChanged", "", "Runner", rawName, "100"),
+        ...["0", ""].map((actor) =>
+          packet(message, "\x0110", actor, "Storm", "1", "1"),
+        ),
+      ];
+      const { events } = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
+      expect(events.slice(1)).toHaveLength(2);
+      for (const event of events.slice(1)) {
+        expect(event).toMatchObject({
+          type,
+          isRecorder: true,
+          originalMessage: body,
+        });
+        expect(type === "flag-cap" ? event.capturer : event.actor).toBe(
+          "NewName.TAG",
+        );
+        expect(
+          type === "flag-cap" ? event.raw?.capturer : event.raw?.actor,
+        ).toBe(rawName);
+      }
+    },
+  );
+
+  it("distinguishes own actions from automatic returns even without a recorder name", async () => {
+    scan.blocks = [
+      packet(
+        "MsgCTFFlagReturned",
+        "You returned your flag.",
+        "0",
+        "Storm",
+        "1",
+      ),
+      packet(
+        "MsgCTFFlagReturned",
+        "Your flag was returned.",
+        "0",
+        "Storm",
+        "1",
+      ),
+      packet(
+        "MsgCTFFlagReturned",
+        "The Storm flag was returned to base.",
+        "0",
+        "Storm",
+        "1",
+      ),
+      packet(
+        "MsgCTFFlagDropped",
+        "You have left the mission area and lost the flag.",
+        "0",
+        "Inferno",
+        "2",
+      ),
+      packet("MsgCTFFlagCapped", "You captured the flag!", "0", "Inferno", "2"),
+    ];
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), null);
+    expect(events.map((event) => event.isRecorder)).toEqual([
+      true,
+      false,
+      false,
+      true,
+      true,
+    ]);
+    expect(
+      events.every(
+        (event) =>
+          event.actor == null && event.capturer == null && event.raw == null,
+      ),
+    ).toBe(true);
+  });
+
+  it("uses event-time team metadata for omitted names on every flag action", async () => {
+    recorder(1);
+    scan.taggedStrings.set(10, "1");
+    scan.taggedStrings.set(11, "0");
+    scan.blocks = [
+      packet("MsgCTFAddTeam", "", "1", "\x0bBlood Eagle", "<At Base>", "0"),
+      packet(
+        "MsgCTFFlagTaken",
+        "Your flag has been taken by %1!",
+        "Enemy",
+        "\x0111",
+        "\x0110",
+      ),
+      packet(
+        "MsgCTFFlagDropped",
+        "Your flag has been dropped by %1!",
+        "Enemy",
+        "0",
+        "1",
+      ),
+      packet(
+        "MsgCTFFlagReturned",
+        "Teammate %1 returned your flag to base.",
+        "Ally",
+        "0",
+        "1",
+      ),
+      packet("MsgCTFFlagReturned", "Your flag was returned.", "0", "0", "1"),
+      packet(
+        "MsgCTFFlagCapped",
+        "Your flag was captured by %1.",
+        "Enemy",
+        "0",
+        "1",
+        "2",
+      ),
+      packet("MsgCTFAddTeam", "", "1", "Starwolf", "<At Base>", "0"),
+      packet("MsgCTFFlagReturned", "", "Ally", "", "1"),
+      packet("MsgCTFFlagReturned", "", "Ally", "Custom", "1"),
+    ];
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
+    expect(events.map((event) => event.flagTeamName)).toEqual([
+      "Blood Eagle",
+      "Blood Eagle",
+      "Blood Eagle",
+      "Blood Eagle",
+      "Blood Eagle",
+      "Starwolf",
+      "Custom",
+    ]);
+    expect(events[3]).toMatchObject({
+      description: "The Blood Eagle flag was returned",
+      isRecorder: false,
+    });
+    expect(events[3].actor).toBeUndefined();
+    expect(events[3].raw).toBeUndefined();
+  });
+
+  it.each(["0", "3", "unknown"])(
+    "does not invent a name for unknown or teamless flag %s",
+    async (team) => {
+      scan.blocks = [
+        packet("MsgCTFAddTeam", "", "0", "Observers", "", "0"),
+        packet("MsgCTFFlagReturned", "The flag was returned.", "0", "0", team),
+      ];
+      const { events } = await scanDemoTimeline(new ArrayBuffer(0), null);
+      expect(events[0].flagTeamName).toBeUndefined();
+      expect(events[0].description).toBe("The flag was returned");
+    },
+  );
+
   it("resolves every observer flag action's team, including automatic returns", async () => {
     recorder(0);
     scan.taggedStrings.set(10, "2");
@@ -1659,7 +2181,7 @@ describe("flag team metadata", () => {
       packet("MsgCTFFlagCapped", "", "Player", "Custom B", "2", "1"),
     ];
     const result = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
-    expect(result.observerPerspective).toBe(true);
+
     expect(
       result.events.map(({ type, flagTeamId, actorTeamId }) => [
         type,
@@ -1688,7 +2210,7 @@ describe("flag team metadata", () => {
       packet("MsgCTFFlagCapped", "", "Opponent", "Storm", "1", "2"),
     ];
     const result = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
-    expect(result.observerPerspective).toBe(false);
+
     expect(
       result.events.map(({ type, flagTeamId, teamAffinity }) => [
         type,
@@ -1718,7 +2240,7 @@ describe("flag team metadata", () => {
       packet("MsgCTFFlagCapped", "", "Opponent", "Storm", "1", "2"),
     ];
     const result = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
-    expect(result.observerPerspective).toBe(false);
+
     expect(result.events.map((event) => event.teamAffinity)).toEqual([
       "enemy",
       "friendly",
@@ -1726,7 +2248,7 @@ describe("flag team metadata", () => {
     ]);
   });
 
-  it("keeps observer flag actions before and after playing, and every cap through team changes", async () => {
+  it("keeps everyone's flag actions before, during and after playing through team changes", async () => {
     recorder(0);
     const actions = () => [
       packet("MsgCTFFlagTaken", "", "Other", "Inferno", "2"),
@@ -1749,16 +2271,16 @@ describe("flag team metadata", () => {
       packet("MsgClientJoinTeam", "", "Runner", "Inferno", "100", "2"),
       packet("MsgCTFFlagCapped", "", "Opponent", "Storm", "1", "2"),
     ];
-    const { events, observerPerspective } = await scanDemoTimeline(
-      new ArrayBuffer(0),
-      "Runner",
-    );
-    expect(observerPerspective).toBe(false);
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
+
     const flagActions = events.filter((event) => event.type !== "flag-cap");
     expect(flagActions.map(({ type, timeSec }) => [type, timeSec])).toEqual([
       ["flag-grab", 0],
       ["flag-drop", 0],
       ["flag-return", 0],
+      ["flag-grab", 0.032],
+      ["flag-drop", 0.032],
+      ["flag-return", 0.032],
       ["flag-grab", 0.064],
       ["flag-drop", 0.064],
       ["flag-return", 0.064],
@@ -2036,9 +2558,15 @@ describe("recorder identity", () => {
         new ArrayBuffer(0),
         "  \x0btag|runner  ",
       );
-      expect(result.observerPerspective).toBe(false);
+
       expect(result.events).toMatchObject([
-        { type: "kill", killer: "TAG|Runner", isRecorder: true },
+        {
+          type: "kill",
+          killer: "TAG|Runner",
+          isRecorder: true,
+          victimIsRecorder: false,
+        },
+        { type: "death", victim: "Opponent", isRecorder: false },
       ]);
     },
   );
@@ -2055,7 +2583,7 @@ describe("recorder identity", () => {
       packet("MsgClientJoinTeam", "", "Renamed", "Storm", "100", "1"),
     ];
     const result = await scanDemoTimeline(new ArrayBuffer(0), "TAG|Runner");
-    expect(result.observerPerspective).toBe(true);
+
     expect(result.events).toMatchObject([
       { type: "rename", isRecorder: false },
     ]);
@@ -2076,12 +2604,13 @@ describe("recorder identity", () => {
       kill("Opponent"),
     ];
     const result = await scanDemoTimeline(new ArrayBuffer(0), "  tag|runner  ");
-    expect(result.observerPerspective).toBe(false);
+
     expect(
       result.events.map(({ type, isRecorder }) => [type, isRecorder]),
     ).toEqual([
       ["rename", true],
       ["kill", true],
+      ["death", false],
     ]);
     expect(result.events.find((event) => event.type === "kill")?.killer).toBe(
       "NEW|Runner",
@@ -2138,7 +2667,7 @@ describe("recorder identity", () => {
       ),
     ];
     const result = await scanDemoTimeline(new ArrayBuffer(0), entry.recorder);
-    expect(result.observerPerspective).toBe(true);
+
     expect(result.events).toMatchObject([
       { type: "rename", isRecorder: false },
     ]);
@@ -2154,13 +2683,15 @@ describe("recorder identity", () => {
       kill("OTHER|Runner"),
     ];
     const result = await scanDemoTimeline(new ArrayBuffer(0), "TAG|Runner");
-    expect(result.observerPerspective).toBe(false);
+
     expect(
       result.events.map(({ type, isRecorder }) => [type, isRecorder]),
     ).toEqual([
       ["rename", true],
       ["rename", false],
       ["kill", true],
+      ["kill", false],
+      ["kill", false],
     ]);
     expect(result.events.find((event) => event.type === "kill")?.killer).toBe(
       "NEW|Runner",
@@ -2174,12 +2705,84 @@ describe("recorder identity", () => {
       kill("OTHER|Runner"),
     ];
     const { events } = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
-    expect(events.map((e) => e.type)).toEqual(["kill", "death"]);
-    expect(events.map((e) => e.isRecorder)).toEqual([true, false]);
+    expect(events.map((e) => e.type)).toEqual(["kill", "kill", "kill"]);
+    expect(events.map((e) => e.isRecorder)).toEqual([true, false, false]);
+    expect(events.map((e) => e.victimIsRecorder)).toEqual([false, true, false]);
+  });
+
+  it("keeps every kill and death through observer periods and renames", async () => {
+    scan.blocks = [
+      kill(tagged),
+      packet("MsgClientJoinTeam", "", tagged, "Observer", "100", "0"),
+      kill("Other", "Opponent"),
+      packet("MsgClientNameChanged", "", tagged, "NEW|Runner", "100"),
+      kill("Opponent", "NEW|Runner"),
+      packet("MsgSelfKill", "", "Other", "", "", "Other", "", "", "", "ground"),
+      packet("MsgSuicide", "", "NEW|Runner", "", "", "NEW|Runner"),
+    ];
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
+    expect(events).toMatchObject([
+      {
+        type: "kill",
+        killer: "TAG|Runner",
+        victim: "Opponent",
+        isRecorder: true,
+        victimIsRecorder: false,
+      },
+      {
+        type: "kill",
+        killer: "Other",
+        victim: "Opponent",
+        isRecorder: false,
+        victimIsRecorder: false,
+      },
+      { type: "rename", isRecorder: true },
+      {
+        type: "kill",
+        killer: "Opponent",
+        victim: "NEW|Runner",
+        isRecorder: false,
+        victimIsRecorder: true,
+      },
+      {
+        type: "death",
+        victim: "Other",
+        description: "Other cratered",
+        isRecorder: false,
+      },
+      {
+        type: "death",
+        victim: "NEW|Runner",
+        description: "NEW|Runner suicided",
+        isRecorder: true,
+      },
+    ]);
+  });
+
+  it("keeps everyone's combat events when the recorder is unknown", async () => {
+    scan.demoValues = [];
+    scan.blocks = [kill("Alice", "Bob"), packet("MsgLavaKill", "", "Carol")];
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), null);
+    expect(events).toMatchObject([
+      {
+        type: "kill",
+        killer: "Alice",
+        victim: "Bob",
+        isRecorder: false,
+        victimIsRecorder: false,
+      },
+      {
+        type: "death",
+        victim: "Carol",
+        isRecorder: false,
+        description: "Carol died in lava",
+      },
+    ]);
   });
 
   it("marks the navigation target across flag, death, rename and global events", async () => {
     scan.blocks = [
+      packet("MsgMissionStart", "Match started!"),
       packet("MsgCTFFlagTaken", "", tagged, "Inferno"),
       packet("MsgCTFFlagDropped", "You dropped the %2 flag", "0", "0"),
       packet("MsgCTFFlagReturned", "", tagged, "Storm"),
@@ -2192,11 +2795,11 @@ describe("recorder identity", () => {
       packet("MsgCTFFlagCapped", "", tagged, "Inferno"),
       packet("MsgCTFFlagCapped", "", "New name", "Inferno"),
       packet("MsgClientNameChanged", "", "Opponent", "New name", "200"),
-      packet("MsgMissionStart", "Match started!"),
       packet("MsgGameOver", "Match has ended."),
     ];
     const { events } = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
     expect(events.map(({ type, isRecorder }) => [type, isRecorder])).toEqual([
+      ["match-start", false],
       ["flag-grab", true],
       ["flag-drop", true],
       ["flag-return", true],
@@ -2209,7 +2812,6 @@ describe("recorder identity", () => {
       ["flag-cap", false],
       ["flag-cap", true],
       ["rename", false],
-      ["match-start", false],
       ["match-end", false],
     ]);
   });
@@ -2223,9 +2825,10 @@ describe("recorder identity", () => {
     async (...args) => {
       scan.blocks = [packet(...args), kill("NEW|Runner"), kill(tagged)];
       const { events } = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
-      expect(events.filter((e) => e.type === "kill")).toHaveLength(1);
-      expect(events.find((e) => e.type === "kill")?.killer).toBe("NEW|Runner");
-      expect(events.every((e) => e.isRecorder)).toBe(true);
+      expect(events.filter((e) => e.type === "kill")).toMatchObject([
+        { killer: "NEW|Runner", isRecorder: true },
+        { killer: "TAG|Runner", isRecorder: false },
+      ]);
     },
   );
 });

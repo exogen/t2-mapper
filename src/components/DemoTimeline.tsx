@@ -19,6 +19,17 @@ import { useSettings } from "./SettingsProvider";
 import { useMediaQuery } from "./useMediaQuery";
 import { ImSad2 } from "react-icons/im";
 import { timelineFlagColor } from "./demoTimelineColors";
+import { isRelayRecording } from "../stream/demoDate";
+import {
+  timelineDeathAction,
+  timelineKillVerb,
+} from "../stream/demoTimelineCombatText";
+import {
+  TIMELINE_CATEGORIES,
+  defaultTimelineCategories,
+  isMatchTimelineEvent,
+  matchesTimelineCategory,
+} from "./demoTimelineFilters";
 import accordionStyles from "./Accordion.module.css";
 import controlStyles from "./InspectorControls.module.css";
 import styles from "./DemoTimeline.module.css";
@@ -38,68 +49,48 @@ const EVENT_ICON: Record<TimelineEventType, React.ReactNode> = {
   "generator-online": <HiMiniBolt />,
 };
 
-const WEAPONS_PAST_TENSE: Record<string, string> = {
-  chaingun: "chaingunned",
-  plasma: "plasma rifled",
-};
-
 function renderEventDescription(event: TimelineEvent): React.ReactNode {
   // Names as sent, so the official clan tag shows in its yellow; a
   // name without markup renders as plain text.
   const named = (name: string | undefined, raw: string | undefined) =>
     raw ? <ColoredName raw={raw} tagsOnly /> : (name ?? "");
+  const subject = (name: string | undefined, raw: string | undefined) =>
+    event.isRecorder ? "You" : named(name, raw);
   if (event.type === "kill" && event.killer && event.victim) {
     return (
       <>
-        <span className={styles.Killer} title={event.killer}>
-          {event.isRecorder ? "You" : named(event.killer, event.raw?.killer)}
+        <span className={styles.Killer}>
+          {subject(event.killer, event.raw?.killer)}
         </span>{" "}
         <span className={styles.DamageType}>
-          {event.weapon
-            ? (WEAPONS_PAST_TENSE[event.weapon] ??
-              `${event.weapon}${event.weapon.endsWith("e") ? "d" : "ed"}`)
-            : "killed"}
+          {timelineKillVerb(event.weapon)}
         </span>{" "}
         <span className={styles.Victim}>
-          {named(event.victim, event.raw?.victim)}
+          {event.victimIsRecorder
+            ? "you"
+            : named(event.victim, event.raw?.victim)}
         </span>
       </>
     );
   }
   if (event.type === "death") {
-    if (event.killer) {
-      return (
-        <>
-          <span className={styles.Killer}>
-            {named(event.killer, event.raw?.killer)}
-          </span>{" "}
-          <span className={styles.DamageType}>
-            {event.weapon
-              ? (WEAPONS_PAST_TENSE[event.weapon] ??
-                `${event.weapon}${event.weapon.endsWith("e") ? "d" : "ed"}`)
-              : "killed"}
-          </span>{" "}
-          <span className={styles.Victim} title={event.victim}>
-            {/* The scanner emits deaths only when the recorder is the victim. */}
-            you
-          </span>
-        </>
-      );
-    }
-    return <>{event.description}</>;
+    return (
+      <>
+        <span className={styles.Victim}>
+          {subject(event.victim || "A player", event.raw?.victim)}
+        </span>{" "}
+        {timelineDeathAction(event, event.isRecorder)}
+      </>
+    );
   }
   if (event.type === "flag-grab") {
     const flagLabel = event.flagTeamName
       ? `the ${event.flagTeamName} flag`
       : "the enemy flag";
-    if (event.teamAffinity === "friendly") {
-      return <>You grabbed {flagLabel}</>;
-    }
-    if (event.actor) {
+    if (event.actor || event.isRecorder) {
       return (
         <>
-          {event.isRecorder ? "You" : named(event.actor, event.raw?.actor)}{" "}
-          grabbed {flagLabel}
+          {subject(event.actor, event.raw?.actor)} grabbed {flagLabel}
         </>
       );
     }
@@ -109,31 +100,23 @@ function renderEventDescription(event: TimelineEvent): React.ReactNode {
     const flagLabel = event.flagTeamName
       ? `the ${event.flagTeamName} flag`
       : "the flag";
-    if (event.teamAffinity === "friendly") {
-      return <>You dropped {flagLabel}</>;
-    }
-    if (event.actor) {
+    if (event.actor || event.isRecorder) {
       return (
         <>
-          {event.isRecorder ? "You" : named(event.actor, event.raw?.actor)}{" "}
-          dropped {flagLabel}
+          {subject(event.actor, event.raw?.actor)} dropped {flagLabel}
         </>
       );
     }
     return <>{event.description}</>;
   }
   if (event.type === "flag-return") {
-    if (event.teamAffinity === "friendly") {
-      return <>You returned your flag</>;
-    }
     const flagLabel = event.flagTeamName
       ? `the ${event.flagTeamName} flag`
       : "the flag";
-    if (event.actor) {
+    if (event.actor || event.isRecorder) {
       return (
         <>
-          {event.isRecorder ? "You" : named(event.actor, event.raw?.actor)}{" "}
-          returned {flagLabel}
+          {subject(event.actor, event.raw?.actor)} returned {flagLabel}
         </>
       );
     }
@@ -142,7 +125,7 @@ function renderEventDescription(event: TimelineEvent): React.ReactNode {
     }
     return <>{event.description}</>;
   }
-  if (event.type === "flag-cap" && event.capturer) {
+  if (event.type === "flag-cap" && (event.capturer || event.isRecorder)) {
     const flagLabel =
       event.teamAffinity === "friendly"
         ? "the enemy flag"
@@ -153,19 +136,19 @@ function renderEventDescription(event: TimelineEvent): React.ReactNode {
             : "a flag";
     return (
       <>
-        {named(event.capturer, event.raw?.capturer)} captured {flagLabel}
+        {subject(event.capturer, event.raw?.capturer)} captured {flagLabel}
       </>
     );
   }
   if (event.type === "rename" && event.actor) {
     return (
       <>
-        <span className={styles.Victim} title={event.previousName}>
-          {event.previousName
-            ? named(event.previousName, event.raw?.previousName)
-            : "A player"}
+        <span className={styles.Victim}>
+          {subject(event.previousName || "A player", event.raw?.previousName)}
         </span>{" "}
-        <span className={styles.DamageType}>is now</span>{" "}
+        <span className={styles.DamageType}>
+          {event.isRecorder ? "are now" : "is now"}
+        </span>{" "}
         <span className={styles.Killer}>
           {named(event.actor, event.raw?.actor)}
         </span>
@@ -173,11 +156,11 @@ function renderEventDescription(event: TimelineEvent): React.ReactNode {
     );
   }
   if (event.type === "generator-offline" || event.type === "generator-online") {
-    if (!event.actor) return event.description;
+    if (!event.actor && !event.isRecorder) return event.description;
     const action = event.type === "generator-online" ? "repaired" : "destroyed";
     return (
       <>
-        {named(event.actor, event.raw?.actor)} {action} the{" "}
+        {subject(event.actor, event.raw?.actor)} {action} the{" "}
         {event.generatorLabel ?? "generator"}
       </>
     );
@@ -188,67 +171,41 @@ function renderEventDescription(event: TimelineEvent): React.ReactNode {
   return event.description;
 }
 
-type Filter =
-  | "all"
-  | "kill"
-  | "death"
-  | "flag-grab"
-  | "flag-return"
-  | "flag-cap"
-  | "gens"
-  | "rename";
-
-interface EventFilter {
-  value: Filter;
-  label: string;
-  types?: TimelineEventType[];
-  playerOnly?: boolean;
-  hideWhenEmpty?: boolean;
-}
-
-const EVENT_FILTERS: EventFilter[] = [
-  { value: "all", label: "All" },
-  { value: "kill", label: "Kills", types: ["kill"], playerOnly: true },
-  { value: "death", label: "Deaths", types: ["death"], playerOnly: true },
-  { value: "flag-grab", label: "Grabs", types: ["flag-grab"] },
-  { value: "flag-return", label: "Returns", types: ["flag-return"] },
-  { value: "flag-cap", label: "Caps", types: ["flag-cap"] },
-  {
-    value: "gens",
-    label: "Gens",
-    types: ["generator-offline", "generator-online"],
-  },
-  { value: "rename", label: "Names", types: ["rename"], hideWhenEmpty: true },
-];
-
 export function DemoTimeline() {
   const events = useDemoTimeline((s) => s.events);
   const scanProgress = useDemoTimeline((s) => s.scanProgress);
   const error = useDemoTimeline((s) => s.error);
-  const observerPerspective = useDemoTimeline((s) => s.observerPerspective);
   const recording = useRecording();
   const { setSidebarOpen, observerTeamColors } = useSettings();
   // Match the overlay layout and navigation actions in MapInspector.
   const sidebarOverlayMode = useMediaQuery("(max-width: 899px)") ?? false;
-  const [filter, setFilter] = useState<Filter>("all");
+  const [categories, setCategories] = useState(defaultTimelineCategories);
+  const defaultMine = !isRelayRecording(recording?.recorderName ?? null);
+  const [mine, setMine] = useState(defaultMine);
 
-  // Filters never persist across demos — each load starts on "All".
   useEffect(() => {
-    setFilter("all");
-  }, [events]);
+    setCategories(defaultTimelineCategories());
+    setMine(defaultMine);
+  }, [events, defaultMine]);
 
-  // Observer recordings never emit kills/deaths — their chips are
-  // hidden, and a selection guards against the pre-reset render.
-  const effectiveFilter =
-    EVENT_FILTERS.find(
-      ({ value, playerOnly }) =>
-        value === filter && !(observerPerspective && playerOnly),
-    ) ?? EVENT_FILTERS[0];
-
-  const filtered =
+  const scopedEvents =
     events?.filter(
-      (e) => !effectiveFilter.types || effectiveFilter.types.includes(e.type),
+      (event) =>
+        isMatchTimelineEvent(event) ||
+        !mine ||
+        event.isRecorder ||
+        event.victimIsRecorder,
     ) ?? [];
+  const filtered = scopedEvents.filter(
+    (event) =>
+      isMatchTimelineEvent(event) ||
+      TIMELINE_CATEGORIES.some(
+        (category) =>
+          categories.has(category.value) &&
+          matchesTimelineCategory(event, category, mine),
+      ),
+  );
+  const allSelected = categories.size === TIMELINE_CATEGORIES.length;
 
   const handleClick = useCallback(
     (event: TimelineEvent) => {
@@ -281,70 +238,96 @@ export function DemoTimeline() {
 
   if (!events) return null;
 
-  const eventCounts = new Map<TimelineEventType, number>();
-  for (const event of events) {
-    eventCounts.set(event.type, (eventCounts.get(event.type) ?? 0) + 1);
-  }
-
   return (
     <div className={styles.Root}>
+      <label className={styles.Mine}>
+        <input
+          type="checkbox"
+          checked={mine}
+          onChange={(event) => setMine(event.target.checked)}
+        />
+        Only the recorder’s events
+      </label>
       <div className={styles.Filters}>
-        {EVENT_FILTERS.map(
-          ({ value, label, types, playerOnly, hideWhenEmpty }) => {
-            const count = types
-              ? types.reduce(
-                  (sum, type) => sum + (eventCounts.get(type) ?? 0),
-                  0,
-                )
-              : events.length;
-            if (
-              (observerPerspective && playerOnly) ||
-              (hideWhenEmpty && !count)
+        <button
+          type="button"
+          className={styles.FilterButton}
+          data-active={allSelected}
+          aria-pressed={allSelected}
+          onClick={() =>
+            setCategories(
+              new Set(
+                allSelected
+                  ? []
+                  : TIMELINE_CATEGORIES.map(({ value }) => value),
+              ),
             )
-              return null;
-            return (
-              <button
-                key={value}
-                type="button"
-                className={styles.FilterButton}
-                data-active={effectiveFilter.value === value}
-                onClick={() => setFilter(value)}
-              >
-                {label} ({count})
-              </button>
-            );
-          },
-        )}
+          }
+        >
+          All ({scopedEvents.length})
+        </button>
+        {TIMELINE_CATEGORIES.map((category) => {
+          const active = categories.has(category.value);
+          const count = scopedEvents.filter((event) =>
+            matchesTimelineCategory(event, category, mine),
+          ).length;
+          return (
+            <button
+              key={category.value}
+              type="button"
+              className={styles.FilterButton}
+              data-active={active}
+              aria-pressed={active}
+              onClick={() =>
+                setCategories((previous) => {
+                  const next = new Set(previous);
+                  if (next.has(category.value)) next.delete(category.value);
+                  else next.add(category.value);
+                  return next;
+                })
+              }
+            >
+              {category.label} ({count})
+            </button>
+          );
+        })}
       </div>
       {filtered.length === 0 ? (
         <div className={styles.Empty}>No events found.</div>
       ) : (
         <div className={styles.EventList}>
-          {filtered.map((event, i) => (
-            <button
-              key={`${event.timeSec}-${event.type}-${i}`}
-              type="button"
-              className={styles.EventRow}
-              title={event.description}
-              onClick={() => handleClick(event)}
-            >
-              <span className={styles.EventTime}>
-                {formatPlayheadTime(event.timeSec)}
-              </span>
-              <span
-                className={styles.EventIcon}
-                data-type={event.type}
-                style={{
-                  color: timelineFlagColor(event, observerTeamColors),
-                }}
+          {filtered.map((event, i) => {
+            const displayType =
+              event.type === "kill" &&
+              (!categories.has("kill") || (mine && !event.isRecorder))
+                ? "death"
+                : event.type;
+            return (
+              <button
+                key={`${event.timeSec}-${event.type}-${i}`}
+                type="button"
+                className={styles.EventRow}
+                title={event.originalMessage}
+                onClick={() => handleClick(event)}
               >
-                {EVENT_ICON[event.type]}
-              </span>
-              <span className={styles.EventDescription}>
-                {renderEventDescription(event)}
-              </span>
-            </button>
-          ))}
+                <span className={styles.EventTime}>
+                  {formatPlayheadTime(event.timeSec)}
+                </span>
+                <span
+                  className={styles.EventIcon}
+                  data-type={displayType}
+                  style={{
+                    color: timelineFlagColor(event, observerTeamColors),
+                  }}
+                >
+                  {EVENT_ICON[displayType]}
+                </span>
+                <span className={styles.EventDescription}>
+                  {renderEventDescription(event)}
+                </span>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

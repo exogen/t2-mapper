@@ -585,7 +585,7 @@ function startTimelineScan(
     .then((result) => {
       if (!result || !isCurrentScan()) return;
       const s = demoTimelineStore.getState();
-      s.setEvents(result.events, result.observerPerspective, result.killEvents);
+      s.setEvents(result.events);
       s.setScanProgress(null);
     })
     .catch((err: unknown) => {

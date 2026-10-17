@@ -10,6 +10,7 @@ import {
   resolveIffDisplay,
   rgbString,
   IFF_FRIENDLY,
+  IFF_NEUTRAL,
 } from "./iffTheme";
 import { useSettings } from "./SettingsProvider";
 import { useDataSource } from "../state/gameEntityStore";
@@ -39,7 +40,7 @@ const DEATH_FADE_SECONDS = 3;
 
 /** Neutral gray for the death icon, matching the app's other neutral icon
  *  tints (e.g. FlagMarker's untinted flag). */
-const SKULL_COLOR = "rgb(200, 200, 200)";
+const SKULL_COLOR = rgbString(IFF_NEUTRAL.mapColor);
 
 const FALLBACK_COLOR = rgbString(IFF_FRIENDLY.mapColor);
 

@@ -6,7 +6,6 @@ import { DemoPlaybackControls } from "./DemoPlaybackControls";
 
 const state = vi.hoisted(() => ({
   events: [] as TimelineEvent[] | null,
-  observerPerspective: false,
   observerTeamColors: "blueOrange" as TeamColorScheme,
   recording: { duration: 100 },
   playback: {
@@ -57,7 +56,7 @@ vi.mock("./SettingsProvider", () => ({
 beforeEach(() => {
   state.events = [];
   state.recording.duration = 100;
-  state.observerPerspective = false;
+
   state.observerTeamColors = "blueOrange";
   state.playback.status = "paused";
 });
@@ -140,7 +139,6 @@ it.each([
 ] as const)(
   "uses the scoring team's %s observer color",
   (scheme, team1, team2) => {
-    state.observerPerspective = true;
     state.observerTeamColors = scheme;
     const result = markers(
       {

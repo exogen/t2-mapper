@@ -5,17 +5,16 @@
  * These sets are a protocol fact — which `Msg*` types the server sends
  * for a death and which of those the victim brought on themselves —
  * not an editorial choice. Consumers differ in what they DO with a
- * death (the timeline filters the pub kill feed as noise; cast
- * generation keeps every kill), and that filtering lives in each
- * scanner, downstream of these tables.
+ * death, and that filtering lives downstream of these tables.
  */
 
 /**
- * All death message types where args[2]=victimName, args[5]=killerName,
+ * All death message types where args[2]=victimName, args[3]=him/her,
+ * args[4]=his/her, args[5]=killerName, args[6..7]=killer pronouns,
  * args[9]=DamageTypeText. Case-insensitive matching is used.
  *
  * Note: explicit suicide (Ctrl+K) uses `msgSuicide` which is NOT in
- * this set — we intentionally ignore those.
+ * this set. The timeline handles it separately; the director ignores it.
  */
 export const KILL_MSG_TYPES: ReadonlySet<string> = new Set([
   // Player-vs-player kills

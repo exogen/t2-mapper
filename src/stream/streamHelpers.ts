@@ -1,6 +1,7 @@
 import { Matrix4, Quaternion, Vector3 } from "three";
 import type { ParsedData } from "t2-demo-parser";
 import {
+  extractWavTag,
   resolveNetString,
   resolveShapeName,
   stripTaggedStringMarkup,
@@ -675,8 +676,8 @@ export { stripTaggedStringMarkup };
 
 /**
  * Expand a `messageClient` template: resolve the template + each arg net
- * string, substitute `%1..%N` with the tag-stripped args, drop leftover
- * `%N`, and strip tagged markup. (Callers wanting chat display also strip
+ * string, substitute `%1`–`%9` with args (empty if missing), and strip
+ * tagged markup. (Callers wanting chat display also strip
  * the trailing `~w` sound cue via extractWavTag.)
  */
 export function formatRemoteArgs(
@@ -684,18 +685,21 @@ export function formatRemoteArgs(
   args: string[],
   netStrings: Map<number, string>,
 ): string {
-  let resolved = resolveNetString(template, netStrings);
-  for (let i = 0; i < args.length; i++) {
-    const placeholder = `%${i + 1}`;
-    if (resolved.includes(placeholder)) {
-      resolved = resolved.replaceAll(
-        placeholder,
-        stripTaggedStringMarkup(resolveNetString(args[i], netStrings)),
-      );
-    }
-  }
-  resolved = resolved.replace(/%\d+/g, "");
-  return stripTaggedStringMarkup(resolved);
+  return stripTaggedStringMarkup(
+    formatRemoteArgsColored(template, args, netStrings),
+  );
+}
+
+/** Original ServerMessage text, with substitutions but no color or sound tags. */
+export function formatServerMessageText(
+  args: string[],
+  netStrings: Map<number, string>,
+): string | undefined {
+  return (
+    extractWavTag(
+      formatRemoteArgs(args[1] ?? "", args.slice(2), netStrings),
+    ).text.trim() || undefined
+  );
 }
 
 /**
@@ -709,17 +713,12 @@ export function formatRemoteArgsColored(
   args: string[],
   netStrings: Map<number, string>,
 ): string {
-  let resolved = resolveNetString(template, netStrings);
-  for (let i = 0; i < args.length; i++) {
-    const placeholder = `%${i + 1}`;
-    if (resolved.includes(placeholder)) {
-      resolved = resolved.replaceAll(
-        placeholder,
-        resolveNetString(args[i], netStrings),
-      );
-    }
-  }
-  return resolved.replace(/%\d+/g, "");
+  // Substitute only the template's tokens. Names can contain literal %N or
+  // JavaScript replacement patterns such as $&, which must stay untouched.
+  return resolveNetString(template, netStrings).replace(/%([1-9])/g, (_, n) => {
+    const arg = args[Number(n) - 1];
+    return arg == null ? "" : resolveNetString(arg, netStrings);
+  });
 }
 
 export {

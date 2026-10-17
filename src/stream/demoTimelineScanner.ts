@@ -10,9 +10,8 @@ import type {
 } from "t2-demo-parser";
 import {
   TICK_DURATION_MS,
-  extractWavTag,
   resolveNetString,
-  formatRemoteArgs,
+  formatServerMessageText,
   stripTaggedStringMarkup,
 } from "./streamHelpers";
 import { KILL_MSG_TYPES, SELF_INFLICTED_MSG_TYPES } from "./serverMessages";
@@ -34,6 +33,7 @@ import {
   isServerMessageCommand,
 } from "../../relay/serverMessageDecode";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
+import { timelineDeathAction } from "./demoTimelineCombatText";
 
 const log = createLogger("demoTimelineScanner");
 
@@ -47,6 +47,26 @@ const METADATA_MESSAGE_TYPES: Record<string, string> = {
   msgctfaddteam: "MsgCTFAddTeam",
 };
 
+type FlagAction = "grab" | "drop" | "return" | "cap";
+const FLAG_MESSAGE_ACTIONS: Record<string, FlagAction> = {
+  msgctfflagtaken: "grab",
+  msgctfflagdropped: "drop",
+  msgctfflagreturned: "return",
+  msgctfflagcapped: "cap",
+};
+const FLAG_ACTION_VERBS: Record<FlagAction, string> = {
+  grab: "grabbed",
+  drop: "dropped",
+  return: "returned",
+  cap: "captured",
+};
+
+/** Flag messages use both empty strings and "0" for omitted names. */
+function flagMessageName(raw: string): string | undefined {
+  const name = stripTaggedStringMarkup(raw).trim();
+  return name && name !== "0" ? name : undefined;
+}
+
 /**
  * An admin force or a passed start vote: the countdown is beginning,
  * which can still be cancelled before the actual kickoff.
@@ -59,85 +79,8 @@ function isCountdownForced(rawBody: string): boolean {
   );
 }
 
-/** Descriptions for self-inflicted deaths by message type.
- *  Used for environmental deaths where the msg type alone is sufficient. */
-const SELF_INFLICTED_DESCRIPTIONS: Record<string, string> = {
-  msgoobkill: "Out of bounds",
-  msglavakill: "Killed by lava",
-  msglightningkill: "Struck by lightning",
-  msgcampkill: "Nexus camping",
-  msgturretselfkill: "Killed by own turret",
-  msgvehiclecrash: "Vehicle crash",
-  msgvehiclespawnkill: "Crushed by vehicle",
-};
-
-/** Display names for $DamageTypeText values that need formatting. */
-const WEAPON_DISPLAY_NAMES: Record<string, string> = {
-  turret: "base turret",
-  "plasma turret": "plasma turret",
-  "aa turret": "AA turret",
-  "elf turret": "ELF turret",
-  "mortar turret": "mortar turret",
-  "missile turret": "missile turret",
-  "clamp turret": "indoor deployable turret",
-  "spike turret": "outdoor deployable turret",
-  "sentry turret": "sentry turret",
-  "shrike blaster": "Shrike",
-  "belly turret": "Havoc belly turret",
-  "bomber bomb": "bomber",
-  "tank chaingun": "tank chaingun",
-  "tank mortar": "tank mortar",
-  "mpb missile": "MPB missile",
-  forcefield: "force field",
-  impact: "vehicle impact",
-  crash: "vehicle crash",
-  explosion: "explosion",
-};
-
-/** Descriptions for msgselfkill deaths by $DamageTypeText (args[9]).
- *  The msg type is the same for cratering AND own-weapon deaths, so
- *  the damage type text is needed to distinguish them. */
-const SELF_KILL_BY_WEAPON: Record<string, string> = {
-  ground: "Cratered",
-  mine: "Killed by own mine",
-  satchelcharge: "Killed by own satchel",
-  grenade: "Killed by own grenade",
-  mortar: "Killed by own mortar",
-  disc: "Killed by own disc",
-  plasma: "Killed by own plasma",
-  blaster: "Killed by own blaster",
-  missile: "Killed by own missile",
-  explosion: "Killed by explosion",
-};
-
-/**
- * A message template formatted for timeline display: the shared
- * formatRemoteArgs plus dropping the embedded `~w<path>` sound cue many
- * templates end with, and trimming.
- */
-function formatEventDescription(
-  template: string,
-  args: string[],
-  netStrings: Map<number, string>,
-): string {
-  return extractWavTag(
-    formatRemoteArgs(template, args, netStrings),
-  ).text.trim();
-}
-
 export interface TimelineScanResult {
   events: TimelineEvent[];
-  /**
-   * True when the recorder never played (relay auto-capture, spectator
-   * recording) — kill and death events are never emitted for these.
-   */
-  observerPerspective: boolean;
-  /**
-   * EVERY player-vs-player kill regardless of perspective, for the
-   * auto-director's weapon classification. Not shown on the timeline —
-   * dozens of players' kills are noise at timeline scale.
-   */
-  killEvents: TimelineEvent[];
 }
 
 /**
@@ -244,40 +187,55 @@ export async function scanDemoTimelineParser(
     }
   }
 
-  // The whole-demo flag controls player filters; flag events use the
-  // recorder's current team so observing periods keep everyone's actions.
-  let recorderEverOnTeam = recorderTeamId != null && recorderTeamId > 0;
-
-  const events: TimelineEvent[] = [];
+  let events: TimelineEvent[] = [];
   // Generator credit may arrive later; match against the recorder's name
   // when the transition happened, not their final name after a rename/rejoin.
   const generatorRecorders = new Map<TimelineEvent, string | null>();
-  const killEvents: TimelineEvent[] = [];
   /** Forced-start/vote countdowns, used only if no kickoff ever lands. */
   const forcedStarts: TimelineEvent[] = [];
   let moveTicks = 0;
   let seenMatchStart = false;
+  let matchBoundary = 0;
   let currentMissionName: string | null = null;
   let blockCount = 0;
   let serverNameFound = false;
   let sliceStart = performance.now();
   const totalBlocks = parser.blockCount;
 
-  function flagMetadata(
-    action: "grab" | "drop" | "return" | "cap",
-    teamArg: string | undefined,
-    actor: string | undefined,
-    actorTeamArg?: string,
-  ): Pick<
-    TimelineEvent,
-    "flagTeamId" | "actorTeamId" | "actorTeamName" | "teamAffinity"
-  > {
+  function flagEvent(
+    action: FlagAction,
+    args: string[],
+    timeSec: number,
+  ): TimelineEvent {
+    let actorRaw = resolveNetString(args[2] ?? "", netStrings);
+    let actor = flagMessageName(actorRaw);
+    const template = stripTaggedStringMarkup(
+      resolveNetString(args[1] ?? "", netStrings),
+    ).trim();
+    // Own returns/drops/captures can omit the actor. "Your flag..." also
+    // occurs on automatic returns, so match "You" as a whole word.
+    const ownAction = !actor && /^you\b/i.test(template);
+    if (ownAction) {
+      actorRaw = recorderRawName ?? "";
+      actor = flagMessageName(actorRaw);
+    }
+    const isRecorder = ownAction || actor?.toLowerCase() === normalizedRecorder;
     const parseTeam = (arg: string | undefined) => {
       const parsed =
         arg == null ? NaN : parseInt(resolveNetString(arg, netStrings), 10);
       return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
     };
-    const flagTeamId = parseTeam(teamArg);
+    // All four messages carry the flag's team in args[4]. Only captures
+    // carry the actor's team in args[5]; grabs use that slot for a name.
+    const flagTeamId = parseTeam(args[4]);
+    const flagTeamName =
+      flagMessageName(resolveNetString(args[3] ?? "", netStrings)) ??
+      (flagTeamId != null && flagTeamId > 0
+        ? flagMessageName(
+            rosterState.teamScores.find((team) => team.teamId === flagTeamId)
+              ?.name ?? "",
+          )
+        : undefined);
     const matches = actor
       ? [...rosterState.playerRoster.values()].filter(
           (entry) => entry.name.toLowerCase() === actor.toLowerCase(),
@@ -292,11 +250,9 @@ export async function scanDemoTimelineParser(
     // Stock two-team CTF: grabs/drops/caps belong to the opposing team;
     // returns (including automatic returns) belong to the flag's owner.
     const actorTeamId =
-      parseTeam(actorTeamArg) ??
+      (action === "cap" ? parseTeam(args[5]) : undefined) ??
       rosterTeam ??
-      (actor?.toLowerCase() === normalizedRecorder &&
-      recorderTeamId != null &&
-      recorderTeamId > 0
+      (isRecorder && recorderTeamId != null && recorderTeamId > 0
         ? recorderTeamId
         : undefined) ??
       (action === "return"
@@ -324,7 +280,33 @@ export async function scanDemoTimelineParser(
           DEFAULT_TEAM_NAMES[actorTeamId] ||
           `Team ${actorTeamId}`
         : undefined;
-    return { flagTeamId, actorTeamId, actorTeamName, teamAffinity };
+    const originalMessage = formatServerMessageText(args, netStrings);
+    const verb = FLAG_ACTION_VERBS[action];
+    const flagLabel = flagTeamName
+      ? `the ${flagTeamName} flag`
+      : action === "grab"
+        ? "the enemy flag"
+        : "the flag";
+    return {
+      timeSec,
+      type: `flag-${action}`,
+      description:
+        action === "cap"
+          ? (originalMessage ?? "Flag captured")
+          : actor
+            ? `${actor} ${verb} ${flagLabel}`
+            : `The ${flagTeamName ? `${flagTeamName} ` : ""}flag was ${verb}`,
+      originalMessage,
+      isRecorder,
+      flagTeamId,
+      flagTeamName,
+      actorTeamId,
+      actorTeamName,
+      teamAffinity,
+      ...(action === "cap"
+        ? { capturer: actor, raw: actor ? { capturer: actorRaw } : undefined }
+        : { actor, raw: actor ? { actor: actorRaw } : undefined }),
+    };
   }
 
   while (true) {
@@ -359,6 +341,7 @@ export async function scanDemoTimelineParser(
           evt.parsedData.message === GhostMessage.EndGhosting
         ) {
           seenMatchStart = false;
+          matchBoundary = events.length;
           currentMissionName = null;
           continue;
         }
@@ -486,9 +469,6 @@ export async function scanDemoTimelineParser(
         if (recorderClientId != null) {
           recorderTeamId =
             rosterState.playerRoster.get(recorderClientId)?.teamId ?? null;
-          if (recorderTeamId != null && recorderTeamId > 0) {
-            recorderEverOnTeam = true;
-          }
         }
 
         // Track current mission name from server info messages.
@@ -516,11 +496,18 @@ export async function scanDemoTimelineParser(
           const body = resolveNetString(args[1] ?? "", netStrings);
           const suffix = currentMissionName ? ` (${currentMissionName})` : "";
           if (!seenMatchStart && isRealMatchStart(body)) {
+            // A recorded kickoff proves the preceding period was warmup.
+            // Keep player kills, but omit spawn-selection/self deaths. Without
+            // a kickoff, the recording may instead have begun mid-match.
+            events = events.filter(
+              (event, index) => index < matchBoundary || event.type !== "death",
+            );
             seenMatchStart = true;
             events.push({
               timeSec,
               type: "match-start",
               description: `Match started${suffix}`,
+              originalMessage: formatServerMessageText(args, netStrings),
               isRecorder: false,
             });
           } else if (!seenMatchStart && isCountdownForced(body)) {
@@ -528,6 +515,7 @@ export async function scanDemoTimelineParser(
               timeSec,
               type: "match-countdown",
               description: `Countdown started${suffix}`,
+              originalMessage: formatServerMessageText(args, netStrings),
               isRecorder: false,
             });
           }
@@ -544,16 +532,14 @@ export async function scanDemoTimelineParser(
             timeSec,
             type: "match-end",
             description: `Match ended${suffix}`,
+            originalMessage: formatServerMessageText(args, netStrings),
             isRecorder: false,
           });
           // Reset for the next match in the same demo.
           seenMatchStart = false;
+          matchBoundary = events.length;
           continue;
         }
-
-        // Preserve observer actions before, between and after played periods.
-        const isObserverPerspective =
-          recorderTeamId == null || recorderTeamId <= 0;
 
         // A player changed their name — the community tag-change script
         // (TacoServer dtChatCmdGame.cs). Wire: args[2]=old name,
@@ -569,6 +555,7 @@ export async function scanDemoTimelineParser(
               timeSec,
               type: "rename",
               description: `${previousName || "A player"} is now ${newName}`,
+              originalMessage: formatServerMessageText(args, netStrings),
               isRecorder:
                 parseInt(resolveNetString(args[4], netStrings), 10) ===
                 recorderClientId,
@@ -581,316 +568,89 @@ export async function scanDemoTimelineParser(
           continue;
         }
 
-        // Flag grab (taken from base).
-        // Wire: args[2]=playerName, args[3]=teamName, args[4]=flag.team, args[5]=playerNameBase
-        if (msgTypeLower === "msgctfflagtaken" && args.length >= 3) {
-          const playerRaw = resolveNetString(args[2], netStrings);
-          const playerName = stripTaggedStringMarkup(playerRaw).trim();
-          const flagTeamName =
-            args.length >= 4
-              ? stripTaggedStringMarkup(
-                  resolveNetString(args[3], netStrings),
-                ).trim()
-              : undefined;
-          if (isObserverPerspective) {
-            events.push({
-              timeSec,
-              type: "flag-grab",
-              description: `${playerName} grabbed the ${flagTeamName ?? "enemy"} flag`,
-              isRecorder: playerName.toLowerCase() === normalizedRecorder,
-              actor: playerName || undefined,
-              flagTeamName: flagTeamName || undefined,
-              ...flagMetadata("grab", args[4], playerName),
-              raw: playerName ? { actor: playerRaw } : undefined,
-            });
-          } else if (
-            normalizedRecorder &&
-            playerName.toLowerCase() === normalizedRecorder
-          ) {
-            // Only include grabs by the control player (recorder).
-            events.push({
-              timeSec,
-              type: "flag-grab",
-              description: `You took the ${flagTeamName ?? "enemy"} flag`,
-              isRecorder: true,
-              flagTeamName: flagTeamName || undefined,
-              ...flagMetadata("grab", args[4], normalizedRecorder ?? undefined),
-            });
-          }
+        const flagAction = FLAG_MESSAGE_ACTIONS[msgTypeLower];
+        if (flagAction && (args.length >= 3 || flagAction === "cap")) {
+          events.push(flagEvent(flagAction, args, timeSec));
           continue;
         }
 
-        // Flag drop (carrier died or ejected it).
-        // Wire: args[2]=playerName (or "0" for the carrier's own copy),
-        // args[3]=teamName (or "0"), args[4]=flag.team
-        if (msgTypeLower === "msgctfflagdropped" && args.length >= 3) {
-          const playerRaw = resolveNetString(args[2], netStrings);
-          const playerName = stripTaggedStringMarkup(playerRaw).trim();
-          const flagTeamNameRaw =
-            args.length >= 4
-              ? stripTaggedStringMarkup(
-                  resolveNetString(args[3], netStrings),
-                ).trim()
-              : "";
-          // "0" is TorqueScript's empty for both fields.
-          const flagTeamName =
-            flagTeamNameRaw && flagTeamNameRaw !== "0"
-              ? flagTeamNameRaw
-              : undefined;
-          const actor =
-            playerName && playerName !== "0" ? playerName : undefined;
-          if (isObserverPerspective) {
-            const flagLabel = flagTeamName
-              ? `the ${flagTeamName} flag`
-              : "the flag";
-            events.push({
-              timeSec,
-              type: "flag-drop",
-              description: actor
-                ? `${actor} dropped ${flagLabel}`
-                : `${flagLabel.replace(/^the/, "The")} was dropped`,
-              isRecorder: actor?.toLowerCase() === normalizedRecorder,
-              actor,
-              flagTeamName,
-              ...flagMetadata("drop", args[4], actor),
-              raw: actor ? { actor: playerRaw } : undefined,
-            });
-          } else if (
-            normalizedRecorder &&
-            (actor?.toLowerCase() === normalizedRecorder ||
-              // The recorder receives only the messageClient copy of
-              // their own drop ("You dropped the %2 flag" with
-              // playerName "0") — key off the template body.
-              (!actor &&
-                stripTaggedStringMarkup(
-                  resolveNetString(args[1] ?? "", netStrings),
-                )
-                  .toLowerCase()
-                  .includes("you dropped")))
-          ) {
-            // Only include drops by the control player (recorder).
-            events.push({
-              timeSec,
-              type: "flag-drop",
-              description: `You dropped the ${flagTeamName ?? "enemy"} flag`,
-              isRecorder: true,
-              flagTeamName,
-              ...flagMetadata("drop", args[4], normalizedRecorder ?? undefined),
-            });
-          }
-          continue;
-        }
-
-        // Flag return (returned to base).
-        // Wire: args[2]=playerName, args[3]=teamName, args[4]=flag.team
-        if (msgTypeLower === "msgctfflagreturned" && args.length >= 3) {
-          const playerRaw = resolveNetString(args[2], netStrings);
-          const playerName = stripTaggedStringMarkup(playerRaw).trim();
-          if (isObserverPerspective) {
-            const flagTeamName =
-              args.length >= 4
-                ? stripTaggedStringMarkup(
-                    resolveNetString(args[3], netStrings),
-                  ).trim()
-                : undefined;
-            const flagLabel = flagTeamName
-              ? `the ${flagTeamName} flag`
-              : "the flag";
-            // "0" is TorqueScript's empty: the flag timed out to base.
-            const actor =
-              playerName && playerName !== "0" ? playerName : undefined;
-            events.push({
-              timeSec,
-              type: "flag-return",
-              description: actor
-                ? `${actor} returned ${flagLabel}`
-                : `${flagLabel.replace(/^the/, "The")} was returned`,
-              isRecorder: actor?.toLowerCase() === normalizedRecorder,
-              actor,
-              flagTeamName: flagTeamName || undefined,
-              ...flagMetadata("return", args[4], actor),
-              raw: actor ? { actor: playerRaw } : undefined,
-            });
-          } else if (
-            normalizedRecorder &&
-            playerName.toLowerCase() === normalizedRecorder
-          ) {
-            // Only include returns by the control player (recorder).
-            events.push({
-              timeSec,
-              type: "flag-return",
-              description: "You returned your flag",
-              isRecorder: true,
-              ...flagMetadata(
-                "return",
-                args[4],
-                normalizedRecorder ?? undefined,
-              ),
-            });
-          }
-          continue;
-        }
-
-        // Captures are global milestones, independent of recorder filtering.
-        // Wire: args[2]=capturerName, args[3]=teamName, args[4]=flag.team, args[5]=capturer.team
-        if (msgTypeLower === "msgctfflagcapped") {
-          const description = formatEventDescription(
-            args[1] ?? "",
-            args.slice(2),
-            netStrings,
-          );
-          let capturerRaw =
-            args.length >= 3
-              ? resolveNetString(args[2], netStrings)
-              : undefined;
-          // The recorder's own copy omits their name. Recover it from
-          // the current identity so capture tooltips still name the capper.
-          if (
-            capturerRaw === "0" &&
-            normalizedRecorder &&
-            stripTaggedStringMarkup(resolveNetString(args[1], netStrings))
-              .toLowerCase()
-              .includes("you captured")
-          ) {
-            capturerRaw = recorderRawName ?? undefined;
-          }
-          const capturerName =
-            capturerRaw != null
-              ? stripTaggedStringMarkup(capturerRaw).trim()
-              : undefined;
-          const flagTeamName =
-            args.length >= 4
-              ? stripTaggedStringMarkup(
-                  resolveNetString(args[3], netStrings),
-                ).trim()
-              : undefined;
-          events.push({
-            timeSec,
-            type: "flag-cap",
-            description: description || "Flag captured",
-            isRecorder: capturerName?.toLowerCase() === normalizedRecorder,
-            capturer: capturerName,
-            flagTeamName: flagTeamName || undefined,
-            ...flagMetadata("cap", args[4], capturerName, args[5]),
-            raw: capturerName ? { capturer: capturerRaw } : undefined,
-          });
-          continue;
-        }
-
-        // Kill/death messages.
-        if (KILL_MSG_TYPES.has(msgTypeLower) && args.length >= 6) {
-          // args[2]=victimName, args[5]=killerName, args[9]=DamageTypeText
-          const killerRaw = resolveNetString(args[5], netStrings);
+        // A player kill is also a death; retain one event with both identities
+        // so selecting both categories never duplicates the incident.
+        if (
+          (KILL_MSG_TYPES.has(msgTypeLower) || msgTypeLower === "msgsuicide") &&
+          args.length >= 3
+        ) {
+          const killerRaw = resolveNetString(args[5] ?? "", netStrings);
           const victimRaw = resolveNetString(args[2], netStrings);
           const killerName = stripTaggedStringMarkup(killerRaw).trim();
           const victimName = stripTaggedStringMarkup(victimRaw).trim();
-          const rawNames = { killer: killerRaw, victim: victimRaw };
-          const weapon =
+          // The server chooses this from the character's sex when they die,
+          // including for players whose body is outside our ghost scope.
+          const pronoun = resolveNetString(args[3] ?? "", netStrings)
+            .trim()
+            .toLowerCase();
+          const victimPronoun =
+            pronoun === "him" || pronoun === "her" ? pronoun : undefined;
+          const weaponText =
             args.length >= 10
               ? stripTaggedStringMarkup(
                   resolveNetString(args[9], netStrings),
                 ).trim()
               : undefined;
-
+          const weapon =
+            weaponText?.toLowerCase() === "default" ? undefined : weaponText;
+          const isSelfInflicted =
+            SELF_INFLICTED_MSG_TYPES.has(msgTypeLower) ||
+            msgTypeLower === "msgsuicide";
+          const victimIsRecorder =
+            victimName.toLowerCase() === normalizedRecorder;
+          const originalMessage = formatServerMessageText(args, netStrings);
           if (
-            !SELF_INFLICTED_MSG_TYPES.has(msgTypeLower) &&
+            !isSelfInflicted &&
             killerName &&
             victimName &&
             killerName.toLowerCase() !== victimName.toLowerCase()
           ) {
-            killEvents.push({
+            events.push({
               timeSec,
               type: "kill",
-              description: `${killerName} killed ${victimName}`,
+              description:
+                originalMessage ?? `${killerName} killed ${victimName}`,
+              originalMessage,
               isRecorder: killerName.toLowerCase() === normalizedRecorder,
+              victimIsRecorder,
               killer: killerName,
               victim: victimName,
+              victimPronoun,
               weapon: weapon || undefined,
-              raw: rawNames,
+              raw: { killer: killerRaw, victim: victimRaw },
             });
-          }
-
-          // Observer recordings keep only flag and match events —
-          // other players' kills and deaths are noise at timeline
-          // scale (Ctrl+K suicides are already excluded globally).
-          if (recorderEverOnTeam && normalizedRecorder) {
-            const normalizedKiller = killerName.toLowerCase();
-            const normalizedVictim = victimName.toLowerCase();
-            const isSelfInflicted = SELF_INFLICTED_MSG_TYPES.has(msgTypeLower);
-
-            // Kills: recorder killed someone else (not self-inflicted).
-            if (
-              !isSelfInflicted &&
-              normalizedKiller === normalizedRecorder &&
-              normalizedVictim !== normalizedRecorder
-            ) {
-              const description = formatEventDescription(
-                args[1],
-                args.slice(2),
-                netStrings,
-              );
-              events.push({
-                timeSec,
-                type: "kill",
-                description: description || `${killerName} got a kill`,
-                isRecorder: true,
-                killer: killerName,
-                victim: victimName,
-                weapon: weapon || undefined,
-                raw: rawNames,
-              });
-            }
-
-            // Deaths: recorder is the victim.
-            if (normalizedVictim === normalizedRecorder) {
-              if (isSelfInflicted) {
-                // Self-inflicted: cratering, own weapon, environmental.
-                // For msgselfkill, use the weapon text to distinguish
-                // (e.g. "ground" = cratered, "mine" = own mine).
-                const msgDescription =
-                  SELF_INFLICTED_DESCRIPTIONS[msgTypeLower];
-                const weaponDescription =
-                  msgTypeLower === "msgselfkill" && weapon
-                    ? SELF_KILL_BY_WEAPON[weapon.toLowerCase()]
-                    : undefined;
-                events.push({
-                  timeSec,
-                  type: "death",
-                  description: msgDescription ?? weaponDescription ?? "Died",
-                  isRecorder: true,
-                  weapon: weapon || undefined,
-                });
-              } else if (
-                normalizedKiller !== normalizedRecorder &&
-                killerName
-              ) {
-                // Killed by another player or controlled turret.
-                events.push({
-                  timeSec,
-                  type: "death",
-                  description: `Killed by ${killerName}`,
-                  isRecorder: false,
-                  killer: killerName,
-                  victim: victimName,
-                  weapon: weapon || undefined,
-                  raw: rawNames,
-                });
-              } else {
-                // No killer name (base turret, explosion, etc.) or
-                // self-inflicted on a non-self-inflicted msg type
-                // (e.g. msgexplosionkill where killer === victim).
-                const weaponLower = weapon?.toLowerCase();
-                events.push({
-                  timeSec,
-                  type: "death",
-                  description: weapon
-                    ? `Killed by ${WEAPON_DISPLAY_NAMES[weaponLower!] ?? weapon}`
-                    : "Died",
-                  isRecorder: true,
-                  weapon: weapon || undefined,
-                });
-              }
-            }
+          } else {
+            const weaponLower = weapon?.toLowerCase();
+            const selfKill =
+              !!weapon &&
+              weaponLower !== "ground" &&
+              (msgTypeLower === "msgselfkill" ||
+                msgTypeLower === "msgturretselfkill" ||
+                (!isSelfInflicted &&
+                  !!killerName &&
+                  killerName.toLowerCase() === victimName.toLowerCase()));
+            const death = {
+              deathMessage: msgTypeLower,
+              victimPronoun,
+              selfKill,
+              weapon: weapon || undefined,
+            } satisfies Partial<TimelineEvent>;
+            events.push({
+              timeSec,
+              type: "death",
+              description: `${victimName || "A player"} ${timelineDeathAction(death)}`,
+              originalMessage,
+              isRecorder: victimIsRecorder,
+              victim: victimName || undefined,
+              ...death,
+              raw: victimName ? { victim: victimRaw } : undefined,
+            });
           }
         }
       } catch (err) {
@@ -933,23 +693,8 @@ export async function scanDemoTimelineParser(
     events.sort((a, b) => a.timeSec - b.timeSec);
   }
 
-  // Attribution is now final, as is the observer/player classification.
-  // Unattributed transitions remain useful to everyone.
-  const timelineEvents = recorderEverOnTeam
-    ? events.filter(
-        (event) =>
-          !generatorRecorders.has(event) || !event.actor || event.isRecorder,
-      )
-    : events;
-
-  log.info(
-    "Scanned %d blocks, found %d events",
-    blockCount,
-    timelineEvents.length,
-  );
+  log.info("Scanned %d blocks, found %d events", blockCount, events.length);
   return {
-    events: timelineEvents,
-    observerPerspective: !recorderEverOnTeam,
-    killEvents,
+    events,
   };
 }

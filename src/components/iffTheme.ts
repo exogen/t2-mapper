@@ -22,10 +22,10 @@ export interface IffRgb {
 }
 
 /**
- * One displayable affiliation color. `color` is the canonical shade (3D
- * HUD elements); `mapColor` is tuned for readability on the dark top-down
- * command circuit terrain; `strokeOpacity` is used by outline-style
- * indicators (the CC flag callout's circle/leader).
+ * One displayable affiliation color. `color` is the HUD shade; `mapColor`
+ * is used by Command Circuit and timeline markers. Both use the same
+ * bright green/red. `strokeOpacity` controls outline-style indicators
+ * (the CC flag callout's circle/leader).
  */
 export interface IffDisplayColor {
   color: IffRgb;
@@ -33,36 +33,47 @@ export interface IffDisplayColor {
   strokeOpacity: number;
 }
 
-/** Sampled from gui/hud_alliedtriangle (flat-colored texture). */
+/** All team tints, in sRGB (0–255). Blue keeps a brighter map variant;
+ * classic Match HUD team names have their own intentional text colors. */
+export const IFF_PALETTE = {
+  green: { r: 0, g: 212, b: 71 },
+  red: { r: 255, g: 60, b: 10 },
+  blue: { r: 40, g: 152, b: 255 },
+  blueMap: { r: 45, g: 162, b: 255 },
+  orange: { r: 255, g: 100, b: 15 },
+  neutral: { r: 200, g: 200, b: 200 },
+  classicFriendlyName: { r: 45, g: 228, b: 106 },
+  classicTeamName: { r: 121, g: 203, b: 212 },
+} satisfies Record<string, IffRgb>;
+
 export const IFF_FRIENDLY: IffDisplayColor = {
-  color: { r: 0, g: 155, b: 53 },
-  mapColor: { r: 0, g: 212, b: 71 },
+  color: IFF_PALETTE.green,
+  mapColor: IFF_PALETTE.green,
   strokeOpacity: 0.6,
 };
 
-/** Sampled from gui/hud_enemytriangle. */
 export const IFF_ENEMY: IffDisplayColor = {
-  color: { r: 255, g: 0, b: 0 },
-  mapColor: { r: 255, g: 60, b: 10 },
+  color: IFF_PALETTE.red,
+  mapColor: IFF_PALETTE.red,
   strokeOpacity: 0.65,
 };
 
 /** Matches the app's other neutral icon tints. */
 export const IFF_NEUTRAL: IffDisplayColor = {
-  color: { r: 200, g: 200, b: 200 },
-  mapColor: { r: 200, g: 200, b: 200 },
+  color: IFF_PALETTE.neutral,
+  mapColor: IFF_PALETTE.neutral,
   strokeOpacity: 0.5,
 };
 
 const BLUE: IffDisplayColor = {
-  color: { r: 40, g: 152, b: 255 },
-  mapColor: { r: 45, g: 162, b: 255 },
+  color: IFF_PALETTE.blue,
+  mapColor: IFF_PALETTE.blueMap,
   strokeOpacity: 0.75,
 };
 
 const ORANGE: IffDisplayColor = {
-  color: { r: 255, g: 100, b: 15 },
-  mapColor: { r: 255, g: 100, b: 15 },
+  color: IFF_PALETTE.orange,
+  mapColor: IFF_PALETTE.orange,
   strokeOpacity: 0.6,
 };
 

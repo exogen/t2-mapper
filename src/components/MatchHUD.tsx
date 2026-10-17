@@ -14,6 +14,7 @@ import {
   IFF_ENEMY,
   IFF_FRIENDLY,
   IFF_NEUTRAL,
+  IFF_PALETTE,
   resolveIffDisplay,
   rgbString,
   type TeamColorScheme,
@@ -507,7 +508,16 @@ function ClassicMatchHUD({
   // Keep the column aligned when only some teams have known flag state.
   const hasFlags = teams.some((team) => team.flag != null);
   return (
-    <table className={styles.TeamScores} aria-label="Match HUD">
+    <table
+      className={styles.TeamScores}
+      aria-label="Match HUD"
+      style={
+        {
+          "--team-name-friendly": rgbString(IFF_PALETTE.classicFriendlyName),
+          "--team-name-default": rgbString(IFF_PALETTE.classicTeamName),
+        } as CSSProperties
+      }
+    >
       {observerCount > 0 && (
         <caption className={styles.ObserverCount}>
           <button

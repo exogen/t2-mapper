@@ -38,7 +38,6 @@ export function QuickCamPanel({ watching }: { watching: boolean }) {
             id="quickCamHudPositionInput"
             aria-label="Quick cam HUD position"
             value={quickCamHudPosition}
-            disabled={!showQuickCamHud}
             onChange={(event) =>
               setQuickCamHudPosition(event.target.value as HudPosition)
             }

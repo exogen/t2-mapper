@@ -229,6 +229,24 @@ it.each(["flag-grab", "flag-return", "flag-drop"] as const)(
   },
 );
 
+it("leaves the camera alone for an automatic return of the recorder's team's flag", () => {
+  enterWatchFollow("1");
+  const before = camera();
+  seekToTimelineEvent(
+    recording,
+    event({
+      type: "flag-return",
+      teamAffinity: "friendly",
+      isRecorder: false,
+      actor: undefined,
+    }),
+  );
+  completeSeek();
+  expect(camera()).toBe(before);
+  expect(camera().followEntityId).toBe("1");
+  expect(engine().playback.seekTime).toBe(97);
+});
+
 it.each([
   { type: "kill", killer: "Recorder" },
   { type: "death", killer: undefined },

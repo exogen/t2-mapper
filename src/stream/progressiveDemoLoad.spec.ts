@@ -72,7 +72,7 @@ function recording() {
     },
   } as unknown as StreamRecording;
 }
-const scanResult = { events: [], killEvents: [], observerPerspective: false };
+const scanResult = { events: [] };
 beforeEach(() => {
   unloadDemo();
   vi.clearAllMocks();

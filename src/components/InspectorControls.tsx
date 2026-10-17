@@ -334,7 +334,6 @@ export const InspectorControls = memo(function InspectorControls({
                           id="chatHudStyleInput"
                           aria-label="Chat HUD style"
                           value={chatHudStyle}
-                          disabled={!showChat}
                           onChange={(event) =>
                             setChatHudStyle(event.target.value as HudStyle)
                           }
@@ -364,7 +363,6 @@ export const InspectorControls = memo(function InspectorControls({
                           id="scoreHudPositionInput"
                           aria-label="Mini score HUD position"
                           value={scoreHudPosition}
-                          disabled={!showScoreHud}
                           onChange={(event) =>
                             setScoreHudPosition(
                               event.target.value as HudPosition,
@@ -378,7 +376,6 @@ export const InspectorControls = memo(function InspectorControls({
                           id="scoreHudStyleInput"
                           aria-label="Player scores HUD style"
                           value={scoreHudStyle}
-                          disabled={!showScoreHud}
                           onChange={(event) =>
                             setScoreHudStyle(event.target.value as HudStyle)
                           }
@@ -408,7 +405,6 @@ export const InspectorControls = memo(function InspectorControls({
                           id="matchHudStyleInput"
                           aria-label="Match HUD style"
                           value={matchHudStyle}
-                          disabled={!showMatchHud}
                           onChange={(event) =>
                             setMatchHudStyle(
                               event.target.value as MatchHudStyle,
@@ -426,7 +422,6 @@ export const InspectorControls = memo(function InspectorControls({
                         <select
                           id="scoreStyleInput"
                           value={scoreStyle}
-                          disabled={!showMatchHud}
                           title="Competition shows captures only in CTF games."
                           onChange={(event) =>
                             setScoreStyle(event.target.value as ScoreStyle)

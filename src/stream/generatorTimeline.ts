@@ -3,6 +3,7 @@ import { decodeTeamAdd } from "../../relay/serverMessageDecode";
 import type { TimelineEvent } from "../state/demoTimelineStore";
 import { GhostMessage } from "./entityClassification";
 import {
+  formatServerMessageText,
   isValidPosition,
   isVec3Like,
   resolveNetString,
@@ -84,6 +85,7 @@ interface Destruction {
 
 interface DestructionMessage {
   timeSec: number;
+  originalMessage?: string;
   name?: string;
   kind: string;
   rawActor: string;
@@ -342,6 +344,7 @@ export class GeneratorTimeline {
         actorTeamId: recorder.teamId,
       };
     } else return;
+    message.originalMessage = formatServerMessageText(args, this.netStrings);
     message.target = this.uniqueMessageTarget(this.generatorCatalog(), message);
     this.destructionMessages.push(message);
   }
@@ -533,16 +536,16 @@ export class GeneratorTimeline {
       }
       return candidates;
     });
-    const credits = new Map<Destruction, Map<string, string>>();
+    const credits = new Map<Destruction, Map<string, DestructionMessage>>();
     for (let i = 0; i < matches.length; i++) {
-      const rawActor = this.destructionMessages[i].rawActor;
-      const actor = playerName(rawActor);
+      const message = this.destructionMessages[i];
+      const actor = playerName(message.rawActor);
       for (const candidate of matches[i]) {
         let names = credits.get(candidate);
         if (!names) credits.set(candidate, (names = new Map()));
         names.set(
           matches[i].length === 1 && actor ? actor.name.toLowerCase() : "",
-          rawActor,
+          message,
         );
       }
     }
@@ -556,7 +559,9 @@ export class GeneratorTimeline {
         candidate.timeSec - candidate.event.timeSec <= DESTRUCTION_MATCH_SEC
       ) {
         // Repeated identical announcements agree; competing names do not.
-        attribute(candidate.event, [...names.values()][0]);
+        const message = [...names.values()][0];
+        attribute(candidate.event, message.rawActor);
+        candidate.event.originalMessage = message.originalMessage;
       }
     }
     for (const [event, actor] of this.inferredActors) {
