@@ -262,8 +262,9 @@ const httpServer = http.createServer(async (req, res) => {
     // Demo recording is optional — report stats, never fail health on it.
     if (DEMO_RECORD_ENABLED || demoUploader.enabled) {
       // Disk is the ground truth for pending work: .rec files survive
-      // restarts (the sweep re-uploads them), .partial files are either
-      // in-progress spools or crash debris awaiting the next sweep.
+      // restarts (the sweep re-uploads them). Recordings spool under
+      // pending/, which salvages its own crashes, so a .partial here is
+      // debris from before that layout, awaiting the sweep's salvage.
       let recFiles = 0;
       let partialFiles = 0;
       try {

@@ -62,6 +62,22 @@ export const TARGET_FINDER_INPUT = [
   { name: "findTarget", keys: ["KeyT"] },
 ] as const satisfies readonly InputMapEntry[];
 
+/**
+ * Opens the score screen in demo playback and live. The open screen
+ * closes itself on F2 (ScoreScreen), as it holds the keyboard.
+ */
+export const SCORE_SCREEN_INPUT = [
+  { name: "toggleScoreScreen", keys: ["F2"] },
+] as const satisfies readonly InputMapEntry[];
+
+/**
+ * While orbiting a followed player: keep the camera behind them, or free
+ * it (WatchedPlayerHUD's button).
+ */
+export const PLAYER_ORBIT_INPUT = [
+  { name: "toggleFollowBehindPlayer", keys: ["Shift-ArrowUp"] },
+] as const satisfies readonly InputMapEntry[];
+
 /** Demo/watch saved views; 1 and 2 retain their flag defaults until assigned. */
 export const QUICK_CAM_INPUT = Array.from({ length: 10 }, (_, slot) => [
   { name: `quickCam${slot}` as const, keys: [`Digit${slot}`] },
@@ -154,6 +170,8 @@ export type ActionName =
   | (typeof DEMO_MODE_INPUT)[number]["name"]
   | (typeof LIVE_OBSERVER_INPUT)[number]["name"]
   | (typeof TARGET_FINDER_INPUT)[number]["name"]
+  | (typeof SCORE_SCREEN_INPUT)[number]["name"]
+  | (typeof PLAYER_ORBIT_INPUT)[number]["name"]
   | (typeof LIVE_FOLLOW_INPUT)[number]["name"]
   | (typeof FOLLOW_KEYBOARD_INPUT)[number]["name"]
   | (typeof TOUR_MODE_INPUT)[number]["name"]

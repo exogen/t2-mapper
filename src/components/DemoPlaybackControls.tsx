@@ -37,6 +37,20 @@ import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import styles from "./DemoPlaybackControls.module.css";
 
 /**
+ * Keys the focused seek bar would otherwise step on. [ and ] seek, so
+ * arrows stay the camera's, and Page Up/Down's 0.1 s steps are no use.
+ * Home and End still jump to the ends.
+ */
+const UNSTEPPED_KEYS = new Set([
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "PageUp",
+  "PageDown",
+]);
+
+/**
  * iOS-app-download-style progress: a ring with a pie wedge filling
  * clockwise from 12 o'clock. The wedge is a stroked circle of half the
  * radius with a dash length proportional to progress.
@@ -356,6 +370,10 @@ export function DemoPlaybackControls() {
         value={[dragValue ?? currentTime]}
         onPointerDownCapture={beginScrub}
         onKeyDownCapture={beginScrub}
+        // A prevented key skips Radix's own handling.
+        onKeyDown={(e) => {
+          if (UNSTEPPED_KEYS.has(e.key)) e.preventDefault();
+        }}
         onValueChange={handleSeekChange}
         onValueCommit={handleSeekCommit}
         aria-busy={isSeeking}
@@ -437,7 +455,13 @@ export function DemoPlaybackControls() {
                 title={`${event.description} – ${formatPlayheadTime(event.timeSec)}`}
                 aria-label={`Seek to ${event.description} – ${formatPlayheadTime(event.timeSec)}`}
                 onPointerDown={(e) => e.stopPropagation()}
-                onKeyDown={(e) => e.stopPropagation()}
+                // Keys pressed here reach the slider root, where Home and
+                // End would move the playhead (arrows and Page keys it
+                // already leaves alone). Prevented rather than stopped,
+                // they still reach the app's key bindings.
+                onKeyDown={(e) => {
+                  if (e.key === "Home" || e.key === "End") e.preventDefault();
+                }}
                 onClick={(e) => {
                   scrubRecording.current = null;
                   // Match timeline clicks with a three-second lead-in.

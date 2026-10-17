@@ -8,6 +8,7 @@ const fixture = vi.hoisted(() => ({
   watcher: false,
   owner: "input" as "input" | "tour" | "director" | "commandCircuit",
   targetFinderOpen: false,
+  orbit: false,
 }));
 
 vi.mock("./usePlayback", () => ({
@@ -28,6 +29,9 @@ vi.mock("zustand", () => ({
   useStore: (_store: unknown, select: (state: unknown) => unknown) =>
     select({ open: fixture.targetFinderOpen, followFlagSlot: null }),
 }));
+vi.mock("./usePlayerOrbitLocked", () => ({
+  usePlayerOrbitAvailable: () => fixture.orbit,
+}));
 vi.mock("./InputBindings", () => ({
   InputBindings: ({ map }: { map: readonly InputMapEntry[] }) => (
     <span data-actions={map.map((entry) => entry.name).join(",")} />
@@ -39,6 +43,7 @@ afterEach(() => {
   fixture.watcher = false;
   fixture.owner = "input";
   fixture.targetFinderOpen = false;
+  fixture.orbit = false;
 });
 
 it.each(["input", "tour", "director", "commandCircuit"] as const)(
@@ -71,6 +76,35 @@ it.each([
     expect(html.includes("quickCam0")).toBe(enabled);
   },
 );
+
+it.each(["input", "tour", "director", "commandCircuit"] as const)(
+  "binds the score screen in demo and live while %s owns the camera",
+  (owner) => {
+    fixture.owner = owner;
+    for (const source of ["demo", "live"] as const) {
+      fixture.source = source;
+      expect(
+        renderToStaticMarkup(<ActiveInputBindings />).match(
+          /\btoggleScoreScreen\b/g,
+        ),
+      ).toHaveLength(1);
+    }
+    fixture.source = null;
+    expect(renderToStaticMarkup(<ActiveInputBindings />)).not.toContain(
+      "toggleScoreScreen",
+    );
+  },
+);
+
+it("binds the follow lock only while orbiting a player", () => {
+  expect(renderToStaticMarkup(<ActiveInputBindings />)).not.toContain(
+    "toggleFollowBehindPlayer",
+  );
+  fixture.orbit = true;
+  expect(renderToStaticMarkup(<ActiveInputBindings />)).toContain(
+    "toggleFollowBehindPlayer",
+  );
+});
 
 it("leaves number keys to the target finder while it is open", () => {
   fixture.targetFinderOpen = true;

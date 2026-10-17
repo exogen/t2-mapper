@@ -1,10 +1,25 @@
 import { afterEach, expect, it } from "vitest";
-import { flagLabel, resolveFlagTeam } from "./flagTeam";
+import { flagLabel, resolveFlagTeam, shouldShowFlagMarker } from "./flagTeam";
 import { streamEntityToGameEntity } from "../stream/entityBridge";
 import { setStreamSnapshot } from "./streamSnapshotStore";
 import type { StreamSnapshot } from "../stream/types";
 
 afterEach(() => setStreamSnapshot(null));
+
+it.each(["Item", "Player"])(
+  "keeps a neutral single flag visible on a live %s without team or image metadata",
+  (type) => {
+    const entity = streamEntityToGameEntity({
+      id: "rabbit-flag",
+      type,
+      className: type,
+      teamId: 0,
+      targetRenderFlags: 2,
+    });
+    expect(resolveFlagTeam(entity).teamId).toBe(type === "Player" ? null : 0);
+    expect(shouldShowFlagMarker(entity)).toBe(true);
+  },
+);
 
 it.each([
   [undefined, "Flag", "Flag"],

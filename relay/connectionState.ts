@@ -458,7 +458,12 @@ export class ConnectionState {
     switch ((data.type as string | undefined) ?? eventName) {
       case "NetStringEvent": {
         const { id, value } = data as { id?: number; value?: string };
-        if (id == null || typeof value !== "string") return NO_EVENT_EFFECT;
+        if (id == null) return NO_EVENT_EFFECT;
+        if (data.hasValue === false) {
+          this.netStrings.delete(id);
+          return NO_EVENT_EFFECT;
+        }
+        if (typeof value !== "string") return NO_EVENT_EFFECT;
         this.netStrings.set(id, value);
         return {
           kind: "netString",

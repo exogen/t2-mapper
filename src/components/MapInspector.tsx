@@ -19,6 +19,7 @@ import { ViewModeToggle } from "./ViewModeToggle";
 import { useSettings } from "./SettingsProvider";
 import { useDevicePixelRatio } from "./useDevicePixelRatio";
 import { useAutoScoreScreen } from "./useAutoScoreScreen";
+import { useInputAction } from "./InputControls";
 import { useRecording } from "./usePlayback";
 import { useFeatures } from "./FeaturesProvider";
 import {
@@ -107,6 +108,9 @@ export function MapInspector() {
   const [mapInfoOpen, setMapInfoOpen] = useState(false);
   const [scoreScreenOpen, setScoreScreenOpen] = useState(false);
   useAutoScoreScreen(setScoreScreenOpen);
+  useInputAction("toggleScoreScreen", () =>
+    setScoreScreenOpen((open) => !open),
+  );
   const [choosingMap, setChoosingMap] = useState(false);
   const [missionLoadingProgress, setMissionLoadingProgress] = useState(0);
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(true);

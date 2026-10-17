@@ -510,7 +510,7 @@ describe("watch catch-up equivalence", () => {
       });
       const sim: RelaySim = {
         parser: relayKit.packetParser,
-        ghostState: new GhostStateAccumulator(),
+        ghostState: new GhostStateAccumulator(initialBlock.taggedStrings),
         watchState: new WatchStateAccumulator(),
       };
       sim.ghostState.applyPacket({

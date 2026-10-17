@@ -21,6 +21,7 @@ import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { EntityRenderer } from "./EntityRenderer";
 import { ShapeErrorBoundary } from "./ShapeErrorBoundary";
 import { FlagMarker } from "./FlagMarker";
+import { shouldShowFlagMarker } from "../state/flagTeam";
 import { CommandCircuitFlagCallout } from "./CommandCircuitFlagCallout";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import { entityTypeColor } from "../stream/playbackUtils";
@@ -182,28 +183,17 @@ const EntityWrapper = memo(function EntityWrapper({
   );
 });
 
-/** Imperatively tracks targetRenderFlags bit 0x2 on a game entity and
- * mounts/unmounts FlagMarker when the flag state changes. Entity field
+/** Tracks flag eligibility, including the carrier's death state. Entity field
  * mutations don't trigger React re-renders (ID-only equality), so this
- * uses useFrame to poll the mutable field. */
+ * uses useFrame to poll the mutable fields. */
 function FlagMarkerSlot({ entity }: { entity: GameEntity }) {
   const commandCircuitActive = useCommandCircuit((s) => s.active);
   const flagRef = useRef(false);
-  const [isFlag, setIsFlag] = useState(() => {
-    const flags =
-      "targetRenderFlags" in entity
-        ? (entity.targetRenderFlags as number | undefined)
-        : undefined;
-    return ((flags ?? 0) & 0x2) !== 0;
-  });
+  const [isFlag, setIsFlag] = useState(() => shouldShowFlagMarker(entity));
   flagRef.current = isFlag; // eslint-disable-line react-hooks/refs
 
   useFrame(() => {
-    const flags =
-      "targetRenderFlags" in entity
-        ? (entity.targetRenderFlags as number | undefined)
-        : undefined;
-    const nowFlag = ((flags ?? 0) & 0x2) !== 0;
+    const nowFlag = shouldShowFlagMarker(entity);
     if (nowFlag !== flagRef.current) {
       flagRef.current = nowFlag;
       setIsFlag(nowFlag);

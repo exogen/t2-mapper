@@ -5,6 +5,16 @@ import { stripTaggedStringMarkup } from "../stream/streamHelpers";
 import type { GameEntity } from "./gameEntityTypes";
 import type { FlagTargetInfo } from "../stream/types";
 
+/** HudNavDisplay (Tribes2.exe 0x503f00) excludes dead players from HUD
+ * targets. A corpse can share its target with a respawn. */
+export function shouldShowFlagMarker(entity: GameEntity): boolean {
+  return (
+    "targetRenderFlags" in entity &&
+    ((entity.targetRenderFlags ?? 0) & 0x2) !== 0 &&
+    (entity.renderType !== "Player" || (entity.damageState ?? 0) === 0)
+  );
+}
+
 /**
  * Resolves which team's flag a flag-marked entity represents. Flag items
  * carry their team name as the target name. A carrier identifies the

@@ -152,7 +152,9 @@ export function MapInfoDialog({
     }
   }, []);
 
-  // While open: block keyboard events from reaching drei, and handle close keys.
+  // While open: block key presses from reaching drei, and handle close
+  // keys. Releases still reach the input tracker, or a key held as the
+  // dialog opened would stay down after it closes.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -163,14 +165,9 @@ export function MapInfoDialog({
       }
       e.stopImmediatePropagation();
     };
-    const handleKeyUp = (e: KeyboardEvent) => {
-      e.stopImmediatePropagation();
-    };
     window.addEventListener("keydown", handleKeyDown, { capture: true });
-    window.addEventListener("keyup", handleKeyUp, { capture: true });
     return () => {
       window.removeEventListener("keydown", handleKeyDown, { capture: true });
-      window.removeEventListener("keyup", handleKeyUp, { capture: true });
     };
   }, [onClose]);
 

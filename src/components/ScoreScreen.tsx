@@ -192,7 +192,9 @@ export function ScoreScreen({ onClose }: { onClose: () => void }) {
     }
   }, []);
 
-  // Block keyboard events from reaching Three.js while open
+  // Block key presses from reaching Three.js while open. Releases still
+  // reach the input tracker, or a key held as the screen opened (F2
+  // itself) would stay down after it closes.
   useEffect(() => {
     const belongsToAnotherDialog = (e: KeyboardEvent) => {
       const dialog =
@@ -203,20 +205,14 @@ export function ScoreScreen({ onClose }: { onClose: () => void }) {
     };
     const handleKeyDown = (e: KeyboardEvent) => {
       if (belongsToAnotherDialog(e)) return;
-      if (e.key === "Escape") {
+      if (!e.repeat && (e.key === "Escape" || e.code === "F2")) {
         onClose();
       }
       e.stopImmediatePropagation();
     };
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (belongsToAnotherDialog(e)) return;
-      e.stopImmediatePropagation();
-    };
     window.addEventListener("keydown", handleKeyDown, { capture: true });
-    window.addEventListener("keyup", handleKeyUp, { capture: true });
     return () => {
       window.removeEventListener("keydown", handleKeyDown, { capture: true });
-      window.removeEventListener("keyup", handleKeyUp, { capture: true });
     };
   }, [onClose]);
 
@@ -312,7 +308,7 @@ export function ScoreScreen({ onClose }: { onClose: () => void }) {
           <button className={styles.CloseButton} onClick={onClose}>
             Close
           </button>
-          <span className={styles.Hint}>Esc to close</span>
+          <span className={styles.Hint}>Esc or F2 to close</span>
         </div>
       </div>
     </div>

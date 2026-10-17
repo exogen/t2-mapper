@@ -12,6 +12,7 @@ import { flagLabel } from "../state/flagTeam";
 import styles from "./WatchedPlayerHUD.module.css";
 import { usePlayerOrbitAvailable } from "./usePlayerOrbitLocked";
 import { useSettings } from "./SettingsProvider";
+import { useInputAction } from "./InputControls";
 
 /**
  * The followed player's name — or the followed flag's, e.g. "Storm Flag"
@@ -55,6 +56,9 @@ export function WatchedPlayerHUD() {
   const teamNames = useCaster((s) => s.settings?.teamNames);
   const orbitAvailable = usePlayerOrbitAvailable();
   const { followBehindPlayer, setFollowBehindPlayer } = useSettings();
+  const toggleFollowBehindPlayer = () =>
+    setFollowBehindPlayer((enabled) => !enabled);
+  useInputAction("toggleFollowBehindPlayer", toggleFollowBehindPlayer);
   const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
   const followEntityId = useStore(streamPlaybackStore, (s) => s.followEntityId);
   const followFlagSlot = useStore(streamPlaybackStore, (s) => s.followFlagSlot);
@@ -84,10 +88,10 @@ export function WatchedPlayerHUD() {
           aria-label="Keep follow camera behind player"
           title={
             followBehindPlayer
-              ? "Unlock orbit camera"
-              : "Keep follow camera behind player"
+              ? "Unlock orbit camera (Shift+↑)"
+              : "Keep follow camera behind player (Shift+↑)"
           }
-          onClick={() => setFollowBehindPlayer((enabled) => !enabled)}
+          onClick={toggleFollowBehindPlayer}
         >
           <TbArrowDownFromArc aria-hidden="true" />
         </button>

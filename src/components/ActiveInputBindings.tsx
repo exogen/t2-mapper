@@ -6,6 +6,7 @@ import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { useCameraOwner } from "../state/cameraOwner";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { InputBindings } from "./InputBindings";
+import { usePlayerOrbitAvailable } from "./usePlayerOrbitLocked";
 import { targetFinderStore } from "../state/targetFinderStore";
 import {
   FREE_FLY_INPUT,
@@ -24,6 +25,8 @@ import {
   COMMAND_CIRCUIT_INPUT,
   COMMAND_CIRCUIT_EXIT_INPUT,
   TARGET_FINDER_INPUT,
+  SCORE_SCREEN_INPUT,
+  PLAYER_ORBIT_INPUT,
 } from "./inputMap";
 
 /**
@@ -50,8 +53,13 @@ export function ActiveInputBindings() {
   const isMap = !recording;
   const targetFinderOpen = useStore(targetFinderStore, (s) => s.open);
   const canFindTarget = isDemo || (isLive && isWatcher);
+  const orbitAvailable = usePlayerOrbitAvailable();
 
   if (targetFinderOpen) return null;
+
+  const scoreScreen = (isDemo || isLive) && (
+    <InputBindings map={SCORE_SCREEN_INPUT} />
+  );
 
   // Tours keep manual controls disabled; quick cams can interrupt them.
   if (cameraOwner === "tour") {
@@ -59,12 +67,14 @@ export function ActiveInputBindings() {
       <>
         <InputBindings map={TOUR_MODE_INPUT} />
         {canFindTarget && <InputBindings map={QUICK_CAM_INPUT} />}
+        {scoreScreen}
       </>
     );
   }
 
   // The auto-director keeps manual camera controls disabled. Transport,
-  // the explicit interrupt, and target finding remain available.
+  // the explicit interrupt, target finding and the score screen remain
+  // available.
   if (cameraOwner === "director") {
     return (
       <>
@@ -72,6 +82,7 @@ export function ActiveInputBindings() {
         {canFindTarget && <InputBindings map={QUICK_CAM_INPUT} />}
         {isDemo && <InputBindings map={DEMO_MODE_INPUT} />}
         {canFindTarget && <InputBindings map={TARGET_FINDER_INPUT} />}
+        {scoreScreen}
       </>
     );
   }
@@ -121,7 +132,9 @@ export function ActiveInputBindings() {
             {clickToCycle && <InputBindings map={LIVE_FOLLOW_INPUT} />}
           </>
         )}
+      {orbitAvailable && <InputBindings map={PLAYER_ORBIT_INPUT} />}
       {canFindTarget && <InputBindings map={QUICK_CAM_INPUT} />}
+      {scoreScreen}
     </>
   );
 }

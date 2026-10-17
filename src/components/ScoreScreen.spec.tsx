@@ -5,6 +5,8 @@ import { ScoreScreen } from "./ScoreScreen";
 import { ScoreHUD } from "./ScoreHUD";
 
 const fixture = vi.hoisted(() => ({
+  effects: [] as (() => void | (() => void))[],
+  cleanups: [] as (() => void)[],
   source: "demo" as "demo" | "live" | "map",
   role: "watcher",
   liveReady: true,
@@ -19,6 +21,11 @@ const fixture = vi.hoisted(() => ({
   },
 }));
 
+vi.mock("react", async (original) => ({
+  ...(await original<typeof import("react")>()),
+  useEffect: (effect: () => void | (() => void)) =>
+    fixture.effects.push(effect),
+}));
 vi.mock("zustand", async (original) => ({
   ...(await original<typeof import("zustand")>()),
   useStore: (
@@ -49,7 +56,52 @@ beforeEach(() => {
   fixture.liveReady = true;
   casterStore.getState().activate("test:28000", "1", "Katabatic");
 });
-afterEach(() => casterStore.getState().suspend());
+afterEach(() => {
+  for (const cleanup of fixture.cleanups.splice(0).reverse()) cleanup();
+  fixture.effects.length = 0;
+  casterStore.getState().suspend();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+
+it.each(["F2", "Escape"])(
+  "closes on a fresh %s press, not key repeat",
+  (key) => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", new EventTarget());
+    vi.stubGlobal("Element", class extends EventTarget {});
+    const onClose = vi.fn();
+    renderToStaticMarkup(<ScoreScreen onClose={onClose} />);
+    for (const effect of fixture.effects.splice(0)) {
+      const cleanup = effect();
+      if (cleanup) fixture.cleanups.push(cleanup);
+    }
+    // A nested team-name dialog owns its own exit keys.
+    const nestedDialog = new Element();
+    const nestedKey = Object.assign(new Event("keydown"), { code: key, key });
+    Object.defineProperty(nestedKey, "target", {
+      value: Object.assign(new Element(), { closest: () => nestedDialog }),
+    });
+    const nestedHandler = vi.fn();
+    window.addEventListener("keydown", nestedHandler, { once: true });
+    window.dispatchEvent(nestedKey);
+    expect(nestedHandler).toHaveBeenCalledOnce();
+    expect(onClose).not.toHaveBeenCalled();
+
+    window.dispatchEvent(
+      Object.assign(new Event("keydown"), { code: key, key, repeat: true }),
+    );
+    expect(onClose).not.toHaveBeenCalled();
+    const keyUp = vi.fn();
+    window.addEventListener("keyup", keyUp, { once: true });
+    window.dispatchEvent(Object.assign(new Event("keyup"), { code: key, key }));
+    expect(keyUp).toHaveBeenCalledOnce();
+    window.dispatchEvent(
+      Object.assign(new Event("keydown"), { code: key, key, repeat: false }),
+    );
+    expect(onClose).toHaveBeenCalledOnce();
+  },
+);
 
 it.each(["demo", "live"] as const)(
   "offers team renaming for every score-screen team in %s mode",

@@ -4,8 +4,11 @@ import { LiveStreamAdapter } from "./liveStreaming";
 import type { RelayClient } from "./relayClient";
 import { WatchStateAccumulator } from "../../relay/watchState";
 import type { WatchTargetEntry } from "../../relay/types";
-import { streamEntityToGameEntity } from "./entityBridge";
-import { flagLabel } from "../state/flagTeam";
+import {
+  streamEntityToGameEntity,
+  updateGameEntityFromStream,
+} from "./entityBridge";
+import { flagLabel, shouldShowFlagMarker } from "../state/flagTeam";
 import { decodeCheckpoint, encodeCheckpoint } from "./checkpointCodec";
 import { IFF_GREEN, IFF_RED } from "./entityClassification";
 import { buildCatchupPayload } from "../../relay/watchCatchup";
@@ -74,6 +77,13 @@ class TargetStream extends LiveStreamAdapter {
       index,
       type: "update",
       parsedData: { images: [{ index: 3, dataBlockId }] },
+    });
+  }
+  damage(index: number, damageState: number) {
+    this.processGhostUpdate({
+      index,
+      type: "update",
+      parsedData: { damageState },
     });
   }
   player(index: number) {
@@ -477,6 +487,49 @@ it("uses only server target bits for flag markers, independently of mounted imag
   stream.mountImage(0, 1);
   expect(stream.entity().targetRenderFlags).toBe(0);
 });
+
+it.each([1, 2])(
+  "does not mark a corpse (damage state %s) when its respawn picks up a flag",
+  (damageState) => {
+    const { stream, receive } = fixture();
+    stream.spawn(0, 32, 2);
+    receive({ type: "TargetInfoEvent", targetId: 32, renderFlags: 2 });
+    stream.mountImage(0, 1);
+    const corpse = streamEntityToGameEntity(stream.entity(0));
+    expect(shouldShowFlagMarker(corpse)).toBe(true);
+
+    // Death can arrive before the target bit clears. The render entity
+    // is updated in place, just as it is during live playback.
+    stream.damage(0, damageState);
+    stream.mountImage(0, 0);
+    updateGameEntityFromStream(corpse, stream.entity(0));
+    expect(shouldShowFlagMarker(corpse)).toBe(false);
+    receive({ type: "TargetInfoEvent", targetId: 32, renderFlags: 0 });
+
+    stream.spawn(1, 32, 2);
+    stream.mountImage(1, 1);
+    receive({ type: "TargetInfoEvent", targetId: 32, renderFlags: 2 });
+    expect(stream.entity(0).targetRenderFlags).toBe(2);
+    updateGameEntityFromStream(corpse, stream.entity(0));
+    expect(shouldShowFlagMarker(corpse)).toBe(false);
+    expect(
+      shouldShowFlagMarker(streamEntityToGameEntity(stream.entity(1))),
+    ).toBe(true);
+
+    stream.restore(stream.checkpoint());
+    expect(
+      [0, 1].map((index) =>
+        shouldShowFlagMarker(streamEntityToGameEntity(stream.entity(index))),
+      ),
+    ).toEqual([false, true]);
+
+    // A living carrier can drop the flag too; the server bit still controls it.
+    receive({ type: "TargetInfoEvent", targetId: 32, renderFlags: 0 });
+    expect(
+      shouldShowFlagMarker(streamEntityToGameEntity(stream.entity(1))),
+    ).toBe(false);
+  },
+);
 
 it("restores target types and pending strings from serialized seek checkpoints", () => {
   const { stream, receive } = fixture();

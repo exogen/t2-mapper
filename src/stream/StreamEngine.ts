@@ -2100,12 +2100,10 @@ export abstract class StreamEngine implements StreamingPlayback {
                 : 0;
 
             // Resolve skin from net string tag or inline name.
-            let skinName: string | undefined;
-            if (img.skinTagIndex != null) {
-              skinName = this.conn.netStrings.get(img.skinTagIndex);
-            } else if (img.skinName) {
-              skinName = img.skinName;
-            }
+            const skinName =
+              (img.skinTagIndex != null
+                ? this.conn.netStrings.get(img.skinTagIndex)
+                : img.skinName) || undefined;
 
             // Every slot carries its image state (a pack's trigger is
             // its activation); the state table is parsed once per datablock.

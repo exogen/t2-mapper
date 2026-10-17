@@ -192,7 +192,7 @@ function BroadcastTeam({
               <button
                 type="button"
                 className={`${styles.Action} ${styles.PlayerCount}`}
-                title={`${team.playerCount} ${team.playerCount === 1 ? "player" : "players"} — show score screen`}
+                title={`${team.playerCount} ${team.playerCount === 1 ? "player" : "players"} — show score screen (F2)`}
                 aria-haspopup="dialog"
                 onClick={onOpenScoreScreen}
               >
@@ -523,7 +523,7 @@ function ClassicMatchHUD({
           <button
             type="button"
             className={styles.Action}
-            title="Show score screen"
+            title="Show score screen (F2)"
             aria-haspopup="dialog"
             onClick={onOpenScoreScreen}
           >
@@ -550,7 +550,7 @@ function ClassicMatchHUD({
                 <button
                   type="button"
                   className={styles.Action}
-                  title="Show score screen"
+                  title="Show score screen (F2)"
                   aria-haspopup="dialog"
                   onClick={onOpenScoreScreen}
                 >

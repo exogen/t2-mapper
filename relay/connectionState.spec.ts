@@ -112,6 +112,20 @@ describe("TargetTable", () => {
 });
 
 describe("ConnectionState", () => {
+  it("clears a network string slot without changing already resolved target skins", () => {
+    const state = connection();
+    events(
+      state,
+      { type: "NetStringEvent", id: 10, value: "baseb" },
+      { type: "TargetInfoEvent", targetId: 32, skinTag: 10 },
+      { type: "NetStringEvent", id: 10, hasValue: false },
+    );
+    expect(state.netStrings.has(10)).toBe(false);
+    expect(
+      state.targets.entries().find((entry) => entry.targetId === 32)?.skin,
+    ).toBe("baseb");
+  });
+
   it("reports whether a target event changed what the HUD shows", () => {
     const state = connection();
     expect(

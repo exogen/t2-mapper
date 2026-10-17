@@ -11,6 +11,8 @@ import {
   FOLLOW_KEYBOARD_INPUT,
   FREE_FLY_INPUT,
   LIVE_FOLLOW_INPUT,
+  MOVABLE_CAMERA_INPUT,
+  PLAYER_ORBIT_INPUT,
   QUICK_CAM_INPUT,
 } from "./inputMap";
 
@@ -124,6 +126,27 @@ it.each(["ControlLeft", "AltLeft"])(
     expect(seek).not.toHaveBeenCalled();
   },
 );
+
+it("toggles the follow lock with Shift-Up without looking up", () => {
+  // Only the arrow keys: this test's canvas stub has no gestures.
+  mount(MOVABLE_CAMERA_INPUT.slice(0, 4));
+  mount(PLAYER_ORBIT_INPUT);
+  const toggle = watch("toggleFollowBehindPlayer");
+  const look = watch("lookUp");
+  key("keydown", "ShiftLeft");
+  key("keydown", "ArrowUp");
+  expect(toggle).toHaveBeenCalledOnce();
+  expect(inputControlsStore.getState().actions.lookUp).toEqual({
+    pressed: false,
+  });
+  key("keyup", "ArrowUp");
+  key("keyup", "ShiftLeft");
+  // Shift pressed while looking up is no toggle.
+  key("keydown", "ArrowUp");
+  key("keydown", "ShiftLeft");
+  expect(look).toHaveBeenCalledOnce();
+  expect(toggle).toHaveBeenCalledOnce();
+});
 
 it("ignores held-key repeats but accepts another press after release", () => {
   const seek = watch("seekForward");

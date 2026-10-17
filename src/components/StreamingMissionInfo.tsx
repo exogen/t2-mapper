@@ -190,7 +190,7 @@ export function StreamingMissionInfo({
               <button
                 type="button"
                 className={styles.PlayersButton}
-                title="Show scores"
+                title="Show scores (F2)"
                 onClick={onOpenScoreScreen}
               >
                 <LuUsers className={styles.PlayersIcon} aria-label="Players" />
