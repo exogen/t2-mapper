@@ -90,6 +90,7 @@ export function Projectiles() {
           streamRenderFrame.previous?.get(entity.id),
           streamRenderFrame.interpT,
           state3d.camera,
+          streamRenderFrame.aimCorrection,
         );
     });
   }, FramePriority.ShapeAnimation - 1);

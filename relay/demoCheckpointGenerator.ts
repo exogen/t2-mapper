@@ -11,10 +11,12 @@ import {
 } from "../src/stream/demoStreaming";
 import { scanDemoTimelineParser } from "../src/stream/demoTimelineScanner";
 import {
+  DEFAULT_CHECKPOINT_INTERVAL_TICKS,
   DEMO_CHECKPOINT_VERSION,
   demoSha256,
   demoCheckpointTargets,
   validateDemoCheckpoints,
+  type DemoCheckpointPlan,
   type DemoCheckpointSidecar,
 } from "../src/stream/demoCheckpoints";
 import { encodeCheckpoint, bytesToBase64 } from "../src/stream/checkpointCodec";
@@ -25,7 +27,10 @@ import { registerShapeSequences } from "../src/stream/shapeSequences";
 import { OCCLUDER_SHAPE_TYPES } from "../src/world/colliderPolicy";
 import { ForceFieldState } from "../src/stream/forceFieldState";
 import { TICK_DURATION_MS } from "../src/stream/streamHelpers";
-import { loadDemoCheckpointCount } from "./demoCheckpointConfig.js";
+import {
+  checkDemoCheckpointPlan,
+  loadDemoCheckpointPlan,
+} from "./demoCheckpointConfig.js";
 
 export interface DemoCheckpointGenerationResult {
   version: number;
@@ -44,9 +49,9 @@ export async function generateDemoCheckpoints(
   assetRoot: string,
   progress: (event: unknown) => void = () => {},
   reuseExisting = true,
-  count = loadDemoCheckpointCount(),
+  plan: DemoCheckpointPlan = loadDemoCheckpointPlan(),
 ): Promise<DemoCheckpointGenerationResult> {
-  count = loadDemoCheckpointCount(count, "Checkpoint count");
+  plan = checkDemoCheckpointPlan(plan);
   if (
     [output, `${output}.tmp`].some(
       (target) => path.resolve(target) === path.resolve(input),
@@ -67,8 +72,12 @@ export async function generateDemoCheckpoints(
     try {
       const text = await fs.readFile(output, "utf8");
       const existing = JSON.parse(text) as DemoCheckpointSidecar;
-      if (existing.requestedCount !== count)
-        throw new Error("Checkpoint count changed");
+      if (
+        existing.requestedCount !== plan.maxCount ||
+        (existing.intervalTicks ?? DEFAULT_CHECKPOINT_INTERVAL_TICKS) !==
+          plan.intervalTicks
+      )
+        throw new Error("Checkpoint plan changed");
       await validateDemoCheckpoints(text, buffer);
       return {
         version: existing.version,
@@ -86,10 +95,10 @@ export async function generateDemoCheckpoints(
   const parser = new DemoParser(new Uint8Array(buffer));
   await parser.load();
   let targets: ReturnType<typeof demoCheckpointTargets> = [];
-  if (count > 0) {
+  if (plan.maxCount > 0) {
     const { recorderName } = extractMissionInfo(parser.initialBlock.demoValues);
     const { events } = await scanDemoTimelineParser(parser, recorderName);
-    targets = demoCheckpointTargets(events, count, parser.bufferedMoveTicks);
+    targets = demoCheckpointTargets(events, plan, parser.bufferedMoveTicks);
   }
   progress({
     phase: "targets",
@@ -104,7 +113,8 @@ export async function generateDemoCheckpoints(
     version: DEMO_CHECKPOINT_VERSION,
     demoBytes: bytes.byteLength,
     demoSha256: await demoSha256(buffer),
-    requestedCount: count,
+    requestedCount: plan.maxCount,
+    intervalTicks: plan.intervalTicks,
     checkpoints: [],
   };
   if (targets.length > 0) {

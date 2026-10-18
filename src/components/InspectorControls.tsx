@@ -187,6 +187,8 @@ export const InspectorControls = memo(function InspectorControls({
     setLodEnabled,
     showFpsMeter,
     setShowFpsMeter,
+    aimCorrection,
+    setAimCorrection,
   } = useDebug();
   const watching = useLiveSelector((s) => s.role === "watcher");
   const showCasterControls =
@@ -879,6 +881,24 @@ export const InspectorControls = memo(function InspectorControls({
                   <label className={styles.Label} htmlFor="fpsMeterInput">
                     FPS meter
                   </label>
+                </div>
+                <div className={styles.CheckboxField}>
+                  <input
+                    id="aimCorrectionInput"
+                    type="checkbox"
+                    checked={aimCorrection}
+                    onChange={(event) => {
+                      setAimCorrection(event.target.checked);
+                    }}
+                  />
+                  <label className={styles.Label} htmlFor="aimCorrectionInput">
+                    Aim correction
+                  </label>
+                  <p className={styles.Description}>
+                    Other players' view angles arrive rounded down to steps of
+                    about 3°. Read them at the middle of each step, so their
+                    models, beams and follow cameras line up with their shots.
+                  </p>
                 </div>
                 {canShowDebugVisuals && (
                   <div className={styles.CheckboxField}>

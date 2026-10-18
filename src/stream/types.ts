@@ -434,6 +434,12 @@ export interface StreamEntity {
   headPitch?: number;
   /** Head yaw for blend animations (freelook), normalized [-1,1]. -1 = max right, 1 = max left. */
   headYaw?: number;
+  /**
+   * The view angles (rotation, head pitch and yaw) came from ghost updates,
+   * which pack them in a few bits. False while the recording client's own
+   * full-precision control data drives this player.
+   */
+  viewQuantized?: boolean;
   /** Arm blend animation action index from Player ghost (networked). */
   armAction?: number;
   /** ShapeBase sound slots (from ghost SoundMask). */

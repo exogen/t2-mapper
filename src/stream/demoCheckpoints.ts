@@ -10,7 +10,12 @@ import { TICK_DURATION_MS } from "./streamHelpers";
 export const DEMO_CHECKPOINT_VERSION = 14;
 const MIN_SUPPORTED_CHECKPOINT_VERSION = 14;
 export const DEMO_CHECKPOINT_SUFFIX = ".checkpoints.json";
-const CHECKPOINT_INTERVAL_TICKS = (12 * 60 * 1000) / TICK_DURATION_MS;
+/**
+ * The generator's default spacing, and the spacing of sidecars written
+ * before they recorded theirs.
+ */
+export const DEFAULT_CHECKPOINT_INTERVAL_TICKS =
+  (12 * 60 * 1000) / TICK_DURATION_MS;
 
 export function isSupportedDemoCheckpointVersion(version: number): boolean {
   return (
@@ -22,7 +27,11 @@ export function isSupportedDemoCheckpointVersion(version: number): boolean {
 
 export interface DemoCheckpointTarget {
   tick: number;
-  matchStartSec: number;
+  /**
+   * The first match start, which anchors the schedule. Absent when the
+   * recording has none, such as one that began mid-match.
+   */
+  matchStartSec?: number;
   description: string;
 }
 
@@ -31,8 +40,27 @@ export interface DemoCheckpointSidecar {
   version: number;
   demoBytes: number;
   demoSha256: string;
+  /**
+   * The generator's DemoCheckpointPlan maxCount, so it can tell whether a
+   * sidecar is current. Playback takes whatever checkpoints a sidecar holds.
+   */
   requestedCount: number;
+  /**
+   * The plan's intervalTicks. Sidecars written before it was recorded used
+   * DEFAULT_CHECKPOINT_INTERVAL_TICKS.
+   */
+  intervalTicks?: number;
   checkpoints: (DemoCheckpointTarget & { data: string })[];
+}
+
+/**
+ * Where the generator puts a demo's seek checkpoints: from a minute before
+ * its first match start (or one interval in, without one), every
+ * `intervalTicks`, at most `maxCount` of them.
+ */
+export interface DemoCheckpointPlan {
+  intervalTicks: number;
+  maxCount: number;
 }
 
 function firstCheckpointTick(matchStartSec: number): number {
@@ -44,7 +72,7 @@ function firstCheckpointTick(matchStartSec: number): number {
 
 export function demoCheckpointTargets(
   events: readonly TimelineEvent[],
-  count: number,
+  plan: DemoCheckpointPlan,
   lastTick: number,
 ): DemoCheckpointTarget[] {
   let firstStart: TimelineEvent | undefined;
@@ -57,17 +85,22 @@ export function demoCheckpointTargets(
       continue;
     if (!firstStart || event.timeSec < firstStart.timeSec) firstStart = event;
   }
-  if (!firstStart) return [];
+  // A recording without a kickoff, often one that began mid-match, still
+  // seeks faster from checkpoints.
+  const firstTick = firstStart
+    ? firstCheckpointTick(firstStart.timeSec)
+    : plan.intervalTicks;
   const targets: DemoCheckpointTarget[] = [];
-  const firstTick = firstCheckpointTick(firstStart.timeSec);
-  for (let i = 0; i < count; i++) {
-    const tick = firstTick + i * CHECKPOINT_INTERVAL_TICKS;
+  // A checkpoint at tick 0 would save no replay. Only the first can land there.
+  for (let i = 0; i <= plan.maxCount && targets.length < plan.maxCount; i++) {
+    const tick = firstTick + i * plan.intervalTicks;
     if (tick >= lastTick) break;
-    targets.push({
-      tick,
-      matchStartSec: firstStart.timeSec,
-      description: firstStart.description,
-    });
+    if (tick > 0)
+      targets.push({
+        tick,
+        matchStartSec: firstStart?.timeSec,
+        description: firstStart?.description ?? "Recording start",
+      });
   }
   return targets;
 }
@@ -108,33 +141,26 @@ async function visitDemoCheckpoints(
 ): Promise<void> {
   const sidecar = JSON.parse(text) as DemoCheckpointSidecar;
   signal?.throwIfAborted();
+  // Any checkpoint of this exact demo speeds seeking, wherever it falls:
+  // the generator's plan (count, spacing) is its own business.
   if (
     sidecar.format !== "t2-mapper-seek-checkpoints" ||
     !isSupportedDemoCheckpointVersion(sidecar.version) ||
     sidecar.demoBytes !== buffer.byteLength ||
     !Array.isArray(sidecar.checkpoints) ||
-    !Number.isSafeInteger(sidecar.requestedCount) ||
-    sidecar.requestedCount < 0 ||
-    sidecar.checkpoints.length > sidecar.requestedCount ||
     sidecar.demoSha256 !== (await demoSha256(buffer))
   )
     throw new Error(
       "Seek checkpoints do not match this demo or engine version",
     );
-  for (const [index, entry] of sidecar.checkpoints.entries()) {
+  for (const entry of sidecar.checkpoints) {
     signal?.throwIfAborted();
     if (
       !Number.isSafeInteger(entry.tick) ||
       entry.tick < 0 ||
-      !Number.isFinite(entry.matchStartSec) ||
-      entry.matchStartSec < 0 ||
-      entry.matchStartSec !== sidecar.checkpoints[0].matchStartSec ||
-      entry.tick !==
-        firstCheckpointTick(entry.matchStartSec) +
-          index * CHECKPOINT_INTERVAL_TICKS ||
       typeof entry.data !== "string"
     )
-      throw new Error("Invalid seek checkpoint timing");
+      throw new Error("Invalid seek checkpoint");
     const checkpoint = (await decodeCompressedCheckpoint(
       entry.data,
     )) as DemoSeekCheckpoint;

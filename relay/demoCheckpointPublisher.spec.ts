@@ -55,10 +55,12 @@ const config = {
   prefix: "demos/",
 };
 const key = "demos/example.rec";
+const defaultPlan = { intervalTicks: 22_500, maxCount: 1 };
 const contents = '{"checkpoints":[]}';
 const metadata = {
   "checkpoint-version": String(DEMO_CHECKPOINT_VERSION),
   "checkpoint-count": "1",
+  "checkpoint-interval": "22500",
   "demo-bytes": "3",
   "demo-etag": '"demo-v1"',
 };
@@ -68,6 +70,7 @@ let publisher: DemoCheckpointPublisher;
 beforeEach(async () => {
   vi.resetAllMocks();
   vi.stubEnv("DEMO_CHECKPOINT_COUNT", undefined);
+  vi.stubEnv("DEMO_CHECKPOINT_INTERVAL_MINUTES", undefined);
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "checkpoint-publisher-test-"));
   localFile = path.join(dir, "example.rec");
   await fs.writeFile(localFile, new Uint8Array([1, 2, 3]));
@@ -109,15 +112,20 @@ afterEach(async () => {
 });
 
 describe("demo checkpoint publishing", () => {
-  it.each([-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])(
-    "rejects invalid numeric count %s at construction",
-    (count) => {
-      expect(
-        () => new DemoCheckpointPublisher(config, "/assets", count),
-      ).toThrow("Checkpoint count must be a non-negative integer");
-      expect(mocks.send).not.toHaveBeenCalled();
-    },
-  );
+  it.each([
+    { intervalTicks: 22_500, maxCount: -1 },
+    { intervalTicks: 22_500, maxCount: 1.5 },
+    { intervalTicks: 22_500, maxCount: NaN },
+    { intervalTicks: 22_500, maxCount: Infinity },
+    { intervalTicks: 22_500, maxCount: Number.MAX_SAFE_INTEGER + 1 },
+    { intervalTicks: 0, maxCount: 1 },
+    { intervalTicks: 1.5, maxCount: 1 },
+  ])("rejects invalid plan %o at construction", (plan) => {
+    expect(() => new DemoCheckpointPublisher(config, "/assets", plan)).toThrow(
+      /^Checkpoint (count|interval) must be/,
+    );
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
   it("reuses a current remote sidecar without downloading or replaying", async () => {
     mocks.send
       .mockResolvedValueOnce({ Metadata: metadata })
@@ -151,7 +159,7 @@ describe("demo checkpoint publishing", () => {
         `${input}.checkpoints.json`,
         "/assets",
         false,
-        1,
+        defaultPlan,
       );
       await expect(fs.access(path.dirname(input))).rejects.toThrow();
     },
@@ -164,7 +172,7 @@ describe("demo checkpoint publishing", () => {
       `${localFile}.checkpoints.json`,
       "/assets",
       false,
-      1,
+      defaultPlan,
     );
     expect(mocks.send).toHaveBeenCalledTimes(2);
     expect(mocks.send).toHaveBeenCalledWith(
@@ -194,34 +202,56 @@ describe("demo checkpoint publishing", () => {
     expect(mocks.run.mock.calls[0][3]).toBe(true);
   });
 
-  it.each([undefined, "3"])(
-    "regenerates when the requested count metadata is %s",
-    async (count) => {
-      mocks.send.mockResolvedValueOnce({
-        Metadata: { ...metadata, "checkpoint-count": count },
-      });
-      expect(await publisher.publish(key)).toBe("published");
-      expect(mocks.run.mock.calls[0][4]).toBe(1);
-    },
-  );
+  it.each([
+    { "checkpoint-count": undefined },
+    { "checkpoint-count": "3" },
+    { "checkpoint-interval": "16875" },
+  ])("regenerates when the plan metadata is %j", async (headers) => {
+    mocks.send.mockResolvedValueOnce({
+      Metadata: { ...metadata, ...headers },
+    });
+    expect(await publisher.publish(key)).toBe("published");
+    expect(mocks.run.mock.calls[0][4]).toEqual(defaultPlan);
+  });
 
-  it.each([undefined, 4])(
-    "passes the env count or explicit override %s to the worker and metadata",
+  it("takes sidecars without interval metadata to use the default interval", async () => {
+    const legacy = { ...metadata, "checkpoint-interval": undefined };
+    mocks.send
+      .mockResolvedValueOnce({ Metadata: legacy })
+      .mockResolvedValueOnce({ ContentLength: 3, ETag: '"demo-v1"' });
+    expect(await publisher.publish(key)).toBe("current");
+    publisher = new DemoCheckpointPublisher(config, "/assets", {
+      intervalTicks: 16_875,
+      maxCount: 1,
+    });
+    mocks.send.mockResolvedValueOnce({ Metadata: legacy });
+    expect(await publisher.publish(key)).toBe("published");
+  });
+
+  it.each([undefined, { intervalTicks: 100, maxCount: 4 }])(
+    "passes the env plan or explicit override %o to the worker and metadata",
     async (override) => {
       vi.stubEnv("DEMO_CHECKPOINT_COUNT", "3");
+      vi.stubEnv("DEMO_CHECKPOINT_INTERVAL_MINUTES", "9");
       publisher = new DemoCheckpointPublisher(config, "/assets", override);
       expect(await publisher.publish(key, { localFile })).toBe("published");
-      const count = override ?? 3;
-      expect(mocks.run.mock.calls[0][4]).toBe(count);
+      const plan = override ?? { intervalTicks: 16_875, maxCount: 3 };
+      expect(mocks.run.mock.calls[0][4]).toEqual(plan);
       const upload = mocks.send.mock.calls.find(
         ([command]) => command.kind === "put",
       )![0];
-      expect(upload.input.Metadata["checkpoint-count"]).toBe(String(count));
+      expect(upload.input.Metadata).toMatchObject({
+        "checkpoint-count": String(plan.maxCount),
+        "checkpoint-interval": String(plan.intervalTicks),
+      });
     },
   );
 
   it("reuses short-demo sidecars using the requested count even if none were generated", async () => {
-    publisher = new DemoCheckpointPublisher(config, "/assets", 3);
+    publisher = new DemoCheckpointPublisher(config, "/assets", {
+      intervalTicks: 22_500,
+      maxCount: 3,
+    });
     mocks.send
       .mockResolvedValueOnce({
         Metadata: { ...metadata, "checkpoint-count": "3" },

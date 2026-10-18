@@ -14,11 +14,17 @@ import * as demoStreaming from "../src/stream/demoStreaming";
 import * as headlessWorld from "../src/world/headlessWorld";
 import * as timelineScanner from "../src/stream/demoTimelineScanner";
 
+const plan = (
+  maxCount: number,
+  intervalTicks = checkpoints.DEFAULT_CHECKPOINT_INTERVAL_TICKS,
+) => ({ intervalTicks, maxCount });
+
 let dir: string;
 let file: string;
 let output: string;
 beforeEach(async () => {
   vi.stubEnv("DEMO_CHECKPOINT_COUNT", undefined);
+  vi.stubEnv("DEMO_CHECKPOINT_INTERVAL_MINUTES", undefined);
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "checkpoint-generator-test-"));
   file = path.join(dir, "midmatch.rec");
   output = `${file}.checkpoints.json`;
@@ -66,7 +72,7 @@ describe("offline checkpoint generation", () => {
     },
   );
 
-  it("creates a valid empty sidecar without collision assets when no kickoff exists", async () => {
+  it("creates a valid empty sidecar without collision assets for a demo shorter than one interval", async () => {
     const result = await generateDemoCheckpoints(
       file,
       output,
@@ -85,6 +91,33 @@ describe("offline checkpoint generation", () => {
       "midmatch.rec",
       "midmatch.rec.checkpoints.json",
     ]);
+  });
+
+  it("schedules a demo without a kickoff from one interval in", async () => {
+    await writeDemo(303);
+    expect(
+      await generateDemoCheckpoints(
+        file,
+        output,
+        "/absent-assets",
+        undefined,
+        true,
+        plan(5, 100),
+      ),
+    ).toMatchObject({ count: 3, reused: false });
+    const bytes = await fs.readFile(file);
+    const buffer = bytes.buffer.slice(
+      bytes.byteOffset,
+      bytes.byteOffset + bytes.byteLength,
+    ) as ArrayBuffer;
+    expect(
+      (
+        await readDemoCheckpoints(await fs.readFile(output, "utf8"), buffer)
+      ).map((checkpoint) => checkpoint.cursor.moveTicks),
+    ).toEqual([100, 200, 300]);
+    expect(
+      JSON.parse(await fs.readFile(output, "utf8")).checkpoints[0],
+    ).not.toHaveProperty("matchStartSec");
   });
 
   it("reuses valid completed output and regenerates stale/corrupt local sidecars", async () => {
@@ -155,14 +188,43 @@ describe("offline checkpoint generation", () => {
         "/absent-assets",
         undefined,
         true,
-        0,
+        plan(0),
       ),
     ).toMatchObject({ count: 0, reused: false });
   });
 
-  it.each([-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])(
-    "rejects an invalid numeric override %s before reading or writing files",
-    async (count) => {
+  it("regenerates when the interval changes, taking unrecorded intervals as the default", async () => {
+    await generateDemoCheckpoints(file, output, "/absent-assets");
+    const sidecar = JSON.parse(await fs.readFile(output, "utf8"));
+    expect(sidecar.intervalTicks).toBe(
+      checkpoints.DEFAULT_CHECKPOINT_INTERVAL_TICKS,
+    );
+    delete sidecar.intervalTicks;
+    await fs.writeFile(output, JSON.stringify(sidecar));
+    expect(
+      await generateDemoCheckpoints(file, output, "/absent-assets"),
+    ).toMatchObject({ reused: true });
+    vi.stubEnv("DEMO_CHECKPOINT_INTERVAL_MINUTES", "9");
+    expect(
+      await generateDemoCheckpoints(file, output, "/absent-assets"),
+    ).toMatchObject({ reused: false });
+    expect(JSON.parse(await fs.readFile(output, "utf8")).intervalTicks).toBe(
+      16_875,
+    );
+  });
+
+  it.each([
+    plan(-1),
+    plan(1.5),
+    plan(NaN),
+    plan(Infinity),
+    plan(Number.MAX_SAFE_INTEGER + 1),
+    plan(1, 0),
+    plan(1, 0.5),
+    plan(1, NaN),
+  ])(
+    "rejects invalid plan %o before reading or writing files",
+    async (invalid) => {
       await expect(
         generateDemoCheckpoints(
           "/missing.rec",
@@ -170,9 +232,9 @@ describe("offline checkpoint generation", () => {
           "/absent-assets",
           undefined,
           true,
-          count,
+          invalid,
         ),
-      ).rejects.toThrow("Checkpoint count must be a non-negative integer");
+      ).rejects.toThrow(/^Checkpoint (count|interval) must be/);
       await expect(fs.access(output)).rejects.toThrow();
     },
   );
@@ -190,7 +252,7 @@ describe("offline checkpoint generation", () => {
           "/absent-assets",
           undefined,
           true,
-          count,
+          plan(count),
         ),
       ).toMatchObject({ count: 0, reused: false });
       expect(scan).toHaveBeenCalledTimes(count === 0 ? 0 : 1);
@@ -200,11 +262,12 @@ describe("offline checkpoint generation", () => {
   );
 
   it.each([
-    [22_502, [2]],
-    [22_503, [2, 22_502]],
+    [22_502, plan(3), [2]],
+    [22_503, plan(3), [2, 22_502]],
+    [303, plan(5, 100), [2, 102, 202, 302]],
   ])(
     "captures only ticks before the actual last tick %i, regardless of header duration",
-    async (lastTick, ticks) => {
+    async (lastTick, checkpointPlan, ticks) => {
       // Keep the replay real while supplying a deterministic kickoff marker.
       vi.spyOn(timelineScanner, "scanDemoTimelineParser").mockResolvedValue({
         events: [
@@ -222,7 +285,7 @@ describe("offline checkpoint generation", () => {
         "/absent-assets",
         undefined,
         true,
-        3,
+        checkpointPlan,
       );
       expect(result).toMatchObject({ count: ticks.length, reused: false });
       const bytes = await fs.readFile(file);
@@ -242,7 +305,7 @@ describe("offline checkpoint generation", () => {
           "/absent-assets",
           undefined,
           true,
-          3,
+          checkpointPlan,
         ),
       ).toMatchObject({ count: ticks.length, reused: true });
       const sidecar = JSON.parse(await fs.readFile(output, "utf8"));
@@ -255,7 +318,7 @@ describe("offline checkpoint generation", () => {
           "/absent-assets",
           undefined,
           true,
-          3,
+          checkpointPlan,
         ),
       ).toMatchObject({ count: ticks.length, reused: false });
     },

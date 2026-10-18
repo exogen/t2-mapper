@@ -10,8 +10,10 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import {
+  DEFAULT_CHECKPOINT_INTERVAL_TICKS,
   DEMO_CHECKPOINT_SUFFIX,
   isSupportedDemoCheckpointVersion,
+  type DemoCheckpointPlan,
 } from "../src/stream/demoCheckpoints";
 import type { DemoUploadConfig } from "./demoUpload.js";
 import { demoLog as log } from "./logger.js";
@@ -19,7 +21,10 @@ import {
   DemoCheckpointGenerationError,
   runDemoCheckpointProcess,
 } from "./demoCheckpointProcess.js";
-import { loadDemoCheckpointCount } from "./demoCheckpointConfig.js";
+import {
+  checkDemoCheckpointPlan,
+  loadDemoCheckpointPlan,
+} from "./demoCheckpointConfig.js";
 
 export interface PublishDemoCheckpointsOptions {
   localFile?: string;
@@ -33,7 +38,7 @@ export class DemoCheckpointPublisher {
   private readonly client: S3Client;
   private readonly config: DemoUploadConfig;
   private readonly assetRoot: string;
-  private readonly checkpointCount: number;
+  private readonly plan: DemoCheckpointPlan;
   private tail: Promise<unknown> = Promise.resolve();
   private readonly pending = new Map<
     string,
@@ -43,14 +48,11 @@ export class DemoCheckpointPublisher {
   constructor(
     config: DemoUploadConfig,
     assetRoot: string,
-    checkpointCount = loadDemoCheckpointCount(),
+    plan: DemoCheckpointPlan = loadDemoCheckpointPlan(),
   ) {
     this.config = config;
     this.assetRoot = assetRoot;
-    this.checkpointCount = loadDemoCheckpointCount(
-      checkpointCount,
-      "Checkpoint count",
-    );
+    this.plan = checkDemoCheckpointPlan(plan);
     this.client = new S3Client({
       region: "auto",
       endpoint: config.endpoint,
@@ -72,11 +74,15 @@ export class DemoCheckpointPublisher {
         }),
         { abortSignal: AbortSignal.timeout(30_000) },
       );
+      // Sidecars from before the interval was recorded used the default.
       if (
         !isSupportedDemoCheckpointVersion(
           Number(sidecar.Metadata?.["checkpoint-version"]),
         ) ||
-        sidecar.Metadata?.["checkpoint-count"] !== String(this.checkpointCount)
+        sidecar.Metadata?.["checkpoint-count"] !== String(this.plan.maxCount) ||
+        (sidecar.Metadata?.["checkpoint-interval"] ??
+          String(DEFAULT_CHECKPOINT_INTERVAL_TICKS)) !==
+          String(this.plan.intervalTicks)
       )
         return false;
       const demo = await this.client.send(
@@ -162,7 +168,7 @@ export class DemoCheckpointPublisher {
           output,
           this.assetRoot,
           force,
-          this.checkpointCount,
+          this.plan,
         );
       } catch (error) {
         if (!(error instanceof DemoCheckpointGenerationError)) throw error;
@@ -185,7 +191,8 @@ export class DemoCheckpointPublisher {
             CacheControl: "no-cache",
             Metadata: {
               "checkpoint-version": String(result.version),
-              "checkpoint-count": String(this.checkpointCount),
+              "checkpoint-count": String(this.plan.maxCount),
+              "checkpoint-interval": String(this.plan.intervalTicks),
               "demo-bytes": String(result.demoBytes),
               "demo-sha256": result.demoSha256,
               ...(demoETag ? { "demo-etag": demoETag } : {}),

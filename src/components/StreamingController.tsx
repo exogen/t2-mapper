@@ -11,7 +11,7 @@ import { useFrame } from "@react-three/fiber";
 import { Quaternion, Vector3 } from "three";
 import type { Group, Object3D } from "three";
 import { DEFAULT_EYE_HEIGHT, STREAM_TICK_SEC } from "../stream/playbackUtils";
-import { useSettings } from "./SettingsProvider";
+import { useDebug, useSettings } from "./SettingsProvider";
 import { ParticleEffects } from "./ParticleEffects";
 import { eyePositions } from "./eyePositions";
 import { useProgress } from "@react-three/drei";
@@ -249,6 +249,7 @@ function computeFirstPersonCamera(
   eyePos: Vector3,
   player: StreamEntity | undefined,
   interpT: number,
+  aimCorrection: boolean,
 ): void {
   // Position: body position + body rotation * eye offset.
   _tmpVec.copy(eyePos).applyQuaternion(playerGroup.quaternion);
@@ -259,6 +260,7 @@ function computeFirstPersonCamera(
     player,
     interpT,
     _playerView,
+    aimCorrection,
   );
   const [rx, ry, rz, rw] = yawPitchToQuaternion(yaw, pitch);
   camera.quaternion.set(rx, ry, rz, rw);
@@ -296,6 +298,7 @@ export function StreamingController({
 }) {
   const engineStore = useEngineStoreApi();
   const { followBehindPlayer } = useSettings();
+  const { aimCorrection } = useDebug();
   const lockedOrbitRef = useRef<PlayerOrbitSpring>(null!);
   if (lockedOrbitRef.current == null)
     lockedOrbitRef.current = new PlayerOrbitSpring();
@@ -670,6 +673,7 @@ export function StreamingController({
       streamRenderFrame.current = currentEntities;
       streamRenderFrame.previous = previousEntities;
       streamRenderFrame.interpT = interpT;
+      streamRenderFrame.aimCorrection = aimCorrection;
       const renderEntities = gameEntityStore.getState().streamEntities;
       const root = streamPlaybackStore.getState().root;
       if (root) {
@@ -690,6 +694,7 @@ export function StreamingController({
             previousEntities.get(child.name),
             interpT,
             state.camera,
+            aimCorrection,
           );
         }
       }
@@ -949,6 +954,7 @@ export function StreamingController({
               currentEntities.get(orbitTargetId),
               interpT,
               _playerView,
+              aimCorrection,
             );
             lastLockedOrbit.update(
               orbitSpringKey ?? orbitTargetId,
@@ -1114,6 +1120,7 @@ export function StreamingController({
                 _tmpVec.set(0, DEFAULT_EYE_HEIGHT, 0)),
           followedEntity,
           interpT,
+          aimCorrection,
         );
       }
     }

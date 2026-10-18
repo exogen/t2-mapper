@@ -267,6 +267,10 @@ export interface MutableEntity {
   thrustDirection?: number;
   headPitch?: number;
   headYaw?: number;
+  /**
+   * See StreamEntity.viewQuantized.
+   */
+  viewQuantized?: boolean;
   targetRenderFlags?: number;
   /** Ghost index of the object this entity is mounted on (vehicle, etc.).
    *  When set, the entity's rendered position is derived from the mount
@@ -1566,6 +1570,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.threads = undefined;
     entity.headPitch = undefined;
     entity.headYaw = undefined;
+    entity.viewQuantized = undefined;
     entity.health = undefined;
     entity.playerPrediction = undefined;
     entity.playerDelta = undefined;
@@ -1659,6 +1664,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.headPitch =
       prediction.headPitch / (prediction.data.maxLookAngle || 1);
     entity.headYaw = prediction.headYaw / (prediction.data.maxLookAngle || 1);
+    entity.viewQuantized = !prediction.exactView;
     entity.jetting = prediction.jetting;
     entity.falling = prediction.falling;
     entity.playerDelta = prediction.renderDelta();
@@ -2285,6 +2291,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     // Rotation
     if (entity.type === "Player" && typeof data.rotationZ === "number") {
       entity.rotation = playerYawToQuaternion(data.rotationZ);
+      entity.viewQuantized = true;
     }
 
     // Head pitch/yaw
@@ -3549,6 +3556,7 @@ export abstract class StreamEngine implements StreamingPlayback {
             ];
             ghostEntity.rotation = playerYawToQuaternion(yaw);
             ghostEntity.headPitch = this.getControlPlayerHeadPitch(pitch);
+            ghostEntity.viewQuantized = false;
             // Sync velocity from controlObjectData. The authoritative
             // falling/jetting flags come from the ghost's MoveMask update
             // (processed earlier in applyGhostData) — don't overwrite them.
@@ -3967,6 +3975,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         maintainEmitterId: entity.maintainEmitterId,
         headPitch: entity.headPitch,
         headYaw: entity.headYaw,
+        viewQuantized: entity.viewQuantized,
         label: entity.label,
         audioFileName: entity.audioFileName,
         audioVolume: entity.audioVolume,

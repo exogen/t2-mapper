@@ -167,6 +167,12 @@ type DebugContextType = {
   setLodEnabled: StateSetter<boolean>;
   showFpsMeter: boolean;
   setShowFpsMeter: StateSetter<boolean>;
+  /**
+   * Read other players' packed view angles at the middle of their step
+   * wherever they're drawn: models, beams and follow cameras (playerView.ts).
+   */
+  aimCorrection: boolean;
+  setAimCorrection: StateSetter<boolean>;
 };
 
 type ControlsContextType = {
@@ -228,6 +234,7 @@ type PersistedSettings = {
   showReticle?: boolean;
   showCompass?: boolean;
   showFpsMeter?: boolean;
+  aimCorrection?: boolean;
   serverBrowserView?: ServerBrowserView;
   showIffs?: IffVisibility;
   observerTeamColors?: TeamColorScheme;
@@ -342,6 +349,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [renderOnDemand, setRenderOnDemand] = useState(false);
   const [lodEnabled, setLodEnabled] = useState(true);
   const [showFpsMeter, setShowFpsMeter] = useState(false);
+  const [aimCorrection, setAimCorrection] = useState(true);
 
   const [fogEnabledOverride, setFogEnabledOverride] = useFogQueryState();
   const clearFogEnabledOverride = useCallback(() => {
@@ -481,6 +489,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setLodEnabled,
       showFpsMeter,
       setShowFpsMeter,
+      aimCorrection,
+      setAimCorrection,
     }),
     [
       canShowDebugVisuals,
@@ -490,6 +500,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       renderOnDemand,
       lodEnabled,
       showFpsMeter,
+      aimCorrection,
     ],
   );
 
@@ -548,6 +559,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
     if (savedSettings.showFpsMeter != null) {
       setShowFpsMeter(savedSettings.showFpsMeter);
+    }
+    if (typeof savedSettings.aimCorrection === "boolean") {
+      setAimCorrection(savedSettings.aimCorrection);
     }
     if (savedSettings.audioEnabled != null) {
       setAudioEnabled(savedSettings.audioEnabled);
@@ -768,6 +782,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         showReticle,
         showCompass,
         showFpsMeter,
+        aimCorrection,
         serverBrowserView,
         showIffs,
         observerTeamColors,
@@ -821,6 +836,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     showReticle,
     showCompass,
     showFpsMeter,
+    aimCorrection,
     serverBrowserView,
     showIffs,
     observerTeamColors,

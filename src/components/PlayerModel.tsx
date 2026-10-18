@@ -8,6 +8,11 @@ import {
   applyStreamEntityRotation,
   streamRenderFrame,
 } from "../stream/interpolateEntity";
+import {
+  getPlayerHeadAngles,
+  playerBodyYawCorrection,
+  type PlayerHeadAngles,
+} from "../stream/playerView";
 import { sameImageMounts } from "../stream/imageMount";
 import { observeShapeMeshes } from "../dts/dtsScene";
 import {
@@ -450,6 +455,7 @@ export function PlayerModel({
   });
   const jetFlarePosRef = useRef(0);
   const mountYawRef = useRef<Group>(null);
+  const headAnglesRef = useRef<PlayerHeadAngles>({ pitch: 0, yaw: 0 });
   // The flare thread's outputs, rebuilt when the body's actions are.
   const jetFlareThreadRef = useRef<{
     source: Map<string | number, AnimationAction> | null;
@@ -499,6 +505,10 @@ export function PlayerModel({
           pose,
           streamRenderFrame.previous?.get(entity.id),
           streamRenderFrame.interpT,
+          // Armor::onMount's zeroed pilot yaw was exact.
+          entity.mountNode === 0
+            ? 0
+            : playerBodyYawCorrection(current, streamRenderFrame.aimCorrection),
         );
       else mountYaw.quaternion.identity();
     }
@@ -550,17 +560,14 @@ export function PlayerModel({
     const armAction = activeArmRef.current;
     const blendWeight = isDead ? 0 : 1;
 
-    const prediction = current?.playerDelta;
-    const dt = 1 - streamRenderFrame.interpT;
-    const lookAngle = prediction?.maxLookAngle || 1;
-    const headPitch = prediction
-      ? (prediction.head[0] + prediction.headVec[0] * dt) / lookAngle
-      : (entity.headPitch ?? 0);
-    const headYaw = prediction
-      ? (prediction.head[1] + prediction.headVec[1] * dt) / lookAngle
-      : (entity.headYaw ?? 0);
-    const pitchPos = (headPitch + 1) / 2;
-    const yawPos = (headYaw + 1) / 2;
+    const look = getPlayerHeadAngles(
+      current ?? entity,
+      streamRenderFrame.interpT,
+      headAnglesRef.current,
+      streamRenderFrame.aimCorrection,
+    );
+    const pitchPos = (look.pitch + 1) / 2;
+    const yawPos = (look.yaw + 1) / 2;
 
     if (armAction) {
       holdDtsAction(armAction, pitchPos);

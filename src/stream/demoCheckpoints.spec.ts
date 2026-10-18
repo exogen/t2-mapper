@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { gzipSync } from "node:zlib";
 import { encodeCheckpoint, bytesToBase64 } from "./checkpointCodec";
 import {
+  DEFAULT_CHECKPOINT_INTERVAL_TICKS,
   DEMO_CHECKPOINT_VERSION,
   demoSha256,
   demoCheckpointTargets,
@@ -16,6 +17,11 @@ const event = (
   type: TimelineEvent["type"] = "match-start",
 ): TimelineEvent => ({ timeSec, type, description: String(timeSec) });
 
+const every12 = (maxCount: number) => ({
+  intervalTicks: DEFAULT_CHECKPOINT_INTERVAL_TICKS,
+  maxCount,
+});
+
 describe("precomputed checkpoint targets", () => {
   it("anchors 12-minute intervals to the first kickoff, excluding countdowns and later starts", () => {
     const result = demoCheckpointTargets(
@@ -26,7 +32,7 @@ describe("precomputed checkpoint targets", () => {
         event(1200, "match-end"),
         event(2400),
       ],
-      3,
+      every12(3),
       100_000,
     );
     expect(
@@ -37,23 +43,51 @@ describe("precomputed checkpoint targets", () => {
       [1980, 600],
     ]);
   });
-  it("handles recordings with no kickoff, short lead-ins and duplicate markers", () => {
-    expect(demoCheckpointTargets([], 3, 100_000)).toEqual([]);
+  it("starts one interval in without a kickoff, as when a recording began mid-match", () => {
+    const fromStart = [22_500, 45_000, 67_500].map((tick) => ({
+      tick,
+      description: "Recording start",
+    }));
+    expect(demoCheckpointTargets([], every12(3), 100_000)).toEqual(fromStart);
     expect(
-      demoCheckpointTargets([event(300, "match-countdown")], 3, 100_000),
-    ).toEqual([]);
+      demoCheckpointTargets(
+        [event(300, "match-countdown")],
+        every12(3),
+        100_000,
+      ),
+    ).toEqual(fromStart);
+    expect(demoCheckpointTargets([], every12(3), 22_500)).toEqual([]);
+    expect(demoCheckpointTargets([], every12(3), 22_501)).toEqual(
+      fromStart.slice(0, 1),
+    );
+    expect(demoCheckpointTargets([], every12(0), 100_000)).toEqual([]);
+  });
+  it("skips a checkpoint at the very start after a short lead-in, ignoring duplicate markers", () => {
     expect(
       demoCheckpointTargets(
         [event(10), event(30), event(90), event(90)],
-        3,
+        every12(3),
         100_000,
-      ).map((point) => point.tick),
-    ).toEqual([0, 22_500, 45_000]);
+      ).map((point) => [point.tick, point.matchStartSec]),
+    ).toEqual([
+      [22_500, 10],
+      [45_000, 10],
+      [67_500, 10],
+    ]);
+    expect(
+      demoCheckpointTargets(
+        [event(10)],
+        { intervalTicks: 0, maxCount: 3 },
+        100,
+      ),
+    ).toEqual([]);
   });
   it("rounds down to a complete simulation tick", () => {
-    const result = demoCheckpointTargets([event(60.064)], 2, 100_000);
+    const result = demoCheckpointTargets([event(60.064)], every12(2), 100_000);
     expect(result.map((point) => point.tick)).toEqual([2, 22_502]);
-    expect(demoCheckpointTargets([event(60.063)], 1, 100)[0].tick).toBe(1);
+    expect(
+      demoCheckpointTargets([event(60.063)], every12(1), 100)[0].tick,
+    ).toBe(1);
   });
   it.each([
     [0, []],
@@ -61,7 +95,7 @@ describe("precomputed checkpoint targets", () => {
     [1000, [1000, 23_500, 46_000]],
   ])("caps the sequence at the requested count %i", (count, ticks) => {
     expect(
-      demoCheckpointTargets([event(92)], count, 50_000).map(
+      demoCheckpointTargets([event(92)], every12(count), 50_000).map(
         (point) => point.tick,
       ),
     ).toEqual(ticks);
@@ -77,15 +111,31 @@ describe("precomputed checkpoint targets", () => {
     [46_000, [1000, 23_500]],
   ])("skips targets at or beyond the last tick %i", (lastTick, ticks) => {
     expect(
-      demoCheckpointTargets([event(92)], 3, lastTick).map(
+      demoCheckpointTargets([event(92)], every12(3), lastTick).map(
         (point) => point.tick,
       ),
     ).toEqual(ticks);
   });
+  it("spaces checkpoints by the plan's interval", () => {
+    expect(
+      demoCheckpointTargets(
+        [event(92)],
+        { intervalTicks: 16_875, maxCount: 4 },
+        100_000,
+      ).map((point) => point.tick),
+    ).toEqual([1000, 17_875, 34_750, 51_625]);
+  });
   it("ignores invalid kickoff times", () => {
     expect(
-      demoCheckpointTargets([event(NaN), event(Infinity), event(-1)], 3, 100),
-    ).toEqual([]);
+      demoCheckpointTargets(
+        [event(NaN), event(Infinity), event(-1)],
+        every12(2),
+        100_000,
+      ),
+    ).toEqual([
+      { tick: 22_500, description: "Recording start" },
+      { tick: 45_000, description: "Recording start" },
+    ]);
   });
 });
 
@@ -167,7 +217,7 @@ describe("checkpoint sidecar loading", () => {
     original.checkpoints[0].tick = 1001;
     await expect(
       readDemoCheckpoints(JSON.stringify(original), buffer),
-    ).rejects.toThrow("timing");
+    ).rejects.toThrow("state");
     original.checkpoints[0].tick = 1000;
     original.checkpoints[0].data = "corrupt";
     await expect(
@@ -182,21 +232,22 @@ describe("checkpoint sidecar loading", () => {
       [],
     );
   });
-  it("loads successive checkpoints on the 12-minute schedule", async () => {
+  it("loads checkpoints at any spacing, whatever plan wrote them", async () => {
     const buffer = new ArrayBuffer(3);
     const original = await sidecar(buffer);
-    original.requestedCount = 3;
-    for (const tick of [23_500, 46_000])
+    for (const tick of [5000, 46_000])
       original.checkpoints.push({
         ...original.checkpoints[0],
         tick,
+        matchStartSec: 93,
         data: checkpointData(tick),
       });
+    original.intervalTicks = 7;
     expect(
       (await readDemoCheckpoints(JSON.stringify(original), buffer)).map(
         (checkpoint) => checkpoint.cursor.moveTicks,
       ),
-    ).toEqual([1000, 23_500, 46_000]);
+    ).toEqual([1000, 5000, 46_000]);
     await expect(
       validateDemoCheckpoints(JSON.stringify(original), buffer),
     ).resolves.toBeUndefined();
@@ -204,12 +255,18 @@ describe("checkpoint sidecar loading", () => {
     await expect(
       validateDemoCheckpoints(JSON.stringify(original), buffer),
     ).rejects.toThrow();
-    original.checkpoints[2].data = checkpointData(46_000);
-    original.checkpoints[1].matchStartSec = 93;
-    await expect(
-      readDemoCheckpoints(JSON.stringify(original), buffer),
-    ).rejects.toThrow("timing");
   });
+  it.each([{ tick: -1 }, { tick: 1000.5 }, { tick: "1000" }, { data: 1000 }])(
+    "rejects malformed entry %o",
+    async (change) => {
+      const buffer = new ArrayBuffer(3);
+      const original = await sidecar(buffer);
+      Object.assign(original.checkpoints[0], change);
+      await expect(
+        readDemoCheckpoints(JSON.stringify(original), buffer),
+      ).rejects.toThrow("Invalid seek checkpoint");
+    },
+  );
   it("rejects payloads whose captured tick disagrees with their target", async () => {
     const buffer = new ArrayBuffer(3);
     const original = await sidecar(buffer);

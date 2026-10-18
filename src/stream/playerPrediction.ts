@@ -77,6 +77,11 @@ export class PlayerPrediction {
   rotVec = 0;
   headPitch = 0;
   headYaw = 0;
+  /**
+   * The view angles last came from the control client's full-precision
+   * packet data rather than a ghost update's packed MoveMask.
+   */
+  exactView = false;
   private headPitchVec = 0;
   private headYawVec = 0;
   energy = 0;
@@ -143,6 +148,7 @@ export class PlayerPrediction {
         headYaw: this.headYaw,
         headPitchVec: this.headPitchVec,
         headYawVec: this.headYawVec,
+        exactView: this.exactView,
         energy: this.energy,
         jetting: this.jetting,
         falling: this.falling,
@@ -192,6 +198,7 @@ export class PlayerPrediction {
     if (update.move) this.move = unclampMove(update.move);
     this.actionState = update.actionState ?? this.actionState;
     this.recoverTicks = update.recoverTicks ?? this.recoverTicks;
+    this.exactView = false;
     this.headPitch =
       (update.headX ?? 0) * (this.data.maxLookAngle ?? Math.PI / 2);
     this.headYaw =
@@ -236,6 +243,7 @@ export class PlayerPrediction {
     });
     if (update.headX != null) this.headPitch = update.headX;
     if (update.headZ != null) this.headYaw = update.headZ;
+    this.exactView = true;
     if (update.energyLevel != null) this.energy = update.energyLevel;
     if (update.jumpDelay != null) this.jumpDelay = update.jumpDelay;
     if (update.jumpSurfaceLastContact != null)

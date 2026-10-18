@@ -90,6 +90,24 @@ describe("retail player prediction", () => {
       12,
     );
   });
+  it("knows whether its view came packed from a ghost or exact from the control client", () => {
+    const at = {
+      position: { x: 0, y: 0, z: 10 },
+      velocity: { x: 0, y: 0, z: 0 },
+    };
+    const p = player();
+    expect(p.exactView).toBe(false);
+    p.readPacketData({ ...at, rotationZ: 1.25, headX: 0.5, headZ: 0 });
+    expect(p.exactView).toBe(true);
+    const saved = p.saveState();
+    p.unpackUpdate({ ...at, rotationZ: 1, headX: 0, headZ: 0 });
+    expect(p.exactView).toBe(false);
+    p.restoreState(saved);
+    expect(p.exactView).toBe(true);
+    // An update without a MoveMask leaves the view as it was.
+    p.unpackUpdate({ energy: 0.5 });
+    expect(p.exactView).toBe(true);
+  });
   it("fills ticks without a network update and stops after the prediction limit", () => {
     const p = player();
     expect(p.contactTimer).toBe(0);

@@ -15,6 +15,7 @@ let child: EventEmitter & {
 };
 beforeEach(() => {
   vi.stubEnv("DEMO_CHECKPOINT_COUNT", undefined);
+  vi.stubEnv("DEMO_CHECKPOINT_INTERVAL_MINUTES", undefined);
   vi.stubEnv("DEMO_CHECKPOINT_HEAP_MB", undefined);
   vi.useFakeTimers();
   child = Object.assign(new EventEmitter(), {
@@ -29,23 +30,28 @@ afterEach(() => {
 });
 
 describe("checkpoint child process", () => {
-  it.each([-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])(
-    "rejects invalid numeric count %s without spawning a child",
-    (count) => {
-      const forks = mocks.fork.mock.calls.length;
-      expect(() =>
-        runDemoCheckpointProcess(
-          "demo.rec",
-          "output.json",
-          "/assets",
-          false,
-          count,
-        ),
-      ).toThrow("Checkpoint count must be a non-negative integer");
-      expect(mocks.fork).toHaveBeenCalledTimes(forks);
-      expect(vi.getTimerCount()).toBe(0);
-    },
-  );
+  it.each([
+    { intervalTicks: 22_500, maxCount: -1 },
+    { intervalTicks: 22_500, maxCount: 1.5 },
+    { intervalTicks: 22_500, maxCount: NaN },
+    { intervalTicks: 22_500, maxCount: Infinity },
+    { intervalTicks: 22_500, maxCount: Number.MAX_SAFE_INTEGER + 1 },
+    { intervalTicks: 0, maxCount: 1 },
+    { intervalTicks: Infinity, maxCount: 1 },
+  ])("rejects invalid plan %o without spawning a child", (plan) => {
+    const forks = mocks.fork.mock.calls.length;
+    expect(() =>
+      runDemoCheckpointProcess(
+        "demo.rec",
+        "output.json",
+        "/assets",
+        false,
+        plan,
+      ),
+    ).toThrow(/^Checkpoint (count|interval) must be/);
+    expect(mocks.fork).toHaveBeenCalledTimes(forks);
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it("waits for successful process exit after receiving a result", async () => {
     const result = { count: 2, bytes: 12 };
     const pending = runDemoCheckpointProcess(
@@ -58,7 +64,7 @@ describe("checkpoint child process", () => {
     expect(await pending).toEqual(result);
     expect(mocks.fork).toHaveBeenCalledWith(
       expect.any(URL),
-      ["demo.rec", "output.json", "/assets", "false", "1"],
+      ["demo.rec", "output.json", "/assets", "false", "22500", "1"],
       expect.objectContaining({
         execArgv: expect.arrayContaining([
           "--import=tsx/esm",
@@ -86,14 +92,15 @@ describe("checkpoint child process", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("passes an explicit count to the child instead of the environment default", async () => {
+  it("passes an explicit plan to the child instead of the environment default", async () => {
     vi.stubEnv("DEMO_CHECKPOINT_COUNT", "3");
+    vi.stubEnv("DEMO_CHECKPOINT_INTERVAL_MINUTES", "9");
     const pending = runDemoCheckpointProcess(
       "demo.rec",
       "output.json",
       "/assets",
       false,
-      4,
+      { intervalTicks: 100, maxCount: 4 },
     );
     child.emit("message", { count: 2 });
     child.emit("close", 0, null);
@@ -103,6 +110,7 @@ describe("checkpoint child process", () => {
       "output.json",
       "/assets",
       "false",
+      "100",
       "4",
     ]);
   });

@@ -2,29 +2,45 @@ import { Quaternion } from "three";
 import type { Camera, Object3D } from "three";
 import type { GameEntity } from "../state/gameEntityTypes";
 import type { StreamCamera, StreamEntity } from "./types";
+import { playerBodyYawCorrection } from "./playerView";
 
 const quatB = new Quaternion(),
+  quatYaw = new Quaternion(),
   billboardFlip = new Quaternion(0, 1, 0, 0);
 /** The current interpolation inputs, shared with visuals acquired later in the frame. */
 export const streamRenderFrame: {
   current: ReadonlyMap<string, StreamEntity> | null;
   previous: ReadonlyMap<string, StreamEntity> | null;
   interpT: number;
+  /**
+   * Read packed player views at the middle of their step (playerView.ts).
+   */
+  aimCorrection: boolean;
   /** Recorded view used by the camera pass; held during incomplete seeks. */
   camera: StreamCamera | null;
-} = { current: null, previous: null, interpT: 0, camera: null };
+} = {
+  current: null,
+  previous: null,
+  interpT: 0,
+  aimCorrection: false,
+  camera: null,
+};
 
-/** Player body yaw is relative to its mount, but uses the same render delta
- * and snapshot interpolation as an unmounted entity's rotation. */
+/**
+ * Player body yaw is relative to its mount, but uses the same render delta
+ * and snapshot interpolation as an unmounted entity's rotation.
+ * `yawCorrection` turns a player's body further (playerBodyYawCorrection).
+ */
 export function applyStreamEntityRotation(
   target: Quaternion,
   entity: Pick<StreamEntity, "rotation" | "playerDelta">,
   previousEntity: Pick<StreamEntity, "rotation"> | undefined,
   interpT: number,
+  yawCorrection = 0,
 ): void {
   if (entity.playerDelta) {
     const { rot, rotVec } = entity.playerDelta;
-    const halfAngle = -(rot + rotVec * (1 - interpT)) / 2;
+    const halfAngle = -(rot + rotVec * (1 - interpT) + yawCorrection) / 2;
     target.set(0, Math.sin(halfAngle), 0, Math.cos(halfAngle));
   } else if (entity.rotation) {
     if (previousEntity?.rotation) {
@@ -32,6 +48,12 @@ export function applyStreamEntityRotation(
       target.fromArray(previousEntity.rotation).slerp(quatB, interpT);
     } else {
       target.fromArray(entity.rotation);
+    }
+    if (yawCorrection) {
+      const halfAngle = -yawCorrection / 2;
+      target.multiply(
+        quatYaw.set(0, Math.sin(halfAngle), 0, Math.cos(halfAngle)),
+      );
     }
   }
 }
@@ -43,6 +65,7 @@ export function applyStreamEntityPose(
   previousEntity: StreamEntity | undefined,
   interpT: number,
   camera: Camera,
+  aimCorrection = false,
 ): void {
   // React/Suspense may not have committed removals yet. The destination
   // snapshot controls presence immediately, including during a seek.
@@ -105,6 +128,7 @@ export function applyStreamEntityPose(
       entity,
       previousEntity,
       interpT,
+      playerBodyYawCorrection(entity, aimCorrection),
     );
   }
 }

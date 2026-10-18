@@ -1,7 +1,8 @@
 import { generateDemoCheckpoints } from "./demoCheckpointGenerator.js";
-import { loadDemoCheckpointCount } from "./demoCheckpointConfig.js";
+import { checkDemoCheckpointPlan } from "./demoCheckpointConfig.js";
 
-const [input, output, assetRoot, force, count] = process.argv.slice(2);
+const [input, output, assetRoot, force, intervalTicks, maxCount] =
+  process.argv.slice(2);
 let completed = false;
 process.on("disconnect", () => {
   if (!completed) process.exit(1);
@@ -13,7 +14,10 @@ try {
     assetRoot,
     undefined,
     force !== "true",
-    loadDemoCheckpointCount(count),
+    checkDemoCheckpointPlan({
+      intervalTicks: Number(intervalTicks),
+      maxCount: Number(maxCount),
+    }),
   );
   completed = true;
   process.send!(

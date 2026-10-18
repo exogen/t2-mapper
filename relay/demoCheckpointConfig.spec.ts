@@ -1,7 +1,10 @@
 import { afterEach, expect, it, vi } from "vitest";
 import {
+  checkDemoCheckpointPlan,
   loadDemoCheckpointCount,
   loadDemoCheckpointHeapMB,
+  loadDemoCheckpointInterval,
+  loadDemoCheckpointPlan,
 } from "./demoCheckpointConfig";
 
 afterEach(() => vi.unstubAllEnvs());
@@ -34,6 +37,69 @@ it.each([
     "DEMO_CHECKPOINT_COUNT must be a non-negative integer",
   ),
 );
+
+it("defaults to 12-minute intervals and reads the environment on each call", () => {
+  vi.stubEnv("DEMO_CHECKPOINT_INTERVAL_MINUTES", undefined);
+  expect(loadDemoCheckpointInterval()).toBe(22_500);
+  vi.stubEnv("DEMO_CHECKPOINT_INTERVAL_MINUTES", "9");
+  expect(loadDemoCheckpointInterval()).toBe(16_875);
+});
+
+it.each([
+  ["9", 16_875],
+  [" 12 ", 22_500],
+  ["7.5", 14_063],
+  ["0.001", 2],
+])("converts an interval of %s minutes to %i ticks", (raw, ticks) => {
+  expect(loadDemoCheckpointInterval(raw)).toBe(ticks);
+});
+
+it.each([
+  "",
+  "0",
+  "0.0001",
+  "-1",
+  ".5",
+  "1e3",
+  "invalid",
+  "Infinity",
+  "9".repeat(20),
+])("rejects invalid interval %s", (raw) => {
+  expect(() => loadDemoCheckpointInterval(raw)).toThrow(
+    "DEMO_CHECKPOINT_INTERVAL_MINUTES must be a positive number of minutes",
+  );
+});
+
+it("plans from the environment unless a script overrides it", () => {
+  vi.stubEnv("DEMO_CHECKPOINT_INTERVAL_MINUTES", "9");
+  vi.stubEnv("DEMO_CHECKPOINT_COUNT", "3");
+  expect(loadDemoCheckpointPlan()).toEqual({
+    intervalTicks: 16_875,
+    maxCount: 3,
+  });
+  expect(loadDemoCheckpointPlan({ interval: "6", count: "0" })).toEqual({
+    intervalTicks: 11_250,
+    maxCount: 0,
+  });
+  expect(() => loadDemoCheckpointPlan({ interval: "soon" })).toThrow(
+    "--interval must be a positive number of minutes",
+  );
+  expect(() => loadDemoCheckpointPlan({ count: "-1" })).toThrow(
+    "--count must be a non-negative integer",
+  );
+});
+
+it.each([
+  [{ intervalTicks: 0, maxCount: 1 }, "interval"],
+  [{ intervalTicks: 1.5, maxCount: 1 }, "interval"],
+  [{ intervalTicks: NaN, maxCount: 1 }, "interval"],
+  [{ intervalTicks: 22_500, maxCount: -1 }, "count"],
+  [{ intervalTicks: 22_500, maxCount: NaN }, "count"],
+])("rejects plan %o handed between processes", (plan, field) => {
+  expect(() => checkDemoCheckpointPlan(plan)).toThrow(
+    `Checkpoint ${field} must be`,
+  );
+});
 
 it("defaults to a 256 MiB worker heap and reads the configured cap on each call", () => {
   vi.stubEnv("DEMO_CHECKPOINT_HEAP_MB", undefined);

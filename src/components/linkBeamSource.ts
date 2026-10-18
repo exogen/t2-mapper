@@ -13,11 +13,17 @@ import {
   threeForwardHeading,
   yawPitchToQuaternion,
 } from "../stream/streamHelpers";
+import { streamRenderFrame } from "../stream/interpolateEntity";
+import {
+  getPlayerHeadAngles,
+  type PlayerHeadAngles,
+} from "../stream/playerView";
 
 /** PlayerData::maxLookAngle — 1.5 rad in every Tribes 2 armor. */
 const LINK_MAX_LOOK_ANGLE = 1.5;
 
 const _aimQuat = new Quaternion();
+const _headAngles: PlayerHeadAngles = { pitch: 0, yaw: 0 };
 
 const imageMuzzles = new Map<string, Map<number, Object3D>>();
 
@@ -71,21 +77,20 @@ export function sourceAimDirection(
     // Native DTS +Y becomes model +Z; an unmounted source uses world +X.
     return out.set(1, 0, 0).transformDirection(source.matrixWorld);
   }
-  const headPitch =
-    srcEntity && "headPitch" in srcEntity
-      ? ((srcEntity.headPitch as number | undefined) ?? 0)
-      : 0;
-  const headYaw =
-    srcEntity && "headYaw" in srcEntity
-      ? ((srcEntity.headYaw as number | undefined) ?? 0)
-      : 0;
+  // The rendered body already carries its share of the aim correction.
+  const head = getPlayerHeadAngles(
+    streamRenderFrame.current?.get(srcEntity.id) ?? srcEntity,
+    streamRenderFrame.interpT,
+    _headAngles,
+    streamRenderFrame.aimCorrection,
+  );
   const bodyYaw = threeForwardHeading(source.quaternion);
   const pitch = Math.max(
     -MAX_PITCH,
-    Math.min(MAX_PITCH, headPitch * LINK_MAX_LOOK_ANGLE),
+    Math.min(MAX_PITCH, head.pitch * LINK_MAX_LOOK_ANGLE),
   );
   const [rx, ry, rz, rw] = yawPitchToQuaternion(
-    bodyYaw + headYaw * LINK_MAX_LOOK_ANGLE,
+    bodyYaw + head.yaw * LINK_MAX_LOOK_ANGLE,
     pitch,
   );
   _aimQuat.set(rx, ry, rz, rw);

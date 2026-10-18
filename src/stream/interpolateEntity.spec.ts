@@ -4,7 +4,7 @@ import {
   applyStreamEntityPose,
   applyStreamEntityRotation,
 } from "./interpolateEntity";
-import { playerYawToQuaternion } from "./streamHelpers";
+import { playerYawToQuaternion, threeForwardHeading } from "./streamHelpers";
 import type { StreamEntity } from "./types";
 
 it("interpolates mounted body yaw between packets along the shortest turn", () => {
@@ -51,3 +51,43 @@ it("uses the same prediction delta for mounted and unmounted players", () => {
       .forEach((component, i) => expect(component).toBeCloseTo(expected[i]));
   }
 });
+
+it.each([false, true])(
+  "turns only a body a ghost update packed by half a yaw step (predicted: %s)",
+  (predicted) => {
+    const player = (viewQuantized: boolean): StreamEntity => ({
+      id: "player",
+      type: "Player",
+      position: [1, 2, 3],
+      rotation: playerYawToQuaternion(0.8),
+      viewQuantized,
+      playerDelta: predicted
+        ? {
+            rot: 0.8,
+            rotVec: 0,
+            posVec: [0, 0, 0],
+            head: [0, 0],
+            headVec: [0, 0],
+            maxLookAngle: 1.5,
+          }
+        : undefined,
+    });
+    const body = new Group();
+    const camera = new PerspectiveCamera();
+    const heading = (viewQuantized: boolean, aimCorrection: boolean) => {
+      applyStreamEntityPose(
+        body,
+        undefined,
+        player(viewQuantized),
+        undefined,
+        1,
+        camera,
+        aimCorrection,
+      );
+      return threeForwardHeading(body.quaternion);
+    };
+    expect(heading(true, true)).toBeCloseTo(0.8 + Math.PI / 127, 12);
+    expect(heading(false, true)).toBeCloseTo(0.8, 12);
+    expect(heading(true, false)).toBeCloseTo(0.8, 12);
+  },
+);

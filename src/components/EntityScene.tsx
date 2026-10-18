@@ -235,6 +235,7 @@ function PositionedEntityWrapper({
       streamRenderFrame.previous?.get(entity.id),
       streamRenderFrame.interpT,
       camera,
+      streamRenderFrame.aimCorrection,
     );
   });
   const position = entity.position;

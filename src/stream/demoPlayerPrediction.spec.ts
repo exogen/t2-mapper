@@ -230,6 +230,37 @@ it.each([
   },
 );
 
+it.each([
+  [false, true],
+  [false, false],
+  [true, true],
+  [true, false],
+])(
+  "marks a view quantized only when a ghost update packed it (control=%s, prediction=%s)",
+  (control, prediction) => {
+    // The recorder's control data follows its own ghost update in a packet.
+    const stream = demo(
+      [
+        packet(
+          [update(pose(1))],
+          control
+            ? {
+                controlObjectGhostIndex: 0,
+                controlObjectData: { ...pose(1), energyLevel: 90 },
+              }
+            : {},
+        ),
+        move(),
+      ],
+      control,
+      prediction,
+    );
+    expect(stream.stepToTime(atTick(1)).entities[0].viewQuantized).toBe(
+      !control,
+    );
+  },
+);
+
 it("counts initial queued moves from their recorded index", () => {
   const stream = demo(
     Array.from({ length: 45 }, move),
