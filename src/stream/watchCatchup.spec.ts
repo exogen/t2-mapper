@@ -11,6 +11,7 @@ import type { PacketData, PacketParser, ParsedData } from "t2-demo-parser";
 import { LiveStreamAdapter } from "./liveStreaming";
 import type { RelayClient } from "./relayClient";
 import type { ImageSlot, ThreadState } from "./types";
+import { latestAction, type ActionSlot } from "./actionSlot";
 import { WatchStateAccumulator } from "../../relay/watchState";
 import type { ConnectionState } from "../../relay/connectionState";
 import { PlayerResolver } from "../../relay/playerReference";
@@ -367,10 +368,7 @@ function project(entity: Record<string, unknown>, comparePosition: boolean) {
     ...targetInfo(entity),
     mountObjectGhostIndex: entity.mountObjectGhostIndex,
     mountNode: entity.mountNode,
-    actionAnim: entity.actionAnim,
-    actionAtEnd: entity.actionAtEnd,
-    actionHoldAtEnd: entity.actionHoldAtEnd,
-    actionAnimPos: entity.actionAnimPos,
+    action: latestAction(entity.actionSlot as ActionSlot | undefined),
     armAction: entity.armAction,
     health: entity.health,
     damageState: entity.damageState,

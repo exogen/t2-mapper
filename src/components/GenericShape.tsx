@@ -1,6 +1,5 @@
 import { getDTSCollisionMeshes } from "../dts/dtsCollision";
 import {
-  Fragment,
   memo,
   Suspense,
   useEffect,
@@ -14,7 +13,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import type { AnimationAction, Object3D, Group } from "three";
 import type { LightAnchor } from "../stream/types";
 import { ShapeLoader } from "../shapeLoader";
-import { createPortal, useFrame, useLoader } from "@react-three/fiber";
+import { useFrame, useLoader } from "@react-three/fiber";
 import { createLogger } from "../logger";
 import { shapeToUrl } from "../loaders";
 import { AnimationClip, LoopOnce, LoopRepeat, Color, Vector3 } from "three";
@@ -46,7 +45,8 @@ import { gameEntityStore } from "../state/gameEntityStore";
 import { streamClock } from "../state/streamPlaybackStore";
 import type { DTSShape } from "../dts/dtsModel";
 import { useVehicleJets, type VehicleJetShape } from "./useVehicleJets";
-import { findOwnNode, getMountNode } from "../sceneNodes";
+import { findOwnNode } from "../sceneNodes";
+import { MountPortal } from "./MountPortal";
 import {
   getDTSImageMountTransform,
   type DTSImageOffset,
@@ -1084,14 +1084,11 @@ export const ShapeModel = memo(function ShapeModel({
       {entityId && <DebugShapeBounds entityId={entityId} scene={gltf.scene} />}
       {children}
       {mounted &&
-        Object.entries(mounted).map(([slot, content]) => {
-          const bone = getMountNode(clonedScene, Number(slot));
-          return (
-            <Fragment key={slot}>
-              {createPortal(<group>{content}</group>, bone)}
-            </Fragment>
-          );
-        })}
+        Object.entries(mounted).map(([slot, content]) => (
+          <MountPortal key={slot} root={clonedScene} mountPoint={Number(slot)}>
+            <group>{content}</group>
+          </MountPortal>
+        ))}
     </group>
   );
 });

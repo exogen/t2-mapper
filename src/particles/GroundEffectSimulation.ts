@@ -12,7 +12,6 @@ import {
 } from "./groundEffectAssets";
 import { advanceDTSTriggers } from "../dts/dtsTriggers";
 import { samplePlayerPose } from "../stream/playerAnimation";
-import { TABLE_ACTION_NAMES } from "../stream/playerActionMap";
 import type {
   GroundActor,
   GroundEffectFrame,
@@ -163,17 +162,11 @@ export class GroundEffectSimulation {
     if (!move) return;
     const shapeName = String(db.shapeName ?? "");
     const clipName = (key: string | number) =>
-      groundActionName(
-        this.playback,
-        shape,
-        shapeName,
-        typeof key === "number" ? key : TABLE_ACTION_NAMES.indexOf(key),
-      );
+      groundActionName(this.playback, shape, shapeName, key);
     const sample = (time: number) =>
       samplePlayerPose(
         move,
         actor,
-        actor.mounted,
         time,
         0,
         (i) => i,

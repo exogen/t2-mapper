@@ -47,7 +47,7 @@ export function groundActionName(
   playback: StreamingPlayback,
   shape: GroundShape,
   name: string,
-  index: number,
+  action: number | string,
 ): string | undefined {
   let maps = actionMaps.get(playback);
   if (!maps) actionMaps.set(playback, (maps = new Map()));
@@ -59,7 +59,10 @@ export function groundActionName(
     // A model can arrive before its TSShapeConstructor datablock.
     if (sequences.length) maps.set(shape, actions);
   }
-  return actions.get(index)?.clipName;
+  if (typeof action === "number") return actions.get(action)?.clipName;
+  for (const entry of actions.values())
+    if (entry.alias === action) return entry.clipName;
+  return undefined;
 }
 export function groundClipInfo(shape: GroundShape, name: string | undefined) {
   const clip = name != null ? shape.clips.get(name) : undefined;

@@ -895,9 +895,11 @@ export const InspectorControls = memo(function InspectorControls({
                     Aim correction
                   </label>
                   <p className={styles.Description}>
-                    Other players' view angles arrive rounded down to steps of
-                    about 3°. Read them at the middle of each step, so their
-                    models, beams and follow cameras line up with their shots.
+                    Other players’ angles arrive rounded down in steps of about
+                    3°, causing minor discrepancies in aiming. When enabled,
+                    this attempts to compensate by rounding differently,
+                    pointing closer to where the player was probably aiming in
+                    most cases.
                   </p>
                 </div>
                 {canShowDebugVisuals && (

@@ -19,11 +19,7 @@ export interface GroundActor {
   scale?: Vec3;
   threads?: import("./types").ThreadState[];
   clientAnimation?: ClientAnimationState;
-  actionAnim?: number;
-  actionAnimPos?: number;
-  actionTimeSec?: number;
-  actionAtEnd?: boolean;
-  actionHoldAtEnd?: boolean;
+  actionSlot?: import("./actionSlot").ActionSlot;
   damageState?: number;
 }
 export interface GroundEffectFrame {

@@ -20,6 +20,7 @@ import {
 import { WatchStateAccumulator } from "../../relay/watchState";
 import { GhostMessage } from "./entityClassification";
 import { LiveStreamAdapter } from "./liveStreaming";
+import { latestAction } from "./actionSlot";
 import type { RelayClient } from "./relayClient";
 
 class Viewer extends LiveStreamAdapter {
@@ -175,14 +176,11 @@ describe("watch player actions", () => {
       return {
         mountObjectId: player.mountObjectId,
         mountNode: player.mountNode,
-        actionAnim: player.actionAnim,
-        actionAtEnd: player.actionAtEnd,
-        actionHoldAtEnd: player.actionHoldAtEnd,
-        actionAnimPos: player.actionAnimPos,
+        action: latestAction(player.actionSlot),
       };
     };
     expect(pose(late)).toEqual(pose(early));
     if (update.mountObject === -1 && update.action === undefined)
-      expect(pose(late).actionAnim).toBeUndefined();
+      expect(pose(late).action).toBeUndefined();
   });
 });

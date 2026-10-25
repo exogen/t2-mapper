@@ -16,7 +16,6 @@ import {
 import { sameImageMounts } from "../stream/imageMount";
 import { observeShapeMeshes } from "../dts/dtsScene";
 import {
-  Fragment,
   Suspense,
   useEffect,
   useLayoutEffect,
@@ -25,7 +24,7 @@ import {
   useState,
 } from "react";
 import type { ReactNode } from "react";
-import { createPortal, useFrame } from "@react-three/fiber";
+import { useFrame } from "@react-three/fiber";
 import {
   AdditiveAnimationBlendMode,
   type AnimationMixer,
@@ -63,7 +62,8 @@ import {
   type NodeEmitterFrame,
 } from "./nodeEmitters";
 import { useJetSound } from "./useJetSound";
-import { findOwnNode, getMountNode } from "../sceneNodes";
+import { findOwnNode } from "../sceneNodes";
+import { MountPortal } from "./MountPortal";
 import { useDebug } from "./SettingsProvider";
 import { readDtsSequences } from "../dts/dtsSequences";
 import { useQuery } from "@tanstack/react-query";
@@ -519,7 +519,6 @@ export function PlayerModel({
       const poses = samplePlayerPose(
         recorded.move,
         kf ?? {},
-        mounted,
         time,
         ANIM_TRANSITION_TIME,
         (index) => index,
@@ -645,34 +644,39 @@ export function PlayerModel({
       {images?.map(
         (image, slot) =>
           image?.shapeName && (
-            <Fragment key={`image-${slot}`}>
-              {createPortal(
-                <Suspense
-                  key={`image-${slot}:${image.dataBlockId}:${image.shapeName}`}
-                >
-                  <MountedShapeContent
-                    shapeName={image.shapeName}
-                    imageDataBlockId={image.dataBlockId}
-                    entityId={entity.id}
-                    skinName={image.skinName}
-                    mountOffset={image.mountOffset}
-                    slot={slot}
-                    rootRef={(root) => {
-                      if (root) imageRoots.current.set(slot, root);
-                      else imageRoots.current.delete(slot);
-                    }}
-                  />
-                </Suspense>,
-                getMountNode(clonedScene, image.mountPoint),
-              )}
-            </Fragment>
+            <MountPortal
+              key={`image-${slot}`}
+              root={clonedScene}
+              mountPoint={image.mountPoint}
+            >
+              <Suspense
+                key={`image-${slot}:${image.dataBlockId}:${image.shapeName}`}
+              >
+                <MountedShapeContent
+                  shapeName={image.shapeName}
+                  imageDataBlockId={image.dataBlockId}
+                  entityId={entity.id}
+                  skinName={image.skinName}
+                  mountOffset={image.mountOffset}
+                  slot={slot}
+                  rootRef={(root) => {
+                    if (root) imageRoots.current.set(slot, root);
+                    else imageRoots.current.delete(slot);
+                  }}
+                />
+              </Suspense>
+            </MountPortal>
           ),
       )}
       {objectMounts &&
         Object.entries(objectMounts).map(([point, content]) => (
-          <Fragment key={`object-${point}`}>
-            {createPortal(content, getMountNode(clonedScene, Number(point)))}
-          </Fragment>
+          <MountPortal
+            key={`object-${point}`}
+            root={clonedScene}
+            mountPoint={Number(point)}
+          >
+            {content}
+          </MountPortal>
         ))}
     </>
   );

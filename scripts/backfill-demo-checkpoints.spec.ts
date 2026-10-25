@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import path from "node:path";
+import { DEFAULT_CHECKPOINT_INTERVAL_TICKS } from "../src/stream/demoCheckpoints";
 
 const mocks = vi.hoisted(() => ({
   r2Client: vi.fn(),
@@ -14,8 +15,8 @@ vi.mock("./lib/r2", () => ({
 }));
 vi.mock("../relay/demoCheckpointPublisher", () => ({
   DemoCheckpointPublisher: class {
-    constructor(config: unknown, assetRoot: string, count: number) {
-      mocks.construct(this, config, assetRoot, count);
+    constructor(config: unknown, assetRoot: string, plan: unknown) {
+      mocks.construct(this, config, assetRoot, plan);
     }
     publish(key: string, options: unknown) {
       return mocks.publish(this, key, options);
@@ -34,6 +35,7 @@ beforeEach(() => {
   vi.resetModules();
   vi.resetAllMocks();
   vi.stubEnv("DEMO_CHECKPOINT_COUNT", undefined);
+  vi.stubEnv("DEMO_CHECKPOINT_INTERVAL_MINUTES", undefined);
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
   process.exitCode = undefined;
@@ -128,8 +130,43 @@ it.each([
       expect.anything(),
       {},
       path.resolve("docs/base"),
-      count,
+      { intervalTicks: DEFAULT_CHECKPOINT_INTERVAL_TICKS, maxCount: count },
     );
+  },
+);
+
+it.each([
+  [undefined, undefined, DEFAULT_CHECKPOINT_INTERVAL_TICKS],
+  ["6", undefined, 11_250],
+  ["6", "0.5", 938],
+  ["invalid", "3", 5_625],
+])(
+  "uses env=%s and --interval=%s for checkpoints %i ticks apart",
+  async (env, arg, intervalTicks) => {
+    vi.stubEnv("DEMO_CHECKPOINT_INTERVAL_MINUTES", env);
+    if (arg !== undefined) process.argv.push(`--interval=${arg}`);
+    await import("./backfill-demo-checkpoints");
+    expect(mocks.construct).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(),
+      {},
+      path.resolve("docs/base"),
+      { intervalTicks, maxCount: 1 },
+    );
+  },
+);
+
+it.each(["", "0", "-1", "invalid", "Infinity"])(
+  "rejects invalid checkpoint interval %s before accessing R2",
+  async (interval) => {
+    process.argv.push(`--interval=${interval}`);
+    vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("exit");
+    });
+    await expect(import("./backfill-demo-checkpoints")).rejects.toThrow("exit");
+    expect(console.error).toHaveBeenCalledWith(
+      "--interval must be a positive number of minutes",
+    );
+    expect(mocks.r2Client).not.toHaveBeenCalled();
   },
 );
 

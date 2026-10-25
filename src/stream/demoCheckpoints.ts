@@ -6,9 +6,10 @@ import { TICK_DURATION_MS } from "./streamHelpers";
 // New writes use this version. Raise the minimum for incompatible state
 // changes, or when older sidecars would restore wrong state (v12 holds sensor
 // group 0 until the recorder spawns; 13 seeds it from the start block; 14
-// keeps connection state in one ConnectionState).
-export const DEMO_CHECKPOINT_VERSION = 14;
-const MIN_SUPPORTED_CHECKPOINT_VERSION = 14;
+// keeps connection state in one ConnectionState; 15 keeps each player's
+// action slot as its setActionThread calls, with the jump chain and ski hold).
+export const DEMO_CHECKPOINT_VERSION = 15;
+const MIN_SUPPORTED_CHECKPOINT_VERSION = 15;
 export const DEMO_CHECKPOINT_SUFFIX = ".checkpoints.json";
 /**
  * The generator's default spacing, and the spacing of sidecars written

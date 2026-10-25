@@ -16,6 +16,9 @@ const MIN_WARP_TICKS = 0.5;
 const MAX_WARP_TICKS = 3;
 const MOVE_STATE = 1,
   RECOVER_STATE = 2;
+const SKI_HOLD_TICKS = 22;
+/** The PlayerData actions a jump sets: table JumpAnim, standjump, ski. */
+export type PlayerJumpAction = "jump" | "standjump" | "ski";
 export interface PlayerMove {
   x?: number;
   y?: number;
@@ -98,6 +101,15 @@ export class PlayerPrediction {
   recoverTicks = 0;
   jumpDelay = 0;
   jumpSurfaceLastContact = 0;
+  /** A held-jump hop chain has played its first jump action (+0x988). */
+  jumpChain = false;
+  /** Ticks pickActionAnimation stays off after a ski jump (+0x98c). */
+  skiTicks = 0;
+  /**
+   * The action this tick's jump passed to setActionThread, if any. The
+   * owner applies it to the player's one action slot.
+   */
+  jumpAction: PlayerJumpAction | undefined;
   /** Movement ticks since contact with a runnable surface (retail +0x984). */
   contactTimer = 0;
   private readonly warpOffset = new Vector3();
@@ -162,6 +174,8 @@ export class PlayerPrediction {
         recoverTicks: this.recoverTicks,
         jumpDelay: this.jumpDelay,
         jumpSurfaceLastContact: this.jumpSurfaceLastContact,
+        jumpChain: this.jumpChain,
+        skiTicks: this.skiTicks,
         contactTimer: this.contactTimer,
         rotOffset: this.rotOffset,
         initialized: this.initialized,
@@ -264,6 +278,7 @@ export class PlayerPrediction {
   }
 
   processTick(gravity: number, move?: PlayerMove, rechargeRate = 0): void {
+    this.jumpAction = undefined;
     this.posVec.set(0, 0, 0);
     this.rotVec = 0;
     this.headPitchVec = this.headYawVec = 0;
@@ -303,6 +318,30 @@ export class PlayerPrediction {
     this.updateMove(gravity);
     this.updatePos();
     this.posVec.copy(this.initial).sub(this.position);
+  }
+
+  /**
+   * updateMove's jump animation (0x5d2d60, constants 0x79b3d0-0x79b3e0):
+   * the first jump of a hop chain, or a slow one, plays standjump or jump;
+   * held hops at 4–30 m/s keep the current action; faster ones ski and
+   * hold pickActionAnimation off for 22 ticks.
+   */
+  private pickJumpAction(speed: number): PlayerJumpAction | undefined {
+    const action = speed <= 2 ? "standjump" : "jump";
+    if (!this.jumpChain) {
+      this.jumpChain = true;
+      return action;
+    }
+    if (speed < 4) {
+      this.jumpChain = false;
+      return action;
+    }
+    if (speed < 30) {
+      this.skiTicks = 0;
+      return undefined;
+    }
+    this.skiTicks = SKI_HOLD_TICKS;
+    return "ski";
   }
 
   private updateMove(gravity: number): void {
@@ -444,14 +483,17 @@ export class PlayerPrediction {
           (d.underwaterVertJetFactor ?? 0);
       this.acceleration.addScaledVector(this.requested, dt / mass);
     }
-    if (
+    const canJump =
       move.trigger?.[2] &&
       moving &&
       !this.jumpDelay &&
       this.energy >= (d.minJumpEnergy ?? 0) &&
-      this.jumpSurfaceLastContact < 8 &&
-      this.velocity.z <= (d.maxJumpSpeed ?? 0)
-    ) {
+      this.jumpSurfaceLastContact < 8;
+    // canJump (0x5d4bb0) owns the contact count; rising past maxJumpSpeed
+    // only skips the jump itself.
+    if (!canJump)
+      this.jumpSurfaceLastContact = jump ? 0 : this.jumpSurfaceLastContact + 1;
+    else if (this.velocity.z <= (d.maxJumpSpeed ?? 0)) {
       const min = d.minJumpSpeed ?? 0,
         max = d.maxJumpSpeed ?? 0;
       const scale =
@@ -464,10 +506,13 @@ export class PlayerPrediction {
       this.acceleration.z += this.jumpSurfaceNormal.z * impulse * scale;
       this.jumpDelay = d.jumpDelay ?? 0;
       this.energy -= d.jumpEnergyDrain ?? 0;
+      this.jumpAction = this.pickJumpAction(this.velocity.length());
       this.jumpSurfaceLastContact = 8;
-    } else
-      this.jumpSurfaceLastContact = jump ? 0 : this.jumpSurfaceLastContact + 1;
+    }
+    // Landing on a jump surface with the trigger released ends a hop chain.
     if (this.jumpDelay > 0) this.jumpDelay--;
+    else if (jump && !move.trigger?.[2]) this.jumpChain = false;
+    if (this.skiTicks > 0) this.skiTicks--;
     this.velocity.add(this.acceleration);
     const horizontal = Math.hypot(this.velocity.x, this.velocity.y),
       resistance = d.horizResistSpeed ?? Infinity;

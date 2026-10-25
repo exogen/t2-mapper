@@ -412,12 +412,7 @@ export function StreamingController({
       kf.velocity = entity.velocity;
       kf.health = entity.health;
       kf.energy = entity.energy;
-      kf.actionAnim = entity.actionAnim;
-      kf.actionAtEnd = entity.actionAtEnd;
-      kf.actionHoldAtEnd = entity.actionHoldAtEnd;
-      kf.actionSeq = entity.actionSeq;
-      kf.actionAnimPos = entity.actionAnimPos;
-      kf.actionTimeSec = entity.actionTimeSec;
+      kf.actionSlot = entity.actionSlot;
       kf.damageState = entity.damageState;
     }
 

@@ -169,10 +169,6 @@ interface PositionedBase extends EntityBase {
   soundSlots?: SoundSlot[];
   health?: number;
   energy?: number;
-  actionAnim?: number;
-  actionAtEnd?: boolean;
-  actionHoldAtEnd?: boolean;
-  actionSeq?: number;
 }
 
 // ── Gameplay entities ──

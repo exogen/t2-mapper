@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Quaternion, Vector3 } from "three";
-import {
-  actionStartPosition,
-  pickMoveAnimation,
-  samplePlayerPose,
-} from "./playerAnimation";
+import { pickMoveAnimation, samplePlayerPose } from "./playerAnimation";
+import type { ActionCall, ActionSlot } from "./actionSlot";
 import { playerYawToQuaternion } from "./streamHelpers";
 
 describe("movement animation direction", () => {
@@ -99,34 +96,16 @@ describe("movement animation contact timer", () => {
   });
 });
 
-describe("actionStartPosition", () => {
-  it("advances the packed position by the time since the update", () => {
-    expect(
-      actionStartPosition(
-        { actionAnimPos: 0.25, actionTimeSec: 100 },
-        100.5,
-        2,
-      ),
-    ).toBeCloseTo(0.5);
-  });
-
-  it("saturates once the clip would have run out", () => {
-    expect(actionStartPosition({ actionTimeSec: 100 }, 130, 2)).toBe(1);
-  });
-
-  it("is the packed position without an arrival time", () => {
-    expect(actionStartPosition({ actionAnimPos: 0.4 }, 500, 2)).toBe(0.4);
-  });
-});
-
 describe("samplePlayerPose", () => {
   const move = { animation: "run", timeScale: 1, timeSec: 0 };
-  type Wired = Parameters<typeof samplePlayerPose<string>>[1];
-  const sample = (time: number, wire: Wired = {}, mounted = false) =>
+  const slot = (
+    action: number | string,
+    ...calls: ActionCall[]
+  ): { actionSlot: ActionSlot } => ({ actionSlot: { action, calls } });
+  const sample = (time: number, player = {}) =>
     samplePlayerPose(
       move,
-      wire,
-      mounted,
+      player,
       time,
       0.25,
       () => "pda",
@@ -134,59 +113,121 @@ describe("samplePlayerPose", () => {
     );
 
   it("returns to movement after a wired action, without another packet", () => {
-    const wire = { actionAnim: 18, actionTimeSec: 10 };
-    expect(sample(11, wire)[0]).toMatchObject({
+    const pda = slot(18, { timeSec: 10 });
+    expect(sample(11, pda)[0]).toMatchObject({
       name: "pda",
       position: 0.5,
       weight: 1,
     });
-    expect(sample(13, wire)[0]).toMatchObject({
+    expect(sample(13, pda)[0]).toMatchObject({
       name: "run",
       position: 0.5,
       weight: 1,
     });
-    expect(sample(101, wire)[0]).toMatchObject({
+    expect(sample(101, pda)[0]).toMatchObject({
       name: "run",
       position: 0.5,
       weight: 1,
     });
   });
 
-  it("restarts the same wired action from its new time anchor", () => {
-    expect(sample(20.5, { actionAnim: 18, actionTimeSec: 10 })[0].name).toBe(
-      "run",
-    );
-    expect(
-      sample(20.5, { actionAnim: 18, actionTimeSec: 20 })[0],
-    ).toMatchObject({
+  it("ignores a re-sent action while it plays, and restarts it once replaced", () => {
+    // setActionThread keeps the action the slot holds: a taunt re-sent
+    // mid-clip plays on. Once the movement pick replaced it, it starts over.
+    const spam = slot(18, { timeSec: 10 }, { timeSec: 11 }, { timeSec: 20 });
+    expect(sample(11.5, spam)[0]).toMatchObject({
+      name: "pda",
+      position: 0.75,
+    });
+    expect(sample(13, spam)[0].name).toBe("run");
+    expect(sample(20.5, spam)[0]).toMatchObject({
       name: "pda",
       position: 0.25,
       weight: 1,
     });
+    // A re-send the pick had not reached yet is not seen early.
+    expect(sample(19, spam)[0].name).toBe("run");
+  });
+
+  it("snaps an at-end re-send to the clip's end, then lets movement pick", () => {
+    const pda = slot(18, { timeSec: 10 }, { timeSec: 10.5, atEnd: true });
+    expect(sample(10.5, pda)[0]).toMatchObject({ name: "run" });
+    const [before] = sample(10.4, pda);
+    expect(before.name).toBe("pda");
+    expect(before.position).toBeCloseTo(0.2);
   });
 
   it("reconstructs mid-clip and held late starts", () => {
-    const wire = { actionAnim: 18, actionTimeSec: 10, actionAnimPos: 0.6 };
-    expect(sample(10, wire)[0]).toMatchObject({ name: "pda", position: 0.6 });
-    expect(sample(100, wire)[0].name).toBe("run");
-    expect(sample(100, { ...wire, actionHoldAtEnd: true })[0]).toMatchObject({
+    const pda = { timeSec: 10, startPos: 0.6 };
+    expect(sample(10, slot(18, pda))[0]).toMatchObject({
+      name: "pda",
+      position: 0.6,
+    });
+    expect(sample(100, slot(18, pda))[0].name).toBe("run");
+    expect(sample(100, slot(18, { ...pda, hold: true }))[0]).toMatchObject({
       name: "pda",
       position: 1,
     });
   });
 
-  it("holds a seated action until unmounted, even without holdAtEnd", () => {
-    const wire = { actionAnim: 18, actionTimeSec: 10, actionAtEnd: true };
-    expect(sample(20, wire, true)[0]).toMatchObject({
+  it("holds an action set while mounted, or still held when the player mounts", () => {
+    const seated = slot(18, { timeSec: 10, atEnd: true, parked: true });
+    expect(sample(20, seated)[0]).toMatchObject({
       name: "pda",
       position: 1,
     });
-    expect(sample(20, wire, false)[0].name).toBe("run");
+    const before = { action: 18, calls: [{ timeSec: 10 }] };
+    expect(
+      sample(20, { actionSlot: { ...before, parkedSec: 11 } })[0],
+    ).toMatchObject({ name: "pda", position: 1 });
+    // Mounted after the movement pick replaced it: nothing to hold.
+    expect(
+      sample(20, { actionSlot: { ...before, parkedSec: 15 } })[0].name,
+    ).toBe("run");
+  });
+
+  it("plays an action the client set itself by its engine alias", () => {
+    const names: (number | string)[] = [];
+    const poses = samplePlayerPose(
+      move,
+      slot("standjump", { timeSec: 10 }),
+      11,
+      0,
+      (action) => (names.push(action), action),
+      (name) => ({ duration: 2, cyclic: name === "run" }),
+    );
+    expect(names).toEqual(["standjump"]);
+    expect(poses[0]).toMatchObject({ name: "standjump", position: 0.5 });
+  });
+
+  it("parks a finished action until pickActionAnimation may run again", () => {
+    const ski = (...calls: ActionCall[]) => slot("ski", ...calls);
+    const once = ski({ timeSec: 10, pickHeldUntilSec: 14 });
+    expect(sample(13, once)[0]).toMatchObject({ name: "pda", position: 1 });
+    // Movement starts when the hold ends, not when the clip ended.
+    expect(sample(14.5, once)[0]).toMatchObject({
+      name: "run",
+      position: 0.25,
+    });
+    expect(sample(13, ski({ timeSec: 10 }))[0].name).toBe("run");
+    // A ski jump after the hold lapsed but within the clip is ignored and
+    // re-arms the hold; one after the pick replaced it starts over.
+    const hops = ski(
+      { timeSec: 10, pickHeldUntilSec: 10.5 },
+      { timeSec: 11, pickHeldUntilSec: 13.5 },
+      { timeSec: 14, pickHeldUntilSec: 14.5 },
+    );
+    expect(sample(13, hops)[0]).toMatchObject({ name: "pda", position: 1 });
+    expect(sample(13.75, hops)[0].name).toBe("run");
+    expect(sample(14.5, hops)[0]).toMatchObject({
+      name: "pda",
+      position: 0.25,
+    });
   });
 
   it("starts movement at the arrival time of an already-finished action", () => {
     expect(
-      sample(10.5, { actionAnim: 18, actionTimeSec: 10, actionAtEnd: true })[0],
+      sample(10.5, slot(18, { timeSec: 10, atEnd: true }))[0],
     ).toMatchObject({
       name: "run",
       position: 0.25,
@@ -195,9 +236,7 @@ describe("samplePlayerPose", () => {
   });
 
   it("clears an active wired action and samples movement on a backwards seek", () => {
-    expect(sample(11, { actionAnim: 18, actionTimeSec: 10 })[0].name).toBe(
-      "pda",
-    );
+    expect(sample(11, slot(18, { timeSec: 10 }))[0].name).toBe("pda");
     expect(sample(11)[0]).toMatchObject({ name: "run", position: 0.5 });
     expect(sample(9)[0]).toMatchObject({ name: "run", position: 0.5 });
   });
@@ -212,7 +251,6 @@ describe("samplePlayerPose", () => {
           previous: { animation: "root", timeScale: 1, timeSec: 10 },
         },
         {},
-        false,
         time,
         0.25,
         () => undefined,

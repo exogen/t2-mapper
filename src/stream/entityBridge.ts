@@ -163,8 +163,6 @@ function positionedBase(entity: StreamEntity, spawnTime?: number) {
     soundSlots: entity.soundSlots,
     health: entity.health,
     energy: entity.energy,
-    actionAnim: entity.actionAnim,
-    actionAtEnd: entity.actionAtEnd,
     keyframes: [
       {
         time: spawnTime ?? 0,

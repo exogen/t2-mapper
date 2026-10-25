@@ -169,6 +169,59 @@ describe("retail player prediction", () => {
     p.processTick(-20);
     expect(p.velocity.x).toBe(16);
   });
+  it("picks updateMove's jump action from speed and the hop chain", () => {
+    box(0, 0, -1, 100, 100, 2);
+    const jumping = { ...neutral, trigger: [false, false, true] };
+    const p = new PlayerPrediction({ ...armor, jumpDelay: 0 });
+    const jumpAt = (speed: number) => {
+      p.unpackUpdate({
+        position: { x: 0, y: 0, z: 0 },
+        velocity: { x: speed, y: 0, z: 0 },
+        move: jumping,
+      });
+      p.jumpSurfaceLastContact = 0;
+      p.processTick(-20);
+      return p.jumpAction;
+    };
+    // The first jump of a chain plays; standing still it is standjump.
+    expect(jumpAt(0)).toBe("standjump");
+    expect(p.jumpChain).toBe(true);
+    // Held hops at 4–30 m/s keep the current action.
+    expect(jumpAt(16)).toBeUndefined();
+    expect(p.jumpChain).toBe(true);
+    // Faster ones ski and hold pickActionAnimation off for 22 ticks,
+    // counted down by the same updateMove.
+    expect(jumpAt(40)).toBe("ski");
+    expect(p.skiTicks).toBe(21);
+    expect(jumpAt(16)).toBeUndefined();
+    expect(p.skiTicks).toBe(0);
+    // A slow hop plays again and ends the chain.
+    expect(jumpAt(3)).toBe("jump");
+    expect(p.jumpChain).toBe(false);
+    expect(jumpAt(16)).toBe("jump");
+    // No jump, no action; landing with the trigger released ends the chain.
+    p.unpackUpdate({
+      position: { x: 0, y: 0, z: 0 },
+      velocity: { x: 0, y: 0, z: 0 },
+      move: neutral,
+    });
+    p.processTick(-20);
+    expect(p.jumpAction).toBeUndefined();
+    expect(p.jumpChain).toBe(false);
+  });
+  it("leaves the jump-surface count alone when rising too fast to jump", () => {
+    box(0, 0, -1, 100, 100, 2);
+    const p = new PlayerPrediction({ ...armor, jumpDelay: 0 });
+    p.unpackUpdate({
+      position: { x: 0, y: 0, z: 0 },
+      velocity: { x: 0, y: 0, z: 31 },
+      move: { ...neutral, trigger: [false, false, true] },
+    });
+    p.jumpSurfaceLastContact = 3;
+    p.processTick(-20);
+    expect(p.jumpAction).toBeUndefined();
+    expect(p.jumpSurfaceLastContact).toBe(3);
+  });
   it("jets vertically near a jump surface, then apportions horizontal thrust", () => {
     const p = player({
       velocity: { x: 0, y: 0, z: 0 },

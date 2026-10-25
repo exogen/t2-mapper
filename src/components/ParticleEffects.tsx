@@ -44,7 +44,11 @@ import {
   resolveEmitterData,
 } from "../particles/ParticleSystem";
 import type { EmitterDataResolved } from "../particles/types";
-import type { StreamSnapshot, StreamingPlayback } from "../stream/types";
+import type {
+  PendingAudioEvent,
+  StreamSnapshot,
+  StreamingPlayback,
+} from "../stream/types";
 import { createLogger } from "../logger";
 import { useDebug, useSettings } from "./SettingsProvider";
 import { useAudio } from "./AudioContext";
@@ -61,6 +65,7 @@ import { getEffectiveSoundRate } from "./audioPlaybackRate";
 import { effectDeltaSec, effectNow, engineStore } from "../state/engineStore";
 import { streamClock } from "../state/streamPlaybackStore";
 import { ParticleSnapshotIndex } from "./particleSnapshot";
+import { findAudioProfileId, ScriptSoundTracker } from "../stream/scriptSounds";
 
 const log = createLogger("ParticleEffects");
 
@@ -750,8 +755,19 @@ export function ParticleEffects({
   const projectileSoundsRef = useRef<Map<string, ProjectileSound>>(new Map());
   /** Explosion entity IDs whose impact sound already played. */
   const processedExplosionSoundsRef = useRef<Set<string>>(new Set());
-  /** Track processed audio event keys to prevent replays on seek. */
-  const processedAudioEventsRef = useRef<Set<string>>(new Set());
+  /**
+   * Audio events already played: the snapshot's window repeats them. Each
+   * is its own object, so two identical sounds in one tick both play.
+   */
+  const processedAudioEventsRef = useRef(new WeakSet<PendingAudioEvent>());
+  /**
+   * The server scripts' sounds a recording holds only near its recorder.
+   */
+  const scriptSoundsRef = useRef(new ScriptSoundTracker());
+  /**
+   * AudioProfile ids by file; null when the recording has none.
+   */
+  const scriptSoundProfilesRef = useRef(new Map<string, number | null>());
   /** Active wireframe explosion spheres. */
   const activeExplosionSpheresRef = useRef<ActiveExplosionSphere[]>([]);
   /** Active shockwave ring effects. */
@@ -789,7 +805,9 @@ export function ParticleEffects({
   // from the previous demo would silently suppress its sounds.
   useEffect(() => {
     processedExplosionSoundsRef.current.clear();
-    processedAudioEventsRef.current.clear();
+    processedAudioEventsRef.current = new WeakSet();
+    scriptSoundsRef.current.reset();
+    scriptSoundProfilesRef.current.clear();
   }, [playback]);
 
   useFrame((state, delta) => {
@@ -1402,12 +1420,19 @@ export function ParticleEffects({
 
       // ── Audio: event-based sounds (Sim3DAudioEvent / Sim2DAudioEvent) ──
       for (const evt of snapshot.audioEvents) {
-        const evtKey = `${evt.timeSec}:${evt.profileId}:${evt.position?.x ?? ""}`;
-        if (processedAudioEventsRef.current.has(evtKey)) continue;
-        processedAudioEventsRef.current.add(evtKey);
+        if (processedAudioEventsRef.current.has(evt)) continue;
+        processedAudioEventsRef.current.add(evt);
 
         const resolved = resolveAudioProfile(evt.profileId, getDataBlockData);
         if (!resolved) continue;
+        if (
+          evt.position &&
+          !scriptSoundsRef.current.playRecorded(resolved.filename, {
+            timeSec: evt.timeSec,
+            position: [evt.position.x, evt.position.y, evt.position.z],
+          })
+        )
+          continue;
 
         const pos = evt.position
           ? new Vector3(evt.position.y, evt.position.z, evt.position.x)
@@ -1419,6 +1444,35 @@ export function ParticleEffects({
           pos,
           groupRef.current,
         );
+      }
+
+      // ── Audio: the server scripts' sounds sent only near the recorder ──
+      if (snapshotChanged) {
+        const profiles = scriptSoundProfilesRef.current;
+        for (const sound of scriptSoundsRef.current.update(
+          snapshot,
+          getDataBlockData,
+        )) {
+          let profileId = profiles.get(sound.file);
+          if (profileId === undefined) {
+            profileId =
+              findAudioProfileId(getDataBlockData, sound.file) ?? null;
+            profiles.set(sound.file, profileId);
+          }
+          const resolved =
+            profileId != null
+              ? resolveAudioProfile(profileId, getDataBlockData)
+              : null;
+          if (!resolved) continue;
+          const [x, y, z] = sound.position;
+          playOneShotSound(
+            resolved,
+            audioListener,
+            audioLoader,
+            new Vector3(y, z, x),
+            groupRef.current,
+          );
+        }
       }
     }
 
@@ -1446,11 +1500,6 @@ export function ParticleEffects({
         }
       }
     }
-    // Event keys are time-based; anything past the engine's short replay
-    // window can never fire again, so just reset the set.
-    if (processedAudioEventsRef.current.size > 500) {
-      processedAudioEventsRef.current.clear();
-    }
   });
 
   // Cleanup on unmount.
@@ -1461,7 +1510,7 @@ export function ParticleEffects({
     const trailEntities = trailEntitiesRef.current;
     const processedExplosionSounds = processedExplosionSoundsRef.current;
     const projectileSounds = projectileSoundsRef.current;
-    const processedAudioEvents = processedAudioEventsRef.current;
+    const scriptSounds = scriptSoundsRef.current;
     return () => {
       for (const entry of activeEmittersRef.current) {
         entry.mesh.removeFromParent();
@@ -1494,7 +1543,7 @@ export function ParticleEffects({
       for (const entityId of [...projectileSounds.keys()]) {
         stopProjectileSound(projectileSounds, entityId);
       }
-      processedAudioEvents.clear();
+      scriptSounds.reset();
     };
   }, []);
 

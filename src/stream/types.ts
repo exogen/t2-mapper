@@ -2,6 +2,7 @@ import type { FlagState } from "../../relay/flagState";
 import type { PlayerRecord } from "../../relay/playerReference";
 import type { ChatSegment } from "../../relay/shared";
 import type { FlagDropTimes } from "../../relay/flagReturnState";
+import type { ActionSlot } from "./actionSlot";
 import type { ClientAnimationState } from "./clientAnimation";
 import type { PlayerRenderDelta } from "./playerPrediction";
 import type { ParsedData } from "t2-demo-parser";
@@ -104,24 +105,11 @@ export interface Keyframe {
   energy?: number;
   /** Torque DamageState: 0 = Enabled, 1 = Disabled (dead), 2 = Destroyed. */
   damageState?: number;
-  /** Action animation index from ghost ActionMask (indices >= 7 are non-table
-   *  actions like death animations). */
-  actionAnim?: number;
-  /** True when the action animation has reached its final frame. */
-  actionAtEnd?: boolean;
-  /** The action holds its last frame until another arrives; otherwise
-   *  the client ends it itself when the clip finishes. */
-  actionHoldAtEnd?: boolean;
-  /** Counts ActionMask updates: a re-sent action of the same index is
-   *  a new one. */
-  actionSeq?: number;
-  /** Where the server's thread was (0..1) when the update was packed,
-   *  when it said so; the client starts the clip there. */
-  actionAnimPos?: number;
-  /** Stream time the ActionMask update arrived: a model that starts the
-   *  action later (a seek, a remount) picks it up where the server's
-   *  thread would be by now. */
-  actionTimeSec?: number;
+  /**
+   * The player's one action slot: the wired or client-set action and the
+   * setActionThread calls the pose sampler resolves (see actionSlot.ts).
+   */
+  actionSlot?: ActionSlot;
 }
 
 /**
@@ -381,15 +369,8 @@ export interface StreamEntity {
   projectileActivateDelayMS?: number;
   health?: number;
   energy?: number;
-  actionAnim?: number;
-  actionAtEnd?: boolean;
-  /** The action holds its last frame until another arrives (see
-   *  Keyframe.actionHoldAtEnd). */
-  actionHoldAtEnd?: boolean;
-  /** Counts ActionMask updates (see Keyframe.actionSeq). */
-  actionSeq?: number;
-  actionAnimPos?: number;
-  actionTimeSec?: number;
+  /** See Keyframe.actionSlot. */
+  actionSlot?: ActionSlot;
   damageState?: number;
   /** Retail renderWhenDestroyed / player blowApart visibility. */
   destroyedHidden?: boolean;

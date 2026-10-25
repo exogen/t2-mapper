@@ -8,12 +8,18 @@ import type {
 import { LiveStreamAdapter } from "./liveStreaming";
 import type { MutableEntity } from "./StreamEngine";
 import type { RelayClient } from "./relayClient";
-import { clearWorldColliders } from "../collision/worldCollision";
+import { BoxGeometry, Mesh } from "three";
+import {
+  clearWorldColliders,
+  registerInteriorCollider,
+} from "../collision/worldCollision";
 import { setTerrainCollisionData } from "../collision/terrainCollision";
+import { latestAction } from "./actionSlot";
 
 const armor = {
   boxSize: { x: 1, y: 1, z: 2 },
   runSurfaceAngle: 70,
+  jumpSurfaceAngle: 80,
   maxEnergy: 100,
 } satisfies PlayerDataBlock;
 const neutral = {
@@ -132,15 +138,15 @@ it("applies a new action after unmounting when both arrive in one ghost update",
     damageState: 1,
   });
   expect(stream.player.mountObjectGhostIndex).toBeUndefined();
-  expect(stream.player.actionAnim).toBe(20);
-  expect(stream.player.actionTimeSec).toBe(0.032);
-  expect(stream.player.actionHoldAtEnd).toBe(true);
-  expect(stream.player.actionAtEnd).toBe(false);
+  expect(stream.player.actionSlot).toEqual({
+    action: 20,
+    calls: [{ timeSec: 0.032, hold: true, atEnd: false, parked: true }],
+  });
 
   // An ordinary unmount still clears a stale seat pose.
   stream.update({ mountObject: 4, action: 16, actionAtEnd: true });
   stream.update({ mountObject: -1 });
-  expect(stream.player.actionAnim).toBeUndefined();
+  expect(stream.player.actionSlot).toBeUndefined();
 });
 
 it("advances prediction and contact once per 32 ms, independently of render frequency", () => {
@@ -240,4 +246,76 @@ it("honors the tick budget and never runs live simulation backwards", () => {
   stream.reset();
   expect(stream.getSnapshot().timeSec).toBe(0);
   expect(stream.getSnapshot().entities).toEqual([]);
+});
+
+it("ends a seated pose re-sent after a quick dismount at the player's next jump", () => {
+  // Classic's Armor::onMount re-sends mountPose 300 ms after mounting; a
+  // player who jumped out first is left standing in a held seated pose
+  // until updateMove's jump replaces it.
+  // A floor just under the player, so it can land and jump again.
+  const floor = new Mesh(new BoxGeometry(100, 2, 100));
+  floor.position.set(0, 99, 0);
+  floor.updateMatrixWorld();
+  registerInteriorCollider("floor", [floor]);
+  const stream = new PlayerStream();
+  stream.update({
+    mountObject: 4,
+    mountNode: 0,
+    action: 29,
+    actionHoldAtEnd: true,
+  });
+  stream.update({ mountObject: -1 });
+  stream.update({ action: 29, actionHoldAtEnd: true });
+  stream.stepToTime(0.32);
+  expect(latestAction(stream.player.actionSlot)).toMatchObject({
+    action: 29,
+    hold: true,
+  });
+
+  stream.update({
+    ...pose,
+    move: { ...neutral, trigger: [false, false, true] },
+  });
+  stream.stepToTime(0.352);
+  expect(stream.player.actionSlot).toEqual({
+    action: "jump",
+    calls: [{ timeSec: 0.352 }],
+  });
+});
+
+it("records jumps in the action slot and the ski hold beside it", () => {
+  class Slot extends PlayerStream {
+    jump(action: "jump" | "standjump" | "ski" | undefined, skiTicks = 0) {
+      this.applyPredictedAction(this.player, {
+        jumpAction: action,
+        skiTicks,
+      } as never);
+    }
+    at(timeSec: number) {
+      (this as unknown as { getTimeSec: () => number }).getTimeSec = () =>
+        timeSec;
+      return this;
+    }
+  }
+  const stream = new Slot();
+  const times = () => stream.player.actionSlot?.calls.map((c) => c.timeSec);
+  // Same jump again: the sampler decides with the clip whether it restarts.
+  stream.at(10).jump("jump");
+  stream.at(10.5).jump("jump");
+  expect(times()).toEqual([10, 10.5]);
+  stream.at(11.6).jump("standjump");
+  expect(stream.player.actionSlot?.action).toBe("standjump");
+
+  // Ski hops inside the 22-tick hold re-arm it without a call of their own.
+  stream.at(20).jump("ski", 21);
+  stream.at(20.6).jump("ski", 21);
+  expect(stream.player.actionSlot?.calls).toEqual([
+    { timeSec: 20, pickHeldUntilSec: expect.closeTo(21.272) },
+  ]);
+  // A 4–30 m/s hop zeroes the hold without changing the action.
+  stream.at(21).jump(undefined, 0);
+  expect(stream.player.actionSlot?.calls).toEqual([
+    { timeSec: 20, pickHeldUntilSec: 21 },
+  ]);
+  expect(stream.player.pickHeldUntilSec).toBeUndefined();
 });

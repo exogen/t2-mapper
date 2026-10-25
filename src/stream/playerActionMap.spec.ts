@@ -127,7 +127,6 @@ describe("player action-table playback", () => {
         const [pose] = samplePlayerPose(
           { animation: "run", timeScale: 1, timeSec: 10 },
           {},
-          false,
           time,
           0.25,
           (index) => index,

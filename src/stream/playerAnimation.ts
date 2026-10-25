@@ -7,6 +7,8 @@
  * the ghost's velocity, body rotation, and state flags (mFalling, jetting).
  */
 
+import { resolveActionSlot, type ActionSlot } from "./actionSlot";
+
 /** Minimum velocity dot product to count as intentional movement. */
 const MOVE_THRESHOLD = 0.1;
 
@@ -89,25 +91,6 @@ export function pickMoveAnimation(
  *  non-table action sent over the wire (deaths, cels, the PDA idle). */
 export const NUM_TABLE_ACTION_ANIMS = 8;
 
-/**
- * Where a wired action's clip stands at `nowSec`: the position the
- * server packed (its thread's, when the update was not at the end) plus
- * what has elapsed since the update, as the engine's own thread would
- * have advanced. Player::unpackUpdate seats a scope-in ghost's action
- * at that position; a model that starts late (a seek, a remount) must
- * not replay the clip from its start.
- */
-export function actionStartPosition(
-  kf: { actionAnimPos?: number; actionTimeSec?: number },
-  nowSec: number,
-  clipDurationSec: number,
-): number {
-  const packed = kf.actionAnimPos ?? 0;
-  if (kf.actionTimeSec == null || !(clipDurationSec > 0)) return packed;
-  const elapsed = Math.max(0, nowSec - kf.actionTimeSec);
-  return Math.min(1, packed + elapsed / clipDurationSec);
-}
-
 export interface PlayerPose<Key extends string | number = string> {
   /** Unwrapped cycle position for animation triggers (including reverse play). */
   phase?: number;
@@ -121,18 +104,10 @@ export interface PlayerPose<Key extends string | number = string> {
  * model late must not start a new death, taunt, seated pose or run cycle. */
 export function samplePlayerPose<Key extends string | number = string>(
   move: import("./clientAnimation").MoveAnimationTimeline,
-  wired: {
-    actionAnim?: number;
-    actionAnimPos?: number;
-    actionTimeSec?: number;
-    actionAtEnd?: boolean;
-    actionHoldAtEnd?: boolean;
-    damageState?: number;
-  },
-  mounted: boolean,
+  player: { actionSlot?: ActionSlot },
   now: number,
   transitionDuration: number,
-  actionName: (index: number) => Key | undefined,
+  actionName: (action: number | string) => Key | undefined,
   clipInfo: (
     name: string | Key,
   ) => { duration: number; cyclic: boolean } | undefined,
@@ -156,36 +131,35 @@ export function samplePlayerPose<Key extends string | number = string>(
       weight: 1,
     };
   };
-  const name =
-    wired.actionAnim != null &&
-    (wired.actionAnim >= NUM_TABLE_ACTION_ANIMS ||
-      (wired.damageState ?? 0) >= 1)
-      ? actionName(wired.actionAnim)
-      : undefined;
+  // The slot only ever holds non-table wired actions and the client's own
+  // jumps; the movement timeline stands for every other table action.
+  const slot = player.actionSlot;
+  const name = slot ? actionName(slot.action) : undefined;
   const info = name != null ? clipInfo(name) : undefined;
-  const position = wired.actionAtEnd
-    ? 1
-    : actionStartPosition(wired, now, info?.duration ?? 0);
-  const actionStart =
-    (wired.actionTimeSec ?? now) -
-    (wired.actionAtEnd ? 1 : (wired.actionAnimPos ?? 0)) *
-      (info?.duration ?? 0);
-  const actionEnd = actionStart + (info?.duration ?? 0);
-  const holds =
-    wired.actionHoldAtEnd || mounted || (wired.damageState ?? 0) >= 1;
+  const resolved =
+    slot && info && now >= slot.calls[0].timeSec
+      ? resolveActionSlot(slot, info.duration, now)
+      : undefined;
   let current: PlayerPose<Key>,
     previous: PlayerPose<Key> | undefined,
     changedAt: number;
-  if (name != null && info && (position < 1 || holds)) {
-    current = { name, position, phase: position, weight: 1 };
-    changedAt = wired.actionAtEnd ? -Infinity : actionStart;
+  if (resolved && now < resolved.endSec) {
+    const elapsed =
+      info!.duration > 0 ? (now - resolved.timeSec) / info!.duration : 0;
+    const position = resolved.atEnd
+      ? 1
+      : Math.min(1, resolved.startPos + elapsed);
+    current = { name: name!, position, phase: position, weight: 1 };
+    changedAt = resolved.sinceSec;
     previous = movementPose(move, move.timeSec, changedAt);
   } else {
-    const start = info ? Math.max(move.timeSec, actionEnd) : move.timeSec;
+    const start = resolved
+      ? Math.max(move.timeSec, resolved.endSec)
+      : move.timeSec;
     current = movementPose(move, start);
     changedAt = start;
     previous =
-      info && actionEnd >= move.timeSec
+      resolved && resolved.endSec >= move.timeSec
         ? { name: name!, position: 1, weight: 1 }
         : move.previous
           ? movementPose(move.previous, move.previous.timeSec, changedAt)

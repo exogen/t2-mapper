@@ -131,6 +131,12 @@ import {
   resolveExplosionTiming,
 } from "./explosionLifetime";
 import { getShapeSequenceDurationSec } from "./shapeSequences";
+import {
+  endActionPickHold,
+  parkActionSlot,
+  setActionThread,
+  type ActionSlot,
+} from "./actionSlot";
 import { updateShapeThread } from "./shapeThreads";
 import { ImageAnimation } from "./imageAnimation";
 import { getShapeBounds } from "./shapeBounds";
@@ -197,18 +203,10 @@ export interface MutableEntity {
   health?: number;
   energy?: number;
   maxEnergy?: number;
-  actionAnim?: number;
-  actionAtEnd?: boolean;
-  /** The action holds its last frame until the server sends another
-   *  (death poses, sitting); otherwise the client returns to its own
-   *  movement animation when the clip ends — table actions are never
-   *  sent, so nothing else would end it (Tribes2.exe FUN_005d5bc0). */
-  actionHoldAtEnd?: boolean;
-  /** Counts ActionMask updates, so a re-sent action of the same index
-   *  (the PDA opened twice) reads as a new one. */
-  actionSeq?: number;
-  actionAnimPos?: number;
-  actionTimeSec?: number;
+  /** The player's one action slot (see actionSlot.ts). */
+  actionSlot?: ActionSlot;
+  /** pickActionAnimation is held off until then (a ski jump's +0x98c). */
+  pickHeldUntilSec?: number;
   armAction?: number;
   damageState?: number;
   destroyedHidden?: boolean;
@@ -451,11 +449,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         scale: entity.scale ? [...entity.scale] : undefined,
         threads: entity.threads,
         clientAnimation: entity.clientAnimation,
-        actionAnim: entity.actionAnim,
-        actionAnimPos: entity.actionAnimPos,
-        actionTimeSec: entity.actionTimeSec,
-        actionAtEnd: entity.actionAtEnd,
-        actionHoldAtEnd: entity.actionHoldAtEnd,
+        actionSlot: entity.actionSlot,
         damageState: entity.damageState,
       });
     }
@@ -1583,11 +1577,8 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.fadeState = undefined;
     entity.cloaked = undefined;
     entity.cloakLevel = undefined;
-    entity.actionAnim = undefined;
-    entity.actionAtEnd = undefined;
-    entity.actionHoldAtEnd = undefined;
-    entity.actionAnimPos = undefined;
-    entity.actionTimeSec = undefined;
+    entity.actionSlot = undefined;
+    entity.pickHeldUntilSec = undefined;
     entity.armAction = undefined;
     entity.explosionDataBlockId = undefined;
     entity.maintainEmitterId = undefined;
@@ -1668,6 +1659,32 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.jetting = prediction.jetting;
     entity.falling = prediction.falling;
     entity.playerDelta = prediction.renderDelta();
+  }
+
+  /**
+   * A predicted jump sets the player's one action slot, as Player::updateMove
+   * (0x5d2d60) does through setActionThread: it replaces any other action,
+   * even a held one. A ski jump also holds pickActionAnimation off for its
+   * 22 ticks, and a 4–30 m/s hop ends that early.
+   */
+  protected applyPredictedAction(
+    entity: MutableEntity,
+    prediction: PlayerPrediction,
+  ): void {
+    const now = this.getTimeSec();
+    const held = entity.pickHeldUntilSec;
+    if (prediction.jumpAction === "ski")
+      entity.pickHeldUntilSec =
+        now + (prediction.skiTicks * TICK_DURATION_MS) / 1000;
+    else if (!prediction.skiTicks) entity.pickHeldUntilSec = undefined;
+    if (prediction.jumpAction)
+      entity.actionSlot = setActionThread(
+        entity.actionSlot,
+        prediction.jumpAction,
+        { timeSec: now, pickHeldUntilSec: entity.pickHeldUntilSec },
+      );
+    else if (held != null && entity.pickHeldUntilSec == null)
+      entity.actionSlot = endActionPickHold(entity.actionSlot, now);
   }
 
   /** ProcessList::advanceObjects: one 32 ms tick, regardless of packet source. */
@@ -1774,12 +1791,14 @@ export abstract class StreamEngine implements StreamingPlayback {
     prediction.readPacketData(data);
     if (this.playerCollisionReady())
       withCollisionQueryBatch(() => {
-        for (const move of moves)
+        for (const move of moves) {
           prediction.processTick(
             this.worldGravity,
             move,
             data.rechargeRate ?? this.controlRechargeRate,
           );
+          this.applyPredictedAction(entity, prediction);
+        }
       });
     this.publishPlayerPrediction(entity, prediction);
   }
@@ -1814,9 +1833,13 @@ export abstract class StreamEngine implements StreamingPlayback {
               move,
               this.controlRechargeRate,
             );
+            this.applyPredictedAction(entity, prediction);
             processed = true;
           }
-        } else prediction.processTick(this.worldGravity);
+        } else {
+          prediction.processTick(this.worldGravity);
+          this.applyPredictedAction(entity, prediction);
+        }
         this.publishPlayerPrediction(entity, prediction);
         // With no newly collected input, reusing the previous tick's backstep
         // would visibly replay that movement even though the position is fixed.
@@ -2241,7 +2264,8 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (typeof data.sourceSlot === "number")
       entity.sourceSlot = data.sourceSlot;
     if (
-      entity.type === "Projectile" &&
+      (entity.type === "Projectile" ||
+        entity.className === "SniperProjectile") &&
       typeof data.sourceObject === "number" &&
       data.sourceObject >= 0
     ) {
@@ -2577,6 +2601,13 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (typeof data.damageState === "number") {
       const prevDamageState = entity.damageState;
       entity.damageState = data.damageState;
+      // A dead player's pickActionAnimation keeps its action.
+      if (data.damageState >= 1 && (prevDamageState ?? 0) < 1)
+        entity.actionSlot = parkActionSlot(
+          entity.actionSlot,
+          this.getTimeSec(),
+          "death",
+        );
       const shapeData =
         entity.dataBlockId == null
           ? undefined
@@ -2636,35 +2667,45 @@ export abstract class StreamEngine implements StreamingPlayback {
     // MountedMask: track mount state for position derivation and animation.
     if (typeof data.mountObject === "number") {
       if (data.mountObject >= 0) {
-        // Mounting on a vehicle/object.
+        // Mounting on a vehicle/object; a mounted player's
+        // pickActionAnimation keeps a non-table action.
         entity.mountObjectGhostIndex = data.mountObject;
         entity.mountNode =
           typeof data.mountNode === "number" ? data.mountNode : 0;
+        entity.actionSlot = parkActionSlot(
+          entity.actionSlot,
+          this.getTimeSec(),
+          "mount",
+        );
       } else {
-        // Unmounting — clear mount state and reset action animation.
-        // Server resets to RootAnim (table action 0) via onUnmount→
-        // setActionThread, but table actions (0-7) are never sent
-        // over the wire, so actionAnim would remain stale.
+        // Player::onUnmount (0x5d6450) sets RootAnim, a table action the
+        // server never sends: the client's movement pick owns the slot.
         entity.mountObjectGhostIndex = undefined;
         entity.mountNode = undefined;
-        entity.actionAnim = undefined;
-        entity.actionAtEnd = undefined;
-        entity.actionHoldAtEnd = undefined;
-        entity.actionAnimPos = undefined;
-        entity.actionTimeSec = undefined;
+        entity.actionSlot = undefined;
       }
     }
 
     // Player::unpackUpdate (0x5db2d0) applies its action after ShapeBase's
     // mount update. A simultaneous unmount must not erase a new death/pose.
     if (typeof data.action === "number") {
-      entity.actionAnim = data.action;
-      entity.actionAtEnd = !!data.actionAtEnd;
-      entity.actionHoldAtEnd = !!data.actionHoldAtEnd;
-      entity.actionSeq = (entity.actionSeq ?? 0) + 1;
-      entity.actionAnimPos =
-        typeof data.actionAnimPos === "number" ? data.actionAnimPos : undefined;
-      entity.actionTimeSec = this.getTimeSec();
+      const now = this.getTimeSec();
+      entity.actionSlot = setActionThread(entity.actionSlot, data.action, {
+        timeSec: now,
+        hold: !!data.actionHoldAtEnd,
+        atEnd: !!data.actionAtEnd,
+        startPos:
+          typeof data.actionAnimPos === "number"
+            ? data.actionAnimPos
+            : undefined,
+        parked:
+          entity.mountObjectGhostIndex != null ||
+          (entity.damageState ?? 0) >= 1,
+        pickHeldUntilSec:
+          (entity.pickHeldUntilSec ?? -Infinity) > now
+            ? entity.pickHeldUntilSec
+            : undefined,
+      });
     }
     if (typeof data.armAction === "number") {
       entity.armAction = data.armAction;
@@ -3948,12 +3989,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         velocity: entity.velocity,
         health: entity.health,
         energy: entity.energy,
-        actionAnim: entity.actionAnim,
-        actionAtEnd: entity.actionAtEnd,
-        actionHoldAtEnd: entity.actionHoldAtEnd,
-        actionSeq: entity.actionSeq,
-        actionAnimPos: entity.actionAnimPos,
-        actionTimeSec: entity.actionTimeSec,
+        actionSlot: entity.actionSlot,
         armAction: entity.armAction,
         damageState: entity.damageState,
         destroyedHidden: entity.destroyedHidden,
