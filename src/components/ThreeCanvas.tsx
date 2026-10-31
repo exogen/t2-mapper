@@ -1,66 +1,50 @@
-import { lazy, ReactNode, Suspense, useCallback } from "react";
-import { Canvas, GLProps, RootState } from "@react-three/fiber";
-import { NoToneMapping, PCFShadowMap, SRGBColorSpace } from "three";
-import { useDebug, useSettings } from "./SettingsProvider";
-import { LimitFPS } from "./LimitFPS";
-import { registerShadowRenderer } from "./shadowControl";
+import { useEffect, useEffectEvent, useRef } from "react";
+import { mountEngineCanvas, type EngineCanvas } from "../engine/engineCanvas";
+import type { GameEngine } from "../engine/gameEngine";
 
-const DTSRendering = lazy(() =>
-  import("./DTSRendering").then((module) => ({
-    default: module.DTSRendering,
-  })),
-);
-
-export type InvalidateFunction = RootState["invalidate"];
-
-// Renderer settings to match Tribes 2's simple rendering pipeline.
-// Tribes 2 (Torque engine, 2001) worked entirely in gamma/sRGB space with no HDR
-// or tone mapping. We disable tone mapping and ensure proper sRGB output.
-const glSettings: GLProps = {
-  toneMapping: NoToneMapping,
-  outputColorSpace: SRGBColorSpace,
-};
-
+/**
+ * The engine's WebGL canvas, filling its container.
+ */
 export function ThreeCanvas({
-  children,
-  renderOnDemand: renderOnDemandFromProps = false,
-  dpr: dprFromProps,
+  engine,
+  dpr,
   onCreated,
 }: {
-  children?: ReactNode;
+  engine: GameEngine;
   dpr?: number;
-  renderOnDemand?: boolean;
-  onCreated?: (state: RootState) => void;
+  onCreated?: (engine: GameEngine) => void;
 }) {
-  const { renderOnDemand: renderOnDemandFromSettings } = useDebug();
-  const renderOnDemand = renderOnDemandFromProps || renderOnDemandFromSettings;
-  const { fpsLimit } = useSettings();
-  const fpsLimitActive = fpsLimit != null && !renderOnDemand;
-
-  const handleCreated = useCallback(
-    (state: RootState) => {
-      registerShadowRenderer(state.gl);
-      onCreated?.(state);
-    },
-    [onCreated],
+  const containerRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<EngineCanvas | null>(null);
+  const handleCreated = useEffectEvent((engine: GameEngine) =>
+    onCreated?.(engine),
   );
-
+  const currentDpr = useEffectEvent(() => dpr);
+  useEffect(() => {
+    const canvas = mountEngineCanvas(engine, containerRef.current!, {
+      dpr: currentDpr(),
+    });
+    canvasRef.current = canvas;
+    handleCreated(engine);
+    return () => {
+      canvasRef.current = null;
+      canvas.dispose();
+    };
+  }, [engine]);
+  // A new resolution (an overlay opening, another display) keeps the
+  // renderer: rebuilding it would drop its context and every GPU resource.
+  useEffect(() => {
+    canvasRef.current?.setPixelRatio(dpr);
+  }, [dpr]);
   return (
-    <Canvas
-      frameloop={renderOnDemand || fpsLimitActive ? "demand" : "always"}
-      dpr={dprFromProps}
-      gl={glSettings}
-      shadows={{ type: PCFShadowMap }}
-      // Face Torque north (world +X; three's default forward −Z is west)
-      // so the compass reads N, not W, before a mission camera takes over.
-      camera={{ rotation: [0, -Math.PI / 2, 0] }}
-      onCreated={handleCreated}
-    >
-      <Suspense>
-        {children}
-        <DTSRendering />
-      </Suspense>
-      {fpsLimitActive ? <LimitFPS /> : null}
-    </Canvas>
+    <div
+      ref={containerRef}
+      style={{
+        position: "relative",
+        width: "100%",
+        height: "100%",
+        overflow: "hidden",
+      }}
+    />
   );
 }

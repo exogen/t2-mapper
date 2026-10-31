@@ -2,10 +2,8 @@
  * and world-matrix updates. Calling this never solves or changes a shot. */
 import { PerspectiveCamera, Quaternion, Vector3 } from "three";
 import type { DirectorCameraFrame } from "./observationContract";
-import type { DirectorVec3 } from "./types";
 import { detached } from "./stateJournal";
-
-const torque = (v: Vector3): DirectorVec3 => [v.z, v.x, v.y];
+import { threeToTorque } from "../scene/coordinates";
 
 export function captureDirectorCamera(
   camera: PerspectiveCamera,
@@ -23,11 +21,13 @@ export function captureDirectorCamera(
       camera.view?.enabled || camera.filmOffset !== 0
         ? null
         : {
-            eye: torque(
+            eye: threeToTorque(
               new Vector3().setFromMatrixPosition(camera.matrixWorld),
             ),
-            forward: torque(new Vector3(0, 0, -1).applyQuaternion(rotation)),
-            up: torque(new Vector3(0, 1, 0).applyQuaternion(rotation)),
+            forward: threeToTorque(
+              new Vector3(0, 0, -1).applyQuaternion(rotation),
+            ),
+            up: threeToTorque(new Vector3(0, 1, 0).applyQuaternion(rotation)),
             verticalFovDeg: camera.getEffectiveFOV(),
             aspect: camera.aspect,
             near: camera.near,

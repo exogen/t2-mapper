@@ -18,7 +18,7 @@ import {
   resolveIffDisplay,
   rgbString,
   type TeamColorScheme,
-} from "./iffTheme";
+} from "../iffTheme";
 import styles from "./MatchHUD.module.css";
 
 // Leave room around SVG strokes. Layout dimensions otherwise map 1:1 to pixels.

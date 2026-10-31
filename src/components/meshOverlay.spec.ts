@@ -16,8 +16,8 @@ import type { ShockLanceEntity } from "../state/gameEntityTypes";
 import {
   createTourHighlightMesh,
   removeTourHighlightMeshes,
-} from "./commandCircuitTourFlash";
-import { createShockLanceView } from "./projectiles/shockLance";
+} from "../engine/commandCircuitTourFlash";
+import { createShockLanceView } from "../projectiles/shockLance";
 
 afterEach(() => {
   streamPlaybackStore.setState({ root: null });

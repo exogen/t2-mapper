@@ -1,24 +1,8 @@
 import { describe, it, expect } from "vitest";
+import { serverMessagePacket } from "./serverPacketFixtures.js";
 import { WatchStateAccumulator } from "./watchState.js";
 
-/**
- * Minimal packet carrying one server message (`ServerMessage` remote
- * command). args[0] is the message type; the rest are its fields.
- */
-function serverMessage(...args: string[]) {
-  return {
-    gameState: {},
-    events: [
-      {
-        parsedData: {
-          type: "RemoteCommandEvent",
-          funcName: "ServerMessage",
-          args,
-        },
-      },
-    ],
-  } as never;
-}
+const serverMessage = (...args: string[]) => serverMessagePacket(args);
 
 // MsgClientJoin: [type, message, name, clientId, targetId, isBot,
 // isAdmin, isSuperAdmin, isSmurf, sendGuid]

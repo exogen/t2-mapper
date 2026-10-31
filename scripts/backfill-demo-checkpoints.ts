@@ -5,6 +5,7 @@ import { DemoCheckpointPublisher } from "../relay/demoCheckpointPublisher.js";
 import { loadDemoCheckpointPlan } from "../relay/demoCheckpointConfig.js";
 import type { DemoCheckpointPlan } from "../src/stream/demoCheckpoints";
 import { listAllObjects, r2Client } from "./lib/r2.js";
+import { ASSET_BASE_DIR } from "../src/resourcePaths";
 
 const { values } = parseArgs({
   options: {
@@ -14,7 +15,7 @@ const { values } = parseArgs({
     count: { type: "string" },
     interval: { type: "string" },
     filter: { type: "string" },
-    "asset-root": { type: "string", default: "docs/base" },
+    "asset-root": { type: "string", default: ASSET_BASE_DIR },
     help: { type: "boolean", default: false },
   },
 });
@@ -31,7 +32,7 @@ if (values.help) {
       "  --dry-run              List demos needing checkpoints without writing anything",
       "  --force                Regenerate even compatible sidecars",
       "  --concurrency=N        Parallel replay workers (default: 1)",
-      "  --asset-root=PATH      Collision asset folder (default: docs/base)",
+      `  --asset-root=PATH      Collision asset folder (default: ${ASSET_BASE_DIR})`,
       "",
       "DEMO_CHECKPOINT_HEAP_MB sets each worker's old-space heap cap in MiB (default: 256).",
     ].join("\n"),

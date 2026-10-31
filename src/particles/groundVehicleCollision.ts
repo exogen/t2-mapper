@@ -17,6 +17,7 @@ import type { StreamingPlayback } from "../stream/types";
 import type { Vec3 } from "../collision/terrainCollision";
 import { groundActorMatrix } from "../collision/wheelContact";
 import { getGroundEffectShape, type GroundShape } from "./groundEffectAssets";
+import { torqueVecToThree } from "../scene/coordinates";
 
 /** Reuse shape geometry/mixers, but sample the historical vehicle transform and
  * threads. Today's rendered vehicle colliders must never leak into a seek. */
@@ -102,7 +103,7 @@ export class GroundVehicleCollision {
       const radius =
         (data.radius + Math.hypot(...data.center)) *
         Math.max(...(actor.scale ?? [1, 1, 1]));
-      this.point.set(actor.position[1], actor.position[2], actor.position[0]);
+      torqueVecToThree(actor.position, this.point);
       if (box.distanceToPoint(this.point) > radius) continue;
       let state = this.shapes.get(shape);
       if (!state) this.shapes.set(shape, (state = new VehicleShape(shape)));
@@ -118,8 +119,8 @@ export class GroundVehicleCollision {
     return false;
   }
   blocksRay(start: Vec3, end: Vec3, before: number, exclude = ""): boolean {
-    const a = this.rayStart.set(start[1], start[2], start[0]),
-      b = this.rayEnd.set(end[1], end[2], end[0]);
+    const a = torqueVecToThree(start, this.rayStart),
+      b = torqueVecToThree(end, this.rayEnd);
     const box = this.rayBox;
     box.min.copy(a).min(b);
     box.max.copy(a).max(b);

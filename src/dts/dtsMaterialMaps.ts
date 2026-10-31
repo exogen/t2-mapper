@@ -1,4 +1,5 @@
 import { MeshLambertMaterial, type Material, type Texture } from "three";
+import { insertAfterChunk } from "../shaderUtils";
 
 export interface DTSMaterialMaps {
   detailMap: Texture | null;
@@ -38,24 +39,26 @@ export function applyDTSMaterialMaps(
     before.call(this, shader, renderer);
     shader.uniforms.dtsDetailMap = { value: source.detailMap };
     shader.uniforms.dtsDetailScale = { value: source.detailScale };
-    shader.vertexShader = shader.vertexShader
-      .replace(
-        "#include <common>",
-        "#include <common>\nuniform float dtsDetailScale;\nvarying vec2 vDtsDetailUV;",
-      )
-      .replace(
-        "#include <uv_vertex>",
-        "#include <uv_vertex>\nvDtsDetailUV = uv * dtsDetailScale;",
-      );
-    shader.fragmentShader = shader.fragmentShader
-      .replace(
-        "#include <common>",
-        "#include <common>\nuniform sampler2D dtsDetailMap;\nvarying vec2 vDtsDetailUV;",
-      )
-      .replace(
-        "#include <map_fragment>",
-        "#include <map_fragment>\ndiffuseColor.rgb *= texture2D(dtsDetailMap, vDtsDetailUV).rgb * 2.0;",
-      );
+    shader.vertexShader = insertAfterChunk(
+      shader.vertexShader,
+      "common",
+      "uniform float dtsDetailScale;\nvarying vec2 vDtsDetailUV;",
+    );
+    shader.vertexShader = insertAfterChunk(
+      shader.vertexShader,
+      "uv_vertex",
+      "vDtsDetailUV = uv * dtsDetailScale;",
+    );
+    shader.fragmentShader = insertAfterChunk(
+      shader.fragmentShader,
+      "common",
+      "uniform sampler2D dtsDetailMap;\nvarying vec2 vDtsDetailUV;",
+    );
+    shader.fragmentShader = insertAfterChunk(
+      shader.fragmentShader,
+      "map_fragment",
+      "diffuseColor.rgb *= texture2D(dtsDetailMap, vDtsDetailUV).rgb * 2.0;",
+    );
   };
   target.customProgramCacheKey = () => `${key}/dts-detail`;
   configurations.set(target, {

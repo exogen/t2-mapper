@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createCastStream, runCastPipeline } from "./castPipeline";
+import { directorDataset } from "./directorTestFixtures";
 import type { DirectorDataset, Shot } from "./types";
 
 const facts = vi.hoisted(() => ({
@@ -34,57 +35,39 @@ vi.mock("./demoDirectorScanner", () => ({
         scanned = Math.max(scanned, Math.min(sec, durationSec));
         if (scanned >= facts.locatedAt) kill.pos = [400, 0, 100];
       },
-      datasetTo: (sec: number): DirectorDataset => ({
-        durationSec: Math.min(sec, durationSec),
-        flagSampleStepSec: 0.5,
-        playerSampleStepSec: 1,
-        gameClassName: scanned >= facts.modeKnownAt ? "CTFGame" : null,
-        teams: [
-          { teamId: 1, name: "Storm" },
-          { teamId: 2, name: "Inferno" },
-        ],
-        flagStands:
-          scanned >= facts.modeKnownAt
-            ? [
-                { slot: 1, teamId: 1, name: "Storm", pos: [0, 0, 100] },
-                { slot: 2, teamId: 2, name: "Inferno", pos: [800, 0, 100] },
-              ]
-            : [],
-        events: [
-          { timeSec: 0, type: "match-start", description: "Match started" },
-          ...(scanned >= 80 ? [kill] : []),
-          ...(scanned >= facts.captureAvailableAt
-            ? [
-                {
-                  timeSec: 80.1,
-                  type: "flag-cap" as const,
-                  capturer: "Runner",
-                  flagTeamName: "Inferno",
-                  description: "Runner captured the Inferno flag",
-                },
-              ]
-            : []),
-        ],
-        flagSamples: Array.from(
-          { length: Math.floor(scanned * 2) + 1 },
-          (_, i) =>
-            [1, 2].map((slot) => ({
-              timeSec: i / 2,
-              slot,
-              status: "home" as const,
-              carrierTargetId: null,
-              pos: [slot === 1 ? 0 : 800, 0, 100] as [number, number, number],
-            })),
-        ).flat(),
-        playerSamples: [],
-        playerNames: [],
-        structures: [],
-        structureInventory: [],
-        mortarShots: [],
-        deaths: [],
-        stations: [],
-        scoreSamples: [],
-      }),
+      datasetTo: (sec: number): DirectorDataset =>
+        directorDataset({
+          durationSec: Math.min(sec, durationSec),
+          gameClassName: scanned >= facts.modeKnownAt ? "CTFGame" : null,
+          flagStands:
+            scanned >= facts.modeKnownAt ? directorDataset().flagStands : [],
+          events: [
+            { timeSec: 0, type: "match-start", description: "Match started" },
+            ...(scanned >= 80 ? [kill] : []),
+            ...(scanned >= facts.captureAvailableAt
+              ? [
+                  {
+                    timeSec: 80.1,
+                    type: "flag-cap" as const,
+                    capturer: "Runner",
+                    flagTeamName: "Inferno",
+                    description: "Runner captured the Inferno flag",
+                  },
+                ]
+              : []),
+          ],
+          flagSamples: Array.from(
+            { length: Math.floor(scanned * 2) + 1 },
+            (_, i) =>
+              [1, 2].map((slot) => ({
+                timeSec: i / 2,
+                slot,
+                status: "home" as const,
+                carrierTargetId: null,
+                pos: [slot === 1 ? 0 : 800, 0, 100] as [number, number, number],
+              })),
+          ).flat(),
+        }),
       drainFacts: () => [],
       drainStates: () => [],
     };

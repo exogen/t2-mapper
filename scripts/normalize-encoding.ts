@@ -13,7 +13,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { EXTRACTED_BASE_DIR } from "./lib/assets";
+import { ASSET_BASE_DIR } from "@/src/resourcePaths";
 import { isTextAsset, toUtf8 } from "./lib/encoding";
 
 const { values, positionals } = parseArgs({
@@ -29,7 +29,7 @@ if (values.help) {
   process.exit(1);
 }
 
-const root = positionals[0] ?? EXTRACTED_BASE_DIR;
+const root = positionals[0] ?? ASSET_BASE_DIR;
 const dryRun = values["dry-run"];
 
 async function* textFiles(dir: string): AsyncGenerator<string> {

@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type { ParsedData } from "t2-demo-parser";
-import { LiveStreamAdapter } from "./liveStreaming";
-import type { RelayClient } from "./relayClient";
 import {
   findAudioProfileId,
   normalizeAudioFile,
@@ -10,25 +8,16 @@ import {
   ScriptSoundTracker,
 } from "./scriptSounds";
 import type { StreamEntity, StreamSnapshot } from "./types";
+import { TestLiveStream } from "./streamTestFixtures";
 
-class LaserStream extends LiveStreamAdapter {
+class LaserStream extends TestLiveStream {
   constructor() {
-    super({} as RelayClient, { mode: "watch" });
-    this.registry = {
-      getGhostParser: (classId: number) => ({
-        name: classId === 2 ? "Player" : "SniperProjectile",
-      }),
-      getEventParser: () => undefined,
-    };
+    super("watch", (classId) =>
+      classId === 2 ? "Player" : "SniperProjectile",
+    );
   }
   override getDataBlockData() {
     return {};
-  }
-  create(index: number, classId: number, parsedData: ParsedData) {
-    this.processGhostUpdate({ index, classId, type: "create", parsedData });
-  }
-  entity(index: number) {
-    return this.buildEntityList().find((e) => e.ghostIndex === index)!;
   }
 }
 
@@ -113,8 +102,11 @@ describe("script sounds", () => {
 
   it("names a laser shot's shooter, as Tribes2.exe's beam does", () => {
     const stream = new LaserStream();
-    stream.create(2, 2, { dataBlockId: 1, position: { x: 0, y: 0, z: 100 } });
-    stream.create(5, 3, {
+    stream.createGhost(2, 2, {
+      dataBlockId: 1,
+      position: { x: 0, y: 0, z: 100 },
+    });
+    stream.createGhost(5, 3, {
       dataBlockId: 2,
       initialPosition: { x: 1, y: 2, z: 101.5 },
       endPos: { x: 1, y: 300, z: 101.5 },
@@ -122,14 +114,14 @@ describe("script sounds", () => {
       sourceSlot: 0,
     });
     // An unscoped shooter is sent as no source.
-    stream.create(6, 3, {
+    stream.createGhost(6, 3, {
       dataBlockId: 2,
       initialPosition: { x: 500, y: 2, z: 101.5 },
       endPos: { x: 500, y: 300, z: 101.5 },
     });
-    expect(stream.entity(5).linkSourceId).toBe(stream.entity(2).id);
-    expect(stream.entity(5).beamStart).toEqual([1, 2, 101.5]);
-    expect(stream.entity(6).linkSourceId).toBe(undefined);
+    expect(stream.entityAt(5)!.linkSourceId).toBe(stream.entityAt(2)!.id);
+    expect(stream.entityAt(5)!.beamStart).toEqual([1, 2, 101.5]);
+    expect(stream.entityAt(6)!.linkSourceId).toBe(undefined);
   });
 
   it("fires a player's laser at the muzzle, even an unnamed one's", () => {

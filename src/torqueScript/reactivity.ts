@@ -4,7 +4,8 @@ function normalize(value: string): string {
   return value.toLowerCase();
 }
 
-function normalizeGlobalName(name: string): string {
+/** Lookup key for a global variable name: case-folded, without the `$`. */
+export function normalizeGlobalName(name: string): string {
   const trimmed = name.trim();
   return normalize(trimmed.startsWith("$") ? trimmed.slice(1) : trimmed);
 }

@@ -28,7 +28,9 @@ import {
 import {
   DTSCollisionMesh,
   castDTSHullRay,
+  dtsCollisionShape,
   getDTSHullPlanes,
+  updateCollisionWorldMatrix,
 } from "../dts/dtsCollision";
 import { INTERSECTED, MeshBVH, NOT_INTERSECTED } from "three-mesh-bvh";
 import {
@@ -45,6 +47,7 @@ import {
   type InteriorEntry,
   type MeshCollider,
 } from "./collisionContext";
+import { torqueVecToThree, threeToTorque } from "../scene/coordinates";
 
 export type { Vec3 };
 export type { MeshCollider, InteriorEntry, ForceFieldEntry };
@@ -59,16 +62,6 @@ export interface WorldRayHit {
   source: "terrain" | "interior" | "forcefield" | "static";
 }
 
-/** Torque (x, y, z) → Three.js (y, z, x), matching torqueToThree. */
-function torqueToThreeVec(v: Vec3, out: Vector3): Vector3 {
-  return out.set(v[1], v[2], v[0]);
-}
-
-/** Three.js (x, y, z) → Torque (z, x, y). */
-function threeToTorqueVec(v: Vector3): Vec3 {
-  return [v.z, v.x, v.y];
-}
-
 // The registry's state lives in collisionContext so more than one world
 // can exist in a process (see that module for why). These accessors
 // keep the call sites below reading naturally.
@@ -79,6 +72,8 @@ const forceFields = () => collisionState().forceFields;
 interface CollisionQueryBatch {
   colliders: Map<MeshCollider, boolean>;
   transforms: Set<Object3D>;
+  /** Shape entries whose bounding sphere is current. */
+  shapes: Set<InteriorEntry>;
 }
 const queryBatches = new WeakMap<CollisionState, CollisionQueryBatch>();
 
@@ -88,7 +83,11 @@ const queryBatches = new WeakMap<CollisionState, CollisionQueryBatch>();
 export function withCollisionQueryBatch<T>(query: () => T): T {
   const state = collisionState();
   if (queryBatches.has(state)) return query();
-  queryBatches.set(state, { colliders: new Map(), transforms: new Set() });
+  queryBatches.set(state, {
+    colliders: new Map(),
+    transforms: new Set(),
+    shapes: new Set(),
+  });
   try {
     return query();
   } finally {
@@ -130,6 +129,36 @@ let interiorVersion = 0;
  */
 export function interiorColliderVersion(): number {
   return interiorVersion;
+}
+
+/** Collision for a shape's meshes, or null when none can collide. */
+function buildShapeEntry(meshes: Mesh[]): InteriorEntry | null {
+  const colliders = buildMeshColliders(meshes);
+  if (!colliders.length) return null;
+  const root = dtsCollisionShape(meshes);
+  return root
+    ? { colliders, shape: { root, sphere: new Sphere() } }
+    : { colliders };
+}
+
+/**
+ * Whether an entry's colliders could reach a query box. A shape is
+ * rejected whole by its bounding sphere: posing every hull of every
+ * far-off shape used to dominate the cost of a single camera ray.
+ */
+function entryReaches(entry: InteriorEntry, box: Box3): boolean {
+  const shape = entry.shape;
+  if (!shape) return true;
+  const batch = queryBatches.get(collisionState());
+  if (!batch?.shapes.has(entry)) {
+    updateCollisionWorldMatrix(shape.root, batch?.transforms);
+    if (!shape.root.boundingSphere(shape.sphere)) shape.sphere.makeEmpty();
+    batch?.shapes.add(entry);
+  }
+  if (!shape.sphere.isEmpty() && !box.intersectsSphere(shape.sphere))
+    return false;
+  shape.root.catchUpPose?.();
+  return true;
 }
 
 function buildMeshColliders(meshes: Mesh[]): MeshCollider[] {
@@ -219,10 +248,9 @@ export function interiorWorldBounds(out = new Box3()): Box3 | null {
  * snapshot semantics; native meshes follow their DTS object's animation.
  */
 export function registerStaticShapeCollider(id: string, meshes: Mesh[]): void {
-  const colliders = buildMeshColliders(meshes);
-  if (colliders.length > 0) {
-    staticShapes().set(id, { colliders });
-  } else staticShapes().delete(id);
+  const entry = buildShapeEntry(meshes);
+  if (entry) staticShapes().set(id, entry);
+  else staticShapes().delete(id);
 }
 
 export function unregisterStaticShapeCollider(id: string): void {
@@ -518,8 +546,8 @@ function raycastCollider(
  * `_segBox`, `_start`); the segment's length, or null when degenerate.
  */
 function setupSegment(start: Vec3, end: Vec3): number | null {
-  torqueToThreeVec(start, _start);
-  torqueToThreeVec(end, _end);
+  torqueVecToThree(start, _start);
+  torqueVecToThree(end, _end);
   _dir.subVectors(_end, _start);
   const segLength = _dir.length();
   if (segLength > 0) _dir.divideScalar(segLength);
@@ -587,8 +615,8 @@ export function firstInteriorFace(
   maxDist: number,
   options?: { includeStatics?: boolean },
 ): { dist: number; front: boolean } | null {
-  torqueToThreeVec(torqueOrigin, _faceOrigin);
-  torqueToThreeVec(torqueDir, _faceDir).normalize();
+  torqueVecToThree(torqueOrigin, _faceOrigin);
+  torqueVecToThree(torqueDir, _faceDir).normalize();
   _faceRay.origin.copy(_faceOrigin);
   _faceRay.direction.copy(_faceDir);
   _segBox.makeEmpty();
@@ -602,6 +630,7 @@ export function firstInteriorFace(
   let best: { dist: number; front: boolean } | null = null;
   for (const group of groups) {
     for (const entry of group.values()) {
+      if (!entryReaches(entry, _segBox)) continue;
       for (const collider of entry.colliders) {
         if (!syncMeshCollider(collider)) continue;
         if (!collider.worldBox.intersectsBox(_segBox)) continue;
@@ -635,7 +664,7 @@ export function pointInsideInterior(
   torquePoint: Vec3,
   hullType: DIFHullType = "standard",
 ): boolean {
-  torqueToThreeVec(torquePoint, _insidePoint);
+  torqueVecToThree(torquePoint, _insidePoint);
   let hasMeshColliders = false;
   for (const entry of interiors().values())
     for (const collider of entry.colliders) {
@@ -661,6 +690,7 @@ const _insidePoint = new Vector3(),
 const _scale = new Vector3();
 const _probeSphere = new Sphere();
 const _probeCenter = new Vector3();
+const _probeBox = new Box3();
 const _terrainProbeTriangle = new Triangle();
 const _terrainProbeVertices: number[] = [];
 const _terrainProbeClosest = new Vector3();
@@ -674,7 +704,7 @@ function nearTerrainSurface(point: Vec3, radius: number): boolean {
     point[1] + radius,
     _terrainProbeVertices,
   );
-  torqueToThreeVec(point, _probeCenter);
+  torqueVecToThree(point, _probeCenter);
   for (let i = 0; i < _terrainProbeVertices.length; i += 9) {
     _terrainProbeTriangle.a.fromArray(_terrainProbeVertices, i);
     _terrainProbeTriangle.b.fromArray(_terrainProbeVertices, i + 3);
@@ -756,12 +786,15 @@ export function pointObstructed(
   // all and reads open air; 251 Raindance grid cells were free that way.
   if (pointInsideInterior(torquePoint, options?.interiorHullType)) return true;
 
-  torqueToThreeVec(torquePoint, _probeCenter);
+  torqueVecToThree(torquePoint, _probeCenter);
+  _probeBox.min.setScalar(-radius).add(_probeCenter);
+  _probeBox.max.setScalar(radius).add(_probeCenter);
   const groups = options?.includeStatics
     ? [interiors(), staticShapes()]
     : [interiors()];
   for (const map of groups) {
     for (const entry of map.values()) {
+      if (!entryReaches(entry, _probeBox)) continue;
       for (const collider of entry.colliders) {
         if (!syncMeshCollider(collider)) continue;
         // Broadphase in world space before paying for a descent.
@@ -879,6 +912,7 @@ function appendMeshTriangles(
   hullType?: DIFHullType,
 ): void {
   for (const entry of entries) {
+    if (!entryReaches(entry, box)) continue;
     for (const collider of entry.colliders) {
       if (!syncMeshCollider(collider) || !collider.worldBox.intersectsBox(box))
         continue;
@@ -939,8 +973,8 @@ function appendMeshTriangles(
 
 /** Player::buildPolyList selects collision hulls, whereas camera rays use LOS. */
 export function registerPlayerShapeCollider(id: string, meshes: Mesh[]): void {
-  const colliders = buildMeshColliders(meshes);
-  if (colliders.length) collisionState().playerShapes.set(id, { colliders });
+  const entry = buildShapeEntry(meshes);
+  if (entry) collisionState().playerShapes.set(id, entry);
 }
 
 export function unregisterPlayerShapeCollider(id: string): void {
@@ -1024,6 +1058,7 @@ export function castWorldRay(
   for (const [group, source] of meshGroups) {
     if (source === "interior" && options?.includeInteriors === false) continue;
     for (const entry of group.values()) {
+      if (!entryReaches(entry, _segBox)) continue;
       for (const collider of entry.colliders) {
         if (!syncMeshCollider(collider)) continue;
         if (!collider.worldBox.intersectsBox(_segBox)) continue;
@@ -1056,8 +1091,8 @@ export function castWorldRay(
         if (_normal.dot(_dir) > 0) _normal.negate();
         best = {
           t,
-          point: threeToTorqueVec(_point),
-          normal: threeToTorqueVec(_normal),
+          point: threeToTorque(_point),
+          normal: threeToTorque(_normal),
           source,
         };
       }
@@ -1083,8 +1118,8 @@ export function castWorldRay(
     _normal.normalize();
     best = {
       t,
-      point: threeToTorqueVec(_point),
-      normal: threeToTorqueVec(_normal),
+      point: threeToTorque(_point),
+      normal: threeToTorque(_normal),
       source: "forcefield",
     };
   }

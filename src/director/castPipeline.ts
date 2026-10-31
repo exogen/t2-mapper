@@ -46,6 +46,7 @@ import { describeVenue } from "./venue";
 import type { DirectorFactRecord } from "./factJournal";
 import type { DirectorStateFrame } from "./observationContract";
 import { withCollisionQueryBatch } from "../collision/worldCollision";
+import { cloneData } from "../cloneData";
 
 export interface CastPipelineOptions {
   /** Scan progress, 0..1. */
@@ -218,7 +219,7 @@ export async function createCastStream(
         // Solve BEFORE publication using only the available path. Future
         // movement belongs to the live camera's visibility rail, not an
         // archive repair after the shot has already aired.
-        const candidate = structuredClone(decision);
+        const candidate = cloneData(decision);
         candidate.endSec = Math.min(candidate.endSec, dataset.durationSec);
         const pending = [candidate];
         addReports(

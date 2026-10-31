@@ -30,7 +30,7 @@ import {
  * modes.ts emits the shots; assemble.ts makes the timeline contiguous,
  * strips aim subjects a frame can't actually contain, merges cuts that
  * change nothing, enforces the minimum hold, and reports coverage from
- * the FINAL shot list. The runtime (DirectorController + cameraRig)
+ * the FINAL shot list. The runtime (directorCamera + cameraRig)
  * then drives the camera on the demo clock, verifying every framing
  * against real geometry.
  */

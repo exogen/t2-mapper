@@ -18,7 +18,7 @@ import type {
 } from "../stream/types";
 import { setStreamSnapshot } from "../state/streamSnapshotStore";
 import { streamClock } from "../state/streamPlaybackStore";
-import type { TeamColorScheme } from "./iffTheme";
+import type { TeamColorScheme } from "../iffTheme";
 import { commentaryTracksStore } from "../state/commentaryTracksStore";
 
 const fixture = vi.hoisted(() => ({

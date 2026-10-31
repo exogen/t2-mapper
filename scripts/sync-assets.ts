@@ -23,11 +23,12 @@ import {
 import { acknowledgeSyncReport, syncAssets } from "./lib/assetSync.js";
 import { createAssetSyncStore, parseAssetBucket } from "./lib/assetSyncR2.js";
 import { shouldPrecompress, writeBrotli } from "./lib/precompress.js";
+import { ASSET_BASE_DIR } from "../src/resourcePaths";
 
 const bucketArg = arg("bucket");
 if (!bucketArg) throw new Error("Expected --bucket s3://bucket/prefix/");
 const bucket = parseAssetBucket(bucketArg);
-const source = arg("source") ?? "docs/base";
+const source = arg("source") ?? ASSET_BASE_DIR;
 const reportFile = arg("report");
 const precompress = !flag("no-precompress");
 const dryRun = flag("dry-run");

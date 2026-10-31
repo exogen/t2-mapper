@@ -1,16 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { parseDemoValues } from "./demoStreaming";
-import { LiveStreamAdapter } from "./liveStreaming";
-import type { RelayClient } from "./relayClient";
 import { normalizePlayerGuid } from "./streamHelpers";
+import { TestLiveStream } from "./streamTestFixtures";
 
-class RosterStream extends LiveStreamAdapter {
-  constructor() {
-    super({} as RelayClient, { mode: "watch" });
-  }
-  message(...args: string[]) {
-    this.handleServerMessage(args);
-  }
+class RosterStream extends TestLiveStream {
   get roster() {
     return [...this.conn.playerRoster].map(([clientId, entry]) => ({
       clientId,

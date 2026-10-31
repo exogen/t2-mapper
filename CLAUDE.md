@@ -3,9 +3,10 @@
 This project implements Tribes 2 map rendering using Three.js. Since we have
 access to partial Tribes 2 source code and the open source Torque3D engine, as
 well as the original game assets, the game's rendering pipeline can be reproduced
-almost exactly. The primary concept demonstrated in this project is that a Torque
-mission file (which defines an object tree similar to a scene graph) can be mapped
-to a React component tree.
+almost exactly. A Torque mission file (which defines an object tree similar to a
+scene graph) maps to a tree of engine-drawn entity views. The game canvas runs on
+raw Three.js from a React-free engine (`src/engine/`); React drives the UI around
+it.
 
 ## Technologies
 
@@ -13,17 +14,15 @@ to a React component tree.
 - npm
 - TypeScript
 - React
-- Next.js
+- Vite
 - Three.js
-- react-three-fiber (r3f)
 - TanStack Query
 - Peggy (formerly PEG.js)
 - Vitest
 
 ## Project Structure
 
-- **app/** - Next.js application.
-- **docs/** - Build output from Next.js static export. It's only called "docs"
+- **docs/** - Build output from Vite. It's only called "docs"
   because that's where GitHub Pages will look for it. NOT intended for actual
   docs. Don't add or look for documentation here!
 - **docs/base/** - Game files from Tribes 2, including extracted .vl2 contents.
@@ -32,6 +31,8 @@ to a React component tree.
   very helpful to explore, especially when debugging specific maps.
 - **src/** - Core implementation.
 - **src/components/** - React components and hooks.
+- **src/engine/** - The game canvas's runtime: renderer and frame loop, frame
+  stages, cameras, entity views, audio. Independent of React.
 - **src/torqueScript/** - TorqueScript transpiler and runtime.
 - **scripts/** - Helper scripts. TypeScript files can be run directly with `tsx`.
   Python scripts are intended for use with Blender's headless background script
@@ -44,7 +45,7 @@ to a React component tree.
   Torque, and how it works (like the engine source code, books, user manuals,
   game files, and conversion utilities). Use this to answer questions about the
   engine.
-- **public/** - Static files for the Next.js app.
+- **public/** - Static files for the app.
 
 ### Three.js
 

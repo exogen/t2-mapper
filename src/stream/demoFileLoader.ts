@@ -263,10 +263,12 @@ async function streamDemoResponse(
   totalBytes: number,
 ): Promise<void> {
   const url = source.url;
-  const [{ DemoParser }, demoStreaming] = await Promise.all([
-    import("t2-demo-parser"),
-    import("./demoStreaming"),
-  ]);
+  const [{ DemoParser }, demoStreaming, { shareDemoParser }] =
+    await Promise.all([
+      import("t2-demo-parser"),
+      import("./demoStreaming"),
+      import("./loadDemoParser"),
+    ]);
   if (parseToken !== token) {
     void body.cancel().catch(() => {});
     return;
@@ -303,6 +305,7 @@ async function streamDemoResponse(
     parser.finish();
     engineStore.getState().refreshRecordingDuration(recording);
     const buffer = assemble();
+    shareDemoParser(buffer, parser);
     engineStore.getState().setDemoBuffer(recording, buffer);
     engineStore.getState().setDownloadComplete(true);
     engineStore.getState().fulfillPendingSeek();
@@ -431,6 +434,9 @@ async function streamDemoResponse(
     return;
   }
   parser.finish();
+  // Whole-demo consumers (timeline scan, director, stats) load these
+  // bytes: they fork this parser instead of inflating them again.
+  shareDemoParser(buffer, parser);
   if (!installed) {
     // Download finished before a renderable scene appeared (odd but
     // possible): install now — everything is parsed and playable.

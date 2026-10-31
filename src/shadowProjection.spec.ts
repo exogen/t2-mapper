@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { Matrix4, Vector3 } from "three";
+import { Matrix4, Sphere, Vector3 } from "three";
 import {
   projectedRadiusPx,
   shadowDistanceFade,
+  shadowFootprintSphere,
   shadowLightDir,
   shadowLightToWorld,
+  shadowReach,
   shadowTileSpec,
   shadowVisibility,
 } from "./shadowProjection";
@@ -89,4 +91,29 @@ describe("shadowLightToWorld", () => {
     expect(Math.abs(dx.dot(dz))).toBeLessThan(1e-6);
     expect(dx.length()).toBeCloseTo(1);
   });
+});
+
+describe("shadowFootprintSphere", () => {
+  it.each([0, 100, 300, 500, 800])(
+    "holds every corner of the projection box at %s m",
+    (dist) => {
+      const center = new Vector3(4, 10, -2);
+      const radius = 1.5;
+      const reach = shadowReach(radius, dist);
+      const lightToWorld = shadowLightToWorld(
+        shadowLightDir(dist, new Vector3()),
+        center,
+        new Matrix4(),
+      );
+      const sphere = shadowFootprintSphere(center, radius, dist, new Sphere());
+      for (let i = 0; i < 8; i++) {
+        const corner = new Vector3(
+          i & 1 ? radius : -radius,
+          i & 2 ? reach : 0,
+          i & 4 ? radius : -radius,
+        ).applyMatrix4(lightToWorld);
+        expect(sphere.distanceToPoint(corner)).toBeLessThanOrEqual(1e-9);
+      }
+    },
+  );
 });

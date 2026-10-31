@@ -11,6 +11,7 @@ import {
   findUnconverted,
   globSources,
 } from "./lib/convert";
+import { ASSET_BASE_DIR } from "../src/resourcePaths";
 
 const { values } = parseArgs({
   options: {
@@ -20,7 +21,7 @@ const { values } = parseArgs({
   },
 });
 
-const all = await globSources("docs/base/**/*.{wav,WAV}");
+const all = await globSources(`${ASSET_BASE_DIR}/**/*.{wav,WAV}`);
 const files = values.new ? await findUnconverted(all) : all;
 if (files.length === 0) {
   console.log("No .wav files to convert.");

@@ -14,7 +14,7 @@
  * projected radius is under DynamicLightsClipPix fade in up to
  * DynamicLightsFadePix (both renderers, folded into the colour).
  *
- * This module holds the uniforms LightPool fills before every render and the
+ * This module holds the uniforms the light pool fills before every render and the
  * GLSL that reproduces the pass per fragment on the plane the fragment lies
  * in (screen-space derivatives give the same per-plane normal the engine
  * projected onto).
@@ -26,9 +26,14 @@ import {
   type Texture,
 } from "three";
 import { textureToUrl } from "./loaders";
+import {
+  insertAfterChunk,
+  insertBeforeChunk,
+  type ShaderSource,
+} from "./shaderUtils";
 import { loadTexture } from "./textureUtils";
 
-/** Slots match the LightPool size; unused slots carry radius 0. */
+/** Slots match the light pool size; unused slots carry radius 0. */
 export const EFFECT_LIGHT_COUNT = 8;
 
 /** `$pref::*::DynamicLightsClipPix` default: skip lights this small on screen. */
@@ -142,20 +147,19 @@ vec3 effectLightsSRGB(vec3 viewPosition) {
  * fogged frame, in gamma space, which is where Three's fragment is after
  * `colorspace_fragment` and `fog_fragment`.
  */
-export function injectEffectLights(shader: {
-  uniforms: Record<string, { value: unknown }>;
-  fragmentShader: string;
-}): void {
+export function injectEffectLights(
+  shader: Pick<ShaderSource, "uniforms" | "fragmentShader">,
+): void {
   Object.assign(shader.uniforms, effectLightUniforms);
-  shader.fragmentShader = shader.fragmentShader.replace(
-    "#include <lights_lambert_pars_fragment>",
-    `#include <lights_lambert_pars_fragment>
-${glslEffectLightIgnoreDirect}
+  shader.fragmentShader = insertAfterChunk(
+    shader.fragmentShader,
+    "lights_lambert_pars_fragment",
+    `${glslEffectLightIgnoreDirect}
 ${glslEffectLightsPars}`,
   );
-  shader.fragmentShader = shader.fragmentShader.replace(
-    "#include <premultiplied_alpha_fragment>",
-    `gl_FragColor.rgb = min(gl_FragColor.rgb + effectLightsSRGB(-vViewPosition), 1.0);
-#include <premultiplied_alpha_fragment>`,
+  shader.fragmentShader = insertBeforeChunk(
+    shader.fragmentShader,
+    "premultiplied_alpha_fragment",
+    "gl_FragColor.rgb = min(gl_FragColor.rgb + effectLightsSRGB(-vViewPosition), 1.0);",
   );
 }

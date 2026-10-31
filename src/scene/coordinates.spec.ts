@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { Quaternion, Vector3 } from "three";
 import {
   torqueToThree,
-  torqueScaleToThree,
+  torqueVecToThree,
+  threeToTorque,
   matrixFToQuaternion,
   torqueAxisAngleToQuaternion,
 } from "./coordinates";
@@ -19,9 +20,20 @@ describe("torqueToThree", () => {
   });
 });
 
-describe("torqueScaleToThree", () => {
-  it("applies same swizzle as position", () => {
-    expect(torqueScaleToThree({ x: 10, y: 20, z: 30 })).toEqual([20, 30, 10]);
+describe("torqueToThree tuples, torqueVecToThree and threeToTorque", () => {
+  it("swizzle tuples and objects alike", () => {
+    expect(torqueToThree([10, 20, 30])).toEqual([20, 30, 10]);
+    expect(torqueVecToThree([10, 20, 30], new Vector3()).toArray()).toEqual([
+      20, 30, 10,
+    ]);
+    expect(
+      torqueVecToThree({ x: 10, y: 20, z: 30 }, new Vector3()).toArray(),
+    ).toEqual([20, 30, 10]);
+  });
+
+  it("threeToTorque inverts torqueToThree", () => {
+    expect(threeToTorque(torqueToThree([10, 20, 30]))).toEqual([10, 20, 30]);
+    expect(threeToTorque(new Vector3(20, 30, 10))).toEqual([10, 20, 30]);
   });
 });
 

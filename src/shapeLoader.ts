@@ -11,7 +11,7 @@ import type { DTSModel } from "./dts/dtsModel";
 import { batchDTSRigidMeshes } from "./dts/dtsRigidBatch";
 import { loadShapeImageLists } from "./iflAtlas";
 
-// Both R3F's useLoader and imperative effect pools request the same source model.
+// Shape views and imperative effect pools request the same source model.
 const models = new WeakMap<LoadingManager, Map<string, Promise<DTSModel>>>();
 const sequencePaths = new WeakMap<
   ReturnType<typeof getResourceMap>,

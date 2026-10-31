@@ -1,67 +1,50 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { LiveStreamAdapter } from "./liveStreaming";
-import type { RelayClient } from "./relayClient";
 import type { MutableEntity } from "./StreamEngine";
 import { STREAM_TICK_SEC } from "./streamHelpers";
+import { TestLiveStream } from "./streamTestFixtures";
 import { engineStore, effectDeltaSec } from "../state/engineStore";
 import { resetStreamPlayback, streamClock } from "../state/streamPlaybackStore";
 import { DirectorTrackers } from "../director/directorTrackers";
 import { groupScoreboard } from "../state/scoreboard";
 import { matchClockAt } from "../state/matchClock";
 
-class MatchStream extends LiveStreamAdapter {
+class MatchStream extends TestLiveStream {
   constructor() {
-    super({} as RelayClient);
-    this.entities.set("projectile", {
+    super("play");
+    this.addEntity({
       id: "projectile",
       ghostIndex: 1,
       className: "LinearProjectile",
-      spawnTick: 0,
       type: "Projectile",
-      rotation: [0, 0, 0, 1],
       position: [0, 0, 100],
       simulatedVelocity: [10, 0, 0],
       projAgeTicks: 0,
     });
-    this.entities.set("explosion", {
+    this.addEntity({
       id: "explosion",
       ghostIndex: 2,
       className: "Explosion",
       type: "Explosion",
-      spawnTick: 0,
-      rotation: [0, 0, 0, 1],
       position: [0, 0, 100],
       isExplosion: true,
       expiryTick: 10,
     });
-    this.entities.set("shape", {
+    this.addEntity({
       id: "shape",
       ghostIndex: 3,
       className: "StaticShape",
       type: "StaticShape",
-      spawnTick: 0,
-      rotation: [0, 0, 0, 1],
       position: [0, 0, 100],
       fadeVal: 1,
       fadeState: { elapsed: 0, fadeTime: 2, fadeOut: true },
       mountObjectGhostIndex: 1,
     });
-    for (const entity of this.entities.values())
-      this.entityIdByGhostIndex.set(entity.ghostIndex, entity.id);
   }
   override getDataBlockData() {
     return undefined;
   }
-  command(funcName: string, ...args: string[]) {
-    this.processEvent(
-      {
-        classId: 0,
-        parsedData: { type: "RemoteCommandEvent", funcName, args },
-      },
-      undefined,
-    );
-  }
-  message(...args: string[]) {
+  // Through the event path, as the wire delivers them.
+  override message(...args: string[]) {
     this.command("ServerMessage", ...args);
   }
   tick(count = 1) {
@@ -72,12 +55,6 @@ class MatchStream extends LiveStreamAdapter {
   }
   remove(id: string) {
     this.entities.delete(id);
-  }
-  checkpoint() {
-    return this.captureSimulationState();
-  }
-  restore(checkpoint: ReturnType<MatchStream["checkpoint"]>) {
-    this.restoreSimulationState(checkpoint);
   }
 }
 

@@ -32,7 +32,7 @@ import {
   isObserverView,
   resolveIffDisplay,
   rgbString,
-} from "./iffTheme";
+} from "../iffTheme";
 import { useSettings } from "./SettingsProvider";
 import { ColoredName } from "./ColoredName";
 import { restorePointerLock } from "./restorePointerLock";

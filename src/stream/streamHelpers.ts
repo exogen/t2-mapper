@@ -31,12 +31,6 @@ export function streamTimeToTick(timeSec: number): number {
 const _rotMat = new Matrix4();
 const _rotQuat = new Quaternion();
 
-export function clamp(value: number, min: number, max: number): number {
-  if (value < min) return min;
-  if (value > max) return max;
-  return value;
-}
-
 export const MAX_PITCH = Math.PI * 0.494;
 export const CameraMode_OrbitObject = 3;
 
@@ -281,38 +275,43 @@ const PRELOAD_DATA_BLOCK_CLASSES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Explosion and debris shapes, including sub-explosions and debris impacts.
+ * Explosion and debris shapes: every ExplosionData's shape, whichever field
+ * references it (explosion, underwaterExplosion, subExplosions, …), plus
+ * ShapeBase debris and Debris shapes.
  */
 export function collectEffectShapeNames(
   dataBlocks: Iterable<ParsedData | undefined>,
-  getDataBlockData: (id: number) => ParsedData | undefined,
 ): string[] {
   const names = new Set<string>();
-  const addShape = (block: ParsedData | undefined) => {
-    const shape = block?.dtsFileName;
-    if (typeof shape === "string" && shape) names.add(shape);
-  };
   for (const data of dataBlocks) {
-    if (typeof data?.debrisShapeName === "string" && data.debrisShapeName)
-      names.add(data.debrisShapeName);
+    for (const shape of [data?.dtsFileName, data?.debrisShapeName]) {
+      if (typeof shape === "string" && shape) names.add(shape);
+    }
     if (
       typeof data?.shapeName === "string" &&
       typeof data?.numBounces === "number" &&
       data.shapeName
     )
       names.add(data.shapeName);
-    const explosionId = data?.explosion;
-    if (typeof explosionId !== "number") continue;
-    const expBlock = getDataBlockData(explosionId);
-    if (!expBlock) continue;
-    addShape(expBlock);
-    const subExplosions = expBlock.subExplosions;
-    if (!Array.isArray(subExplosions)) continue;
-    for (const subId of subExplosions) {
-      if (typeof subId === "number") addShape(getDataBlockData(subId));
-    }
   }
   return [...names];
+}
+
+/**
+ * TSShapeConstructor sequence lists by lowercase shape name; a later
+ * datablock for the same shape replaces an earlier one.
+ */
+export function collectShapeConstructorSequences(
+  dataBlocks: Iterable<ParsedData | undefined>,
+): Map<string, string[]> {
+  const sequencesByShape = new Map<string, string[]>();
+  for (const data of dataBlocks) {
+    const shape = data?.shape;
+    const sequences = data?.sequences;
+    if (typeof shape === "string" && shape && Array.isArray(sequences))
+      sequencesByShape.set(shape.toLowerCase(), sequences as string[]);
+  }
+  return sequencesByShape;
 }
 
 /** Unique shape names from datablocks in the prefetch categories. */

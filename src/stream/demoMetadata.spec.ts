@@ -1,11 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { gzipSync } from "node:zlib";
-import {
-  BlockTypeMove,
-  BlockTypePacket,
-  type DemoBlock,
-  type DemoParser,
-} from "t2-demo-parser";
+import { BlockTypeMove, BlockTypePacket, type DemoBlock } from "t2-demo-parser";
+import { serverMessagePacket } from "../../relay/serverPacketFixtures";
 import { createRecordingFromParser, DemoStreamAdapter } from "./demoStreaming";
 import { bytesToBase64, encodeCheckpoint } from "./checkpointCodec";
 import {
@@ -14,6 +10,7 @@ import {
   readDemoCheckpoints,
 } from "./demoCheckpoints";
 import { flagReturnSecondsRemaining } from "./flagReturnTimer";
+import { fakeDemoParser, packetBlock } from "./streamTestFixtures";
 
 const player = {
   position: { x: 0, y: 0, z: 100 },
@@ -30,34 +27,15 @@ const camera = {
   orbitObjectGhostIndex: 1,
 };
 const move = () => ({ type: BlockTypeMove, parsed: { yaw: 0, pitch: 0 } });
-const controlPlayer = (ghostIndex = 1) => ({
-  type: BlockTypePacket,
-  parsed: {
-    ghosts: [],
-    events: [],
+const controlPlayer = (ghostIndex = 1) =>
+  packetBlock({
     gameState: {
-      lastMoveAck: 0,
       controlObjectGhostIndex: ghostIndex,
       controlObjectData: player,
     },
-  },
-});
-const serverMessage = (...args: string[]) => ({
-  type: BlockTypePacket,
-  parsed: {
-    ghosts: [],
-    events: [
-      {
-        parsedData: {
-          type: "RemoteCommandEvent",
-          funcName: "ServerMessage",
-          args,
-        },
-      },
-    ],
-    gameState: { lastMoveAck: 0 },
-  },
-});
+  });
+const serverMessage = (...args: string[]) =>
+  packetBlock(serverMessagePacket(args));
 const roster = (clientId = 29905, targetId = 70, name = "Flyersfan") =>
   `${name}\t118791\t${clientId}\t${targetId}\t1\t0\t91\t0`;
 
@@ -71,16 +49,10 @@ function fixture(
     sensorGroup?: number;
   } = {},
 ) {
-  let cursor = 0;
-  const owner = {};
   const entries = options.roster ?? [roster()];
-  const nextBlock = vi.fn(() => {
-    const block = blocks[cursor] as DemoBlock | undefined;
-    if (block) cursor++;
-    return block;
-  });
-  const parser = {
-    header: { demoLengthMs: 120_000 },
+  const parser = fakeDemoParser({
+    blocks,
+    demoLengthMs: 120_000,
     initialBlock: {
       dataBlocks: new Map([
         [1, { className: "PlayerData", data: { maxEnergy: 100, mass: 90 } }],
@@ -112,56 +84,23 @@ function fixture(
           ? [{ targetId: 71, name: "Later Player", sensorGroup: 1 }]
           : []),
       ],
-      sensorGroupColors: [],
-      taggedStrings: new Map(),
-      initialEvents: [],
       demoValues: [
         "Observer",
         String(entries.length),
         ...entries,
         ...(options.metadata ?? []),
       ],
-      firstPerson: true,
-      lastMoveAck: 0,
-      lastClientMove: 0,
-      firstMoveIndex: 0,
       sensorGroup: options.sensorGroup ?? 0,
-      moves: [],
     },
-    get blockCursor() {
-      return cursor;
-    },
-    getRegistry: () => ({
-      getGhostParser: (id: number) => ({
-        name: id === 25 ? "Player" : "Camera",
-      }),
-      getEventParser: () => undefined,
-    }),
-    getGhostTracker: () => ({
-      getGhost: (id: number) => ({ classId: id === 1 || id === 2 ? 25 : 4 }),
-    }),
-    getPacketParser: () => ({ protocolRejected: 0, protocolNoDispatch: 0 }),
-    reset: () => {
-      cursor = 0;
-    },
-    nextBlock,
-    createCheckpoint: () => ({
-      owner,
-      cursor,
-      blockStreamOffset: cursor,
-      blockCursor: cursor,
-      ghosts: new Map(),
-    }),
-    restoreCheckpoint: (checkpoint: { cursor: number }) => {
-      cursor = checkpoint.cursor;
-    },
-    isComplete: true,
+    ghostClasses: (id) => (id === 25 ? "Player" : "Camera"),
+    packetParser: { protocolRejected: 0, protocolNoDispatch: 0 },
     decompressedByteLength: blocks.length,
     bufferedMoveTicks: blocks.filter(
       (block) => (block as DemoBlock).type === BlockTypeMove,
     ).length,
-  } as unknown as DemoParser;
-  return { parser, nextBlock };
+    blockCursor: true,
+  });
+  return { parser, nextBlock: vi.spyOn(parser, "nextBlock") };
 }
 
 function ctfHud(firstFlag: string, secondFlag: string) {

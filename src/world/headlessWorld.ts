@@ -41,7 +41,8 @@ import {
   unregisterPlayerShapeCollider,
 } from "../collision/worldCollision";
 import { setTerrainCollisionData } from "../collision/terrainCollision";
-import { getActualResourceKey, getSourceAndPath } from "../manifest";
+import { getActualResourceKey, getWinningSourcePath } from "../manifest";
+import { ASSET_BASE_DIR, shapeResourcePath } from "../resourcePaths";
 import { parseTerrainBuffer } from "../terrain";
 import { createLogger } from "../logger";
 import type {
@@ -98,9 +99,6 @@ function loadDIF(file: string): Promise<DIFModel> {
 }
 
 const log = createLogger("headlessWorld");
-
-/** Where the extracted game assets live, mirroring `getLocalFilePath`. */
-const DEFAULT_ASSET_ROOT = "docs/base";
 
 /** Minimum entity shape needed to build the world — a structural subset
  *  of the stream's MutableEntity, so both live and demo sources fit. */
@@ -167,7 +165,7 @@ export class HeadlessWorld {
   private failed = new Set<string>();
 
   constructor(options: HeadlessWorldOptions = {}) {
-    this.assetRoot = options.assetRoot ?? DEFAULT_ASSET_ROOT;
+    this.assetRoot = options.assetRoot ?? ASSET_BASE_DIR;
     this.includeStatics = options.includeStatics ?? true;
   }
 
@@ -186,11 +184,18 @@ export class HeadlessWorld {
   /** Resolve a game resource to a local file, mirroring the browser's
    *  `getUrlForPath` (including its fuzzy resource-key matching). */
   private localPath(resourcePath: string): string {
-    const key = getActualResourceKey(resourcePath);
-    const [source, actual] = getSourceAndPath(key);
-    return source
-      ? path.join(this.assetRoot, "@vl2", source, actual)
-      : path.join(this.assetRoot, actual);
+    return path.join(
+      this.assetRoot,
+      getWinningSourcePath(getActualResourceKey(resourcePath)),
+    );
+  }
+
+  /**
+   * Local DTS file for a shape named by a datablock or TSStatic. Throws when
+   * the game files lack it.
+   */
+  shapeFile(shapeName: string): string {
+    return this.localPath(shapeResourcePath(shapeName));
   }
 
   /**
@@ -421,7 +426,7 @@ export class HeadlessWorld {
         : (entity.shapeHint ?? entity.dataBlock);
     if (!shapeName) return;
 
-    const file = this.localPath(`shapes/${shapeName}`);
+    const file = this.shapeFile(shapeName);
     const shape = await this.loadOrWarn(file, shapeName);
     if (!shape) return;
 
@@ -431,7 +436,7 @@ export class HeadlessWorld {
     // Placement comes from the ENTITY, never from `sceneData.transform`
     // — including for TSStatic. Shapes are positioned entities: the
     // stream carries their position in Torque space and
-    // `StreamingController` swizzles it onto the group each frame,
+    // `StreamPlaybackSession` swizzles it onto the group each frame,
     // while the rotation quaternion is applied raw. Then GenericShape
     // nests the model under a +90° yaw. All three parts matter — the
     // browser had this map's first static at (-43.25, 148.36, 449.22)

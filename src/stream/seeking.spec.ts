@@ -1,10 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  BlockTypeInfo,
-  BlockTypeMove,
-  BlockTypePacket,
-  type DemoParser,
-} from "t2-demo-parser";
+import { BlockTypeInfo, BlockTypeMove, BlockTypePacket } from "t2-demo-parser";
+import { remoteCommandPacket } from "../../relay/serverPacketFixtures";
 import { PerspectiveCamera, Group } from "three";
 import {
   createRecordingFromParser,
@@ -21,6 +17,7 @@ import {
   streamEntityToGameEntity,
   updateGameEntityFromStream,
 } from "./entityBridge";
+import { fakeDemoParser, moveBlock, packetBlock } from "./streamTestFixtures";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -48,44 +45,22 @@ const update = (parsedData: object) => ({
   type: "update",
   parsedData,
 });
-const packet = (...ghosts: object[]) => ({
-  type: BlockTypePacket,
-  parsed: { ghosts, events: [], gameState: { lastMoveAck: 0 } },
-});
-const move = () => ({
-  type: BlockTypeMove,
-  parsed: { yaw: 0, pitch: 0, x: 0, y: 0, z: 0, trigger: [] },
-});
-const command = (funcName: string, ...args: string[]) => ({
-  type: BlockTypePacket,
-  parsed: {
-    ghosts: [],
-    gameState: { lastMoveAck: 0 },
-    events: [
-      {
-        classId: 0,
-        parsedData: { type: "RemoteCommandEvent", funcName, args },
-      },
-    ],
-  },
-});
+const packet = (...ghosts: object[]) => packetBlock({ ghosts });
+const move = moveBlock;
+const command = (funcName: string, ...args: string[]) =>
+  packetBlock(remoteCommandPacket(funcName, ...args));
 const stats = () => ({ movesRead: 0, captures: 0, restores: 0 });
 
-const cameraPacket = () => ({
-  type: BlockTypePacket,
-  parsed: {
-    ghosts: [],
-    events: [],
+const cameraPacket = () =>
+  packetBlock({
     gameState: {
-      lastMoveAck: 0,
       controlObjectGhostIndex: -1,
       controlObjectData: {
         cameraMode: 0,
         position: { x: 1, y: 2, z: 3 },
       },
     },
-  },
-});
+  });
 const info = (cameraFov: number) => ({
   type: BlockTypeInfo,
   parsed: { firstPerson: true, cameraFov },
@@ -260,9 +235,8 @@ function demo(
   options: DemoStreamingOptions = {},
   calls = stats(),
 ) {
-  let cursor = 0;
-  const parser = {
-    header: { demoLengthMs: 100000 },
+  const parser = fakeDemoParser({
+    blocks,
     initialBlock: {
       dataBlocks: new Map([
         [
@@ -297,46 +271,17 @@ function demo(
         ],
       ]),
       initialGhosts: [create()],
-      controlObjectGhostIndex: -1,
       controlObjectData: { cameraMode: 0 },
-      targetEntries: [],
-      sensorGroupColors: [],
-      taggedStrings: new Map(),
-      initialEvents: [],
-      demoValues: [],
-      firstPerson: true,
-      lastMoveAck: 0,
-      lastClientMove: 0,
-      firstMoveIndex: 0,
-      sensorGroup: 0,
-      moves: [],
     },
-    getRegistry: () => ({
-      getGhostParser: () => ({ name: "WheeledVehicle" }),
-      getEventParser: () => undefined,
-    }),
-    getGhostTracker: () => ({ getGhost: () => ({ classId: 1 }) }),
-    getPacketParser: () => ({}),
-    reset: () => {
-      cursor = 0;
+    ghostClasses: "WheeledVehicle",
+    packetParser: {},
+    onBlock: (block) => {
+      if ((block as { type: number } | undefined)?.type === BlockTypeMove)
+        calls.movesRead++;
     },
-    nextBlock: () => {
-      const block = blocks[cursor++] as { type: number } | undefined;
-      if (block?.type === BlockTypeMove) calls.movesRead++;
-      return block;
-    },
-    createCheckpoint: () => {
-      calls.captures++;
-      return { cursor };
-    },
-    restoreCheckpoint: (checkpoint: { cursor: number }) => {
-      calls.restores++;
-      cursor = checkpoint.cursor;
-    },
-    decompressedByteLength: 1,
-    bufferedMoveTicks: 10000,
-    isComplete: true,
-  } as unknown as DemoParser;
+    onCapture: () => calls.captures++,
+    onRestore: () => calls.restores++,
+  });
   const stream = createRecordingFromParser(parser, options).streamingPlayback;
   stream.reset();
   return stream;

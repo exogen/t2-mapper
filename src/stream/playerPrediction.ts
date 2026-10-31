@@ -7,6 +7,7 @@ import type {
 } from "t2-demo-parser";
 import { PlayerCollision } from "../collision/playerCollision";
 import { waterLevelAt } from "../collision/waterLevel";
+import { cloneData } from "../cloneData";
 
 // Retail constants: 0x79c140 (TickSec), 0x79b400/404/408 (warp/prediction).
 // TickMs is 32; retail physics nevertheless uses 1/32, not TickMs / 1000.
@@ -191,7 +192,7 @@ export class PlayerPrediction {
     this.size.fromArray(state.size);
     this.warpOffset.fromArray(state.warpOffset);
     this.jumpSurfaceNormal.fromArray(state.jumpSurfaceNormal);
-    Object.assign(this, structuredClone(state.values));
+    Object.assign(this, cloneData(state.values));
   }
 
   /** Armor changes preserve the player's current simulation state. */

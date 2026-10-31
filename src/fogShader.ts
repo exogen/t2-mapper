@@ -13,6 +13,12 @@
  */
 
 import { ShaderChunk } from "three";
+import {
+  insertAfterChunk,
+  insertBeforeChunk,
+  replaceChunk,
+  type ShaderSource,
+} from "./shaderUtils";
 
 /**
  * Custom fog fragment shader that implements Torque's fog system.
@@ -271,7 +277,7 @@ interface FogShaderUniformObjects {
  * @param fogUniforms - Shared uniform objects (pass the objects, not values)
  */
 function addFogUniformsToShader(
-  shader: { uniforms: Record<string, { value: unknown }> },
+  shader: Pick<ShaderSource, "uniforms">,
   fogUniforms: FogShaderUniformObjects,
 ): void {
   // Pass the uniform objects directly so they stay linked to FogProvider updates
@@ -292,11 +298,7 @@ function addFogUniformsToShader(
  * scale by 1 - fog instead of mixing toward the fog colour.
  */
 export function injectCustomFog(
-  shader: {
-    uniforms: Record<string, { value: unknown }>;
-    vertexShader: string;
-    fragmentShader: string;
-  },
+  shader: ShaderSource,
   fogUniforms: FogShaderUniformObjects,
   options: { additive?: boolean } = {},
 ): void {
@@ -307,20 +309,20 @@ export function injectCustomFog(
   }
 
   // Add world position varying to vertex shader
-  shader.vertexShader = shader.vertexShader.replace(
-    "#include <fog_pars_vertex>",
-    `#include <fog_pars_vertex>
-#ifdef USE_FOG
+  shader.vertexShader = insertAfterChunk(
+    shader.vertexShader,
+    "fog_pars_vertex",
+    `#ifdef USE_FOG
   #define USE_FOG_WORLD_POSITION
   #define USE_VOLUMETRIC_FOG
   varying vec3 vFogWorldPosition;
 #endif`,
   );
 
-  shader.vertexShader = shader.vertexShader.replace(
-    "#include <fog_vertex>",
-    `#include <fog_vertex>
-#ifdef USE_FOG
+  shader.vertexShader = insertAfterChunk(
+    shader.vertexShader,
+    "fog_vertex",
+    `#ifdef USE_FOG
   vec4 _fogPos3 = vec4(transformed, 1.0);
   #ifdef USE_INSTANCING
     _fogPos3 = instanceMatrix * _fogPos3;
@@ -330,11 +332,15 @@ export function injectCustomFog(
   );
 
   // Add volumetric fog uniforms to fragment shader
-  shader.fragmentShader = shader.fragmentShader.replace(
-    "#include <fog_pars_fragment>",
-    `#define HAS_FOG_DISTANCE_SCALE
-#include <fog_pars_fragment>
-#ifdef USE_FOG
+  shader.fragmentShader = insertBeforeChunk(
+    shader.fragmentShader,
+    "fog_pars_fragment",
+    "#define HAS_FOG_DISTANCE_SCALE",
+  );
+  shader.fragmentShader = insertAfterChunk(
+    shader.fragmentShader,
+    "fog_pars_fragment",
+    `#ifdef USE_FOG
   #define USE_VOLUMETRIC_FOG
   uniform vec4 fogVolumeData[3];
   uniform float cameraHeight;
@@ -347,8 +353,9 @@ export function injectCustomFog(
   );
 
   // Replace fog fragment with custom implementation
-  shader.fragmentShader = shader.fragmentShader.replace(
-    "#include <fog_fragment>",
+  shader.fragmentShader = replaceChunk(
+    shader.fragmentShader,
+    "fog_fragment",
     fogFragmentShader,
   );
 }
@@ -361,17 +368,14 @@ export function injectCustomFog(
  * then adds to the scene as a visible square.
  */
 export function injectSpriteFog(
-  shader: {
-    uniforms: Record<string, { value: unknown }>;
-    vertexShader: string;
-    fragmentShader: string;
-  },
+  shader: ShaderSource,
   fogUniforms: FogShaderUniformObjects,
   options: { additive?: boolean } = {},
 ): void {
-  shader.vertexShader = shader.vertexShader.replace(
-    "#include <fog_vertex>",
-    "vec3 transformed = vec3(0.0);\n#include <fog_vertex>",
+  shader.vertexShader = insertBeforeChunk(
+    shader.vertexShader,
+    "fog_vertex",
+    "vec3 transformed = vec3(0.0);",
   );
   injectCustomFog(shader, fogUniforms, options);
 }

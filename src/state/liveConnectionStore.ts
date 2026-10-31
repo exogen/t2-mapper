@@ -1,4 +1,5 @@
 import { createStore } from "zustand/vanilla";
+import type { ParseFault } from "t2-demo-parser";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { isChatCommand, normalizeAddress } from "../../relay/shared";
 import { createLogger } from "../logger";
@@ -152,6 +153,66 @@ function disconnectedState(
     catchupProgress: null,
     reconnecting: false,
   };
+}
+
+/**
+ * A live adapter for a join or watch session. Its callbacks act only while
+ * it is the store's current adapter, so a replaced session can't touch the
+ * stores.
+ */
+function createSessionAdapter(
+  relay: RelayClient,
+  mode: "play" | "watch",
+  handlers: {
+    onParseFault: (fault: ParseFault) => void;
+    onMissionIdentity?: (sequence: string, missionName: string) => void;
+  },
+): LiveStreamAdapter {
+  const adapter = new LiveStreamAdapter(relay, { mode });
+  const isCurrent = () => liveConnectionStore.getState()._adapter === adapter;
+  adapter.onReady = () => {
+    if (isCurrent()) liveConnectionStore.setState({ liveReady: true });
+  };
+  adapter.onMissionChange = (missionName) => {
+    if (!isCurrent()) return;
+    log.info("mission changed: %s", missionName);
+    liveConnectionStore.setState({ mapName: missionName, liveReady: false });
+    // Set the new mission name and clear stale fields — they'll be
+    // re-populated when MsgClientReady / MsgMissionDropInfo arrive.
+    gameEntityStore.getState().setMissionInfo({
+      missionName,
+      missionType: null,
+      missionTypeDisplayName: null,
+      missionDisplayName: null,
+      gameClassName: null,
+    });
+  };
+  adapter.onMissionInfoChange = () => {
+    if (!isCurrent()) return;
+    gameEntityStore.getState().setMissionInfo({
+      missionDisplayName: adapter.missionDisplayName ?? undefined,
+      missionTypeDisplayName: adapter.missionTypeDisplayName ?? undefined,
+      gameClassName: adapter.gameClassName ?? undefined,
+      serverDisplayName: adapter.serverDisplayName ?? undefined,
+      // connectedPlayerName is derived from the control object's target
+      // info, which reflects the server-assigned name (not warriorName).
+      // A watcher's control object is the relay's observer, not a recorder.
+      recorderName:
+        mode === "play"
+          ? (adapter.connectedPlayerName ?? undefined)
+          : undefined,
+    });
+  };
+  adapter.onParseFault = (fault) => {
+    if (isCurrent()) handlers.onParseFault(fault);
+  };
+  const { onMissionIdentity } = handlers;
+  if (onMissionIdentity) {
+    adapter.onMissionIdentity = (sequence, missionName) => {
+      if (isCurrent()) onMissionIdentity(sequence, missionName);
+    };
+  }
+  return adapter;
 }
 
 export const liveConnectionStore = createStore<LiveConnectionStore>(
@@ -530,49 +591,19 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
       cancelReconnect();
 
       const cachedServer = s.servers.find((sv) => sv.address === address);
-      const newAdapter = new LiveStreamAdapter(s._relay);
-      newAdapter.onReady = () => {
-        if (get()._adapter === newAdapter) set({ liveReady: true });
-      };
-      newAdapter.onMissionChange = (missionName) => {
-        if (get()._adapter !== newAdapter) return;
-        log.info("mission changed: %s", missionName);
-        set({ mapName: missionName, liveReady: false });
-        // Set the new mission name and clear stale fields — they'll be
-        // re-populated when MsgClientReady / MsgMissionDropInfo arrive.
-        gameEntityStore.getState().setMissionInfo({
-          missionName,
-          missionType: null,
-          missionTypeDisplayName: null,
-          missionDisplayName: null,
-          gameClassName: null,
-        });
-      };
-      newAdapter.onMissionInfoChange = () => {
-        if (get()._adapter !== newAdapter) return;
-        gameEntityStore.getState().setMissionInfo({
-          missionDisplayName: newAdapter.missionDisplayName ?? undefined,
-          missionTypeDisplayName:
-            newAdapter.missionTypeDisplayName ?? undefined,
-          gameClassName: newAdapter.gameClassName ?? undefined,
-          serverDisplayName: newAdapter.serverDisplayName ?? undefined,
-          // connectedPlayerName is derived from the control object's target
-          // info, which reflects the server-assigned name (not warriorName).
-          recorderName: newAdapter.connectedPlayerName ?? undefined,
-        });
-      };
-      newAdapter.onParseFault = (fault) => {
-        if (get()._adapter !== newAdapter) return;
-        // The parser lost the stream (the engine would disconnect here);
-        // a fresh connection is the only way back into lockstep.
-        log.error(
-          "rejoining after %s parse fault: %s",
-          fault.stage,
-          fault.message,
-        );
-        get().leaveServer();
-        get().joinServer(address, warriorName);
-      };
+      const newAdapter = createSessionAdapter(s._relay, "play", {
+        onParseFault: (fault) => {
+          // The parser lost the stream (the engine would disconnect here);
+          // a fresh connection is the only way back into lockstep.
+          log.error(
+            "rejoining after %s parse fault: %s",
+            fault.stage,
+            fault.message,
+          );
+          get().leaveServer();
+          get().joinServer(address, warriorName);
+        },
+      });
       s._adapter = newAdapter;
 
       set({
@@ -654,48 +685,22 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
       }
 
       const cachedServer = s.servers.find((sv) => sv.address === address);
-      const newAdapter = new LiveStreamAdapter(s._relay, { mode: "watch" });
-      newAdapter.onMissionIdentity = (sequence, missionName) => {
-        if (get()._adapter !== newAdapter) return;
-        casterStore.getState().activate(address, sequence, missionName);
-      };
-      newAdapter.onReady = () => {
-        if (get()._adapter === newAdapter) set({ liveReady: true });
-      };
-      newAdapter.onMissionChange = (missionName) => {
-        if (get()._adapter !== newAdapter) return;
-        log.info("mission changed: %s", missionName);
-        set({ mapName: missionName, liveReady: false });
-        gameEntityStore.getState().setMissionInfo({
-          missionName,
-          missionType: null,
-          missionTypeDisplayName: null,
-          missionDisplayName: null,
-          gameClassName: null,
-        });
-      };
-      newAdapter.onMissionInfoChange = () => {
-        if (get()._adapter !== newAdapter) return;
-        gameEntityStore.getState().setMissionInfo({
-          missionDisplayName: newAdapter.missionDisplayName ?? undefined,
-          missionTypeDisplayName:
-            newAdapter.missionTypeDisplayName ?? undefined,
-          gameClassName: newAdapter.gameClassName ?? undefined,
-          serverDisplayName: newAdapter.serverDisplayName ?? undefined,
-        });
-      };
-      newAdapter.onParseFault = (fault) => {
-        if (get()._adapter !== newAdapter) return;
-        // Re-attach for a fresh catch-up: the relay's own parser is fine
-        // (it re-syncs itself when it isn't), so a new hydration puts
-        // this adapter back in lockstep with the stream.
-        log.error(
-          "re-watching after %s parse fault: %s",
-          fault.stage,
-          fault.message,
-        );
-        get().watchServer(address);
-      };
+      const newAdapter = createSessionAdapter(s._relay, "watch", {
+        onMissionIdentity: (sequence, missionName) => {
+          casterStore.getState().activate(address, sequence, missionName);
+        },
+        onParseFault: (fault) => {
+          // Re-attach for a fresh catch-up: the relay's own parser is fine
+          // (it re-syncs itself when it isn't), so a new hydration puts
+          // this adapter back in lockstep with the stream.
+          log.error(
+            "re-watching after %s parse fault: %s",
+            fault.stage,
+            fault.message,
+          );
+          get().watchServer(address);
+        },
+      });
       s._adapter = newAdapter;
 
       set({

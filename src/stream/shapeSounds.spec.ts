@@ -1,31 +1,29 @@
 import { describe, expect, it } from "vitest";
 import type { ParsedData } from "t2-demo-parser";
-import { LiveStreamAdapter } from "./liveStreaming";
-import type { MutableEntity } from "./StreamEngine";
-import type { RelayClient } from "./relayClient";
-import { decodeCheckpoint, encodeCheckpoint } from "./checkpointCodec";
+import { TestLiveStream } from "./streamTestFixtures";
 
-class SoundStream extends LiveStreamAdapter {
-  station: MutableEntity = {
+class SoundStream extends TestLiveStream {
+  station = this.addEntity({
     id: "station",
     ghostIndex: 0,
     className: "StaticShape",
     type: "StaticShape",
-    spawnTick: 0,
-    rotation: [0, 0, 0, 1],
-  };
+  });
 
   constructor() {
-    super({} as RelayClient, { mode: "watch" });
-    this.entities.set(this.station.id, this.station);
+    super("watch", "StaticShape");
   }
 
   update(data: ParsedData) {
     this.applyGhostData(this.station, data);
   }
 
+  /**
+   * The server reuses the ghost slot: a create starts a new entity.
+   */
   recreate() {
-    this.resetEntity(this.station);
+    this.createGhost(0, 1, {});
+    this.station = this.entities.get(this.entityIdByGhostIndex.get(0)!)!;
   }
 
   setTick(tick: number) {
@@ -33,10 +31,7 @@ class SoundStream extends LiveStreamAdapter {
   }
 
   restoreCheckpoint() {
-    const saved = this.captureSimulationState();
-    this.restoreSimulationState(
-      decodeCheckpoint(encodeCheckpoint(saved)) as typeof saved,
-    );
+    this.roundTripCheckpoint();
     this.station = this.entities.values().next().value!;
   }
 }

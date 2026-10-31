@@ -1,26 +1,16 @@
 import { afterEach, expect, it, vi } from "vitest";
-import type { PacketData, PacketParser } from "t2-demo-parser";
-import { LiveStreamAdapter } from "./liveStreaming";
-import type { RelayClient } from "./relayClient";
+import type { PacketData } from "t2-demo-parser";
+import { TestLiveStream } from "./streamTestFixtures";
 
-class ControlStream extends LiveStreamAdapter {
+class ControlStream extends TestLiveStream {
   constructor() {
-    super({} as RelayClient);
-    this.registry = {
-      getGhostParser: (id) => ({ name: id === 1 ? "Player" : "HoverVehicle" }),
-      getEventParser: () => undefined,
-    };
+    super("play", (id) => (id === 1 ? "Player" : "HoverVehicle"));
     for (const [index, classId] of [
       [0, 1],
       [1, 2],
       [2, 2],
     ]) {
-      this.processGhostUpdate({
-        index,
-        classId,
-        type: "create",
-        parsedData: { dataBlockId: 1 },
-      });
+      this.createGhost(index, classId, { dataBlockId: 1 });
     }
   }
 
@@ -29,27 +19,13 @@ class ControlStream extends LiveStreamAdapter {
   }
 
   receive(state: Partial<PacketData["gameState"]>) {
-    const parser = (this as unknown as { packetParser: PacketParser })
-      .packetParser;
-    vi.spyOn(parser, "parsePacket").mockReturnValueOnce({
-      gameState: { lastMoveAck: 0, ...state },
-      events: [],
-      ghosts: [],
-      dnetHeader: { packetType: 0 },
-    } as unknown as PacketData);
-    this.feedPacket(new Uint8Array([0]));
+    this.feedDecoded({ gameState: state });
   }
 
   vehicle(index = 1) {
     return this.getSnapshot().entities.find(
       (entity) => entity.ghostIndex === index,
     )!;
-  }
-  checkpoint() {
-    return this.captureSimulationState();
-  }
-  restore(checkpoint: ReturnType<ControlStream["checkpoint"]>) {
-    this.restoreSimulationState(checkpoint);
   }
 }
 const piloting = (x: number, vehicle = 1) => ({

@@ -16,6 +16,7 @@ import {
 } from "./preMatch";
 import { PLAYER_AIM_LIFT } from "./humanScale";
 import { shotPoseAt } from "./shotPath";
+import { directorDataset } from "./directorTestFixtures";
 import type { DirectorDataset, DirectorVec3, Shot } from "./types";
 
 describe("landmarksFor", () => {
@@ -30,28 +31,17 @@ describe("landmarksFor", () => {
       teamId: 1,
       pos: [x, 0, 100],
     });
-    const dataset = {
+    const dataset = directorDataset({
       durationSec: 10,
-      flagSampleStepSec: 0.5,
-      playerSampleStepSec: 1,
-      gameClassName: "CTFGame",
       teams: [{ teamId: 1, name: "Storm" }],
       flagStands: [{ slot: 1, teamId: 1, name: "Storm", pos: [0, 0, 100] }],
-      events: [],
-      flagSamples: [],
-      playerSamples: [],
-      structures: [],
       structureInventory: [
         hardware("generator", 20),
         hardware("base turret", 40),
         hardware("sentry turret", 60),
         hardware("inventory station", 80),
       ],
-      mortarShots: [],
-      deaths: [],
-      stations: [],
-      playerNames: [],
-    } as unknown as DirectorDataset;
+    });
     const names = landmarksFor(dataset, 5).map((m) => m.name);
     expect(names.some((n) => /base turret$/.test(n))).toBe(true);
     expect(names.some((n) => /generator$/.test(n))).toBe(true);

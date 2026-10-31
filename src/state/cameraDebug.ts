@@ -1,6 +1,6 @@
 /**
  * Live camera-decision state for the watchdog (module-mutable, written
- * each frame by the camera drivers, read by CameraDebugWatchdog). Debug
+ * each frame by the camera drivers, read by the camera watchdog). Debug
  * only — nothing renders from this.
  */
 export const orbitSpringDebug = {

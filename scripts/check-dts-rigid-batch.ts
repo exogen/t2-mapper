@@ -14,8 +14,9 @@ import { parseDSQ, mergeDSQ } from "../src/dts/dsq";
 import { buildDTS } from "../src/dts/dtsBuilder";
 import { batchDTSRigidMeshes } from "../src/dts/dtsRigidBatch";
 import { DTSMesh, DTSRigidMeshBatch } from "../src/dts/dtsModel";
+import { ASSET_BASE_DIR } from "../src/resourcePaths";
 
-const base = process.argv[2] ?? "docs/base";
+const base = process.argv[2] ?? ASSET_BASE_DIR;
 const files: string[] = [];
 for await (const file of fs.glob("**/*.{dts,dsq}", { cwd: base }))
   files.push(file);

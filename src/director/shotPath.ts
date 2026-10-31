@@ -20,6 +20,7 @@ import { Vector3 } from "three";
 import { pointObstructed } from "../collision/worldCollision";
 import { subjectViewBlocked } from "./cameraRig";
 import { flightPointAt } from "./flightPath";
+import { torqueVecToThree } from "../scene/coordinates";
 
 /** Room the lens needs; below this it is clipping the world. */
 export const CAMERA_CLEARANCE = 2;
@@ -94,7 +95,7 @@ export function aimCamera(
   aim: SolvedAim,
   scratch: Vector3,
 ): void {
-  scratch.set(aim[1], aim[2], aim[0]);
+  torqueVecToThree(aim, scratch);
   camera.lookAt(scratch);
 }
 
@@ -255,8 +256,8 @@ export function subjectVisible(eye: DirectorVec3, aim: DirectorVec3): boolean {
   // directions — a lateral halo here, a vertical spread there — so the
   // planner certified placements the runtime then rejected a beat into
   // the shot, and the viewer saw the camera correct itself.
-  _fromThree.set(eye[1], eye[2], eye[0]);
-  _toThree.set(aim[1], aim[2], aim[0]);
+  torqueVecToThree(eye, _fromThree);
+  torqueVecToThree(aim, _toThree);
   return !subjectViewBlocked(_fromThree, _toThree);
 }
 const _fromThree = new Vector3();

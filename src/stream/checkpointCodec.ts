@@ -89,7 +89,7 @@ export function decodeCheckpoint(text: string): unknown {
       case "object":
         return {};
       case "array":
-        return [];
+        return null;
       case "map":
         return new Map();
       case "set":
@@ -113,7 +113,7 @@ export function decodeCheckpoint(text: string): unknown {
         value.ref >= objects.length
       )
         throw new Error("Invalid checkpoint reference");
-      return objects[value.ref];
+      return objects[value.ref] ?? decodeArray(value.ref);
     }
     switch (value.special) {
       case "undefined":
@@ -130,6 +130,19 @@ export function decodeCheckpoint(text: string): unknown {
         throw new Error("Invalid checkpoint value");
     }
   }
+  // Arrays are built whole, on first reference: filled one item at a time
+  // (or all from one literal), V8 would give arrays of numbers generic,
+  // boxed elements once any array held an object.
+  const building = new Set<number>();
+  function decodeArray(ref: number): unknown[] {
+    if (building.has(ref))
+      throw new Error("Unsupported checkpoint array cycle");
+    building.add(ref);
+    const array = Array.from(graph.nodes[ref].value as Value[], decode);
+    building.delete(ref);
+    objects[ref] = array;
+    return array;
+  }
   graph.nodes.forEach((node, i) => {
     const object = objects[i];
     if (object instanceof Map)
@@ -137,8 +150,6 @@ export function decodeCheckpoint(text: string): unknown {
         object.set(decode(key), decode(value));
     else if (object instanceof Set)
       for (const value of node.value as Value[]) object.add(decode(value));
-    else if (Array.isArray(object))
-      for (const value of node.value as Value[]) object.push(decode(value));
     else if (node.type === "object")
       for (const [key, value] of Object.entries(
         node.value as Record<string, Value>,

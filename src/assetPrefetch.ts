@@ -12,17 +12,11 @@
  * the prefetch never competes with on-demand loads.
  */
 
-import { useLoader } from "@react-three/fiber";
-import { InteriorLoader } from "./interiorLoader";
-import { useTexture } from "@react-three/drei";
-import {
-  shapeToUrl,
-  interiorToUrl,
-  textureToUrl,
-  terrainTextureToUrl,
-  loadTerrain,
-} from "./loaders";
-import { ShapeLoader } from "./shapeLoader";
+import { loadInterior } from "./engine/interiorCache";
+import { acquireTerrain } from "./engine/terrainCache";
+import { loadSharedTexture } from "./engine/textures";
+import { loadShape } from "./engine/shapeCache";
+import { interiorToUrl, textureToUrl, terrainTextureToUrl } from "./loaders";
 import { createLogger } from "./logger";
 import type { PreloadAsset } from "./stream/types";
 
@@ -44,26 +38,30 @@ const preloaded = new Set<string>();
 function prefetch(asset: PreloadAsset): void {
   switch (asset.kind) {
     case "texture":
-      useTexture.preload(textureToUrl(asset.name));
+      void loadSharedTexture(textureToUrl(asset.name)).catch((e: unknown) =>
+        log.debug("texture prefetch failed: %o", e),
+      );
       break;
-    case "shape": {
-      const url = shapeToUrl(asset.name);
-      useLoader.preload(ShapeLoader, url);
+    case "shape":
+      void loadShape(asset.name).catch((e: unknown) =>
+        log.debug("shape prefetch failed: %o", e),
+      );
       break;
-    }
     case "interior": {
-      const url = interiorToUrl(asset.name);
-      useLoader.preload(InteriorLoader, url);
+      void loadInterior(interiorToUrl(asset.name)).catch((e: unknown) =>
+        log.debug("interior prefetch failed: %o", e),
+      );
       break;
     }
     case "terrain":
-      // Load AND parse the .ter (warms the HTTP cache for the terrain
-      // component's own query), then preload every referenced terrain
-      // texture — the largest visual win on join.
+      // Load AND parse the .ter into the terrain view's cache, then
+      // preload every referenced terrain texture — the largest visual
+      // win on join.
       void (async () => {
-        const ter = await loadTerrain(asset.name);
+        const { promise, release } = acquireTerrain(asset.name);
+        const ter = await promise.finally(release);
         for (const name of ter.textureNames) {
-          useTexture.preload(terrainTextureToUrl(name));
+          void loadSharedTexture(terrainTextureToUrl(name));
         }
         log.debug(
           "prefetched %d terrain texture(s) for %s",

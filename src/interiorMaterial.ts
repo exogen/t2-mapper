@@ -1,7 +1,14 @@
 import { Vector3 } from "three";
 import { injectEffectLights } from "./effectLightUniforms";
 import { lightsFragmentBeginByType } from "./lightsChunk";
-import { glslColorSpace, glslDebugGrid } from "./shaderUtils";
+import {
+  glslColorSpace,
+  glslDebugGrid,
+  insertAfterChunk,
+  insertBeforeChunk,
+  replaceChunk,
+  type ShaderSource,
+} from "./shaderUtils";
 
 /**
  * Interior material shader modifications for MeshLambertMaterial.
@@ -40,7 +47,7 @@ export type InteriorLightingOptions = {
 };
 
 export function injectInteriorLighting(
-  shader: any,
+  shader: ShaderSource,
   options: InteriorLightingOptions,
 ): void {
   const isOutsideVisible = options.surfaceOutsideVisible ?? false;
@@ -58,10 +65,10 @@ export function injectInteriorLighting(
   };
 
   // Add color space functions and uniform
-  shader.fragmentShader = shader.fragmentShader.replace(
-    "#include <common>",
-    `#include <common>
-${glslColorSpace}
+  shader.fragmentShader = insertAfterChunk(
+    shader.fragmentShader,
+    "common",
+    `${glslColorSpace}
 ${glslDebugGrid}
 uniform bool useSceneLighting;
 uniform vec3 interiorDebugColor;
@@ -74,8 +81,9 @@ uniform vec3 interiorDebugColor;
   // pass added after fog (injectEffectLights).
   if (options.dynamicLights) {
     injectEffectLights(shader);
-    shader.fragmentShader = shader.fragmentShader.replace(
-      "#include <lights_fragment_begin>",
+    shader.fragmentShader = replaceChunk(
+      shader.fragmentShader,
+      "lights_fragment_begin",
       lightsFragmentBeginByType({ punctual: "RE_Direct_EffectLightIgnore" }),
     );
   }
@@ -84,8 +92,9 @@ uniform vec3 interiorDebugColor;
   // Since three r183, MeshLambertMaterial DOES apply IBL when
   // scene.environment is set — we never set it, so only the lightmap
   // texel matters here. Don't set scene.environment without revisiting.
-  shader.fragmentShader = shader.fragmentShader.replace(
-    "#include <lights_fragment_maps>",
+  shader.fragmentShader = replaceChunk(
+    shader.fragmentShader,
+    "lights_fragment_maps",
     `// Lightmap handled in custom output calculation
 #ifdef USE_LIGHTMAP
   vec4 lightMapTexel = texture2D( lightMap, vLightMapUv );
@@ -94,8 +103,9 @@ uniform vec3 interiorDebugColor;
 
   // Override outgoingLight with Torque-style gamma-space calculation
   // Using #include <opaque_fragment> as a stable replacement target (it consumes outgoingLight)
-  shader.fragmentShader = shader.fragmentShader.replace(
-    "#include <opaque_fragment>",
+  shader.fragmentShader = insertBeforeChunk(
+    shader.fragmentShader,
+    "opaque_fragment",
     `// Torque-style lighting: output = clamp(lighting × texture, 0, 1) in sRGB space
 // Get texture in sRGB space (undo Three.js linear decode)
 vec3 textureSRGB = torqueLinearToSRGB(diffuseColor.rgb);
@@ -135,14 +145,14 @@ vec3 resultLinear = torqueSRGBToLinear(resultSRGB);
 
 // Reassign outgoingLight before opaque_fragment consumes it
 outgoingLight = resultLinear + totalEmissiveRadiance;
-
-#include <opaque_fragment>`,
+`,
   );
 
   // Add debug grid overlay AFTER opaque_fragment sets gl_FragColor
   // This ensures our debug visualization isn't affected by the Torque lighting calculations
-  shader.fragmentShader = shader.fragmentShader.replace(
-    "#include <tonemapping_fragment>",
+  shader.fragmentShader = insertBeforeChunk(
+    shader.fragmentShader,
+    "tonemapping_fragment",
     `// Debug mode: overlay colored grid on top of normal rendering
 // Blue grid = SurfaceOutsideVisible (receives scene ambient light)
 // Red grid = inside surface (no scene ambient light)
@@ -151,7 +161,6 @@ outgoingLight = resultLinear + totalEmissiveRadiance;
   float gridIntensity = torqueDebugGrid(vMapUv, 4.0, 1.5);
   gl_FragColor.rgb = mix(gl_FragColor.rgb, interiorDebugColor, gridIntensity * 0.1);
 #endif
-
-#include <tonemapping_fragment>`,
+`,
   );
 }

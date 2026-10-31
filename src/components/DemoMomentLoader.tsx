@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import { useFrame } from "@react-three/fiber";
 import { useStore } from "zustand";
 import { engineStore, useEngineSelector } from "../state/engineStore";
 import { useDemoLoad } from "../state/demoLoadStore";
@@ -13,7 +12,8 @@ import {
 import { parseDemoMoment, type DemoMomentCamera } from "./demoMoment";
 import { useDemoQueryState, useDemoTimeQueryState } from "./useQueryParams";
 import { createLogger } from "../logger";
-import { FramePriority } from "./framePriority";
+import { FramePriority } from "../engine/framePriority";
+import { useEngineFrame } from "./useEngine";
 import { demoSourceUrl } from "../stream/demoSources";
 
 const log = createLogger("demoMoment");
@@ -37,7 +37,7 @@ export function DemoMomentLoader() {
   const recording = useEngineSelector((s) => s.playback.recording);
   const durationMs = useEngineSelector((s) => s.playback.durationMs);
   const sourceUrl = useDemoLoad((s) => s.sourceUrl);
-  // Set by StreamingController once it has taken the recording up — the
+  // Set by StreamPlaybackSession once it has taken the recording up — the
   // same effect that snapshots the seek nonce as "already handled" and
   // resets the camera mode. A seek or a camera change made before that
   // effect runs is swallowed by it, which is how a link landed at 0:03.
@@ -124,7 +124,7 @@ export function DemoMomentLoader() {
 
   // A player follow can only be armed once that player has a body at
   // the new time; look for it each frame until it appears.
-  useFrame(() => {
+  useEngineFrame(FramePriority.CameraSelect, () => {
     const pending = pendingFollowRef.current;
     if (!pending) return;
     const playback = engineStore.getState().playback;
@@ -160,7 +160,7 @@ export function DemoMomentLoader() {
       followFlagSlot: null,
     });
     applyOrbit(pending.camera);
-  }, FramePriority.CameraSelect);
+  });
 
   return null;
 }

@@ -1,80 +1,58 @@
 import {
-  createContext,
   type Dispatch,
   ReactNode,
   type SetStateAction,
-  useCallback,
-  useContext,
   useEffect,
-  useMemo,
+  useLayoutEffect,
   useRef,
-  useState,
 } from "react";
+import { useStoreWithEqualityFn } from "zustand/traditional";
+import { shallow } from "zustand/shallow";
 import { useFogQueryState, useModeQueryState } from "./useQueryParams";
 import { useTouchDevice } from "./useTouchDevice";
 import { useDataSource } from "../state/gameEntityStore";
-import { cameraTourStore } from "../state/cameraTourStore";
-import { modeFeatureAccess } from "./modeFeatureAccess";
+import { applyModeFeatureAccess } from "./modeFeatureAccess";
 import {
-  DEFAULT_TEAM_COLOR_SCHEME,
-  TEAM_COLOR_SCHEMES,
-  type TeamColorScheme,
-} from "./iffTheme";
+  clearFogEnabledOverride,
+  readPersistedSettings,
+  selectDebugMode,
+  selectFogEnabled,
+  setPreference,
+  settingsStore,
+  updateHudPreference,
+  type CcPlayerNames,
+  type HudPosition,
+  type HudStyle,
+  type IffVisibility,
+  type MatchHudStyle,
+  type Preferences,
+  type ScoreStyle,
+  type ServerBrowserView,
+  type SettingsState,
+  type TouchMode,
+} from "../state/settingsStore";
+import type { TeamColorScheme } from "../iffTheme";
 
-/** When to show player names under command circuit dot markers. */
-export type CcPlayerNames = "always" | "hover" | "never";
-const CC_PLAYER_NAMES_VALUES: readonly CcPlayerNames[] = [
-  "always",
-  "hover",
-  "never",
-];
-
-export type HudStyle = "solid" | "transparent";
-const HUD_STYLE_VALUES: readonly HudStyle[] = ["solid", "transparent"];
-
-export type MatchHudStyle = "classic" | "broadcast";
-const MATCH_HUD_STYLE_VALUES: readonly MatchHudStyle[] = [
-  "classic",
-  "broadcast",
-];
-
-export type ScoreStyle = "classic" | "competition";
-const SCORE_STYLE_VALUES: readonly ScoreStyle[] = ["classic", "competition"];
-
-export type HudPosition = "left" | "right";
-type HudPreference = { enabled: boolean; position: HudPosition };
-
-/** Visibility of the player's world-space IFF triangle and nameplate. */
-export type IffVisibility = "always" | "followed" | "exceptFollowed" | "never";
-const IFF_VISIBILITY_VALUES: readonly IffVisibility[] = [
-  "always",
-  "followed",
-  "exceptFollowed",
-  "never",
-];
-
-/** Server browser layout: the classic table or preview tiles. */
-export type ServerBrowserView = "list" | "tiles";
-const SERVER_BROWSER_VIEW_VALUES: readonly ServerBrowserView[] = [
-  "list",
-  "tiles",
-];
-import { setAdjustAudioSpeedFlag } from "./audioPlaybackRate";
-
-export const MIN_SPEED_MULTIPLIER = 0.01;
-export const MAX_SPEED_MULTIPLIER = 1;
-
-/** Render-scale fractions offered in the Graphics panel (of the standard
- *  render resolution: devicePixelRatio clamped to [1, 2]). */
-export const RENDER_SCALE_OPTIONS: readonly number[] = [0.25, 0.5, 0.75, 1];
-
-export const DEFAULT_MOUSE_SENSITIVITY = 32 / 16000; // 0.002
-export const MIN_MOUSE_SENSITIVITY = 1 / 16000;
-export const MAX_MOUSE_SENSITIVITY = 256 / 16000;
+export type {
+  CcPlayerNames,
+  HudPosition,
+  HudStyle,
+  IffVisibility,
+  MatchHudStyle,
+  ScoreStyle,
+  ServerBrowserView,
+  TouchMode,
+} from "../state/settingsStore";
+export {
+  DEFAULT_MOUSE_SENSITIVITY,
+  MAX_MOUSE_SENSITIVITY,
+  MAX_SPEED_MULTIPLIER,
+  MIN_MOUSE_SENSITIVITY,
+  MIN_SPEED_MULTIPLIER,
+  RENDER_SCALE_OPTIONS,
+} from "../state/settingsStore";
 
 type StateSetter<T> = Dispatch<SetStateAction<T>>;
-
-export type TouchMode = "dualStick" | "moveLookStick";
 
 type SettingsContextType = {
   canDisableFog: boolean;
@@ -89,19 +67,14 @@ type SettingsContextType = {
   setAudioEnabled: StateSetter<boolean>;
   animationEnabled: boolean;
   setAnimationEnabled: StateSetter<boolean>;
-  /** Engine-style projected shadows under players and vehicles. */
   shadowsEnabled: boolean;
   setShadowsEnabled: StateSetter<boolean>;
   warriorName: string;
   setWarriorName: StateSetter<string>;
   audioVolume: number;
   setAudioVolume: StateSetter<number>;
-  /** Play the CastGenius commentary track when a demo has one. Off =
-   *  the camera cast still runs, but the audio is never downloaded. */
   commentaryEnabled: boolean;
   setCommentaryEnabled: StateSetter<boolean>;
-  /** Show the commentary's lines as subtitles, scheduled from the cue
-   *  file — works with or without the audio track. */
   commentarySubtitles: boolean;
   setCommentarySubtitles: StateSetter<boolean>;
   adjustAudioSpeed: boolean;
@@ -110,8 +83,6 @@ type SettingsContextType = {
   setSidebarOpen: StateSetter<boolean>;
   fpsLimit: number | null;
   setFpsLimit: StateSetter<number | null>;
-  /** 3D view resolution as a fraction of the standard render resolution
-   *  (devicePixelRatio clamped to [1, 2] — the r3f default). 1 = 100%. */
   renderScale: number;
   setRenderScale: StateSetter<number>;
   showInputOverlay: boolean;
@@ -146,10 +117,8 @@ type SettingsContextType = {
   setServerBrowserView: StateSetter<ServerBrowserView>;
   showIffs: IffVisibility;
   setShowIffs: StateSetter<IffVisibility>;
-  /** Team color scheme used when spectating from the observer "team". */
   observerTeamColors: TeamColorScheme;
   setObserverTeamColors: StateSetter<TeamColorScheme>;
-  /** Player names under command circuit dot markers. */
   ccPlayerNames: CcPlayerNames;
   setCcPlayerNames: StateSetter<CcPlayerNames>;
   followBehindPlayer: boolean;
@@ -167,10 +136,6 @@ type DebugContextType = {
   setLodEnabled: StateSetter<boolean>;
   showFpsMeter: boolean;
   setShowFpsMeter: StateSetter<boolean>;
-  /**
-   * Read other players' packed view angles at the middle of their step
-   * wherever they're drawn: models, beams and follow cameras (playerView.ts).
-   */
   aimCorrection: boolean;
   setAimCorrection: StateSetter<boolean>;
 };
@@ -192,665 +157,189 @@ type ControlsContextType = {
   setInvertJoystick: StateSetter<boolean>;
 };
 
-const SettingsContext = createContext<SettingsContextType | null>(null);
-const DebugContext = createContext<DebugContextType | null>(null);
-const ControlsContext = createContext<ControlsContextType | null>(null);
+function setter<K extends keyof Preferences>(
+  key: K,
+): StateSetter<Preferences[K]> {
+  return (action) => setPreference(key, action);
+}
 
-type PersistedSettings = {
-  fogEnabled?: boolean;
-  highQualityFog?: boolean;
-  speedMultiplier?: number;
-  mouseSensitivity?: number;
-  clickToCycle?: boolean;
-  fov?: number;
-  audioEnabled?: boolean;
-  adjustAudioSpeed?: boolean;
-  animationEnabled?: boolean;
-  shadowsEnabled?: boolean;
-  debugMode?: boolean;
-  touchMode?: TouchMode;
-  warriorName?: string;
-  audioVolume?: number;
-  commentaryEnabled?: boolean;
-  commentarySubtitles?: boolean;
-  invertScroll?: boolean;
-  invertDrag?: boolean;
-  invertJoystick?: boolean;
-  sidebarOpen?: boolean;
-  fpsLimit?: number | null;
-  renderScale?: number;
-  showInputOverlay?: boolean;
-  showChat?: boolean;
-  chatHudStyle?: HudStyle;
-  showMatchHud?: boolean;
-  matchHudStyle?: MatchHudStyle;
-  scoreStyle?: ScoreStyle;
-  showScoreHud?: boolean;
-  scoreHudPosition?: HudPosition;
-  showQuickCamHud?: boolean;
-  quickCamHudPosition?: HudPosition;
-  quickCamHideUnassignedSlots?: boolean;
-  scoreHudStyle?: HudStyle;
-  showReticle?: boolean;
-  showCompass?: boolean;
-  showFpsMeter?: boolean;
-  aimCorrection?: boolean;
-  serverBrowserView?: ServerBrowserView;
-  showIffs?: IffVisibility;
-  observerTeamColors?: TeamColorScheme;
-  ccPlayerNames?: CcPlayerNames;
-  followBehindPlayer?: boolean;
+const settingsActions = {
+  setFogEnabled: ((action) => {
+    setPreference("fogEnabled", action);
+    clearFogEnabledOverride();
+  }) as StateSetter<boolean>,
+  clearFogEnabledOverride: () => clearFogEnabledOverride(),
+  setHighQualityFog: setter("highQualityFog"),
+  setFov: setter("fov"),
+  setAudioEnabled: setter("audioEnabled"),
+  setAnimationEnabled: setter("animationEnabled"),
+  setShadowsEnabled: setter("shadowsEnabled"),
+  setWarriorName: setter("warriorName"),
+  setAudioVolume: setter("audioVolume"),
+  setCommentaryEnabled: setter("commentaryEnabled"),
+  setCommentarySubtitles: setter("commentarySubtitles"),
+  setAdjustAudioSpeed: setter("adjustAudioSpeed"),
+  setSidebarOpen: setter("sidebarOpen"),
+  setFpsLimit: setter("fpsLimit"),
+  setRenderScale: setter("renderScale"),
+  setShowInputOverlay: setter("showInputOverlay"),
+  setShowChat: setter("showChat"),
+  setChatHudStyle: setter("chatHudStyle"),
+  setShowMatchHud: setter("showMatchHud"),
+  setMatchHudStyle: setter("matchHudStyle"),
+  setScoreStyle: setter("scoreStyle"),
+  setShowScoreHud: (enabled: boolean) =>
+    updateHudPreference("score", { enabled }),
+  setScoreHudPosition: (position: HudPosition) =>
+    updateHudPreference("score", { position }),
+  setShowQuickCamHud: (enabled: boolean) =>
+    updateHudPreference("quickCam", { enabled }),
+  setQuickCamHudPosition: (position: HudPosition) =>
+    updateHudPreference("quickCam", { position }),
+  setQuickCamHideUnassignedSlots: setter("quickCamHideUnassignedSlots"),
+  setScoreHudStyle: setter("scoreHudStyle"),
+  setShowReticle: setter("showReticle"),
+  setShowCompass: setter("showCompass"),
+  setServerBrowserView: setter("serverBrowserView"),
+  setShowIffs: setter("showIffs"),
+  setObserverTeamColors: setter("observerTeamColors"),
+  setCcPlayerNames: setter("ccPlayerNames"),
+  setFollowBehindPlayer: setter("followBehindPlayer"),
 };
 
-export function useSettings() {
-  const context = useContext(SettingsContext);
-  if (!context) {
-    throw new Error(
-      "No SettingsContext found. Did you remember to add a <SettingsProvider>?",
-    );
-  }
-  return context;
+function selectSettings(state: SettingsState): SettingsContextType {
+  return {
+    ...settingsActions,
+    canDisableFog: state.access.canDisableFog,
+    fogEnabled: selectFogEnabled(state),
+    highQualityFog: state.highQualityFog,
+    fov: state.fov,
+    audioEnabled: state.audioEnabled,
+    animationEnabled: state.animationEnabled,
+    shadowsEnabled: state.shadowsEnabled,
+    warriorName: state.warriorName,
+    audioVolume: state.audioVolume,
+    commentaryEnabled: state.commentaryEnabled,
+    commentarySubtitles: state.commentarySubtitles,
+    adjustAudioSpeed: state.adjustAudioSpeed,
+    sidebarOpen: state.sidebarOpen,
+    fpsLimit: state.fpsLimit,
+    renderScale: state.renderScale,
+    showInputOverlay: state.showInputOverlay,
+    showChat: state.showChat,
+    chatHudStyle: state.chatHudStyle,
+    showMatchHud: state.showMatchHud,
+    matchHudStyle: state.matchHudStyle,
+    scoreStyle: state.scoreStyle,
+    showScoreHud: state.hudPreferences.score.enabled,
+    scoreHudPosition: state.hudPreferences.score.position,
+    showQuickCamHud: state.hudPreferences.quickCam.enabled,
+    quickCamHudPosition: state.hudPreferences.quickCam.position,
+    quickCamHideUnassignedSlots: state.quickCamHideUnassignedSlots,
+    scoreHudStyle: state.scoreHudStyle,
+    showReticle: state.showReticle,
+    showCompass: state.showCompass,
+    serverBrowserView: state.serverBrowserView,
+    showIffs: state.showIffs,
+    observerTeamColors: state.observerTeamColors,
+    ccPlayerNames: state.ccPlayerNames,
+    followBehindPlayer: state.followBehindPlayer,
+  };
 }
 
-export function useDebug() {
-  const context = useContext(DebugContext);
-  if (!context) {
-    throw new Error(
-      "No DebugContext found. Did you remember to add a <SettingsProvider>?",
-    );
-  }
-  return context;
+const debugActions = {
+  setDebugMode: setter("debugMode"),
+  setRenderOnDemand: setter("renderOnDemand"),
+  setLodEnabled: setter("lodEnabled"),
+  setShowFpsMeter: setter("showFpsMeter"),
+  setAimCorrection: setter("aimCorrection"),
+};
+
+function selectDebug(state: SettingsState): DebugContextType {
+  return {
+    ...debugActions,
+    canShowDebugVisuals: state.access.canShowDebugVisuals,
+    canShowEntityList: state.access.canShowEntityList,
+    debugMode: selectDebugMode(state),
+    renderOnDemand: state.renderOnDemand,
+    lodEnabled: state.lodEnabled,
+    showFpsMeter: state.showFpsMeter,
+    aimCorrection: state.aimCorrection,
+  };
 }
 
-export function useControls() {
-  const context = useContext(ControlsContext);
-  if (!context) {
-    throw new Error(
-      "No ControlsContext found. Did you remember to add a <SettingsProvider>?",
-    );
-  }
-  return context;
+const controlsActions = {
+  setSpeedMultiplier: setter("speedMultiplier"),
+  setMouseSensitivity: setter("mouseSensitivity"),
+  setClickToCycle: setter("clickToCycle"),
+  setTouchMode: setter("touchMode"),
+  setInvertScroll: setter("invertScroll"),
+  setInvertDrag: setter("invertDrag"),
+  setInvertJoystick: setter("invertJoystick"),
+};
+
+function selectControls(state: SettingsState): ControlsContextType {
+  return {
+    ...controlsActions,
+    speedMultiplier: state.speedMultiplier,
+    mouseSensitivity: state.mouseSensitivity,
+    clickToCycle: state.clickToCycle,
+    touchMode: state.touchMode,
+    invertScroll: state.invertScroll,
+    invertDrag: state.invertDrag,
+    invertJoystick: state.invertJoystick,
+  };
 }
 
+/** Viewer preferences. Re-renders only when one of these fields changes. */
+export function useSettings(): SettingsContextType {
+  return useStoreWithEqualityFn(settingsStore, selectSettings, shallow);
+}
+
+export function useDebug(): DebugContextType {
+  return useStoreWithEqualityFn(settingsStore, selectDebug, shallow);
+}
+
+export function useControls(): ControlsContextType {
+  return useStoreWithEqualityFn(settingsStore, selectControls, shallow);
+}
+
+/**
+ * Feeds the settings store what it can't know on its own: the app mode's
+ * restrictions, the `?fog=` URL override, and whether this is a touch
+ * device (the sidebar preference is only restored on non-touch devices).
+ */
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [mode] = useModeQueryState();
   const dataSource = useDataSource();
-  const { canDisableFog, canShowDebugVisuals, canShowEntityList } =
-    modeFeatureAccess(mode, dataSource);
-  const [fogEnabled, setFogEnabled] = useState(true);
-  const [highQualityFog, setHighQualityFog] = useState(false);
-  const [speedMultiplier, setSpeedMultiplier] = useState(0.15);
-  const [mouseSensitivity, setMouseSensitivity] = useState(
-    DEFAULT_MOUSE_SENSITIVITY,
-  );
-  const [clickToCycle, setClickToCycle] = useState(true);
-  const [fov, setFov] = useState(90);
-  const [audioEnabled, setAudioEnabled] = useState(true);
-  const [audioVolume, setAudioVolume] = useState(0.75);
-  const [commentaryEnabled, setCommentaryEnabled] = useState(true);
-  const [commentarySubtitles, setCommentarySubtitles] = useState(false);
-  const [adjustAudioSpeed, setAdjustAudioSpeed] = useState(true);
-  const [animationEnabled, setAnimationEnabled] = useState(true);
-  const [shadowsEnabled, setShadowsEnabled] = useState(true);
-  const [debugMode, setDebugMode] = useState(false);
-  const [touchMode, setTouchMode] = useState<TouchMode>("moveLookStick");
-  const [warriorName, setWarriorName] = useState("MapGenius");
-  const [invertScroll, setInvertScroll] = useState(false);
-  const [invertDrag, setInvertDrag] = useState(false);
-  const [invertJoystick, setInvertJoystick] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [fpsLimit, setFpsLimit] = useState<number | null>(null);
-  const [renderScale, setRenderScale] = useState(1);
-  const [showInputOverlay, setShowInputOverlay] = useState(true);
-  const [showChat, setShowChat] = useState(true);
-  const [chatHudStyle, setChatHudStyle] = useState<HudStyle>("solid");
-  const [showMatchHud, setShowMatchHud] = useState(true);
-  const [matchHudStyle, setMatchHudStyle] = useState<MatchHudStyle>("classic");
-  const [scoreStyle, setScoreStyle] = useState<ScoreStyle>("classic");
-  const [hudPreferences, setHudPreferences] = useState<{
-    score: HudPreference;
-    quickCam: HudPreference;
-  }>({
-    score: { enabled: false, position: "left" },
-    quickCam: { enabled: false, position: "left" },
-  });
-  const [quickCamHideUnassignedSlots, setQuickCamHideUnassignedSlots] =
-    useState(false);
-  const updateHudPreference = useCallback(
-    (hud: "score" | "quickCam", changes: Partial<HudPreference>) => {
-      const other = hud === "score" ? "quickCam" : "score";
-      setHudPreferences((previous) => {
-        const next = { ...previous[hud], ...changes };
-        return {
-          ...previous,
-          [hud]: next,
-          [other]:
-            next.enabled &&
-            previous[other].enabled &&
-            previous[other].position === next.position
-              ? { ...previous[other], enabled: false }
-              : previous[other],
-        };
-      });
-    },
-    [],
-  );
-  const [scoreHudStyle, setScoreHudStyle] = useState<HudStyle>("solid");
-  const [showReticle, setShowReticle] = useState(true);
-  const [showCompass, setShowCompass] = useState(true);
-  const [serverBrowserView, setServerBrowserView] =
-    useState<ServerBrowserView>("list");
-  const [showIffs, setShowIffs] = useState<IffVisibility>("always");
-  const [observerTeamColors, setObserverTeamColors] = useState<TeamColorScheme>(
-    DEFAULT_TEAM_COLOR_SCHEME,
-  );
-  const [ccPlayerNames, setCcPlayerNames] = useState<CcPlayerNames>("always");
-  const [followBehindPlayer, setFollowBehindPlayer] = useState(false);
-  const [renderOnDemand, setRenderOnDemand] = useState(false);
-  const [lodEnabled, setLodEnabled] = useState(true);
-  const [showFpsMeter, setShowFpsMeter] = useState(false);
-  const [aimCorrection, setAimCorrection] = useState(true);
-
   const [fogEnabledOverride, setFogEnabledOverride] = useFogQueryState();
-  const clearFogEnabledOverride = useCallback(() => {
-    setFogEnabledOverride(null);
-  }, [setFogEnabledOverride]);
+  const urlOverrideRef = useRef(fogEnabledOverride);
 
-  const setFogEnabledWithoutOverride: StateSetter<boolean> = useCallback(
-    (value) => {
-      setFogEnabled(value);
-      clearFogEnabledOverride();
-    },
-    [clearFogEnabledOverride],
-  );
+  useLayoutEffect(() => {
+    urlOverrideRef.current = fogEnabledOverride;
+    applyModeFeatureAccess(mode, dataSource, fogEnabledOverride);
+  }, [mode, dataSource, fogEnabledOverride]);
 
-  const settingsContext: SettingsContextType = useMemo(
-    () => ({
-      canDisableFog,
-      fogEnabled: !canDisableFog || (fogEnabledOverride ?? fogEnabled),
-      setFogEnabled: setFogEnabledWithoutOverride,
-      clearFogEnabledOverride,
-      highQualityFog,
-      setHighQualityFog,
-      fov,
-      setFov,
-      audioEnabled,
-      setAudioEnabled,
-      animationEnabled,
-      setAnimationEnabled,
-      shadowsEnabled,
-      setShadowsEnabled,
-      warriorName,
-      setWarriorName,
-      audioVolume,
-      setAudioVolume,
-      commentaryEnabled,
-      setCommentaryEnabled,
-      commentarySubtitles,
-      setCommentarySubtitles,
-      adjustAudioSpeed,
-      setAdjustAudioSpeed,
-      sidebarOpen,
-      setSidebarOpen,
-      fpsLimit,
-      setFpsLimit,
-      renderScale,
-      setRenderScale,
-      showInputOverlay,
-      setShowInputOverlay,
-      showChat,
-      setShowChat,
-      chatHudStyle,
-      setChatHudStyle,
-      showMatchHud,
-      setShowMatchHud,
-      matchHudStyle,
-      setMatchHudStyle,
-      scoreStyle,
-      setScoreStyle,
-      showScoreHud: hudPreferences.score.enabled,
-      setShowScoreHud: (enabled) => updateHudPreference("score", { enabled }),
-      scoreHudPosition: hudPreferences.score.position,
-      setScoreHudPosition: (position) =>
-        updateHudPreference("score", { position }),
-      showQuickCamHud: hudPreferences.quickCam.enabled,
-      setShowQuickCamHud: (enabled) =>
-        updateHudPreference("quickCam", { enabled }),
-      quickCamHudPosition: hudPreferences.quickCam.position,
-      setQuickCamHudPosition: (position) =>
-        updateHudPreference("quickCam", { position }),
-      quickCamHideUnassignedSlots,
-      setQuickCamHideUnassignedSlots,
-      scoreHudStyle,
-      setScoreHudStyle,
-      showReticle,
-      setShowReticle,
-      showCompass,
-      setShowCompass,
-      serverBrowserView,
-      setServerBrowserView,
-      showIffs,
-      setShowIffs,
-      observerTeamColors,
-      setObserverTeamColors,
-      ccPlayerNames,
-      setCcPlayerNames,
-      followBehindPlayer,
-      setFollowBehindPlayer,
-    }),
-    [
-      canDisableFog,
-      fogEnabled,
-      fogEnabledOverride,
-      setFogEnabledWithoutOverride,
-      clearFogEnabledOverride,
-      highQualityFog,
-      fov,
-      audioEnabled,
-      animationEnabled,
-      shadowsEnabled,
-      warriorName,
-      audioVolume,
-      commentaryEnabled,
-      commentarySubtitles,
-      adjustAudioSpeed,
-      sidebarOpen,
-      fpsLimit,
-      renderScale,
-      showInputOverlay,
-      showChat,
-      chatHudStyle,
-      hudPreferences,
-      showMatchHud,
-      matchHudStyle,
-      scoreStyle,
-      updateHudPreference,
-      quickCamHideUnassignedSlots,
-      scoreHudStyle,
-      showReticle,
-      showCompass,
-      serverBrowserView,
-      showIffs,
-      observerTeamColors,
-      ccPlayerNames,
-      followBehindPlayer,
-    ],
-  );
-
-  const debugContext: DebugContextType = useMemo(
-    () => ({
-      canShowDebugVisuals,
-      canShowEntityList,
-      debugMode: canShowDebugVisuals && debugMode,
-      setDebugMode,
-      renderOnDemand,
-      setRenderOnDemand,
-      lodEnabled,
-      setLodEnabled,
-      showFpsMeter,
-      setShowFpsMeter,
-      aimCorrection,
-      setAimCorrection,
-    }),
-    [
-      canShowDebugVisuals,
-      canShowEntityList,
-      debugMode,
-      setDebugMode,
-      renderOnDemand,
-      lodEnabled,
-      showFpsMeter,
-      aimCorrection,
-    ],
-  );
-
-  useEffect(() => {
-    if (canShowEntityList) return;
-    const tour = cameraTourStore.getState();
-    if (tour.animation?.tourType === "debug") tour.cancel();
-  }, [canShowEntityList]);
-
-  const controlsContext: ControlsContextType = useMemo(
-    () => ({
-      speedMultiplier,
-      setSpeedMultiplier,
-      mouseSensitivity,
-      setMouseSensitivity,
-      clickToCycle,
-      setClickToCycle,
-      touchMode,
-      setTouchMode,
-      invertScroll,
-      setInvertScroll,
-      invertDrag,
-      setInvertDrag,
-      invertJoystick,
-      setInvertJoystick,
-    }),
-    [
-      speedMultiplier,
-      setSpeedMultiplier,
-      mouseSensitivity,
-      clickToCycle,
-      touchMode,
-      setTouchMode,
-      invertScroll,
-      invertDrag,
-      invertJoystick,
-    ],
+  // Choosing a fog setting clears the override, which also drops it from
+  // the URL.
+  useEffect(
+    () =>
+      settingsStore.subscribe(
+        (state) => state.fogEnabledOverride,
+        (override) => {
+          if (override === null && urlOverrideRef.current !== null)
+            setFogEnabledOverride(null);
+        },
+      ),
+    [setFogEnabledOverride],
   );
 
   const isTouch = useTouchDevice();
-
-  // Read persisted settings from localStorage.
   useEffect(() => {
-    // Defer until we know whether or not we're on a touch device...
-    if (isTouch == null) return;
-
-    let savedSettings: PersistedSettings = {};
-    try {
-      savedSettings =
-        JSON.parse(localStorage.getItem("settings") ?? "{}") || {};
-    } catch (err) {
-      // Ignore.
-    }
-    if (savedSettings.debugMode != null) {
-      setDebugMode(savedSettings.debugMode);
-    }
-    if (savedSettings.showFpsMeter != null) {
-      setShowFpsMeter(savedSettings.showFpsMeter);
-    }
-    if (typeof savedSettings.aimCorrection === "boolean") {
-      setAimCorrection(savedSettings.aimCorrection);
-    }
-    if (savedSettings.audioEnabled != null) {
-      setAudioEnabled(savedSettings.audioEnabled);
-    }
-    if (savedSettings.animationEnabled != null) {
-      setAnimationEnabled(savedSettings.animationEnabled);
-    }
-    if (savedSettings.shadowsEnabled != null) {
-      setShadowsEnabled(savedSettings.shadowsEnabled);
-    }
-    if (savedSettings.fogEnabled != null) {
-      setFogEnabled(savedSettings.fogEnabled);
-    }
-    if (savedSettings.highQualityFog != null) {
-      setHighQualityFog(savedSettings.highQualityFog);
-    }
-    if (savedSettings.speedMultiplier != null) {
-      setSpeedMultiplier(
-        Math.max(
-          MIN_SPEED_MULTIPLIER,
-          Math.min(MAX_SPEED_MULTIPLIER, savedSettings.speedMultiplier),
-        ),
-      );
-    }
-    if (savedSettings.mouseSensitivity != null) {
-      setMouseSensitivity(
-        Math.max(
-          MIN_MOUSE_SENSITIVITY,
-          Math.min(MAX_MOUSE_SENSITIVITY, savedSettings.mouseSensitivity),
-        ),
-      );
-    }
-    if (savedSettings.fov != null) {
-      setFov(savedSettings.fov);
-    }
-    if (typeof savedSettings.clickToCycle === "boolean") {
-      setClickToCycle(savedSettings.clickToCycle);
-    }
-    if (savedSettings.touchMode != null) {
-      setTouchMode(savedSettings.touchMode);
-    }
-    if (savedSettings.warriorName != null) {
-      setWarriorName(savedSettings.warriorName);
-    }
-    if (savedSettings.audioVolume != null) {
-      setAudioVolume(savedSettings.audioVolume);
-    }
-    if (savedSettings.commentaryEnabled != null) {
-      setCommentaryEnabled(savedSettings.commentaryEnabled);
-    }
-    if (savedSettings.commentarySubtitles != null) {
-      setCommentarySubtitles(savedSettings.commentarySubtitles);
-    }
-    if (savedSettings.adjustAudioSpeed != null) {
-      setAdjustAudioSpeed(savedSettings.adjustAudioSpeed);
-    }
-    if (savedSettings.invertScroll != null) {
-      setInvertScroll(savedSettings.invertScroll);
-    }
-    if (savedSettings.invertDrag != null) {
-      setInvertDrag(savedSettings.invertDrag);
-    }
-    if (savedSettings.invertJoystick != null) {
-      setInvertJoystick(savedSettings.invertJoystick);
-    }
-    if (
-      savedSettings.fpsLimit === null ||
-      Number.isInteger(savedSettings.fpsLimit)
-    ) {
-      setFpsLimit(savedSettings.fpsLimit!);
-    }
-    if (
-      savedSettings.renderScale != null &&
-      RENDER_SCALE_OPTIONS.includes(savedSettings.renderScale)
-    ) {
-      setRenderScale(savedSettings.renderScale);
-    }
-    if (savedSettings.showInputOverlay != null) {
-      setShowInputOverlay(savedSettings.showInputOverlay);
-    }
-    if (savedSettings.showChat != null) {
-      setShowChat(savedSettings.showChat);
-    }
-    if (
-      savedSettings.chatHudStyle != null &&
-      HUD_STYLE_VALUES.includes(savedSettings.chatHudStyle)
-    ) {
-      setChatHudStyle(savedSettings.chatHudStyle);
-    }
-    if (
-      savedSettings.scoreHudStyle != null &&
-      HUD_STYLE_VALUES.includes(savedSettings.scoreHudStyle)
-    ) {
-      setScoreHudStyle(savedSettings.scoreHudStyle);
-    }
-    if (savedSettings.showMatchHud != null) {
-      setShowMatchHud(savedSettings.showMatchHud);
-    }
-    if (
-      savedSettings.matchHudStyle != null &&
-      MATCH_HUD_STYLE_VALUES.includes(savedSettings.matchHudStyle)
-    ) {
-      setMatchHudStyle(savedSettings.matchHudStyle);
-    }
-    if (
-      savedSettings.scoreStyle != null &&
-      SCORE_STYLE_VALUES.includes(savedSettings.scoreStyle)
-    ) {
-      setScoreStyle(savedSettings.scoreStyle);
-    }
-    const scorePosition = savedSettings.scoreHudPosition;
-    const quickCamPosition = savedSettings.quickCamHudPosition;
-    setHudPreferences({
-      score: {
-        position: scorePosition === "right" ? "right" : "left",
-        enabled: savedSettings.showScoreHud ?? false,
-      },
-      quickCam: {
-        position: quickCamPosition === "right" ? "right" : "left",
-        enabled: savedSettings.showQuickCamHud ?? false,
-      },
-    });
-    if (typeof savedSettings.quickCamHideUnassignedSlots === "boolean") {
-      setQuickCamHideUnassignedSlots(savedSettings.quickCamHideUnassignedSlots);
-    }
-    if (savedSettings.showReticle != null) {
-      setShowReticle(savedSettings.showReticle);
-    }
-    if (savedSettings.showCompass != null) {
-      setShowCompass(savedSettings.showCompass);
-    }
-    if (
-      savedSettings.showIffs != null &&
-      IFF_VISIBILITY_VALUES.includes(savedSettings.showIffs)
-    ) {
-      setShowIffs(savedSettings.showIffs);
-    }
-    if (
-      savedSettings.observerTeamColors != null &&
-      savedSettings.observerTeamColors in TEAM_COLOR_SCHEMES
-    ) {
-      setObserverTeamColors(savedSettings.observerTeamColors);
-    }
-    if (
-      savedSettings.ccPlayerNames != null &&
-      CC_PLAYER_NAMES_VALUES.includes(savedSettings.ccPlayerNames)
-    ) {
-      setCcPlayerNames(savedSettings.ccPlayerNames);
-    }
-    if (typeof savedSettings.followBehindPlayer === "boolean") {
-      setFollowBehindPlayer(savedSettings.followBehindPlayer);
-    }
-    if (
-      savedSettings.serverBrowserView != null &&
-      SERVER_BROWSER_VIEW_VALUES.includes(savedSettings.serverBrowserView)
-    ) {
-      setServerBrowserView(savedSettings.serverBrowserView);
-    }
-    if (savedSettings.sidebarOpen != null) {
-      // Don't restore on touch devices!
-      if (!isTouch) {
-        setSidebarOpen(savedSettings.sidebarOpen);
-      }
-    }
+    if (isTouch !== false) return;
+    const { sidebarOpen } = readPersistedSettings();
+    if (sidebarOpen != null) setPreference("sidebarOpen", sidebarOpen);
   }, [isTouch]);
 
-  // Sync adjustAudioSpeed to the AudioEmitter module-level flag.
-  useEffect(() => {
-    setAdjustAudioSpeedFlag(adjustAudioSpeed);
-  }, [adjustAudioSpeed]);
-
-  // Persist settings to localStorage with debouncing to avoid excessive writes
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    // Clear any pending save
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-    }
-
-    // Debounce localStorage writes
-    saveTimerRef.current = setTimeout(() => {
-      const settingsToSave: PersistedSettings = {
-        fogEnabled,
-        highQualityFog,
-        speedMultiplier,
-        mouseSensitivity,
-        clickToCycle,
-        fov,
-        audioEnabled,
-        animationEnabled,
-        shadowsEnabled,
-        debugMode,
-        touchMode,
-        warriorName,
-        audioVolume,
-        commentaryEnabled,
-        commentarySubtitles,
-        adjustAudioSpeed,
-        invertScroll,
-        invertDrag,
-        invertJoystick,
-        sidebarOpen,
-        fpsLimit,
-        renderScale,
-        showInputOverlay,
-        showChat,
-        chatHudStyle,
-        showMatchHud,
-        matchHudStyle,
-        scoreStyle,
-        showScoreHud: hudPreferences.score.enabled,
-        scoreHudPosition: hudPreferences.score.position,
-        showQuickCamHud: hudPreferences.quickCam.enabled,
-        quickCamHudPosition: hudPreferences.quickCam.position,
-        quickCamHideUnassignedSlots,
-        scoreHudStyle,
-        showReticle,
-        showCompass,
-        showFpsMeter,
-        aimCorrection,
-        serverBrowserView,
-        showIffs,
-        observerTeamColors,
-        ccPlayerNames,
-        followBehindPlayer,
-      };
-      try {
-        localStorage.setItem("settings", JSON.stringify(settingsToSave));
-      } catch (err) {
-        // Probably forbidden by browser settings.
-      }
-    }, 500);
-
-    return () => {
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-      }
-    };
-  }, [
-    fogEnabled,
-    highQualityFog,
-    speedMultiplier,
-    mouseSensitivity,
-    clickToCycle,
-    fov,
-    audioEnabled,
-    animationEnabled,
-    shadowsEnabled,
-    debugMode,
-    touchMode,
-    warriorName,
-    audioVolume,
-    commentaryEnabled,
-    commentarySubtitles,
-    adjustAudioSpeed,
-    invertScroll,
-    invertDrag,
-    invertJoystick,
-    sidebarOpen,
-    fpsLimit,
-    renderScale,
-    showInputOverlay,
-    showChat,
-    chatHudStyle,
-    hudPreferences,
-    showMatchHud,
-    matchHudStyle,
-    scoreStyle,
-    quickCamHideUnassignedSlots,
-    scoreHudStyle,
-    showReticle,
-    showCompass,
-    showFpsMeter,
-    aimCorrection,
-    serverBrowserView,
-    showIffs,
-    observerTeamColors,
-    ccPlayerNames,
-    followBehindPlayer,
-  ]);
-
-  return (
-    <SettingsContext.Provider value={settingsContext}>
-      <DebugContext.Provider value={debugContext}>
-        <ControlsContext.Provider value={controlsContext}>
-          {children}
-        </ControlsContext.Provider>
-      </DebugContext.Provider>
-    </SettingsContext.Provider>
-  );
+  return children;
 }

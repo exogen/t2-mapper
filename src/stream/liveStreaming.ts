@@ -16,7 +16,7 @@ import {
   resolveShapeName,
   stripTaggedStringMarkup,
   collectPreloadShapeNames,
-  collectEffectShapeNames,
+  collectShapeConstructorSequences,
   STREAM_TICK_SEC,
   streamTimeToTick,
 } from "./streamHelpers";
@@ -24,7 +24,6 @@ import type { PlayerMove } from "./playerPrediction";
 import type { Vec3 } from "./streamHelpers";
 import type { StreamSnapshot } from "./types";
 import { StreamEngine } from "./StreamEngine";
-import { flagReturnDelaySec } from "./flagReturnTimer";
 import { GhostMessage } from "./entityClassification";
 import type { RelayClient } from "./relayClient";
 import type { WatchCatchupPayload } from "../../relay/types";
@@ -132,21 +131,33 @@ export class LiveStreamAdapter extends StreamEngine {
     return this.packetParser.getDataBlockDataMap()?.get(id);
   }
 
-  private _shapeConstructorCache: Map<string, string[]> | null = null;
+  protected getDataBlockDataMap(): ReadonlyMap<number, ParsedData> | undefined {
+    return this.packetParser.getDataBlockDataMap();
+  }
+
+  /** Rebuilt when datablocks arrive or a catch-up replaces the map. */
+  private _shapeSequences: {
+    dataBlocks: ReadonlyMap<number, ParsedData>;
+    size: number;
+    byShape: Map<string, string[]>;
+  } | null = null;
 
   getShapeConstructorSequences(shapeName: string): string[] | undefined {
-    // Rebuild cache each call since datablocks arrive incrementally.
-    this._shapeConstructorCache = new Map();
-    const dbMap = this.packetParser.getDataBlockDataMap();
-    if (!dbMap) return undefined;
-    for (const [, block] of dbMap) {
-      const shape = block.shape as string | undefined;
-      const seqs = block.sequences as string[] | undefined;
-      if (shape && seqs) {
-        this._shapeConstructorCache.set(shape.toLowerCase(), seqs);
-      }
+    const dataBlocks = this.packetParser.getDataBlockDataMap();
+    if (!dataBlocks) return undefined;
+    let cache = this._shapeSequences;
+    if (
+      !cache ||
+      cache.dataBlocks !== dataBlocks ||
+      cache.size !== dataBlocks.size
+    ) {
+      cache = this._shapeSequences = {
+        dataBlocks,
+        size: dataBlocks.size,
+        byShape: collectShapeConstructorSequences(dataBlocks.values()),
+      };
     }
-    return this._shapeConstructorCache.get(shapeName.toLowerCase());
+    return cache.byShape.get(shapeName.toLowerCase());
   }
 
   protected getTimeSec(): number {
@@ -170,12 +181,6 @@ export class LiveStreamAdapter extends StreamEngine {
     );
   }
 
-  getEffectShapes(): string[] {
-    const dbMap = this.packetParser.getDataBlockDataMap();
-    if (!dbMap) return [];
-    return collectEffectShapeNames(dbMap.values(), (id) => dbMap.get(id));
-  }
-
   /** Changes only when server state arrives, not when client simulation advances. */
   get serverUpdateId(): number {
     return this._serverUpdateId;
@@ -190,7 +195,7 @@ export class LiveStreamAdapter extends StreamEngine {
     this._serverUpdateId++;
     this.lastMoveAck = 0;
     this._snapshot = null;
-    this._snapshotTick = -1;
+    this._shapeSequences = null;
     this.dataBlockClassNames.clear();
     this.observerMode = "fly";
     this.missionName = null;
@@ -201,7 +206,17 @@ export class LiveStreamAdapter extends StreamEngine {
     if (this._snapshot && this._snapshotTick === this.tickCount) {
       return this._snapshot;
     }
-    return this.buildSnapshot();
+    // Default observer camera if none exists
+    this.camera ??= {
+      time: this.getTimeSec(),
+      position: [0, 0, 200],
+      rotation: [0, 0, 0, 1],
+      fov: 90,
+      mode: "observer",
+    };
+    this._snapshot = this.buildSnapshot(false);
+    this._snapshotTick = this.tickCount;
+    return this._snapshot;
   }
 
   stepToTime(
@@ -421,7 +436,6 @@ export class LiveStreamAdapter extends StreamEngine {
         this.clearAllEntities();
         this._ready = false;
         this._snapshot = null;
-        this._snapshotTick = -1;
         this.invalidateHudCache();
         this.observerMode = "fly";
         this.lastMoveAck = 0;
@@ -854,74 +868,5 @@ export class LiveStreamAdapter extends StreamEngine {
       }
     }
     this.processGhostUpdate(ghost);
-  }
-
-  // ── Build snapshot ──
-
-  private buildSnapshot(): StreamSnapshot {
-    const entities = this.buildEntityList();
-    const timeSec = this.getTimeSec();
-    const { chatMessages, serverEvents, audioEvents } =
-      this.buildTimeFilteredEvents(timeSec);
-
-    const {
-      weaponsHud,
-      inventoryHud,
-      backpackHud,
-      teamScores,
-      flagTargets,
-      playerTargets,
-      playerRoster,
-    } = this.buildCachedHudState();
-
-    // Default observer camera if none exists
-    if (!this.camera) {
-      this.camera = {
-        time: timeSec,
-        position: [0, 0, 200],
-        rotation: [0, 0, 0, 1],
-        fov: 90,
-        mode: "observer",
-      };
-    }
-
-    const snapshot: StreamSnapshot = {
-      timeSec,
-      gravity: this.gravity,
-      ghostAlwaysDoneSec: this.ghostAlwaysDoneSec,
-      exhausted: false,
-      camera: this.camera,
-      entities,
-      flagTargets,
-      playerTargets,
-      playerIdentityScope: this.conn.playerIdentity.scope,
-      flags: Array.from(this.conn.flags.values()),
-      controlPlayerGhostId: this.controlPlayerGhostId,
-      flagDroppedAtSec: this.conn.flagDroppedAtSec,
-      flagReturnDelaySec: flagReturnDelaySec(
-        this.gameClassName,
-        this.missionTypeDisplayName,
-      ),
-      playerSensorGroup: this.conn.playerSensorGroup,
-      status: this.lastStatus,
-      chatMessages,
-      serverEvents,
-      audioEvents,
-      weaponsHud,
-      backpackHud,
-      inventoryHud,
-      teamScores,
-      playerRoster,
-      connectedClientId: this.connectedClientId,
-      matchClockMs: this.computeMatchClockMs(timeSec),
-      matchEnded: this.matchEnded,
-      matchEndedAtSec: this.matchEndedAtSec,
-      matchStarted: this.matchStarted,
-      loadInfo: this.serverLoadInfo,
-    };
-
-    this._snapshot = snapshot;
-    this._snapshotTick = this.tickCount;
-    return snapshot;
   }
 }

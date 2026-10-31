@@ -22,7 +22,6 @@ import {
 import { encodeCheckpoint, bytesToBase64 } from "../src/stream/checkpointCodec";
 import { HeadlessWorld, type WorldEntity } from "../src/world/headlessWorld";
 import { loadDtsScene } from "../src/dts/nodeDts";
-import { getActualResourceKey, getSourceAndPath } from "../src/manifest";
 import { registerShapeSequences } from "../src/stream/shapeSequences";
 import { OCCLUDER_SHAPE_TYPES } from "../src/world/colliderPolicy";
 import { ForceFieldState } from "../src/stream/forceFieldState";
@@ -195,22 +194,18 @@ export async function generateDemoCheckpoints(
               }
               if (preparedTicks % 512 === 0) await setImmediate();
               if (preparedTicks++ % 32 !== 0) return;
-              for (const asset of stream.getPreloadAssets()) {
-                if (asset.kind !== "shape" || loadedShapes.has(asset.name))
-                  continue;
-                loadedShapes.add(asset.name);
-                let key: string;
+              // Effect lifetimes read their shapes' sequences.
+              for (const name of stream.getEffectShapes()) {
+                if (loadedShapes.has(name)) continue;
+                loadedShapes.add(name);
+                let file: string;
                 try {
-                  key = getActualResourceKey(asset.name);
+                  file = world.shapeFile(name);
                 } catch {
                   continue;
                 } // Missing cosmetic shapes use the same fallback as playback.
-                const [source, actual] = getSourceAndPath(key);
-                const file = source
-                  ? path.join(assetRoot, "@vl2", source, actual)
-                  : path.join(assetRoot, actual);
                 const scene = await loadDtsScene(file);
-                registerShapeSequences(asset.name, scene.animations);
+                registerShapeSequences(name, scene.animations);
               }
             },
           );

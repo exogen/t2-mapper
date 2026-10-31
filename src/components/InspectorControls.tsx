@@ -1,7 +1,7 @@
 import { CastPanel } from "./CastPanel";
 import { QuickCamPanel } from "./QuickCamPanel";
 import { useCommentaryTracks } from "../state/commentaryTracksStore";
-import { useEffect, useState, useRef, RefObject, memo } from "react";
+import { useEffect, useState, useRef, memo } from "react";
 import { FaRotateRight } from "react-icons/fa6";
 import {
   RENDER_SCALE_OPTIONS,
@@ -44,7 +44,9 @@ import { MapInfoButton } from "./MapInfoButton";
 import { ShowScoresButton } from "./ShowScoresButton";
 import { DebugEntityList } from "./DebugEntityList";
 import { DebugNetworkInfo } from "./DebugNetworkInfo";
-import { TEAM_COLOR_SCHEMES, type TeamColorScheme } from "./iffTheme";
+import { DebugRendererInfo } from "./DebugRendererInfo";
+import type { GameEngine } from "../engine/gameEngine";
+import { TEAM_COLOR_SCHEMES, type TeamColorScheme } from "../iffTheme";
 import buttonStyles from "./Button.module.css";
 import styles from "./InspectorControls.module.css";
 
@@ -68,7 +70,7 @@ export const InspectorControls = memo(function InspectorControls({
   onChooseMap,
   onCancelChoosingMap,
   choosingMap,
-  invalidateRef,
+  engine,
   onClose,
 }: {
   missionName: string;
@@ -80,7 +82,8 @@ export const InspectorControls = memo(function InspectorControls({
   onChooseMap?: () => void;
   onCancelChoosingMap?: () => void;
   choosingMap?: boolean;
-  invalidateRef: RefObject<(() => void) | null>;
+  /** The game canvas's engine, once it's mounted. */
+  engine: GameEngine | null;
   onClose: () => void;
 }) {
   const isTouch = useTouchDevice();
@@ -933,7 +936,7 @@ export const InspectorControls = memo(function InspectorControls({
                       className={styles.ForceRenderButton}
                       title="Force render"
                       aria-label="Force render"
-                      onClick={() => invalidateRef.current?.()}
+                      onClick={() => engine?.invalidate()}
                     >
                       <FaRotateRight />
                     </button>
@@ -944,6 +947,7 @@ export const InspectorControls = memo(function InspectorControls({
                     app unrelated to rendering.
                   </p>
                 </div>
+                {engine && <DebugRendererInfo engine={engine} />}
                 <DebugNetworkInfo />
                 {canShowEntityList && <DebugEntityList />}
                 <div className={styles.DebugActionField}>

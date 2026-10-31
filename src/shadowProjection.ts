@@ -2,10 +2,10 @@
  * The engine's per-object projected shadows (Tribes2.exe shadow.cc:
  * Shadow::prepare FUN_00652e70, build FUN_006531f0, light basis
  * FUN_00652990, tables FUN_00652760, setShadowDetailLevel FUN_00652350),
- * as pure math the ShadowPool drives. Everything here is in Three world
+ * as pure math the shadow pool drives. Everything here is in Three world
  * space (x = Torque y, y = Torque z, z = Torque x).
  */
-import { Matrix4, Vector3 } from "three";
+import { Matrix4, Vector3, type Sphere } from "three";
 
 /** The shadow light is a constant, NOT the mission sun: Torque
  *  (0.57, 0.57, -0.57), here in Three axes. */
@@ -135,6 +135,35 @@ export function shadowLightDir(dist: number, out: Vector3): Vector3 {
     out.normalize();
   }
   return out;
+}
+
+/**
+ * How far along the light a shadow reaches, for a caster of `radius` that is
+ * `dist` from the camera (Shadow::prepare's projection distance).
+ */
+export function shadowReach(radius: number, dist: number): number {
+  return (
+    SHADOW_REACH_FACTOR * radius * (1 - shadowDistanceFade(dist).reachLoss)
+  );
+}
+
+const _footprintDir = new Vector3();
+
+/**
+ * A sphere around everything a shadow can darken: the box from the caster's
+ * centre along the light out to its reach, a radius to either side.
+ */
+export function shadowFootprintSphere(
+  center: Vector3,
+  radius: number,
+  dist: number,
+  target: Sphere,
+): Sphere {
+  const reach = shadowReach(radius, dist);
+  shadowLightDir(dist, _footprintDir);
+  target.center.copy(center).addScaledVector(_footprintDir, reach / 2);
+  target.radius = Math.hypot(reach / 2, radius * Math.SQRT2);
+  return target;
 }
 
 const _xAxis = new Vector3();

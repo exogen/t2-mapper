@@ -201,7 +201,7 @@ function copyPos(pos: [number, number, number]): DirectorVec3 {
 /**
  * Where the entity actually is: mounted entities (players in vehicles)
  * stop receiving their own position — walk to the outermost carrier,
- * like StreamingController's resolveCameraTarget.
+ * like StreamPlaybackSession's resolveCameraTarget.
  */
 function resolvePosition(
   entity: StreamEntity,

@@ -335,7 +335,7 @@ it("releases native weighted-skin bone textures without affecting sibling or sou
 it("initializes a newly selected detail with the current custom skin, lighting, and fade", async () => {
   const { attachShapeLightUniforms, createShapeLightState } =
     await import("../shapeLighting");
-  const { applyFadeAndCloak } = await import("../components/shapeFadeCloak");
+  const { applyFadeAndCloak } = await import("../engine/shapeFadeCloak");
   const data = createDTSTestShape();
   data.materials[0].name = "skins/base.lmale";
   data.objects[0].numMeshes = 2;

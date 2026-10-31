@@ -1,10 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { getUrlForPath, RESOURCE_ROOT_URL } from "../loaders";
-import {
-  findMissionInfo,
-  getMissionList,
-  getStandardTextureResourceKey,
-} from "../manifest";
+import { guiTextureToUrl, RESOURCE_ROOT_URL } from "../loaders";
+import { findMissionInfo, getMissionList } from "../manifest";
 
 /**
  * The app's pick for preview tiles with no map art (NOT a game concept —
@@ -16,13 +12,7 @@ import {
 export const TILE_FALLBACK_ART_URL = `${RESOURCE_ROOT_URL}@vl2/textures.vl2/textures/gui/bg_Hammers.png`;
 
 function loadScreenUrlExact(missionName: string): string | null {
-  try {
-    return getUrlForPath(
-      getStandardTextureResourceKey(`textures/gui/Load_${missionName}`),
-    );
-  } catch {
-    return null;
-  }
+  return guiTextureToUrl(`Load_${missionName}`);
 }
 
 /**

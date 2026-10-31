@@ -13,6 +13,10 @@ import * as checkpoints from "../src/stream/demoCheckpoints";
 import * as demoStreaming from "../src/stream/demoStreaming";
 import * as headlessWorld from "../src/world/headlessWorld";
 import * as timelineScanner from "../src/stream/demoTimelineScanner";
+import {
+  clearShapeSequences,
+  getShapeSequenceDurationSec,
+} from "../src/stream/shapeSequences";
 
 const plan = (
   maxCount: number,
@@ -118,6 +122,32 @@ describe("offline checkpoint generation", () => {
     expect(
       JSON.parse(await fs.readFile(output, "utf8")).checkpoints[0],
     ).not.toHaveProperty("matchStartSec");
+  });
+
+  it("registers effect shape sequences from the game files, skipping missing shapes", async () => {
+    clearShapeSequences();
+    await writeDemo(303);
+    vi.spyOn(
+      demoStreaming.DemoStreamAdapter.prototype,
+      "getEffectShapes",
+    ).mockReturnValue(["disc_explosion.dts", "missing_explosion.dts"]);
+    expect(
+      await generateDemoCheckpoints(
+        file,
+        output,
+        path.resolve("docs/base"),
+        undefined,
+        true,
+        plan(1, 100),
+      ),
+    ).toMatchObject({ count: 1, reused: false });
+    expect(
+      getShapeSequenceDurationSec("disc_explosion.dts", "ambient"),
+    ).toBeGreaterThan(0);
+    expect(
+      getShapeSequenceDurationSec("missing_explosion.dts", "ambient"),
+    ).toBeUndefined();
+    clearShapeSequences();
   });
 
   it("reuses valid completed output and regenerates stale/corrupt local sidecars", async () => {

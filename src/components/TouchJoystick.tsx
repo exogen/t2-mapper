@@ -1,8 +1,13 @@
 import { useEffect, useState } from "react";
 import { create } from "nipplejs";
 import { useControls } from "./SettingsProvider";
-import { useJoystick, type JoystickState } from "./JoystickContext";
+import { setJoystickState, type JoystickState } from "../state/joystickState";
 import styles from "./TouchJoystick.module.css";
+
+const setMoveState = (state: Partial<JoystickState>) =>
+  setJoystickState("move", state);
+const setLookState = (state: Partial<JoystickState>) =>
+  setJoystickState("look", state);
 
 /** Apply styles to nipplejs-generated `.back` and `.front` elements imperatively. */
 function applyNippleStyles(zone: HTMLElement) {
@@ -77,7 +82,6 @@ export function TouchJoystick() {
   const { touchMode } = useControls();
   const [moveZone, setMoveZone] = useState<HTMLDivElement | null>(null);
   const [lookZone, setLookZone] = useState<HTMLDivElement | null>(null);
-  const { setMoveState, setLookState } = useJoystick();
 
   useTouchStick(moveZone, "left", setMoveState);
   useTouchStick(lookZone, "right", setLookState);

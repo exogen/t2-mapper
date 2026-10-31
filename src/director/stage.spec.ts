@@ -129,6 +129,7 @@ import type { FreeSpaceGrid } from "./freeSpace";
 import { cameraBuried, shotPoseAt, subjectVisible } from "./shotPath";
 import { Vector3 } from "three";
 import { orbitPullbackDir } from "../stream/streamHelpers";
+import { directorDataset } from "./directorTestFixtures";
 
 const ANCHOR: DirectorVec3 = [0, 0, 1];
 
@@ -146,24 +147,13 @@ function makeDataset(
       status: "home",
     });
   }
-  return {
+  return directorDataset({
     durationSec: 20,
-    flagSampleStepSec: 0.5,
-    playerSampleStepSec: 1,
-    gameClassName: "CTFGame",
     teams: [{ teamId: 1, name: "Storm" }],
     flagStands: [{ slot: 1, teamId: 1, name: "Storm", pos: ANCHOR }],
-    events: [],
     flagSamples,
     playerSamples,
-    structures: [],
-    structureInventory: [],
-    mortarShots: [],
-    deaths: [],
-    stations: [],
-    playerNames: [],
-    scoreSamples: [],
-  };
+  });
 }
 
 function fixedShot(

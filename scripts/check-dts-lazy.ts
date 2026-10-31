@@ -11,6 +11,7 @@ import {
   isDTSMesh,
   type DTSShape,
 } from "../src/dts/dtsModel";
+import { ASSET_BASE_DIR } from "../src/resourcePaths";
 
 async function buffer(file: string) {
   const bytes = await readFile(file);
@@ -20,7 +21,8 @@ async function buffer(file: string) {
   );
 }
 const files: string[] = [];
-for await (const file of glob("docs/base/**/*.{dts,dsq}")) files.push(file);
+for await (const file of glob(`${ASSET_BASE_DIR}/**/*.{dts,dsq}`))
+  files.push(file);
 files.sort();
 const sequences = new Map<string, ReturnType<typeof parseDSQ>>();
 for (const file of files.filter((file) => file.endsWith(".dsq"))) {

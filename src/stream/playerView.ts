@@ -1,6 +1,7 @@
 import type { Quaternion } from "three";
 import type { StreamEntity } from "./types";
-import { clamp, MAX_PITCH, threeForwardHeading } from "./streamHelpers";
+import { MAX_PITCH, threeForwardHeading } from "./streamHelpers";
+import { clamp } from "../mathUtils";
 
 export interface PlayerViewAngles {
   yaw: number;

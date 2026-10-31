@@ -1,16 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { CausalView } from "./causalView";
 import { canContinueVarietyShot, pickVarietyShot } from "./variety";
+import { directorDataset } from "./directorTestFixtures";
 import type { DirectorDataset, DirectorVec3 } from "./types";
 
 const continuation = { kind: "capperSetup" as const, targetId: 5, flagSlot: 2 };
 
 function dataset(): DirectorDataset {
-  return {
+  return directorDataset({
     durationSec: 90,
-    flagSampleStepSec: 0.5,
-    playerSampleStepSec: 1,
-    gameClassName: "CTFGame",
     teams: [],
     flagStands: [
       { slot: 1, teamId: 1, name: "Storm", pos: [0, 0, 100] },
@@ -31,15 +29,7 @@ function dataset(): DirectorDataset {
       teamId: 1,
       pos: [i * 50, 0, 100] as DirectorVec3,
     })),
-    events: [],
-    structures: [],
-    structureInventory: [],
-    mortarShots: [],
-    deaths: [],
-    stations: [],
-    playerNames: [],
-    scoreSamples: [],
-  };
+  });
 }
 
 describe("capper route validity", () => {

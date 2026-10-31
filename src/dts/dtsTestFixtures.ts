@@ -208,6 +208,9 @@ export function createDTSCollisionTestShape() {
     };
   });
   shape.objects[0].numMeshes = 3;
+  // Bounds enclose the render box, as exported shapes' do.
+  shape.bounds = { min: [-10, -10, -10], max: [10, 10, 10] };
+  shape.radius = 10 * Math.sqrt(3);
   shape.names.push("Collision-1", "LOS-9");
   shape.details.push(
     { ...shape.details[0], nameIndex: 3, size: -1, objectDetail: 1 },

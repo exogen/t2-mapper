@@ -22,6 +22,7 @@ import { matchSorter } from "match-sorter";
 import { getMissionInfo, getMissionList, getSourceAndPath } from "../manifest";
 import { IoMdCloseCircle } from "react-icons/io";
 import orderBy from "lodash.orderby";
+import { useComboboxShortcut } from "./useComboboxShortcut";
 import styles from "./MissionSelect.module.css";
 
 const excludeMissions = new Set([
@@ -219,18 +220,7 @@ export function MissionSelect({
     }
   }, [autoFocus, combobox]);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === "KeyK" && (e.metaKey || e.ctrlKey)) {
-        e.stopPropagation();
-        e.preventDefault();
-        inputRef.current?.focus();
-        combobox.show();
-      }
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [combobox]);
+  useComboboxShortcut(inputRef, combobox);
 
   const selectedMission = missionsByName.get(value);
 

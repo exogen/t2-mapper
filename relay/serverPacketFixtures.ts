@@ -1,9 +1,28 @@
 /**
- * Server packets for specs, packed as a Tribes 2 server packs them.
+ * Server packets for specs: packed as a Tribes 2 server packs them, or
+ * decoded as the parser returns them, plus the relay state they build.
  */
-import { NetEventClassFirst, createDefaultRegistry } from "t2-demo-parser";
+import {
+  GhostStateAccumulator,
+  NetEventClassFirst,
+  createDefaultRegistry,
+  createLiveParser,
+  passiveObserverProtocolState,
+  type PacketData,
+  type PacketParser,
+  type ParsedData,
+} from "t2-demo-parser";
 import { BitStreamWriter } from "./BitStreamWriter.js";
 import { packNetString, writeString } from "./HuffmanWriter.js";
+import { GAME_PROTOCOL_VERSION } from "./shared.js";
+import type { WatchCatchupPayload } from "./types.js";
+import { buildCatchupPayload } from "./watchCatchup.js";
+import {
+  type CatchupDataBlockCache,
+  deserializeCatchupPayload,
+  serializeCatchupPayload,
+} from "./watchSerialize.js";
+import { WatchStateAccumulator } from "./watchState.js";
 
 export const CONNECT_SEQUENCE = 0x0badf00d;
 
@@ -185,4 +204,105 @@ export function serverPacket(
   bs.writeFlag(false);
   bs.writeFlag(false); // no ghosts
   return bs.getBuffer();
+}
+
+/**
+ * A packet as the parser decodes it, carrying only these events.
+ */
+export function decodedPacket(...events: ParsedData[]): PacketData {
+  return {
+    gameState: {},
+    ghosts: [],
+    events: events.map((parsedData) => ({ classId: 0, parsedData })),
+  } as unknown as PacketData;
+}
+
+export const remoteCommandEvent = (
+  funcName: string,
+  ...args: string[]
+): ParsedData => ({ type: "RemoteCommandEvent", funcName, args });
+
+export const remoteCommandPacket = (funcName: string, ...args: string[]) =>
+  decodedPacket(remoteCommandEvent(funcName, ...args));
+
+/**
+ * One `ServerMessage` remote command per message. Each message's first
+ * argument is its type (MsgClientJoin, …) and the rest are its fields.
+ */
+export const serverMessagePacket = (...messages: string[][]) =>
+  decodedPacket(
+    ...messages.map((args) => remoteCommandEvent("ServerMessage", ...args)),
+  );
+
+/**
+ * The catch-up payload a watcher joining now receives: built at epoch 1
+ * for test:28000, then sent through the wire format unless `viaWire` is
+ * false. The parser speaks the game protocol unless one is given.
+ */
+export function testCatchupPayload({
+  watchState = new WatchStateAccumulator(),
+  ghostState = new GhostStateAccumulator(),
+  packetParser = createLiveParser({ protocolVersion: GAME_PROTOCOL_VERSION })
+    .packetParser,
+  epoch = 1,
+  serverAddress = "test:28000",
+  viaWire = true,
+  dataBlockCache,
+}: {
+  watchState?: WatchStateAccumulator;
+  ghostState?: GhostStateAccumulator;
+  packetParser?: PacketParser;
+  epoch?: number;
+  serverAddress?: string;
+  viaWire?: boolean;
+  dataBlockCache?: CatchupDataBlockCache;
+} = {}): WatchCatchupPayload {
+  const payload = buildCatchupPayload({
+    packetParser,
+    ghostState,
+    watchState,
+    epoch,
+    serverAddress,
+  });
+  return viaWire
+    ? deserializeCatchupPayload(
+        serializeCatchupPayload(payload, dataBlockCache),
+      )
+    : payload;
+}
+
+/**
+ * A relay watching a server as a passive observer, with one parser feeding
+ * both accumulators. `send` packs its events (numbered in order) into the
+ * next server packet, applies it and returns the bytes watchers receive.
+ */
+export function watchRelaySource() {
+  const { packetParser, registry } = createLiveParser({
+    protocolVersion: GAME_PROTOCOL_VERSION,
+  });
+  packetParser.setConnectionProtocolState(
+    passiveObserverProtocolState(serverPacket(1)[0]),
+  );
+  const watchState = new WatchStateAccumulator();
+  const ghostState = new GhostStateAccumulator();
+  let packets = 0;
+  let events = 0;
+  return {
+    packetParser,
+    registry,
+    watchState,
+    ghostState,
+    send(...pending: ((seq: number) => ServerEvent)[]): Uint8Array {
+      const packet = serverPacket(++packets, {
+        events: pending.map((event) => event(events++)),
+      });
+      const parsed = packetParser.parsePacket(packet);
+      if (parsed.parseFault)
+        throw new Error(`Unreadable packet: ${parsed.parseFault.message}`);
+      watchState.applyPacket(parsed);
+      ghostState.applyPacket(parsed);
+      return packet;
+    },
+    payload: () => testCatchupPayload({ packetParser, ghostState, watchState }),
+  };
 }

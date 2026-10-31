@@ -5,8 +5,9 @@ import { AnimationMixer, PerspectiveCamera } from "three";
 import { parseDTS } from "../src/dts/dts";
 import { buildDTS } from "../src/dts/dtsBuilder";
 import { mergeDSQ, parseDSQ } from "../src/dts/dsq";
+import { ASSET_BASE_DIR } from "../src/resourcePaths";
 
-const base = process.argv[2] ?? "docs/base";
+const base = process.argv[2] ?? ASSET_BASE_DIR;
 const files: string[] = [];
 for await (const file of glob(path.join(base, "**/*.{dts,dsq}")))
   files.push(file);

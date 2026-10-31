@@ -68,16 +68,38 @@ export class DTSCollisionMesh extends Mesh {
           Math.min(this.frames.length - 1, Math.floor(this.object.frame)),
         )
       ];
-    if (updatedTransforms)
-      updateCollisionTransform(this.object, updatedTransforms);
-    else this.object.updateWorldMatrix(true, false);
+    updateCollisionWorldMatrix(this.object, updatedTransforms);
     this.matrixWorld.copy(this.object.matrixWorld);
     return this.visible;
   }
 }
 
-/** A synchronous collision batch can share ancestor updates across hulls.
- * Discard the set before changing any transforms or yielding to animation. */
+/**
+ * Bring an object's world matrix current for a collision query. A
+ * synchronous collision batch can share ancestor updates across hulls:
+ * discard its set before changing any transforms or yielding to animation.
+ */
+export function updateCollisionWorldMatrix(
+  object: Object3D,
+  updatedTransforms?: Set<Object3D>,
+): void {
+  if (updatedTransforms) updateCollisionTransform(object, updatedTransforms);
+  else object.updateWorldMatrix(true, false);
+}
+
+/** The DTS shape posing every mesh, when they share one. */
+export function dtsCollisionShape(meshes: readonly Mesh[]): DTSShape | null {
+  let shape: DTSShape | null = null;
+  for (const mesh of meshes) {
+    if (!(mesh instanceof DTSCollisionMesh)) return null;
+    let owner = mesh.object.parent;
+    while (owner && !(owner instanceof DTSShape)) owner = owner.parent;
+    if (!owner || (shape && owner !== shape)) return null;
+    shape = owner;
+  }
+  return shape;
+}
+
 function updateCollisionTransform(
   object: Object3D,
   updated: Set<Object3D>,

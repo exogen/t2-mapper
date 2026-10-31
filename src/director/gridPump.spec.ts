@@ -5,11 +5,11 @@
  * fly-by then had no grid to decide with.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { directorDataset, STAND_1, STAND_2 } from "./directorTestFixtures";
 import type {
   DirectorDataset,
   DirectorFlagSample,
   DirectorPlayerSample,
-  DirectorVec3,
   MatchFacts,
 } from "./types";
 
@@ -45,9 +45,6 @@ vi.mock("./freeSpace", async (importOriginal) => ({
 const { planShotsCausal, createSwitcherStream } = await import("./switcher");
 const { CausalView } = await import("./causalView");
 
-const STAND_1: DirectorVec3 = [0, 0, 100];
-const STAND_2: DirectorVec3 = [800, 0, 100];
-
 /** Team-picking from 0 to 75 with the world complete at 1s. */
 function dataset(): DirectorDataset {
   const flagSamples: DirectorFlagSample[] = [];
@@ -76,31 +73,13 @@ function dataset(): DirectorDataset {
       armor: "heavy",
     });
   }
-  return {
-    durationSec: 120,
-    flagSampleStepSec: 0.5,
-    playerSampleStepSec: 1,
-    gameClassName: "CTFGame",
-    teams: [
-      { teamId: 1, name: "Storm" },
-      { teamId: 2, name: "Inferno" },
-    ],
-    flagStands: [
-      { slot: 1, teamId: 1, name: "Storm", pos: STAND_1 },
-      { slot: 2, teamId: 2, name: "Inferno", pos: STAND_2 },
-    ],
+  return directorDataset({
     events: [
       { timeSec: 75, type: "match-start", description: "Match started" },
     ],
     flagSamples,
     playerSamples,
-    structures: [],
-    structureInventory: [],
-    mortarShots: [],
-    deaths: [],
-    stations: [],
     playerNames: [{ targetId: 9, name: "guard", displayName: "Guard" }],
-    scoreSamples: [],
     matchFacts: {
       missionName: null,
       missionDisplayName: null,
@@ -119,7 +98,7 @@ function dataset(): DirectorDataset {
       worldCompleteSec: 1,
       matchSeenRunningSec: null,
     } satisfies MatchFacts,
-  };
+  });
 }
 
 beforeEach(() => {

@@ -19,7 +19,8 @@ export { ghostToSceneObject } from "./ghostToScene";
 export { misToSceneObject } from "./misToScene";
 export {
   torqueToThree,
-  torqueScaleToThree,
+  torqueVecToThree,
+  threeToTorque,
   matrixFToQuaternion,
   torqueAxisAngleToQuaternion,
 } from "./coordinates";

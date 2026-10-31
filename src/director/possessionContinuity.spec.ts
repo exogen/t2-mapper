@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CausalView } from "./causalView";
 import { createSwitcherStream, runSwitcher } from "./switcher";
+import { directorDataset } from "./directorTestFixtures";
 import type {
   DirectorDataset,
   DirectorEvent,
@@ -115,30 +116,7 @@ function fixture(scenario: Scenario): DirectorDataset {
             ],
     });
   }
-  return {
-    durationSec: 90,
-    flagSampleStepSec: 0.5,
-    playerSampleStepSec: 1,
-    gameClassName: "CTFGame",
-    teams: [
-      { teamId: 1, name: "Storm" },
-      { teamId: 2, name: "Inferno" },
-    ],
-    flagStands: [
-      { slot: 1, teamId: 1, name: "Storm", pos: [0, 0, 100] },
-      { slot: 2, teamId: 2, name: "Inferno", pos: [800, 0, 100] },
-    ],
-    flagSamples,
-    events,
-    playerSamples: [],
-    playerNames: [],
-    structures: [],
-    structureInventory: [],
-    mortarShots: [],
-    deaths: [],
-    stations: [],
-    scoreSamples: [],
-  };
+  return directorDataset({ durationSec: 90, flagSamples, events });
 }
 
 function concerns(shot: Shot | undefined, slot: number): boolean {

@@ -8,20 +8,9 @@ import { DebrisHistory, debrisRetention } from "./debrisHistory";
 import { THRUST_BACKWARD, THRUST_DOWN, THRUST_FORWARD } from "./types";
 import { GroundEffectHistory, type GroundActor } from "./groundEffectHistory";
 import { timelineRandom } from "./timelineRandom";
-import {
-  decodeVehicleSteering,
-  wheelRotationAt,
-  type WheelState,
-} from "./vehicleWheels";
-import {
-  updateClientAnimation,
-  type ClientAnimationState,
-} from "./clientAnimation";
-import {
-  PlayerPrediction,
-  type PlayerMove,
-  type PlayerRenderDelta,
-} from "./playerPrediction";
+import { decodeVehicleSteering, wheelRotationAt } from "./vehicleWheels";
+import { updateClientAnimation } from "./clientAnimation";
+import { PlayerPrediction, type PlayerMove } from "./playerPrediction";
 import type {
   PlayerGhostData,
   PlayerPacketData,
@@ -37,7 +26,6 @@ import { collisionState } from "../collision/collisionContext";
 import { ghostToSceneObject } from "../scene/ghostToScene";
 import { updateInteriorAlarm } from "../scene/interiorAlarm";
 import { getImageMountOffset } from "./imageMount";
-import type { SceneObject } from "../scene/types";
 import {
   buildLinearSegment,
   linearSegmentPosition,
@@ -57,8 +45,8 @@ import {
   IFF_GREEN,
   IFF_RED,
 } from "./entityClassification";
+import { clamp } from "../mathUtils";
 import {
-  clamp,
   TICK_DURATION_MS,
   MAX_PITCH,
   CameraMode_OrbitObject,
@@ -71,6 +59,7 @@ import {
   isVec3Like,
   isQuatLike,
   resolveShapeName,
+  collectEffectShapeNames,
   getNumberField,
   isTruthyField,
   resolveTracerVisual,
@@ -90,7 +79,7 @@ import {
   parseColorSegments,
   orientationAlongDirection,
 } from "./streamHelpers";
-import { matrixFToQuaternion } from "../scene/coordinates";
+import { matrixFToQuaternion, torqueToThree } from "../scene/coordinates";
 import type { MatrixF } from "../scene/types";
 import type { Vec3 } from "./streamHelpers";
 import {
@@ -100,16 +89,14 @@ import {
   forceFieldPositionForState,
 } from "./forceFieldState";
 import { isServerMessageCommand } from "../../relay/serverMessageDecode";
+import { flagReturnDelaySec } from "./flagReturnTimer";
 import type {
   ServerLoadInfo,
   BackpackHudState,
   ChatSegment,
   ChatMessage,
-  ImageSlot,
   SoundSlot,
   ThreadState,
-  TurretAim,
-  StreamVisual,
   StreamCamera,
   StreamEntity,
   StreamSnapshot,
@@ -122,8 +109,6 @@ import type {
   FlagTargetInfo,
   WeaponsHudSlot,
   ServerMessageEvent,
-  StreamForceFieldData,
-  LightAnchor,
 } from "./types";
 import {
   explosionExplodeTicks,
@@ -135,7 +120,6 @@ import {
   endActionPickHold,
   parkActionSlot,
   setActionThread,
-  type ActionSlot,
 } from "./actionSlot";
 import { updateShapeThread } from "./shapeThreads";
 import { ImageAnimation } from "./imageAnimation";
@@ -150,6 +134,7 @@ import type {
   GhostingMessageEventData,
 } from "t2-demo-parser";
 import { createLogger } from "../logger";
+import { cloneData } from "../cloneData";
 
 const log = createLogger("StreamEngine");
 
@@ -167,58 +152,42 @@ export type { Vec3 };
 
 // ── Internal mutable entity type ──
 
-export interface MutableEntity {
-  id: string;
+/**
+ * Every field of `T` spelled out, optional ones as possibly undefined: an
+ * object literal of this type can't leave a field out.
+ */
+type EveryField<T> = { [K in keyof Required<T>]: T[K] };
+
+/** StreamEntity fields that buildEntityList derives rather than copies. */
+type DerivedEntityField =
+  | "teamId"
+  | "iffColor"
+  | "linkSourceId"
+  | "linkTargetId"
+  | "mountObjectId"
+  | "spawnTimeSec"
+  | "projectileAgeMS"
+  | "projectileActivateDelayMS"
+  | "forceFieldAlpha";
+
+/**
+ * The simulation's entity: the StreamEntity fields it shares with snapshots,
+ * plus state the simulation keeps to itself.
+ */
+export interface MutableEntity extends Omit<
+  StreamEntity,
+  DerivedEntityField | "ghostIndex" | "className" | "rotation"
+> {
   ghostIndex: number;
   className: string;
+  rotation: [number, number, number, number];
   /** Move tick when this ghost instance first entered scope. */
   spawnTick: number;
-  type: string;
-  dataBlockId?: number;
-  shapeHint?: string;
-  dataBlock?: string;
-  visual?: StreamVisual;
-  direction?: [number, number, number];
-  /** Mounted image slots (0-7). Each has shape, mount bone from datablock. */
-  imageSlots?: (ImageSlot | undefined)[];
-  playerName?: string;
-  /** TargetInfoEvent's resolved typeTag (e.g. "Flag", "_ClientConnection"). */
-  targetTypeName?: string;
-  /**
-   * The name as sent, color codes included (see TargetTable.rawNames).
-   */
-  playerRawName?: string;
-  /**
-   * Generation of `targetId` when this entity took it (see
-   * TargetTable.generations).
-   */
-  targetGeneration?: number;
-  /** Player skin (team skin like "base", "baseb"). */
-  skinName?: string;
-  /** Player preferred skin override (chosen skin like "RandySavage"). */
-  skinPrefName?: string;
-  position?: [number, number, number];
-  rotation: [number, number, number, number];
-  velocity?: [number, number, number];
-  health?: number;
-  energy?: number;
   maxEnergy?: number;
-  /** The player's one action slot (see actionSlot.ts). */
-  actionSlot?: ActionSlot;
   /** pickActionAnimation is held off until then (a ski jump's +0x98c). */
   pickHeldUntilSec?: number;
-  armAction?: number;
-  damageState?: number;
-  destroyedHidden?: boolean;
   playerPrediction?: PlayerPrediction;
-  playerDelta?: PlayerRenderDelta;
-  turretAim?: TurretAim;
-  targetId?: number;
   projectilePhysics?: "linear" | "ballistic" | "seeker";
-  /** Shooter's ghost index from the projectile packet (sourceObject —
-   *  the engine transmits who fired every projectile). */
-  sourceGhostIndex?: number;
-  sourceSlot?: number;
   simulatedVelocity?: [number, number, number];
   gravityMod?: number;
   /** Ticks since the projectile left the muzzle (seeded from currTick). */
@@ -227,13 +196,8 @@ export interface MutableEntity {
    *  its "activate" sequence once this old, then loops "maintain"
    *  (binary-verified, FUN_0062e010 / FUN_0062ee40). */
   projActivateDelayMS?: number;
-  /** Beam projectiles: Torque-space endpoints from the ghost. */
-  beamStart?: [number, number, number];
-  beamEnd?: [number, number, number];
   /** Link beams (ELF/repair): the target's ghost index. */
   linkTargetGhostIndex?: number;
-  /** ShockLanceProjectile: whether the bolt pinned to its target. */
-  beamHit?: boolean;
   /** Precomputed flight segment for linear projectiles (Torque model:
    *  one static-world raycast at spawn, closed-form position per tick). */
   linearSegment?: LinearSegment;
@@ -243,96 +207,29 @@ export interface MutableEntity {
   /** Tick after which contact explodes instead of bouncing. */
   projArmedTick?: number;
   explosionShape?: string;
-  hasExploded?: boolean;
   isExplosion?: boolean;
   expiryTick?: number;
-  /** Engine lifetime (ms) of a spawned explosion entity (see explosionLifetime.ts). */
-  explosionLifetimeMS?: number;
-  /** How far into that lifetime the explosion was when it exploded (its delayMS). */
-  explosionStartAgeMS?: number;
   /** Stream time (getTimeSec) at explode(): the renderer's animation origin. */
   explosionSpawnSec?: number;
-  faceViewer?: boolean;
   /** Explosion datablock's faceViewer, stashed for spawnExplosion — NOT this entity's. */
   explosionFaceViewer?: boolean;
-  explosionDataBlockId?: number;
-  maintainEmitterId?: number;
   sensorGroup?: number;
-  threads?: ThreadState[];
-  falling?: boolean;
-  jetting?: boolean;
-  /** Vehicle jet direction (0 forward, 1 backward, 2 down). */
-  thrustDirection?: number;
-  headPitch?: number;
-  headYaw?: number;
-  /**
-   * See StreamEntity.viewQuantized.
-   */
-  viewQuantized?: boolean;
-  targetRenderFlags?: number;
   /** Ghost index of the object this entity is mounted on (vehicle, etc.).
    *  When set, the entity's rendered position is derived from the mount
    *  target's transform, not from its own ghost position. */
   mountObjectGhostIndex?: number;
-  /** Mount point node on the mount target (0 = pilot, 1+ = passenger/turret). */
-  mountNode?: number;
-  /** ShapeBase sound slots (4 max), including repeated play commands. */
-  soundSlots?: SoundSlot[];
-  /** ShapeBase fade value (0=invisible, 1=fully visible). Matches mFadeVal. */
-  fadeVal?: number;
   /** Active fade animation state. Set when CloakMask fading=true. */
   fadeState?: { fadeOut: boolean; fadeTime: number; elapsed: number };
   /** Whether the cloak is active (mCloaked). */
   cloaked?: boolean;
-  /** Cloak level (0=visible, 1=fully cloaked). Interpolated client-side
-   *  at rate dt*2 per tick (0.5s transition). Binary-verified. */
-  cloakLevel?: number;
-  /** Item mStatic flag (from InitialUpdateMask). Static items (flags at
-   *  flagstand) skip all physics in Item::processTick. */
-  isStaticItem?: boolean;
-  /** Item/ShapeBase built-in dynamic light from datablock. */
-  lightType?: number;
-  /** Projectile light withheld until this age (ms). */
-  lightDelayMS?: number;
-  lightColor?: [number, number, number, number];
-  lightTime?: number;
-  lightRadius?: number;
-  lightOnlyStatic?: boolean;
-  lightAnchor?: LightAnchor;
-
   /** Item velocity interpolation state. The client simulates full physics
    *  (gravity, collision, bounce) for non-static, non-at-rest items. */
   itemPhysics?: {
     velocity: [number, number, number];
     atRest: boolean;
   };
-  label?: string;
-  audioFileName?: string;
-  audioVolume?: number;
-  audioIs3D?: boolean;
-  audioIsLooping?: boolean;
-  audioMinDistance?: number;
-  audioMaxDistance?: number;
-  audioMinLoopGap?: number;
-  audioMaxLoopGap?: number;
-  sceneData?: SceneObject;
-  clientAnimation?: ClientAnimationState;
-  /** WheeledVehicle per-wheel state from ghost data. */
-  wheels?: WheelState[];
-  /** Vehicle steering angle (radians), from ghost data. */
-  steeringYaw?: number;
-  /** Vehicle frozen state (deployed MPB, etc.). */
-  frozen?: boolean;
-  /** Vehicle max steering angle (radians), from VehicleData datablock. */
-  maxSteeringAngle?: number;
-  /** Ghost scale in Three.js axis order (StaticShape PositionMask). */
-  scale?: [number, number, number];
-  /** ForceFieldBare mCurrState (see forceFieldState.ts). */
-  forceFieldState?: number;
   /** ForceFieldBare mCurrPosition, ms along the fade. */
   forceFieldPosition?: number;
-  /** Force field visual data extracted from ForceFieldBareData datablock. */
-  forceFieldData?: StreamForceFieldData;
 }
 
 type RuntimeControlObject = {
@@ -642,7 +539,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (!this.conn.endMatch()) return;
     // Keep receiving protocol/HUD updates, but preserve the final world even
     // if late ghost updates or deletes arrive during the debrief.
-    this.endedEntities = structuredClone(this.buildEntityList());
+    this.endedEntities = cloneData(this.buildEntityList());
   }
 
   /**
@@ -678,6 +575,10 @@ export abstract class StreamEngine implements StreamingPlayback {
   /** Resolve datablock data by numeric ID. */
   abstract getDataBlockData(id: number): ParsedData | undefined;
 
+  /** Every datablock received so far, by ID (the packet parser's map). */
+  protected abstract getDataBlockDataMap():
+    ReadonlyMap<number, ParsedData> | undefined;
+
   /** Get TSShapeConstructor sequence entries for a shape name. */
   abstract getShapeConstructorSequences(
     shapeName: string,
@@ -700,8 +601,21 @@ export abstract class StreamEngine implements StreamingPlayback {
     pitch: number;
   };
 
-  /** DTS shape names for weapon effects that should be preloaded. */
-  abstract getEffectShapes(): string[];
+  /**
+   * DTS shape names for weapon effects that should be preloaded, from every
+   * datablock received so far (from-connect recordings deliver theirs in
+   * packets, not the initial block).
+   */
+  getEffectShapes(): string[] {
+    const dataBlocks = this.getDataBlockDataMap();
+    if (!dataBlocks) return [];
+    // Resolve by ID so a demo's initial-block copy wins, as it does for
+    // every other datablock lookup.
+    return collectEffectShapeNames(
+      Array.from(dataBlocks.keys(), (id) => this.getDataBlockData(id)),
+    );
+  }
+
   /** Category-scoped shape names for getPreloadAssets (per data source). */
   protected abstract getPreloadShapeNames(): string[];
 
@@ -891,7 +805,7 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected restoreSimulationState(
     checkpoint: ReturnType<StreamEngine["captureSimulationState"]>,
   ): void {
-    const { conn, ...state } = structuredClone(checkpoint.state);
+    const { conn, ...state } = cloneData(checkpoint.state);
     this.groundEffectHistory.restore(checkpoint.groundEffects);
     this.debrisHistory.restore(checkpoint.debris);
     // Every restore creates new render lifetimes. Reusing checkpoint IDs would
@@ -1517,80 +1431,6 @@ export abstract class StreamEngine implements StreamingPlayback {
         this.getTimeSec(),
       );
     }
-  }
-
-  protected resetEntity(entity: MutableEntity): void {
-    entity.rotation = [0, 0, 0, 1];
-    entity.hasExploded = undefined;
-    entity.explosionShape = undefined;
-    entity.faceViewer = undefined;
-    entity.explosionFaceViewer = undefined;
-    entity.simulatedVelocity = undefined;
-    entity.projectilePhysics = undefined;
-    entity.gravityMod = undefined;
-    entity.projAgeTicks = undefined;
-    entity.projActivateDelayMS = undefined;
-    entity.linearSegment = undefined;
-    entity.projElasticity = undefined;
-    entity.projFriction = undefined;
-    entity.projArmedTick = undefined;
-    entity.direction = undefined;
-    entity.velocity = undefined;
-    entity.position = undefined;
-    entity.scale = undefined;
-    entity.forceFieldState = undefined;
-    entity.forceFieldPosition = undefined;
-    entity.forceFieldData = undefined;
-    entity.dataBlock = undefined;
-    entity.dataBlockId = undefined;
-    entity.shapeHint = undefined;
-    entity.visual = undefined;
-    entity.targetId = undefined;
-    entity.targetGeneration = undefined;
-    entity.targetRenderFlags = undefined;
-    entity.sensorGroup = undefined;
-    entity.playerName = undefined;
-    entity.playerRawName = undefined;
-    entity.targetTypeName = undefined;
-    entity.imageSlots = undefined;
-    entity.mountObjectGhostIndex = undefined;
-    entity.mountNode = undefined;
-    entity.skinName = undefined;
-    entity.skinPrefName = undefined;
-    entity.falling = undefined;
-    entity.jetting = undefined;
-    entity.thrustDirection = undefined;
-    entity.itemPhysics = undefined;
-    entity.threads = undefined;
-    entity.headPitch = undefined;
-    entity.headYaw = undefined;
-    entity.viewQuantized = undefined;
-    entity.health = undefined;
-    entity.playerPrediction = undefined;
-    entity.playerDelta = undefined;
-    entity.energy = undefined;
-    entity.maxEnergy = undefined;
-    entity.damageState = undefined;
-    entity.destroyedHidden = undefined;
-    entity.turretAim = undefined;
-    entity.fadeVal = undefined;
-    entity.fadeState = undefined;
-    entity.cloaked = undefined;
-    entity.cloakLevel = undefined;
-    entity.actionSlot = undefined;
-    entity.pickHeldUntilSec = undefined;
-    entity.armAction = undefined;
-    entity.explosionDataBlockId = undefined;
-    entity.maintainEmitterId = undefined;
-    entity.soundSlots = undefined;
-    entity.isStaticItem = undefined;
-    entity.lightType = undefined;
-    entity.lightDelayMS = undefined;
-    entity.lightColor = undefined;
-    entity.lightTime = undefined;
-    entity.lightRadius = undefined;
-    entity.lightOnlyStatic = undefined;
-    entity.lightAnchor = undefined;
   }
 
   // ── Apply ghost data ──
@@ -2234,10 +2074,10 @@ export abstract class StreamEngine implements StreamingPlayback {
       const s = data.scale;
       if (entity.className === "ForceFieldBare") {
         if (entity.forceFieldData) {
-          entity.forceFieldData.dimensions = [s.y, s.z, s.x];
+          entity.forceFieldData.dimensions = torqueToThree(s);
         }
       } else {
-        entity.scale = [s.y, s.z, s.x];
+        entity.scale = torqueToThree(s);
       }
     }
 
@@ -3918,13 +3758,70 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   // ── Snapshot building ──
 
+  /**
+   * The current state as a snapshot. Adapters cache it on their own keys;
+   * `exhausted` is true once a demo has played to the end of its data.
+   */
+  protected buildSnapshot(exhausted: boolean): StreamSnapshot {
+    const entities = this.buildEntityList();
+    const timeSec = this.getTimeSec();
+
+    const { chatMessages, serverEvents, audioEvents } =
+      this.buildTimeFilteredEvents(timeSec);
+
+    const {
+      weaponsHud,
+      inventoryHud,
+      backpackHud,
+      teamScores,
+      flagTargets,
+      playerTargets,
+      playerRoster,
+    } = this.buildCachedHudState();
+
+    return {
+      timeSec,
+      gravity: this.gravity,
+      ghostAlwaysDoneSec: this.ghostAlwaysDoneSec,
+      exhausted,
+      camera: this.camera,
+      entities,
+      flagTargets,
+      playerTargets,
+      playerIdentityScope: this.conn.playerIdentity.scope,
+      flags: Array.from(this.conn.flags.values()),
+      controlPlayerGhostId: this.controlPlayerGhostId,
+      flagDroppedAtSec: this.conn.flagDroppedAtSec,
+      flagReturnDelaySec: flagReturnDelaySec(
+        this.gameClassName,
+        this.missionTypeDisplayName,
+      ),
+      playerSensorGroup: this.conn.playerSensorGroup,
+      status: this.lastStatus,
+      chatMessages,
+      serverEvents,
+      audioEvents,
+      weaponsHud,
+      backpackHud,
+      inventoryHud,
+      teamScores,
+      playerRoster,
+      connectedClientId: this.connectedClientId,
+      matchClockMs: this.computeMatchClockMs(timeSec),
+      matchEnded: this.matchEnded,
+      matchEndedAtSec: this.matchEndedAtSec,
+      matchStarted: this.matchStarted,
+      loadInfo: this.serverLoadInfo,
+    };
+  }
+
   /** Build entity list, holding the final world throughout the debrief. */
   protected buildEntityList(): StreamEntity[] {
     if (this.endedEntities) return this.endedEntities;
     const entities: StreamEntity[] = [];
     for (const entity of this.entities.values()) {
       const renderFlags = entity.targetRenderFlags;
-      entities.push({
+      const snapshot: EveryField<StreamEntity> = {
         id: entity.id,
         type: entity.type,
         visual: entity.visual,
@@ -3954,6 +3851,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         lightRadius: entity.lightRadius,
         lightDelayMS: entity.lightDelayMS,
         lightOnlyStatic: entity.lightOnlyStatic,
+        lightAnchor: entity.lightAnchor,
         isStaticItem: entity.isStaticItem,
         mountObjectId:
           entity.mountObjectGhostIndex != null
@@ -4045,7 +3943,8 @@ export abstract class StreamEngine implements StreamingPlayback {
                 entity.forceFieldData.fadeMS,
               )
             : undefined,
-      });
+      };
+      entities.push(snapshot);
     }
     return entities;
   }
@@ -4176,8 +4075,7 @@ export abstract class StreamEngine implements StreamingPlayback {
   /**
    * HUD-derived arrays for a snapshot, rebuilding only the parts whose
    * generation counter (or the backpack's identity) changed since the last
-   * call — steady playback frames reuse the prior arrays. Shared by both
-   * adapters' buildSnapshot().
+   * call — steady playback frames reuse the prior arrays.
    */
   protected buildCachedHudState(): {
     weaponsHud: { slots: WeaponsHudSlot[]; activeIndex: number };

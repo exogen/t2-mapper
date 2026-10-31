@@ -1,13 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
-import type {
-  PacketData,
-  PacketParser,
-  ParsedData,
-  PlayerDataBlock,
-} from "t2-demo-parser";
-import { LiveStreamAdapter } from "./liveStreaming";
+import type { ParsedData, PlayerDataBlock } from "t2-demo-parser";
 import type { MutableEntity } from "./StreamEngine";
-import type { RelayClient } from "./relayClient";
+import { TestLiveStream } from "./streamTestFixtures";
 import { BoxGeometry, Mesh } from "three";
 import {
   clearWorldColliders,
@@ -39,21 +33,18 @@ const pose = {
   move: neutral,
 };
 
-class PlayerStream extends LiveStreamAdapter {
-  readonly player: MutableEntity = {
-    id: "player",
-    ghostIndex: 0,
-    className: "Player",
-    type: "Player",
-    spawnTick: 0,
-    rotation: [0, 0, 0, 1],
-    dataBlockId: 1,
-  };
+class PlayerStream extends TestLiveStream {
+  readonly player: MutableEntity;
 
   constructor(mode: "play" | "watch" = "watch") {
-    super({} as RelayClient, { mode });
-    this.entities.set(this.player.id, this.player);
-    this.entityIdByGhostIndex.set(0, this.player.id);
+    super(mode);
+    this.player = this.addEntity({
+      id: "player",
+      ghostIndex: 0,
+      className: "Player",
+      type: "Player",
+      dataBlockId: 1,
+    });
     this.update(pose);
   }
 
@@ -104,20 +95,18 @@ class PlayerStream extends LiveStreamAdapter {
   ) {
     // Only decoding is stubbed; feedPacket still takes the production acceptance,
     // event/ghost application, acknowledgment and snapshot-invalidation path.
-    const parser = (this as unknown as { packetParser: PacketParser })
-      .packetParser;
-    vi.spyOn(parser, "parsePacket").mockImplementationOnce(() => {
-      if (disposition === "rejected") parser.protocolRejected++;
-      if (disposition === "keepalive") parser.protocolNoDispatch++;
-      return {
-        gameState: { lastMoveAck: ack },
-        events: [],
-        ghosts: [],
-        dnetHeader: { packetType: disposition === "keepalive" ? 1 : 0 },
-      } as unknown as PacketData;
-    });
     // Play mode accepts packets without a watch hydration epoch.
-    this.feedPacket(new Uint8Array([0]));
+    this.feedDecoded(
+      {
+        gameState: { lastMoveAck: ack },
+        dnetHeader: { packetType: disposition === "keepalive" ? 1 : 0 },
+      },
+      disposition === "keepalive"
+        ? "noDispatch"
+        : disposition === "rejected"
+          ? "rejected"
+          : undefined,
+    );
   }
 }
 

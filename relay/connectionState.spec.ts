@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ParsedData } from "t2-demo-parser";
 import { ConnectionState, TargetTable } from "./connectionState.js";
+import { serverMessagePacket } from "./serverPacketFixtures.js";
 import { WatchStateAccumulator } from "./watchState.js";
 
 function connection(clock = { now: 0 }, identityScope = "test") {
@@ -299,19 +300,7 @@ describe("ConnectionState", () => {
 });
 
 describe("relay mission info", () => {
-  const packet = (...args: string[]) =>
-    ({
-      gameState: {},
-      events: [
-        {
-          parsedData: {
-            type: "RemoteCommandEvent",
-            funcName: "ServerMessage",
-            args,
-          },
-        },
-      ],
-    }) as never;
+  const packet = (...args: string[]) => serverMessagePacket(args);
 
   it("takes Classic's mod info as the server name, not the mission", () => {
     const relay = new WatchStateAccumulator();

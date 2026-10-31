@@ -24,7 +24,7 @@ export type DirectorStatus =
 /**
  * Auto-director state for the loaded demo. The scan/plan pipeline runs
  * lazily on the first button press (see startDirector); "playing" is the
- * lean-back mode where DirectorController drives the camera until F or
+ * lean-back mode where directorCamera drives the camera until F or
  * Escape (or the CastGenius button) exits back to free-fly.
  */
 export interface DemoDirectorState {

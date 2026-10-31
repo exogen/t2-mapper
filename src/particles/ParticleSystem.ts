@@ -220,27 +220,32 @@ function rotateAroundAxis(
   ];
 }
 
-function interpolateKeys(
+/** Set `target`'s color and size to the keyframes' values at `t`. */
+function applyKeys(
   keys: ParticleKey[],
   t: number,
-): { r: number; g: number; b: number; a: number; size: number } {
+  target: Pick<Particle, "r" | "g" | "b" | "a" | "size">,
+): void {
   for (let i = 1; i < keys.length; i++) {
     if (keys[i].time >= t) {
       const prev = keys[i - 1];
       const curr = keys[i];
       const span = curr.time - prev.time;
       const f = span > 0 ? (t - prev.time) / span : 0;
-      return {
-        r: prev.r + (curr.r - prev.r) * f,
-        g: prev.g + (curr.g - prev.g) * f,
-        b: prev.b + (curr.b - prev.b) * f,
-        a: prev.a + (curr.a - prev.a) * f,
-        size: prev.size + (curr.size - prev.size) * f,
-      };
+      target.r = prev.r + (curr.r - prev.r) * f;
+      target.g = prev.g + (curr.g - prev.g) * f;
+      target.b = prev.b + (curr.b - prev.b) * f;
+      target.a = prev.a + (curr.a - prev.a) * f;
+      target.size = prev.size + (curr.size - prev.size) * f;
+      return;
     }
   }
   const last = keys[keys.length - 1];
-  return { r: last.r, g: last.g, b: last.b, a: last.a, size: last.size };
+  target.r = last.r;
+  target.g = last.g;
+  target.b = last.b;
+  target.a = last.a;
+  target.size = last.size;
 }
 
 /** lerp(a, b, t) as a new vector. */
@@ -527,15 +532,11 @@ export class EmitterInstance {
     p.pos[1] += p.vel[1] * dt;
     p.pos[2] += p.vel[2] * dt;
 
-    const interp = interpolateKeys(
+    applyKeys(
       this.instanceKeys ?? pData.keys,
       p.currentAge / p.totalLifetime,
+      p,
     );
-    p.r = interp.r;
-    p.g = interp.g;
-    p.b = interp.b;
-    p.a = interp.a;
-    p.size = interp.size;
     p.currentSpin = p.spinSpeed * p.currentAge * SPIN_FACTOR;
   }
 

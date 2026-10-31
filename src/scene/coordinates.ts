@@ -1,19 +1,32 @@
-import { Matrix4, Quaternion } from "three";
+import { Matrix4, Quaternion, type Vector3 } from "three";
 import type { MatrixF, Vec3 } from "./types";
 
+/** A vector as an `{x, y, z}` object (Vec3, Vector3) or an `[x, y, z]` tuple. */
+type VectorLike = Vec3 | readonly number[];
+
+function isTuple(v: VectorLike): v is readonly number[] {
+  return Array.isArray(v);
+}
+
 /**
- * Convert a Torque Vec3 (X-right, Y-forward, Z-up) to Three.js (X-right, Y-up, Z-backward).
- * Swizzle: three.x = torque.y, three.y = torque.z, three.z = torque.x
+ * Convert a Torque vector (X-right, Y-forward, Z-up) to Three.js (X-right,
+ * Y-up, Z-backward). Positions and scales swizzle alike:
+ * three.x = torque.y, three.y = torque.z, three.z = torque.x
  *
  * Note: this is the same swizzle used by getPosition() in mission.ts.
  */
-export function torqueToThree(v: Vec3): [number, number, number] {
-  return [v.y, v.z, v.x];
+export function torqueToThree(v: VectorLike): [number, number, number] {
+  return isTuple(v) ? [v[1], v[2], v[0]] : [v.y, v.z, v.x];
 }
 
-/** Convert a Torque scale Vec3 to Three.js axis order. */
-export function torqueScaleToThree(v: Vec3): [number, number, number] {
-  return [v.y, v.z, v.x];
+/** torqueToThree into an existing Vector3. */
+export function torqueVecToThree(v: VectorLike, out: Vector3): Vector3 {
+  return isTuple(v) ? out.set(v[1], v[2], v[0]) : out.set(v.y, v.z, v.x);
+}
+
+/** Convert a Three.js vector back to Torque axes (torqueToThree's inverse). */
+export function threeToTorque(v: VectorLike): [number, number, number] {
+  return isTuple(v) ? [v[2], v[0], v[1]] : [v.z, v.x, v.y];
 }
 
 /**

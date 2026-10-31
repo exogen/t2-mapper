@@ -1,22 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { ParsedData } from "t2-demo-parser";
-import { LiveStreamAdapter } from "./liveStreaming";
-import type { MutableEntity } from "./StreamEngine";
-import type { RelayClient } from "./relayClient";
+import { TestLiveStream } from "./streamTestFixtures";
 
-class VisibilityStream extends LiveStreamAdapter {
-  readonly player: MutableEntity = {
+class VisibilityStream extends TestLiveStream {
+  player = this.addEntity({
     id: "player",
     ghostIndex: 0,
     className: "Player",
     type: "Player",
-    spawnTick: 0,
-    rotation: [0, 0, 0, 1],
-  };
+  });
 
   constructor() {
-    super({} as RelayClient, { mode: "watch" });
-    this.entities.set(this.player.id, this.player);
+    super("watch", "Player");
   }
 
   update(data: ParsedData) {
@@ -27,9 +22,12 @@ class VisibilityStream extends LiveStreamAdapter {
     for (let i = 0; i < count; i++) this.advanceFades();
   }
 
+  /**
+   * The server reuses the ghost slot: a create starts a new entity.
+   */
   recreate(data: ParsedData) {
-    this.resetEntity(this.player);
-    this.update(data);
+    this.createGhost(0, 1, data);
+    this.player = this.entities.get(this.entityIdByGhostIndex.get(0)!)!;
   }
 }
 

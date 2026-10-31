@@ -2,11 +2,14 @@
  * Audio conversion: .wav → .m4a via ffmpeg. Converted files sit beside their sources; the manifest resolves
  * them by swapping the extension.
  */
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
+import { promisify } from "node:util";
 import { derivedPath } from "./assets";
 
 export const FFMPEG_PATH = process.env.FFMPEG_PATH || "ffmpeg";
+
+const execFileAsync = promisify(execFile);
 
 const toolProbes = new Map<string, boolean>();
 
@@ -158,24 +161,20 @@ export async function convertWav(
     const forcedRate =
       sourceRate === undefined ? undefined : outputSampleRate(sourceRate);
     try {
-      execFileSync(
-        FFMPEG_PATH,
-        [
-          "-y",
-          "-i",
-          wavFile,
-          "-c:a",
-          "aac",
-          ...(forcedRate === undefined ? [] : ["-ar", String(forcedRate)]),
-          "-b:a",
-          bitrate,
-          "-movflags",
-          "+faststart",
-          "-vn",
-          m4aFile,
-        ],
-        { stdio: "pipe" },
-      );
+      await execFileAsync(FFMPEG_PATH, [
+        "-y",
+        "-i",
+        wavFile,
+        "-c:a",
+        "aac",
+        ...(forcedRate === undefined ? [] : ["-ar", String(forcedRate)]),
+        "-b:a",
+        bitrate,
+        "-movflags",
+        "+faststart",
+        "-vn",
+        m4aFile,
+      ]);
       completed++;
     } catch (err: any) {
       failed.push(wavFile);

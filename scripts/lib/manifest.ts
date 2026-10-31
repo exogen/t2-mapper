@@ -8,21 +8,17 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import orderBy from "lodash.orderby";
 import ignore from "ignore";
+import {
+  ASSET_BASE_DIR,
+  winningSourcePath,
+  type ResourceEntry,
+} from "@/src/resourcePaths";
 import { normalizePath } from "@/src/stringUtils";
 import { walkDirectory } from "./fileUtils";
 import { parseMissionScript } from "@/src/mission";
 import type { MountTransformTable } from "@/src/manifest";
 import { extractMountTransforms } from "./mounts";
 import { parseDTS } from "../../src/dts/dts";
-
-export type SourceTuple =
-  // If casing of the path within this source is the same as "first seen" casing
-  | [sourcePath: string]
-  // If casing of the path within this source is different
-  | [sourceName: string, actualPath: string];
-
-/** Resource entry: [firstSeenActualPath, ...sourceTuples] */
-export type ResourceEntry = [firstSeenActualPath: string, ...SourceTuple[]];
 
 export interface MissionEntry {
   resourcePath: string;
@@ -74,25 +70,12 @@ export function archiveSortKey(archivePath: string): string {
   return path.basename(archivePath).toLowerCase();
 }
 
-/** The last (winning) source of a resource entry, with its actual path. */
-export function winningSource(entry: ResourceEntry): {
-  source: string;
-  actualPath: string;
-} {
-  const [firstSeenPath, ...sourceTuples] = entry;
-  const last = sourceTuples[sourceTuples.length - 1];
-  return { source: last[0], actualPath: last[1] ?? firstSeenPath };
-}
-
 /** The on-disk location of a resource's winning source. */
 export function resolveResourcePath(
   baseDir: string,
   entry: ResourceEntry,
 ): string {
-  const { source, actualPath } = winningSource(entry);
-  return source
-    ? path.join(baseDir, "@vl2", source, actualPath)
-    : path.join(baseDir, actualPath);
+  return path.join(baseDir, winningSourcePath(entry));
 }
 
 /**
@@ -128,7 +111,7 @@ export function resolveResourcePath(
  * ```
  */
 export async function buildManifest({
-  baseDir = "docs/base",
+  baseDir = ASSET_BASE_DIR,
   onResource,
 }: {
   baseDir?: string;

@@ -16,8 +16,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import { ASSET_BASE_DIR, winningSource } from "@/src/resourcePaths";
 import {
-  EXTRACTED_BASE_DIR,
   applyExtract,
   derivedPath,
   compareShadowed,
@@ -32,13 +32,12 @@ import { FFMPEG_PATH, convertWav, toolAvailable } from "./lib/convert";
 import {
   buildManifest,
   serializeManifest,
-  winningSource,
   type Manifest,
 } from "./lib/manifest";
 import { createPrompter } from "./lib/prompt";
 
 const MANIFEST_PATH = "src/manifest.json";
-const VL2_ROOT = path.join(EXTRACTED_BASE_DIR, "@vl2");
+const VL2_ROOT = path.join(ASSET_BASE_DIR, "@vl2");
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,

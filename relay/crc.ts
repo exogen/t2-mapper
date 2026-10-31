@@ -1,5 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import {
+  shapeResourcePath,
+  winningSourcePath,
+  type ResourceEntry,
+} from "../src/resourcePaths";
 import { crcLog } from "./logger.js";
 
 // CRC-32 lookup table (reflected polynomial 0xEDB88320)
@@ -49,10 +54,6 @@ export interface CRCDataBlock {
   shapeName: string;
 }
 
-// Manifest types (mirrored from src/manifest.ts)
-type SourceTuple =
-  [sourcePath: string] | [sourcePath: string, actualPath: string];
-type ResourceEntry = [firstSeenPath: string, ...SourceTuple[]];
 interface Manifest {
   resources: Record<string, ResourceEntry>;
 }
@@ -86,12 +87,7 @@ async function resolveGameFile(
   const key = resourcePath.toLowerCase().replace(/\\/g, "/");
   const entry = manifest.resources[key];
   if (!entry) return null;
-  const [firstSeenPath, ...sources] = entry;
-  const [sourcePath, actualPath] = sources[sources.length - 1];
-  if (sourcePath) {
-    return path.join(basePath, "@vl2", sourcePath, actualPath ?? firstSeenPath);
-  }
-  return path.join(basePath, actualPath ?? firstSeenPath);
+  return path.join(basePath, winningSourcePath(entry));
 }
 
 /**
@@ -134,8 +130,10 @@ export async function computeGameCRC(
   );
 
   for (const db of sorted) {
-    const shapePath = `shapes/${db.shapeName}`;
-    const localPath = await resolveGameFile(shapePath, basePath);
+    const localPath = await resolveGameFile(
+      shapeResourcePath(db.shapeName),
+      basePath,
+    );
     if (!localPath) {
       crcLog.warn(
         { objectId: db.objectId, className: db.className, shape: db.shapeName },

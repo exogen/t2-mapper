@@ -19,7 +19,7 @@ const camlog = createLogger("camdbg");
  * observer's fly↔follow modes. The relay only sends neutral moves (no
  * triggers), so the server's camera can't enter orbit mode for us —
  * instead the selected player's ghost is orbited locally
- * (StreamingController's orbitOverride path, which mirrors
+ * (StreamPlaybackSession's orbitOverride path, which mirrors
  * Camera::setOrbitMode rendering) and the command circuit tracks the same
  * target.
  */

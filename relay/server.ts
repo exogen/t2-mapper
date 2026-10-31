@@ -4,6 +4,7 @@ import fsSync from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
+import { ASSET_BASE_DIR } from "../src/resourcePaths";
 import { queryServerList, queryServerInfo } from "./masterQuery.js";
 import {
   GameConnection,
@@ -48,7 +49,7 @@ import type { ClientMessage, ServerMessage, ServerInfo } from "./types.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /** Base path for game files (extracted VL2 contents). */
 const GAME_BASE_PATH =
-  process.env.GAME_BASE_PATH || path.resolve(__dirname, "..", "docs", "base");
+  process.env.GAME_BASE_PATH || path.resolve(__dirname, "..", ASSET_BASE_DIR);
 
 const MANIFEST_PATH =
   process.env.MANIFEST_PATH ||

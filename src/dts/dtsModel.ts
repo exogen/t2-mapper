@@ -7,7 +7,7 @@ import {
   BufferGeometry,
   Camera,
   FrontSide,
-  type Frustum,
+  Frustum,
   Group,
   LOD,
   Material,
@@ -22,6 +22,7 @@ import {
   type Intersection,
   SkinnedMesh,
   Skeleton,
+  Sphere,
   SRGBColorSpace,
   SubtractiveBlending,
   Texture,
@@ -36,7 +37,6 @@ import {
 import { applyDTSMaterialMaps } from "./dtsMaterialMaps";
 import { DTSHierarchy } from "./dtsHierarchy";
 import { intersectsDTSSkinFrustum } from "./dtsSkinBounds";
-import { isDTSImpostor } from "./dtsImpostor";
 import {
   configureDTSImageTexture,
   getDTSImageFrame,
@@ -145,9 +145,7 @@ export class DTSMesh extends Mesh implements NativeMesh {
   override copy(source: this, recursive = true): this {
     super.copy(source, recursive);
     this.binding = source.binding;
-    this.material = Array.isArray(source.material)
-      ? source.material.map(cloneMaterial)
-      : cloneMaterial(source.material);
+    this.material = cloneMaterials(source.material);
     this.ownsGeometry = false;
     this.geometrySource = undefined;
     this.unprocessedGeometry = undefined;
@@ -255,9 +253,7 @@ export class DTSSkinnedMesh extends SkinnedMesh implements NativeMesh {
   override copy(source: this, recursive = true): this {
     super.copy(source, recursive);
     this.binding = source.binding;
-    this.material = Array.isArray(source.material)
-      ? source.material.map(cloneMaterial)
-      : cloneMaterial(source.material);
+    this.material = cloneMaterials(source.material);
     return this;
   }
 }
@@ -269,15 +265,19 @@ export function isDTSMesh(object: Object3D): object is DTSRenderable {
 /** Internal pose helpers are driven by native PropertyBindings, which mark
  * matrixWorldNeedsUpdate when a track writes TRS. Resting helpers stay fixed. */
 export class DTSAnimationTransform extends Bone {
+  /** The pose last composed into `matrix`. */
+  readonly composedPose = new ComposedPose();
   constructor() {
     super();
     this.matrixAutoUpdate = false;
     this.matrixWorldNeedsUpdate = true;
   }
+  override updateMatrix(): void {
+    super.updateMatrix();
+    recordCompose(this, this.composedPose);
+  }
   override updateMatrixWorld(force?: boolean): void {
-    if (!this.matrixAutoUpdate && this.matrixWorldNeedsUpdate)
-      this.updateMatrix();
-    super.updateMatrixWorld(force);
+    updateChangedMatrixWorld(this, this.composedPose, POSE_HELPER, force);
   }
   override updateWorldMatrix(
     parents: boolean,
@@ -296,8 +296,14 @@ export class DTSAnimationTransform extends Bone {
 export class DTSNode extends Bone {
   readonly isDTSNode = true;
   nodeIndex = -1;
+  /** The pose last composed into `matrix`. */
+  readonly composedPose = new ComposedPose();
+  override updateMatrix(): void {
+    super.updateMatrix();
+    recordCompose(this, this.composedPose);
+  }
   override updateMatrixWorld(force?: boolean): void {
-    if (!updateIdentityMatrixWorld(this)) super.updateMatrixWorld(force);
+    updateChangedMatrixWorld(this, this.composedPose, POSE_NODE, force);
   }
   override copy(source: this, recursive = true): this {
     super.copy(source, recursive);
@@ -344,9 +350,7 @@ export class DTSRigidMeshBatch extends SkinnedMesh {
   override copy(source: this, recursive = true): this {
     super.copy(source, recursive);
     this.bindings = source.bindings;
-    this.material = Array.isArray(source.material)
-      ? source.material.map(cloneMaterial)
-      : cloneMaterial(source.material);
+    this.material = cloneMaterials(source.material);
     this.batchState = new DTSMeshBatchState();
     return this;
   }
@@ -374,9 +378,7 @@ export class DTSStaticMeshBatch extends Mesh {
     super.copy(source, recursive);
     this.bindings = source.bindings;
     this.restTransforms = source.restTransforms;
-    this.material = Array.isArray(source.material)
-      ? source.material.map(cloneMaterial)
-      : cloneMaterial(source.material);
+    this.material = cloneMaterials(source.material);
     this.batchState = new DTSMeshBatchState();
     return this;
   }
@@ -464,12 +466,22 @@ export class DTSObject extends Group {
   materialFrame = 0;
   defaultVisibility = 1;
   private visibilityValue = 1;
+  /** The pose last composed into `matrix`. */
+  readonly composedPose = new ComposedPose();
+  override updateMatrix(): void {
+    super.updateMatrix();
+    recordCompose(this, this.composedPose);
+  }
   get opacity() {
     return this.visibilityValue;
   }
   set opacity(value: number) {
     this.visibilityValue = value;
+    const wasVisible = this.visible;
     this.visible = value > 0.01;
+    // Hidden objects skip world-matrix updates; a frozen ancestor won't
+    // refresh this one when it reappears.
+    if (this.visible && !wasVisible) this.matrixWorldNeedsUpdate = true;
     this.traverse((node) => {
       if (isDTSMesh(node)) this.applyMeshOpacity(node);
     });
@@ -500,40 +512,207 @@ export class DTSObject extends Group {
     return this;
   }
   override updateMatrixWorld(force?: boolean): void {
-    if (this.visible && !updateIdentityMatrixWorld(this))
-      super.updateMatrixWorld(force);
+    if (this.visible)
+      updateChangedMatrixWorld(this, this.composedPose, POSE_OBJECT, force);
   }
 }
-/** Most public bones and object controls add no transform of their own. Keep
- * their world matrices and descendants current without composing/multiplying
- * identity matrices. Edited controls retain Three's normal update path. */
-function updateIdentityMatrixWorld(object: Object3D): boolean {
-  const { position, quaternion, scale } = object;
-  if (
-    !object.matrixAutoUpdate ||
-    !object.matrixWorldAutoUpdate ||
-    object.pivot !== null ||
-    object.updateMatrix !== Object3D.prototype.updateMatrix ||
-    position.x !== 0 ||
-    position.y !== 0 ||
-    position.z !== 0 ||
-    quaternion.x !== 0 ||
-    quaternion.y !== 0 ||
-    quaternion.z !== 0 ||
-    quaternion.w !== 1 ||
-    scale.x !== 1 ||
-    scale.y !== 1 ||
-    scale.z !== 1
-  )
-    return false;
-  object.matrix.identity();
-  object.matrixWorld.copy(object.parent?.matrixWorld ?? object.matrix);
+/**
+ * The pose last composed into a node's `matrix` (by the matrix pass or by
+ * a world query composing ahead of it), the version of that matrix, and
+ * the version last propagated to the node's world matrix and children.
+ */
+class ComposedPose {
+  parent: Object3D | null = null;
+  version = 0;
+  propagated = -1;
+  px = NaN;
+  py = NaN;
+  pz = NaN;
+  qx = NaN;
+  qy = NaN;
+  qz = NaN;
+  qw = NaN;
+  sx = NaN;
+  sy = NaN;
+  sz = NaN;
+}
+/** Whether the object's pose differs from the one last composed. */
+function poseDiffers(object: Object3D, pose: ComposedPose): boolean {
+  const { position: p, quaternion: q, scale: s } = object;
+  return !(
+    p.x === pose.px &&
+    p.y === pose.py &&
+    p.z === pose.pz &&
+    q.x === pose.qx &&
+    q.y === pose.qy &&
+    q.z === pose.qz &&
+    q.w === pose.qw &&
+    s.x === pose.sx &&
+    s.y === pose.sy &&
+    s.z === pose.sz
+  );
+}
+/**
+ * Record the object's pose as composed into its matrix: a new matrix
+ * version, unless the same pose was composed again (a query composing a
+ * resting node changes nothing).
+ */
+function recordCompose(object: Object3D, pose: ComposedPose): void {
+  if (!poseDiffers(object, pose)) return;
+  const { position: p, quaternion: q, scale: s } = object;
+  pose.px = p.x;
+  pose.py = p.y;
+  pose.pz = p.z;
+  pose.qx = q.x;
+  pose.qy = q.y;
+  pose.qz = q.z;
+  pose.qw = q.w;
+  pose.sx = s.x;
+  pose.sy = s.y;
+  pose.sz = s.z;
+  pose.version++;
+}
+/** How a node's matrixWorldNeedsUpdate and frozen matrix are treated. */
+interface PoseTracking {
+  /**
+   * Only animation tracks (and three's own updateMatrix) mark this node,
+   * so the pose cache decides: a track that rewrote the same pose, or a
+   * world query that cleared the mark, changes nothing.
+   */
+  markIsTrackWrite: boolean;
+  /** The matrix follows the pose even while frozen (the pose helpers). */
+  composeFrozen: boolean;
+}
+const POSE_NODE: PoseTracking = {
+  markIsTrackWrite: true,
+  composeFrozen: false,
+};
+const POSE_HELPER: PoseTracking = {
+  markIsTrackWrite: true,
+  composeFrozen: true,
+};
+/** Objects also mark themselves when they reappear (see `opacity`). */
+const POSE_OBJECT: PoseTracking = {
+  markIsTrackWrite: false,
+  composeFrozen: false,
+};
+/**
+ * three's updateMatrixWorld, except a node recomposes (and so dirties its
+ * subtree) only when its pose changed since the last compose. Three
+ * recomposes every auto-updated node every frame, which forces every
+ * descendant's world matrix too; most DTS nodes rest, and the mixer
+ * rewrites unchanged poses of paused and clamped actions every frame.
+ * Most public bones and object controls also add no transform of their
+ * own: those keep their world matrix and descendants current by copying
+ * the parent's instead of multiplying by identity.
+ */
+function updateChangedMatrixWorld(
+  object: Object3D,
+  pose: ComposedPose,
+  tracking: PoseTracking,
+  force?: boolean,
+): void {
+  let changed = false;
+  // A new parent (or none) changes the world matrix, not the pose.
+  if (object.parent !== pose.parent) {
+    pose.parent = object.parent;
+    changed = true;
+  }
+  if (refreshPose(object, pose, tracking)) changed = true;
+  // Composed since the last propagation, here or by a world query.
+  if (pose.version !== pose.propagated) changed = true;
+  const composes = object.matrixAutoUpdate || tracking.composeFrozen;
+  if (object.matrixWorldNeedsUpdate && !(tracking.markIsTrackWrite && composes))
+    changed = true;
   object.matrixWorldNeedsUpdate = false;
-  // matrixAutoUpdate normally propagates force, including identity → edited
-  // → identity transitions and children mounted since the previous update.
-  for (let i = 0, n = object.children.length; i < n; i++)
-    object.children[i].updateMatrixWorld(true);
-  return true;
+  if (changed || force) {
+    if (object.matrixWorldAutoUpdate) {
+      const parent = object.parent;
+      if (isIdentityPose(object)) {
+        object.matrixWorld.copy(parent ? parent.matrixWorld : object.matrix);
+      } else if (parent) {
+        object.matrixWorld.multiplyMatrices(parent.matrixWorld, object.matrix);
+      } else {
+        object.matrixWorld.copy(object.matrix);
+      }
+    }
+    pose.propagated = pose.version;
+    force = true;
+  }
+  const children = object.children;
+  for (let i = 0, n = children.length; i < n; i++)
+    children[i].updateMatrixWorld(force);
+}
+/**
+ * Recompose the node's matrix if its pose changed since the last compose.
+ * Returns true when the node composes its own way (a custom updateMatrix),
+ * which always counts as a change.
+ */
+function refreshPose(
+  object: Object3D,
+  pose: ComposedPose,
+  tracking: PoseTracking,
+): boolean {
+  const composes = object.matrixAutoUpdate || tracking.composeFrozen;
+  if (composes && Object.hasOwn(object, "updateMatrix")) {
+    object.updateMatrix();
+    return true;
+  }
+  if (poseDiffers(object, pose)) {
+    if (!composes) recordCompose(object, pose);
+    else if (isIdentityPose(object)) {
+      object.matrix.identity();
+      recordCompose(object, pose);
+    } else object.updateMatrix();
+  }
+  return false;
+}
+/**
+ * Bring one node's local and world matrix up to date from its parent's,
+ * leaving its children alone: the path from a dormant shape to what's
+ * mounted on it.
+ */
+function refreshNodeMatrixWorld(node: Object3D): void {
+  if (node instanceof DTSNode) refreshPose(node, node.composedPose, POSE_NODE);
+  else if (node instanceof DTSAnimationTransform)
+    refreshPose(node, node.composedPose, POSE_HELPER);
+  else if (node instanceof DTSObject)
+    refreshPose(node, node.composedPose, POSE_OBJECT);
+  else if (node.matrixAutoUpdate) node.updateMatrix();
+  if (node.matrixWorldAutoUpdate && node.parent)
+    node.matrixWorld.multiplyMatrices(node.parent.matrixWorld, node.matrix);
+}
+/** Whether the object is part of a DTS shape's own hierarchy, as opposed to
+ * something attached to it (a sound, a mounted image or rider). */
+function isShapeContent(object: Object3D): boolean {
+  return (
+    object instanceof DTSNode ||
+    object instanceof DTSAnimationTransform ||
+    object instanceof DTSObject ||
+    object instanceof DTSDetail ||
+    isDTSMesh(object) ||
+    isDTSMeshBatch(object)
+  );
+}
+/** An auto-updated node with the identity pose and no pivot or custom
+ * updateMatrix: its matrix is the identity. */
+function isIdentityPose(object: Object3D): boolean {
+  const { position: p, quaternion: q, scale: s } = object;
+  return (
+    object.matrixAutoUpdate &&
+    object.pivot === null &&
+    !Object.hasOwn(object, "updateMatrix") &&
+    p.x === 0 &&
+    p.y === 0 &&
+    p.z === 0 &&
+    q.x === 0 &&
+    q.y === 0 &&
+    q.z === 0 &&
+    q.w === 1 &&
+    s.x === 1 &&
+    s.y === 1 &&
+    s.z === 1
+  );
 }
 const materialStates = new WeakMap<
   Material,
@@ -544,6 +723,11 @@ function cloneMaterial<T extends Material>(source: T): T {
   const original = materialStates.get(source);
   if (original) materialStates.set(material, original);
   return material;
+}
+function cloneMaterials<T extends Material>(material: T | T[]): T | T[] {
+  return Array.isArray(material)
+    ? material.map(cloneMaterial)
+    : cloneMaterial(material);
 }
 function originalMaterialState(material: Material) {
   let state = materialStates.get(material);
@@ -590,6 +774,40 @@ const cameraSettings = new WeakMap<
   Camera,
   { viewportHeight: number; lodEnabled: boolean }
 >();
+
+/**
+ * The bounding sphere around a shape's rest bounds: animated limbs and
+ * mounted images (a carried flag, a long barrel) reach past them.
+ */
+const BOUNDS_RADIUS_SCALE = 1.25;
+const BOUNDS_RADIUS_MARGIN = 1;
+let cullCamera: Camera | null = null;
+/** Shapes posed for their reach above the one updating (see reachBounds). */
+let reachDepth = 0;
+const cullFrustum = new Frustum(),
+  cullMatrix = new Matrix4(),
+  cullSphere = new Sphere();
+
+/**
+ * Frustum-cull DTS shapes in the scene matrix updates made until the next
+ * call (null stops culling). A shape outside the camera's view isn't drawn;
+ * unless its reach is in view (see DTSShape.reachBounds), its own nodes and
+ * meshes also skip the matrix pass, while what's attached to it (sounds,
+ * mounted images and riders) stays current. Set it around the
+ * main render only: other renders (previews, shadow silhouettes) see every
+ * shape.
+ */
+export function setDTSCullCamera(camera: Camera | null): void {
+  cullCamera = camera;
+  if (!camera) return;
+  camera.updateWorldMatrix(true, false);
+  cullFrustum.setFromProjectionMatrix(
+    cullMatrix.multiplyMatrices(
+      camera.projectionMatrix,
+      camera.matrixWorldInverse,
+    ),
+  );
+}
 
 /** Supply render settings without visiting every shape or changing overrides. */
 export function setDTSRenderSettings(
@@ -653,6 +871,35 @@ export class DTSShape extends LOD {
   private hierarchy = new DTSHierarchy(this);
   private shapeObjects?: Map<number, DTSObject>;
   private meshBatches?: DTSMeshBatch[];
+  /**
+   * Where this shape still changes what's on screen beyond its own bounds
+   * (a projected shadow's footprint), as a world sphere seen from the cull
+   * camera, or null for nowhere. While that's in view the shape is culled,
+   * not drawn, but stays posed, along with everything it carries.
+   */
+  reachBounds: ((camera: Camera, target: Sphere) => Sphere | null) | null =
+    null;
+  /**
+   * Outside the cull camera's view at the last matrix pass (see
+   * setDTSCullCamera). Culling owns `visible`: a culled shape clears it.
+   */
+  culled = false;
+  /**
+   * Culled with nothing it affects in view: its own nodes and meshes skip
+   * the matrix pass, and its owner may defer its animation.
+   */
+  dormant = false;
+  /**
+   * Brings animation its owner deferred while the shape was dormant up to
+   * date. Runs when the shape comes back into view, before its nodes are
+   * posed, and before collision reads its hulls.
+   */
+  catchUpPose?: () => void;
+  /** Dormant since its content's world matrices were last brought current. */
+  private staleContent = false;
+  private readonly mounts = new Set<Object3D>();
+  /** The nodes from this shape down to its mounts, parents first. */
+  private mountPath?: Object3D[];
   override copy(source: this, recursive = true): this {
     Object3D.prototype.copy.call(this, source, recursive);
     this.autoUpdate = source.autoUpdate;
@@ -685,7 +932,117 @@ export class DTSShape extends LOD {
     this.shapeObjects = undefined;
     this.hierarchy = new DTSHierarchy(this);
     this.meshBatches = undefined;
+    // Culling hid the source, not the copy.
+    if (source.culled) this.visible = true;
     return this;
+  }
+  /**
+   * Keep an object attached to one of this shape's nodes (a mounted image
+   * or rider) current while the shape is dormant, until it's removed from
+   * that node.
+   */
+  keepMountCurrent(object: Object3D): void {
+    if (object.parent === this || this.mounts.has(object)) return;
+    this.mounts.add(object);
+    this.mountPath = undefined;
+    const release = () => {
+      object.removeEventListener("removed", release);
+      this.mounts.delete(object);
+      this.mountPath = undefined;
+    };
+    object.addEventListener("removed", release);
+  }
+  override updateMatrixWorld(force?: boolean): void {
+    if (this.matrixAutoUpdate) this.updateMatrix();
+    if (this.matrixWorldNeedsUpdate || force) {
+      if (this.matrixWorldAutoUpdate) {
+        if (this.parent)
+          this.matrixWorld.multiplyMatrices(
+            this.parent.matrixWorld,
+            this.matrix,
+          );
+        else this.matrixWorld.copy(this.matrix);
+      }
+      this.matrixWorldNeedsUpdate = false;
+      force = true;
+    }
+    const culled = cullCamera !== null && this.outsideCullFrustum();
+    if (culled !== this.culled) {
+      this.culled = culled;
+      this.visible = !culled;
+    }
+    const posedForReach = culled && (reachDepth > 0 || this.reachInView());
+    this.dormant = culled && !posedForReach;
+    if (this.dormant) {
+      this.staleContent = true;
+      this.updateAttachedMatrixWorld();
+      return;
+    }
+    // Queries and track writes while dormant could leave any node behind.
+    if (this.staleContent) {
+      this.staleContent = false;
+      this.catchUpPose?.();
+      force = true;
+    }
+    // Not drawn, so the renderer won't select its detail: do it here, so
+    // the posed meshes are the ones it would draw.
+    if (posedForReach) {
+      this.update(cullCamera!);
+      reachDepth++;
+    }
+    try {
+      const children = this.children;
+      for (let i = 0, n = children.length; i < n; i++)
+        children[i].updateMatrixWorld(force);
+    } finally {
+      if (posedForReach) reachDepth--;
+    }
+  }
+  /**
+   * A world-space sphere around everything posed in this shape (by its
+   * current matrixWorld), padded for animation, or null without bounds.
+   */
+  boundingSphere(target: Sphere): Sphere | null {
+    if (!this.data || !(this.data.radius > 0)) return null;
+    dtsVector(this.data.center, 0, target.center).applyMatrix4(
+      this.matrixWorld,
+    );
+    target.radius =
+      (this.data.radius * BOUNDS_RADIUS_SCALE + BOUNDS_RADIUS_MARGIN) *
+      this.matrixWorld.getMaxScaleOnAxis();
+    return target;
+  }
+  private outsideCullFrustum(): boolean {
+    const sphere = this.boundingSphere(cullSphere);
+    return sphere !== null && !cullFrustum.intersectsSphere(sphere);
+  }
+  private reachInView(): boolean {
+    const sphere = this.reachBounds?.(cullCamera!, cullSphere);
+    return !!sphere && cullFrustum.intersectsSphere(sphere);
+  }
+  /** A dormant shape's sounds and mounts, with the node path to each mount. */
+  private updateAttachedMatrixWorld(): void {
+    const children = this.children;
+    for (let i = 0, n = children.length; i < n; i++)
+      if (!isShapeContent(children[i])) children[i].updateMatrixWorld(true);
+    if (this.mounts.size === 0) return;
+    this.mountPath ??= this.findMountPath();
+    for (const node of this.mountPath) refreshNodeMatrixWorld(node);
+    for (const object of this.mounts) object.updateMatrixWorld(true);
+  }
+  private findMountPath(): Object3D[] {
+    const path = new Set<Object3D>();
+    for (const object of this.mounts) {
+      const chain: Object3D[] = [];
+      let node = object.parent;
+      while (node && node !== this) {
+        chain.push(node);
+        node = node.parent;
+      }
+      if (node === this)
+        for (let i = chain.length - 1; i >= 0; i--) path.add(chain[i]);
+    }
+    return [...path];
   }
   /** Configure meshes added after cloning, before their first render. */
   onMeshAdded(
@@ -842,17 +1199,10 @@ export class DTSShape extends LOD {
       this.selectedDetail = undefined;
       this.selectionCamera = undefined;
     }
-    // Runtime-generated billboard details have no stored triangles. Until a
-    // host supplies an impostor, retain the requested source mesh detail.
-    if (
-      this.data.details[detail]?.subShape < 0 &&
-      !this.children.some(
-        (child) => isDTSImpostor(child) && child.detailIndex === detail,
-      )
-    )
+    // Billboard details have no stored triangles; draw the mesh detail
+    // they were rendered from.
+    if (this.data.details[detail]?.subShape < 0)
       detail = this.data.details[detail].billboard?.detailLevel ?? 0;
-    for (const child of this.children)
-      if (isDTSImpostor(child)) child.visible = child.detailIndex === detail;
     const imageFrames = this.imageFrames;
     for (let i = 0; i < this.imageAnimations.length; i++) {
       const animation = this.imageAnimations[i];

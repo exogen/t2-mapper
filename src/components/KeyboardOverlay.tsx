@@ -9,7 +9,7 @@ import { useRecording } from "./usePlayback";
 import { usePlayerOrbitLocked } from "./usePlayerOrbitLocked";
 import { isRelayRecording } from "../stream/demoDate";
 import { useStore } from "zustand";
-import { useInputMode } from "./InputContext";
+import { useInputMode } from "../state/inputModeStore";
 import {
   MAX_ORBIT_DISTANCE,
   MIN_ORBIT_DISTANCE,
@@ -576,7 +576,7 @@ function CommandCircuitOverlay({
 /**
  * Demo-playback camera controls. F cycles original → free-fly → follow →
  * first-person → original; each mode shows only the inputs it uses. (The
- * behavior lives in DemoCameraController — this only visualizes it.)
+ * behavior lives in demoCameraSelection — this only visualizes it.)
  * Relay (MapGenius) recordings have no original view to return to —
  * their mode cycle skips "original" and detaches in place instead.
  */

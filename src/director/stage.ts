@@ -72,6 +72,7 @@ import {
 } from "./tunables";
 import { orbitPullbackDir } from "../stream/streamHelpers";
 import { cameraSpotsFor, type FreeSpaceGrid } from "./freeSpace";
+import { torqueVecToThree, threeToTorque } from "../scene/coordinates";
 
 /** How often along a shot the subject's visibility is sampled. */
 const STAGE_SAMPLE_SEC = 1;
@@ -193,15 +194,15 @@ function openStageContext(
     const sec = Math.round(v.timeSec);
     let list = vehiclesBySec.get(sec);
     if (!list) vehiclesBySec.set(sec, (list = []));
-    list.push(new Vector3(v.pos[1], v.pos[2], v.pos[0]));
+    list.push(torqueVecToThree(v.pos, new Vector3()));
   }
   _stageCtx = {
     freeSpace,
     tightAcc: 0,
     playersAtSec: playersAtSecFor(dataset),
     tracks,
-    standsThree: dataset.flagStands.map(
-      (st) => new Vector3(st.pos[1], st.pos[2], st.pos[0]),
+    standsThree: dataset.flagStands.map((st) =>
+      torqueVecToThree(st.pos, new Vector3()),
     ),
     vehiclesBySec,
     salientBySec: new Map(),
@@ -968,8 +969,8 @@ function placeFixedFromGrid(
   const subject = path[0]?.pos;
   if (!subject) return false;
   const anchor = shot.center;
-  _anchorThree.set(anchor[1], anchor[2], anchor[0]);
-  for (const spot of cameraSpotsFor(grid, [subject.z, subject.x, subject.y], {
+  torqueVecToThree(anchor, _anchorThree);
+  for (const spot of cameraSpotsFor(grid, threeToTorque(subject), {
     wantDist: shot.radius,
     bearing: shot.startAngle,
   })) {
@@ -1155,7 +1156,7 @@ function stageFollowShot(
   const grid = _stageCtx?.freeSpace;
   const first = path[0].pos;
   if (grid && isRoofed([first.z, first.x, first.y - 1])) {
-    for (const spot of cameraSpotsFor(grid, [first.z, first.x, first.y], {
+    for (const spot of cameraSpotsFor(grid, threeToTorque(first), {
       wantDist: wanted,
     })) {
       const dx = spot[0] - first.z;
@@ -1501,7 +1502,7 @@ function openness(eye: Vector3, aim: Vector3, standRadius: number): number {
     const rz = bx * sin + bz * cos;
     // Three (x, y, z) → Torque (z, x, y); probe level with the eye.
     const hit = castWorldRay(
-      [eye.z, eye.x, eye.y],
+      threeToTorque(eye),
       [eye.z + rz * need, eye.x + rx * need, eye.y],
       { includeStatics: true },
     );
@@ -1522,13 +1523,13 @@ function salientAt(timeSec: number): SalientEntity[] {
   if (cached) return cached;
   cached = [];
   for (const p of ctx.playersAtSec.get(sec) ?? []) {
-    cached.push({ pos: new Vector3(p.pos[1], p.pos[2], p.pos[0]), weight: 1 });
+    cached.push({ pos: torqueVecToThree(p.pos, new Vector3()), weight: 1 });
   }
   for (const track of ctx.tracks.values()) {
     const s = sampleAt(track.samples, sec);
     if (s && sec - s.timeSec <= 3) {
       cached.push({
-        pos: new Vector3(s.pos[1], s.pos[2], s.pos[0]),
+        pos: torqueVecToThree(s.pos, new Vector3()),
         weight: 3,
       });
     }

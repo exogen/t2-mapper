@@ -1,16 +1,15 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { WatchStateAccumulator } from "../../relay/watchState";
+import {
+  remoteCommandPacket,
+  serverMessagePacket,
+  testCatchupPayload,
+} from "../../relay/serverPacketFixtures";
 import { LiveStreamAdapter } from "./liveStreaming";
-import { buildCatchupPayload } from "../../relay/watchCatchup";
-import { createLiveParser, GhostStateAccumulator } from "t2-demo-parser";
+import { createLiveParser } from "t2-demo-parser";
 import type { RelayClient } from "./relayClient";
 
-const command = (funcName: string, ...args: string[]) =>
-  ({
-    gameState: {},
-    events: [{ parsedData: { type: "RemoteCommandEvent", funcName, args } }],
-  }) as never;
-const message = (...args: string[]) => command("ServerMessage", ...args);
+const message = (...args: string[]) => serverMessagePacket(args);
 afterEach(() => vi.useRealTimers());
 
 it("holds the relay catch-up clock at MissionEnd and resumes on the next mission", () => {
@@ -19,7 +18,7 @@ it("holds the relay catch-up clock at MissionEnd and resumes on the next mission
   const state = new WatchStateAccumulator();
   state.applyPacket(message("MsgSystemClock", "", "20", "1200000"));
   vi.advanceTimersByTime(5000);
-  state.applyPacket(command("MissionEnd", "1"));
+  state.applyPacket(remoteCommandPacket("MissionEnd", "1"));
   vi.advanceTimersByTime(60000);
   state.applyPacket(message("MsgDebriefResult", ""));
   expect(state.getHudState().clock).toEqual({
@@ -28,13 +27,11 @@ it("holds the relay catch-up clock at MissionEnd and resumes on the next mission
   });
 
   // The normal relay payload also seeds an already-ended browser session.
-  const { packetParser } = createLiveParser();
-  const payload = buildCatchupPayload({
-    packetParser,
-    ghostState: new GhostStateAccumulator(),
+  const payload = testCatchupPayload({
     watchState: state,
-    epoch: 1,
+    packetParser: createLiveParser().packetParser,
     serverAddress: "localhost:28000",
+    viaWire: false,
   });
   const viewer = new LiveStreamAdapter({} as RelayClient, { mode: "watch" });
   viewer.hydrate(payload);
@@ -74,13 +71,11 @@ it("keeps a running relay clock and hydrated world active after welcome debrief 
     clock: { durationMs: 1180000, elapsedMs: 62000 },
   });
 
-  const { packetParser } = createLiveParser();
-  const payload = buildCatchupPayload({
-    packetParser,
-    ghostState: new GhostStateAccumulator(),
+  const payload = testCatchupPayload({
     watchState: state,
-    epoch: 1,
+    packetParser: createLiveParser().packetParser,
     serverAddress: "localhost:28000",
+    viaWire: false,
   });
   const viewer = new LiveStreamAdapter({} as RelayClient, { mode: "watch" });
   viewer.hydrate(payload);

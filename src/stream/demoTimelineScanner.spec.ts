@@ -49,6 +49,7 @@ vi.mock("t2-demo-parser", async (original) => ({
 }));
 
 import { BlockTypeMove, BlockTypePacket, DemoParser } from "t2-demo-parser";
+import { remoteCommandPacket } from "../../relay/serverPacketFixtures";
 import {
   scanDemoTimeline,
   scanDemoTimelineParser,
@@ -66,9 +67,7 @@ beforeEach(() => {
 describe("server metadata discovered during the timeline scan", () => {
   const message = (args: string[], funcName = "ServerMessage") => ({
     type: BlockTypePacket,
-    parsed: {
-      events: [{ parsedData: { type: "RemoteCommandEvent", funcName, args } }],
-    },
+    parsed: remoteCommandPacket(funcName, ...args),
   });
   const dropInfo = (server: string) =>
     message(["MsgMissionDropInfo", "", "Surreal", "Capture the Flag", server]);

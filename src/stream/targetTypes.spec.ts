@@ -1,7 +1,5 @@
 import { expect, it } from "vitest";
 import type { ParsedData } from "t2-demo-parser";
-import { LiveStreamAdapter } from "./liveStreaming";
-import type { RelayClient } from "./relayClient";
 import { WatchStateAccumulator } from "../../relay/watchState";
 import type { WatchTargetEntry } from "../../relay/types";
 import {
@@ -11,45 +9,31 @@ import {
 import { flagLabel, shouldShowFlagMarker } from "../state/flagTeam";
 import { decodeCheckpoint, encodeCheckpoint } from "./checkpointCodec";
 import { IFF_GREEN, IFF_RED } from "./entityClassification";
-import { buildCatchupPayload } from "../../relay/watchCatchup";
-import { GAME_PROTOCOL_VERSION } from "../../relay/shared";
-import { GhostStateAccumulator, createLiveParser } from "t2-demo-parser";
+import {
+  decodedPacket,
+  testCatchupPayload,
+} from "../../relay/serverPacketFixtures";
+import { TestLiveStream } from "./streamTestFixtures";
 
-class TargetStream extends LiveStreamAdapter {
+class TargetStream extends TestLiveStream {
   constructor() {
-    super({} as RelayClient, { mode: "watch" });
-    this.registry = {
-      getGhostParser: (classId: number) => ({
-        name: classId === 2 ? "Player" : "Item",
-      }),
-      getEventParser: () => undefined,
-    };
+    super("watch", (classId) => (classId === 2 ? "Player" : "Item"));
   }
   override getDataBlockData() {
     return { shapeName: "flag.dts" };
   }
   receive(...events: ParsedData[]) {
-    for (const parsedData of events)
-      this.processEvent({ classId: 0, parsedData }, undefined);
+    for (const parsedData of events) this.event(parsedData);
   }
   spawn(index: number, targetId: number, classId = 1) {
-    this.processGhostUpdate({
-      index,
-      classId,
-      type: "create",
-      parsedData: {
-        dataBlockId: 1,
-        targetId,
-        position: { x: 0, y: 0, z: 100 },
-      },
+    this.createGhost(index, classId, {
+      dataBlockId: 1,
+      targetId,
+      position: { x: 0, y: 0, z: 100 },
     });
   }
   retarget(index: number, targetId: number) {
-    this.processGhostUpdate({
-      index,
-      type: "update",
-      parsedData: { targetId },
-    });
+    this.updateGhost(index, { targetId });
   }
   seed(entry: WatchTargetEntry) {
     this.conn.targets.seed(entry);
@@ -59,32 +43,14 @@ class TargetStream extends LiveStreamAdapter {
    */
   hydrateFrom(relay: WatchStateAccumulator) {
     const registry = this.registry;
-    this.hydrate(
-      buildCatchupPayload({
-        packetParser: createLiveParser({
-          protocolVersion: GAME_PROTOCOL_VERSION,
-        }).packetParser,
-        ghostState: new GhostStateAccumulator(),
-        watchState: relay,
-        epoch: 1,
-        serverAddress: "test:28000",
-      }),
-    );
+    this.hydrate(testCatchupPayload({ watchState: relay, viaWire: false }));
     this.registry = registry;
   }
   mountImage(index: number, dataBlockId: number) {
-    this.processGhostUpdate({
-      index,
-      type: "update",
-      parsedData: { images: [{ index: 3, dataBlockId }] },
-    });
+    this.updateGhost(index, { images: [{ index: 3, dataBlockId }] });
   }
   damage(index: number, damageState: number) {
-    this.processGhostUpdate({
-      index,
-      type: "update",
-      parsedData: { damageState },
-    });
+    this.updateGhost(index, { damageState });
   }
   player(index: number) {
     const entity = this.entities.get(this.entityIdByGhostIndex.get(index)!)!;
@@ -97,9 +63,7 @@ class TargetStream extends LiveStreamAdapter {
     return this.buildCachedHudState().teamScores[0];
   }
   entity(index = 0) {
-    return this.buildEntityList().find(
-      (entity) => entity.ghostIndex === index,
-    )!;
+    return this.entityAt(index)!;
   }
   label(index = 0) {
     return flagLabel(
@@ -112,13 +76,7 @@ class TargetStream extends LiveStreamAdapter {
     return this.buildCachedHudState().flagTargets;
   }
   remove(index: number) {
-    this.processGhostUpdate({ index, type: "delete" });
-  }
-  checkpoint() {
-    return this.captureSimulationState();
-  }
-  restore(checkpoint: ReturnType<TargetStream["checkpoint"]>) {
-    this.restoreSimulationState(checkpoint);
+    this.ghost({ index, type: "delete" });
   }
 }
 
@@ -127,11 +85,7 @@ function fixture() {
   const relay = new WatchStateAccumulator();
   const receive = (...events: ParsedData[]) => {
     stream.receive(...events);
-    relay.applyPacket({
-      gameState: {},
-      ghosts: [],
-      events: events.map((parsedData) => ({ classId: 0, parsedData })),
-    } as unknown as Parameters<WatchStateAccumulator["applyPacket"]>[0]);
+    relay.applyPacket(decodedPacket(...events));
   };
   return { stream, relay, receive };
 }

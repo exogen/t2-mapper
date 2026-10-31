@@ -235,7 +235,7 @@ export interface ForceFieldBareEntity extends PositionedBase {
   fieldOpen?: boolean;
   /** Fade alpha, 1 closed → 0 open (see stream/forceFieldState.ts);
    *  undefined means resting in the `fieldOpen` state. Mutated in place
-   *  per tick — read it in useFrame. */
+   *  per tick — read it in a frame callback. */
   fieldAlpha?: number;
 }
 

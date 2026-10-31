@@ -3,6 +3,7 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { parse } from "@/src/torqueScript";
 import type * as AST from "@/src/torqueScript/ast";
+import { ASSET_BASE_DIR } from "@/src/resourcePaths";
 
 /**
  * For all missions, log all the property values matching the given filters.
@@ -160,7 +161,7 @@ async function run({
   propertyList: Set<string> | null;
   valuesOnly: boolean;
 }) {
-  for await (const inFile of fs.glob("docs/base/**/*.mis")) {
+  for await (const inFile of fs.glob(`${ASSET_BASE_DIR}/**/*.mis`)) {
     const baseName = path.basename(inFile);
     const missionScript = await fs.readFile(inFile, "utf8");
 

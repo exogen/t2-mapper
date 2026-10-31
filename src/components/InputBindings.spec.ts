@@ -36,9 +36,13 @@ vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
   useEffect: (effect: () => void | (() => void)) => test.effects.push(effect),
 }));
-vi.mock("@react-three/fiber", () => ({
-  useThree: (selector: (state: unknown) => unknown) =>
-    selector({ gl: { domElement: test.canvas } }),
+vi.mock("./useEngine", () => ({
+  useEngine: () => ({
+    withHost(start: (host: unknown) => (() => void) | void) {
+      const cleanup = start({ renderer: { domElement: test.canvas } });
+      return () => cleanup?.();
+    },
+  }),
 }));
 
 function mount(map: readonly InputMapEntry[] = DEMO_MODE_INPUT) {

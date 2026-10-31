@@ -46,6 +46,7 @@
   "exclude": [
     "scripts/play-demo.ts",
     "scripts/screenshot.ts",
-    "scripts/watch-monitor.ts"
+    "scripts/watch-monitor.ts",
+    "scripts/benchmark-playback-fps.ts"
   ]
 }

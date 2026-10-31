@@ -7,17 +7,15 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import unzipper from "unzipper";
+import {
+  ASSET_BASE_DIR,
+  winningSource,
+  type ResourceEntry,
+} from "@/src/resourcePaths";
 import { normalizePath } from "@/src/stringUtils";
 import { assetIgnoreList } from "./assetIgnore";
 import { isTextAsset, toUtf8 } from "./encoding";
-import {
-  archiveSortKey,
-  resolveResourcePath,
-  winningSource,
-  type ResourceEntry,
-} from "./manifest";
-
-export const EXTRACTED_BASE_DIR = "docs/base";
+import { archiveSortKey, resolveResourcePath } from "./manifest";
 
 /** Source extension → the converted file the app actually loads. */
 const DERIVED_EXTENSIONS: Record<string, string> = {
@@ -225,7 +223,7 @@ export function precedenceReport(
   resources: Record<string, ResourceEntry>,
   archiveRelPath: string,
   entryPaths: string[],
-  baseDir = EXTRACTED_BASE_DIR,
+  baseDir = ASSET_BASE_DIR,
 ): PrecedenceReport {
   const report: PrecedenceReport = {
     shadows: [],

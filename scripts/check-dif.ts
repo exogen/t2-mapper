@@ -2,6 +2,7 @@
 import { glob, readFile } from "node:fs/promises";
 import { Matrix4, Vector3 } from "three";
 import { createDIFModel, disposeDIFModel } from "../src/dif/difLoader";
+import { ASSET_BASE_DIR } from "../src/resourcePaths";
 
 let files = 0;
 let surfaces = 0;
@@ -26,7 +27,9 @@ const a = new Vector3(),
   b = new Vector3(),
   c = new Vector3(),
   n = new Vector3();
-for await (const file of glob(process.argv[2] ?? "docs/base/**/*.dif")) {
+for await (const file of glob(
+  process.argv[2] ?? `${ASSET_BASE_DIR}/**/*.dif`,
+)) {
   try {
     const bytes = await readFile(file);
     const model = createDIFModel(

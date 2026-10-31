@@ -21,13 +21,11 @@ vi.mock("nipplejs", () => ({ create: test.create }));
 vi.mock("./SettingsProvider", () => ({
   useControls: () => ({ touchMode: test.touchMode }),
 }));
-vi.mock("./JoystickContext", () => ({
-  useJoystick: () => ({
-    setMoveState: (state: Partial<typeof test.move>) =>
-      Object.assign(test.move, state),
-    setLookState: (state: Partial<typeof test.look>) =>
-      Object.assign(test.look, state),
-  }),
+vi.mock("../state/joystickState", () => ({
+  setJoystickState: (
+    stick: "move" | "look",
+    state: Partial<typeof test.move>,
+  ) => Object.assign(test[stick], state),
 }));
 
 type MoveEvent = { data: { angle: { radian: number }; force: number } };

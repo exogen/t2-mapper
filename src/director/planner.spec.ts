@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { planShots } from "./planner";
 import { radiusForSpread } from "./framing";
 import { DIRECTOR_CLUSTER_CAM_RADIUS } from "./tunables";
+import { directorDataset, STAND_1, STAND_2 } from "./directorTestFixtures";
 import type {
   DirectorDataset,
   DirectorEvent,
@@ -10,9 +11,6 @@ import type {
   DirectorVec3,
   Shot,
 } from "./types";
-
-const STAND_1: DirectorVec3 = [0, 0, 100];
-const STAND_2: DirectorVec3 = [800, 0, 100];
 
 function lerp(a: DirectorVec3, b: DirectorVec3, t: number): DirectorVec3 {
   return [
@@ -94,19 +92,8 @@ function ctfDataset(
     { timeSec: 118, type: "match-end", description: "Match ended" },
     ...extraEvents,
   ];
-  return {
+  return directorDataset({
     durationSec,
-    flagSampleStepSec: 0.5,
-    playerSampleStepSec: 1,
-    gameClassName: "CTFGame",
-    teams: [
-      { teamId: 1, name: "Storm" },
-      { teamId: 2, name: "Inferno" },
-    ],
-    flagStands: [
-      { slot: 1, teamId: 1, name: "Storm", pos: STAND_1 },
-      { slot: 2, teamId: 2, name: "Inferno", pos: STAND_2 },
-    ],
     events,
     flagSamples,
     playerSamples: [
@@ -122,13 +109,8 @@ function ctfDataset(
       })),
       ...extraPlayerSamples,
     ],
-    structures: [],
-    structureInventory: [],
-    mortarShots: [],
-    deaths: [],
-    stations: [],
     playerNames: [{ targetId: 5, name: "slayer" }],
-  };
+  });
 }
 
 /** Rapid-fire grabs on BOTH flags at the same instants: the camera can

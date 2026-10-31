@@ -1,7 +1,7 @@
 import { Suspense, type ReactNode } from "react";
 import { NuqsAdapter } from "nuqs/adapters/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { skinManifestQueryKey, fetchSkinManifest } from "./PlayerModel";
+import { loadSkinManifest } from "../engine/playerSkins";
 import { FeaturesProvider } from "./FeaturesProvider";
 import { SettingsProvider } from "./SettingsProvider";
 
@@ -15,15 +15,9 @@ const queryClient = new QueryClient({
   },
 });
 
-// Prefetch the custom skins manifest at startup so it's in the cache before
-// any PlayerModel renders. This avoids a race where useQuery inside PlayerModel
-// can't trigger a re-render during streaming (store mutations starve React's
-// concurrent rendering).
-queryClient.prefetchQuery({
-  queryKey: skinManifestQueryKey,
-  queryFn: fetchSkinManifest,
-  staleTime: Infinity,
-});
+// Prefetch the custom skins manifest at startup so it's loaded before any
+// player model is built.
+void loadSkinManifest();
 
 /** Shared provider stack for the main app and the /watch page. */
 export function AppProviders({ children }: { children: ReactNode }) {

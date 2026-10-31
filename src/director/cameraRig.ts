@@ -16,6 +16,7 @@ import { Vector3 } from "three";
 import { castWorldRay } from "../collision/worldCollision";
 import { castTerrainRay } from "../collision/terrainCollision";
 import type { DirectorVec3, Shot } from "./types";
+import { threeToTorque } from "../scene/coordinates";
 
 /** Slow broadcast-style orbit drift for aimless shots (radians/second). */
 export const FOLLOW_YAW_DRIFT = 0.04;
@@ -570,7 +571,7 @@ export function viewBlocked(from: Vector3, to: Vector3): boolean {
   if (distance <= OCCLUSION_TARGET_MARGIN) return false;
   const shorten = OCCLUSION_TARGET_MARGIN / distance;
   // Three (x, y, z) → Torque (z, x, y).
-  const startTorque: [number, number, number] = [from.z, from.x, from.y];
+  const startTorque = threeToTorque(from);
   const endTorque: [number, number, number] = [
     from.z + (to.z - from.z) * (1 - shorten),
     from.x + (to.x - from.x) * (1 - shorten),
@@ -928,7 +929,7 @@ export function clearStandoff(
 ): number {
   // Three (x, y, z) → Torque (z, x, y).
   const hit = castWorldRay(
-    [target.z, target.x, target.y],
+    threeToTorque(target),
     [
       target.z + dir.z * desired,
       target.x + dir.x * desired,

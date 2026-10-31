@@ -98,13 +98,6 @@ export function setupEffectTexture(
   }
 }
 
-export function torqueVecToThree(
-  v: [number, number, number],
-  out: Vector3,
-): Vector3 {
-  return out.set(v[1], v[2], v[0]);
-}
-
 export function setQuaternionFromDir(dir: Vector3, out: Quaternion): void {
   // Equivalent to MathUtils::createOrientFromDir in Torque:
   // column1 = direction, with Torque up-vector converted to Three up-vector.

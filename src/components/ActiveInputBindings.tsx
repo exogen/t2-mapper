@@ -1,6 +1,6 @@
 import { useStore } from "zustand";
 import { useRecording } from "./usePlayback";
-import { useInputMode } from "./InputContext";
+import { useInputMode } from "../state/inputModeStore";
 import { useControls } from "./SettingsProvider";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { useCameraOwner } from "../state/cameraOwner";
@@ -116,7 +116,7 @@ export function ActiveInputBindings() {
       {isDemo && <InputBindings map={DEMO_MODE_INPUT} />}
       {/* Observer fly/follow toggle shares F with the CC follow toggle —
           only one is mounted at a time. Watchers get the same toggle
-          (SpectatorController), demos too (DemoCameraController). */}
+          (spectatorCamera), demos too (demoCameraSelection). */}
       {(isLive || isDemo) && !isCommandCircuit && (
         <InputBindings map={LIVE_OBSERVER_INPUT} />
       )}

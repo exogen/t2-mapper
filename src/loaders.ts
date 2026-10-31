@@ -3,10 +3,11 @@ import { createLogger } from "./logger";
 import {
   getActualResourceKey,
   getMissionInfo,
-  getSourceAndPath,
   getStandardTextureResourceKey,
+  getWinningSourcePath,
 } from "./manifest";
 import { parseMissionScript } from "./mission";
+import { shapeResourcePath } from "./resourcePaths";
 import { normalizePath } from "./stringUtils";
 import { parseTerrainBuffer, type TerrainFile } from "./terrain";
 
@@ -29,12 +30,7 @@ export function getUrlForPath(resourcePath: string, fallbackUrl?: string) {
       throw err;
     }
   }
-  const [sourcePath, actualPath] = getSourceAndPath(resourceKey);
-  if (sourcePath) {
-    return `${RESOURCE_ROOT_URL}@vl2/${sourcePath}/${actualPath}`;
-  } else {
-    return `${RESOURCE_ROOT_URL}${actualPath}`;
-  }
+  return `${RESOURCE_ROOT_URL}${getWinningSourcePath(resourceKey)}`;
 }
 
 export function interiorToUrl(name: string) {
@@ -42,7 +38,7 @@ export function interiorToUrl(name: string) {
 }
 
 export function shapeToUrl(name: string) {
-  return getUrlForPath(`shapes/${name}`);
+  return getUrlForPath(shapeResourcePath(name));
 }
 
 export function terrainTextureToUrl(name: string) {
@@ -68,6 +64,15 @@ export function textureToUrl(
 ): string {
   const resourceKey = getStandardTextureResourceKey(`textures/${name}`);
   return getUrlForPath(resourceKey, fallbackUrl ?? undefined);
+}
+
+/** URL of a `textures/gui/` texture, or null when we don't ship it. */
+export function guiTextureToUrl(name: string): string | null {
+  try {
+    return getUrlForPath(getStandardTextureResourceKey(`textures/gui/${name}`));
+  } catch {
+    return null;
+  }
 }
 
 export function audioToUrl(fileName: string) {

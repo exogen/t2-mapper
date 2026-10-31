@@ -33,7 +33,7 @@ export default defineConfig([
     },
   },
   {
-    // Layer boundary: src/components is the React/r3f layer. Everything
+    // Layer boundary: src/components is the React layer. Everything
     // else in src is React-free and must not reach into it.
     files: ["src/**/*.{ts,tsx}"],
     ignores: ["src/components/**", "src/main.tsx"],
@@ -46,6 +46,34 @@ export default defineConfig([
               group: ["**/components/*"],
               message:
                 "React-free code must not import from src/components; move the helper out of components instead.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // src/engine is the game canvas without React: three.js, the stores'
+    // vanilla APIs and plain classes. (Overrides the block above, so it
+    // repeats the components rule.)
+    files: ["src/engine/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            { name: "react", message: "The engine must not use React." },
+            { name: "react-dom", message: "The engine must not use React." },
+          ],
+          patterns: [
+            {
+              group: ["**/components/*"],
+              message:
+                "React-free code must not import from src/components; move the helper out of components instead.",
+            },
+            {
+              group: ["@react-three/*"],
+              message: "The engine drives three.js directly, without r3f.",
             },
           ],
         },

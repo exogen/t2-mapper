@@ -14,7 +14,7 @@ const fixture = vi.hoisted(() => ({
 vi.mock("./usePlayback", () => ({
   useRecording: () => fixture.source && { source: fixture.source },
 }));
-vi.mock("./InputContext", () => ({ useInputMode: () => "local" }));
+vi.mock("../state/inputModeStore", () => ({ useInputMode: () => "local" }));
 vi.mock("./SettingsProvider", () => ({
   useControls: () => ({ clickToCycle: true }),
 }));

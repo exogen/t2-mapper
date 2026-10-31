@@ -1,18 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { createDefaultRegistry } from "t2-demo-parser";
 import {
-  createDefaultRegistry,
-  createLiveParser,
-  GhostStateAccumulator,
-  passiveObserverProtocolState,
-} from "t2-demo-parser";
-import { gravityEvent, serverPacket } from "../../relay/serverPacketFixtures";
-import { GAME_PROTOCOL_VERSION } from "../../relay/shared";
-import { buildCatchupPayload } from "../../relay/watchCatchup";
-import {
-  deserializeCatchupPayload,
-  serializeCatchupPayload,
-} from "../../relay/watchSerialize";
-import { WatchStateAccumulator } from "../../relay/watchState";
+  gravityEvent,
+  watchRelaySource,
+} from "../../relay/serverPacketFixtures";
 import { LiveStreamAdapter } from "./liveStreaming";
 import type { RelayClient } from "./relayClient";
 import { DEFAULT_WORLD_GRAVITY, worldGravityToMS2 } from "./worldGravity";
@@ -22,40 +13,10 @@ const viewer = () =>
   new LiveStreamAdapter({} as RelayClient, { mode: "watch" });
 
 function relay() {
-  const { packetParser } = createLiveParser({
-    protocolVersion: GAME_PROTOCOL_VERSION,
-  });
-  packetParser.setConnectionProtocolState(
-    passiveObserverProtocolState(serverPacket(1)[0]),
-  );
-  const ghostState = new GhostStateAccumulator();
-  const watchState = new WatchStateAccumulator();
-  let sequence = 0;
+  const source = watchRelaySource();
   return {
-    watchState,
-    gravity(value: number) {
-      const packet = serverPacket(sequence + 1, {
-        events: [gravityEvent(sequence++, value)],
-      });
-      const parsed = packetParser.parsePacket(packet);
-      expect(parsed.parseFault).toBeUndefined();
-      watchState.applyPacket(parsed);
-      ghostState.applyPacket(parsed);
-      return packet;
-    },
-    payload() {
-      return deserializeCatchupPayload(
-        serializeCatchupPayload(
-          buildCatchupPayload({
-            packetParser,
-            ghostState,
-            watchState,
-            epoch: 1,
-            serverAddress: "test:28000",
-          }),
-        ),
-      );
-    },
+    ...source,
+    gravity: (value: number) => source.send((seq) => gravityEvent(seq, value)),
   };
 }
 

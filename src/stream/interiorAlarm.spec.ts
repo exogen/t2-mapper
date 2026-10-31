@@ -1,6 +1,4 @@
 import { expect, it } from "vitest";
-import { LiveStreamAdapter } from "./liveStreaming";
-import type { RelayClient } from "./relayClient";
 import {
   interiorAlarmTime,
   interiorLightingTime,
@@ -9,46 +7,28 @@ import {
   streamEntityToGameEntity,
   updateGameEntityFromStream,
 } from "./entityBridge";
+import { TestLiveStream } from "./streamTestFixtures";
 import type { SceneInteriorInstance } from "../scene/types";
 
-class InteriorStream extends LiveStreamAdapter {
+class InteriorStream extends TestLiveStream {
   constructor(startTick = 0) {
-    super({} as RelayClient);
+    super("play", "InteriorInstance");
     this.tickCount = startTick;
-    this.registry = {
-      getGhostParser: () => ({ name: "InteriorInstance" }),
-      getEventParser: () => undefined,
-    };
-    this.processGhostUpdate({
-      index: 0,
-      classId: 1,
-      type: "create",
-      parsedData: {
-        interiorFile: "sbunk2.dif",
-        alarmState: false,
-        scale: { x: 2, y: 3, z: 4 },
-      },
+    this.createGhost(0, 1, {
+      interiorFile: "sbunk2.dif",
+      alarmState: false,
+      scale: { x: 2, y: 3, z: 4 },
     });
   }
   alarm(alarmState: boolean, tick: number) {
     this.tickCount = tick;
-    this.processGhostUpdate({
-      index: 0,
-      type: "update",
-      parsedData: { alarmState },
-    });
+    this.updateGhost(0, { alarmState });
   }
   entity() {
     return this.buildEntityList()[0];
   }
   scene() {
     return this.entity().sceneData as SceneInteriorInstance;
-  }
-  checkpoint() {
-    return this.captureSimulationState();
-  }
-  restore(saved: ReturnType<InteriorStream["checkpoint"]>) {
-    this.restoreSimulationState(saved);
   }
 }
 

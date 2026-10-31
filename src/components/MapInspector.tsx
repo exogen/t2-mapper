@@ -8,8 +8,7 @@ import {
   ReactNode,
   // ViewTransition,
 } from "react";
-import { type RootState } from "@react-three/fiber";
-import { type InvalidateFunction } from "./ThreeCanvas";
+import type { GameEngine } from "../engine/gameEngine";
 import { InspectorControls } from "./InspectorControls";
 import { MissionSelect } from "./MissionSelect";
 import { DemoSelect } from "./DemoSelect";
@@ -42,7 +41,6 @@ import { useCommandCircuit } from "../state/commandCircuitStore";
 import { WatchErrorDialog } from "./WatchErrorDialog";
 import { DemoDropScreen } from "./DemoDropScreen";
 import { setStatsEnabled } from "../state/statsStore";
-import { InputProvider } from "./InputProducer";
 import { VisualInput } from "./VisualInput";
 import { WelcomeSplash } from "./WelcomeSplash";
 import { MapCompass } from "./MapCompass";
@@ -97,8 +95,8 @@ export function MapInspector() {
   const features = useFeatures();
   const { clearFogEnabledOverride, renderScale, sidebarOpen, setSidebarOpen } =
     useSettings();
-  // Standard render resolution: devicePixelRatio clamped to [1, 2] (what
-  // r3f's default dpr of [1, 2] resolves to). The render-scale preference
+  // Standard render resolution: devicePixelRatio clamped to [1, 2] (the
+  // engine canvas's default). The render-scale preference
   // is a fraction of this, so 100% matches the default exactly and the
   // stored fraction stays meaningful across monitors. The hook keeps it
   // live when the window moves to a display with a different ratio.
@@ -466,7 +464,7 @@ export function MapInspector() {
     [],
   );
 
-  const invalidateRef = useRef<InvalidateFunction | null>(null);
+  const [engine, setEngine] = useState<GameEngine | null>(null);
 
   const handleOpenMapInfo = useCallback(() => setMapInfoOpen(true), []);
   const handleOpenScoreScreen = useCallback(() => setScoreScreenOpen(true), []);
@@ -497,9 +495,6 @@ export function MapInspector() {
   const handleChooseMap = useCallback(() => setChoosingMap(true), []);
   const handleCancelChoosingMap = useCallback(() => {
     setChoosingMap(false);
-  }, []);
-  const handleCanvasCreated = useCallback((state: RootState) => {
-    invalidateRef.current = state.invalidate;
   }, []);
 
   // Live mode without an active session — and without leftover stream
@@ -615,7 +610,7 @@ export function MapInspector() {
               missionName={effectiveMissionName}
               missionType={effectiveMissionType}
               choosingMap={choosingMap}
-              invalidateRef={invalidateRef}
+              engine={engine}
               onOpenMapInfo={handleOpenMapInfo}
               onOpenScoreScreen={
                 hasStreamData ? handleOpenScoreScreen : undefined
@@ -632,142 +627,140 @@ export function MapInspector() {
             />
           </div>
         </Activity>
-        <InputProvider>
-          <div className={styles.Content}>
-            {showJoinScreen ? (
-              autoJoin === "pending" ? (
-                <LoadingIndicator isLoading progress={null} />
-              ) : joinErrorMessage != null && !errorAcknowledged ? (
+        <div className={styles.Content}>
+          {showJoinScreen ? (
+            autoJoin === "pending" ? (
+              <LoadingIndicator isLoading progress={null} />
+            ) : joinErrorMessage != null && !errorAcknowledged ? (
+              <WatchErrorDialog
+                endReason={watchEndReason}
+                message={joinErrorMessage}
+                // This dialog only appears with no stream data, i.e. a
+                // connection that never established (probe fail, failed
+                // ?name lookup) — so Rejoin is offered only in the rare
+                // case we did reach the server before landing here.
+                onRejoin={
+                  canRejoin &&
+                  autoJoin !== "notFound" &&
+                  autoJoin !== "listFailed" &&
+                  rejoinAddress
+                    ? () => handleWatch(rejoinAddress)
+                    : undefined
+                }
+                onRetry={
+                  autoJoin === "listFailed"
+                    ? () => {
+                        autoTargetRef.current = null;
+                        setAutoJoin("pending");
+                        listServers();
+                      }
+                    : retryAddress && autoJoin !== "notFound"
+                      ? () => handleWatch(retryAddress)
+                      : undefined
+                }
+                onBrowse={handleOpenServerBrowser}
+              />
+            ) : (
+              <Suspense fallback={<GameDialogSpinner contained />}>
+                <ServerBrowser
+                  joinLabel="Join game"
+                  showWarriorField={false}
+                  onJoin={handleWatch}
+                />
+              </Suspense>
+            )
+          ) : showDemoScreen ? (
+            <DemoDropScreen />
+          ) : (
+            <>
+              <div className={styles.ThreeView}>
+                <Suspense>
+                  <GameView
+                    missionName={mode === "map" ? missionName : ""}
+                    missionType={missionType}
+                    spectator={isWatcher}
+                    dpr={
+                      mapInfoOpen || scoreScreenOpen || showDisconnectDialog
+                        ? 0.25
+                        : renderDpr
+                    }
+                    onCreated={setEngine}
+                    onLoadingChange={handleLoadingChange}
+                  />
+                </Suspense>
+              </div>
+              {hasStreamData && !scoreScreenOpen ? (
+                <Suspense>
+                  <PlayerHUD onOpenScoreScreen={handleOpenScoreScreen} />
+                </Suspense>
+              ) : null}
+              {dataSource === "map" && !splashVisible ? <MapCompass /> : null}
+              {splashVisible ? (
+                <WelcomeSplash
+                  onWatchDemos={handleEnterDemoMode}
+                  onWatchLive={
+                    features.live ? handleOpenServerBrowser : undefined
+                  }
+                  onDismiss={() => setShowSplash(false)}
+                  // The splash takes the indicator over rather than
+                  // letting it show through the panel.
+                  loading={
+                    loadingIndicatorUp
+                      ? { isLoading, progress: loadingProgress }
+                      : null
+                  }
+                />
+              ) : (
+                <VisualInput />
+              )}
+              {loadingIndicatorUp && !splashVisible && (
+                <LoadingIndicator
+                  id="loadingIndicator"
+                  isLoading={isLoading}
+                  progress={loadingProgress}
+                />
+              )}
+              <StreamDelayNotice />
+              {hasStreamData &&
+              (recording?.source === "demo" || isWatcher) &&
+              !mapInfoOpen &&
+              !scoreScreenOpen &&
+              !showDisconnectDialog ? (
+                <TargetFinder key={`${dataSource}:${effectiveMissionName}`} />
+              ) : null}
+              {recording?.source === "demo" ? <CommentarySubtitles /> : null}
+              {recording?.source === "demo" ? <DemoSeekFeedback /> : null}
+              <QuickCamControls />
+              {showDisconnectDialog ? (
                 <WatchErrorDialog
                   endReason={watchEndReason}
-                  message={joinErrorMessage}
-                  // This dialog only appears with no stream data, i.e. a
-                  // connection that never established (probe fail, failed
-                  // ?name lookup) — so Rejoin is offered only in the rare
-                  // case we did reach the server before landing here.
+                  // A voluntary leave isn't an error — say so plainly.
+                  title={
+                    disconnectReason === "voluntary"
+                      ? "Transmission ended"
+                      : "Uplink failure"
+                  }
+                  message={
+                    disconnectReason === "voluntary"
+                      ? "Uplink to the server closed. The wilderzone awaits your return."
+                      : (connectionFailureMessage ??
+                        "Connection to the server was lost.")
+                  }
                   onRejoin={
-                    canRejoin &&
-                    autoJoin !== "notFound" &&
-                    autoJoin !== "listFailed" &&
-                    rejoinAddress
+                    canRejoin && rejoinAddress
                       ? () => handleWatch(rejoinAddress)
                       : undefined
                   }
                   onRetry={
-                    autoJoin === "listFailed"
-                      ? () => {
-                          autoTargetRef.current = null;
-                          setAutoJoin("pending");
-                          listServers();
-                        }
-                      : retryAddress && autoJoin !== "notFound"
-                        ? () => handleWatch(retryAddress)
-                        : undefined
+                    retryAddress ? () => handleWatch(retryAddress) : undefined
                   }
                   onBrowse={handleOpenServerBrowser}
+                  onDismiss={() => setErrorAcknowledged(true)}
                 />
-              ) : (
-                <Suspense fallback={<GameDialogSpinner contained />}>
-                  <ServerBrowser
-                    joinLabel="Join game"
-                    showWarriorField={false}
-                    onJoin={handleWatch}
-                  />
-                </Suspense>
-              )
-            ) : showDemoScreen ? (
-              <DemoDropScreen />
-            ) : (
-              <>
-                <div className={styles.ThreeView}>
-                  <Suspense>
-                    <GameView
-                      missionName={mode === "map" ? missionName : ""}
-                      missionType={missionType}
-                      spectator={isWatcher}
-                      dpr={
-                        mapInfoOpen || scoreScreenOpen || showDisconnectDialog
-                          ? 0.25
-                          : renderDpr
-                      }
-                      onCreated={handleCanvasCreated}
-                      onLoadingChange={handleLoadingChange}
-                    />
-                  </Suspense>
-                </div>
-                {hasStreamData && !scoreScreenOpen ? (
-                  <Suspense>
-                    <PlayerHUD onOpenScoreScreen={handleOpenScoreScreen} />
-                  </Suspense>
-                ) : null}
-                {dataSource === "map" && !splashVisible ? <MapCompass /> : null}
-                {splashVisible ? (
-                  <WelcomeSplash
-                    onWatchDemos={handleEnterDemoMode}
-                    onWatchLive={
-                      features.live ? handleOpenServerBrowser : undefined
-                    }
-                    onDismiss={() => setShowSplash(false)}
-                    // The splash takes the indicator over rather than
-                    // letting it show through the panel.
-                    loading={
-                      loadingIndicatorUp
-                        ? { isLoading, progress: loadingProgress }
-                        : null
-                    }
-                  />
-                ) : (
-                  <VisualInput />
-                )}
-                {loadingIndicatorUp && !splashVisible && (
-                  <LoadingIndicator
-                    id="loadingIndicator"
-                    isLoading={isLoading}
-                    progress={loadingProgress}
-                  />
-                )}
-                <StreamDelayNotice />
-                {hasStreamData &&
-                (recording?.source === "demo" || isWatcher) &&
-                !mapInfoOpen &&
-                !scoreScreenOpen &&
-                !showDisconnectDialog ? (
-                  <TargetFinder key={`${dataSource}:${effectiveMissionName}`} />
-                ) : null}
-                {recording?.source === "demo" ? <CommentarySubtitles /> : null}
-                {recording?.source === "demo" ? <DemoSeekFeedback /> : null}
-                <QuickCamControls />
-                {showDisconnectDialog ? (
-                  <WatchErrorDialog
-                    endReason={watchEndReason}
-                    // A voluntary leave isn't an error — say so plainly.
-                    title={
-                      disconnectReason === "voluntary"
-                        ? "Transmission ended"
-                        : "Uplink failure"
-                    }
-                    message={
-                      disconnectReason === "voluntary"
-                        ? "Uplink to the server closed. The wilderzone awaits your return."
-                        : (connectionFailureMessage ??
-                          "Connection to the server was lost.")
-                    }
-                    onRejoin={
-                      canRejoin && rejoinAddress
-                        ? () => handleWatch(rejoinAddress)
-                        : undefined
-                    }
-                    onRetry={
-                      retryAddress ? () => handleWatch(retryAddress) : undefined
-                    }
-                    onBrowse={handleOpenServerBrowser}
-                    onDismiss={() => setErrorAcknowledged(true)}
-                  />
-                ) : null}
-              </>
-            )}
-          </div>
-        </InputProvider>
+              ) : null}
+            </>
+          )}
+        </div>
         <footer className={styles.PlayerBar}>
           {recording?.source === "demo" ? (
             <Suspense>

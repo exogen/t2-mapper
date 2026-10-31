@@ -20,7 +20,13 @@ import {
 import { injectCustomFog, injectSpriteFog } from "./fogShader";
 import { globalFogUniforms } from "./globalFogUniforms";
 import { lightsFragmentBeginByType } from "./lightsChunk";
-import { glslColorSpace } from "./shaderUtils";
+import {
+  glslColorSpace,
+  insertAfterChunk,
+  insertBeforeChunk,
+  replaceChunk,
+  type ShaderSource,
+} from "./shaderUtils";
 import {
   defaultShapeLightUniforms,
   glslShapeLightingPars,
@@ -37,7 +43,7 @@ import {
  * one shared callback serves every shape and the program cache still
  * matches by function identity.
  */
-function injectShapeLighting(material: Material, shader: any): void {
+function injectShapeLighting(material: Material, shader: ShaderSource): void {
   const shapeLight =
     (material.userData.shapeLight as ShapeLightUniforms | undefined) ??
     defaultShapeLightUniforms;
@@ -47,56 +53,57 @@ function injectShapeLighting(material: Material, shader: any): void {
     shapeSunUniforms,
     effectLightUniforms,
   );
-  shader.fragmentShader = shader.fragmentShader.replace(
-    "#include <common>",
-    `#include <common>
-${glslColorSpace}`,
+  shader.fragmentShader = insertAfterChunk(
+    shader.fragmentShader,
+    "common",
+    glslColorSpace,
   );
-  shader.fragmentShader = shader.fragmentShader.replace(
-    "#include <lights_lambert_pars_fragment>",
-    `#include <lights_lambert_pars_fragment>
-${glslEffectLightIgnoreDirect}
+  shader.fragmentShader = insertAfterChunk(
+    shader.fragmentShader,
+    "lights_lambert_pars_fragment",
+    `${glslEffectLightIgnoreDirect}
 varying vec3 vShapeLighting;`,
   );
   // Tribes2.exe uses fixed-function GL vertex lighting. Interpolate the
   // clamped vertex colors, rather than re-lighting normalized fragment normals.
-  shader.vertexShader = shader.vertexShader.replace(
-    "#include <common>",
-    `#include <common>
-varying vec3 vShapeLighting;
+  shader.vertexShader = insertAfterChunk(
+    shader.vertexShader,
+    "common",
+    `varying vec3 vShapeLighting;
 ${glslEffectLightUniforms}
 ${glslShapeLightingPars}`,
   );
-  shader.vertexShader = shader.vertexShader.replace(
-    "#include <morphnormal_vertex>",
-    `#include <morphnormal_vertex>
-#ifdef USE_MORPHNORMALS
+  shader.vertexShader = insertAfterChunk(
+    shader.vertexShader,
+    "morphnormal_vertex",
+    `#ifdef USE_MORPHNORMALS
 // Morph blending changes direction and length. Keep the authored length so
 // deformation cannot amplify lighting; later model/instance scale still applies.
 objectNormal *= length(normal) / max(length(objectNormal), 1e-6);
 #endif`,
   );
-  shader.vertexShader = shader.vertexShader.replace(
-    "#include <project_vertex>",
-    `#include <project_vertex>
-// GL_NORMALIZE is disabled in Tribes2.exe: mission scale affects lighting.
+  shader.vertexShader = insertAfterChunk(
+    shader.vertexShader,
+    "project_vertex",
+    `// GL_NORMALIZE is disabled in Tribes2.exe: mission scale affects lighting.
 vShapeLighting = shapeLightingSRGB(transformedNormal, mvPosition.xyz);`,
   );
-  shader.fragmentShader = shader.fragmentShader.replace(
-    "#include <lights_fragment_begin>",
+  shader.fragmentShader = replaceChunk(
+    shader.fragmentShader,
+    "lights_fragment_begin",
     lightsFragmentBeginByType({
       directional: "RE_Direct_EffectLightIgnore",
       punctual: "RE_Direct_EffectLightIgnore",
     }),
   );
-  shader.fragmentShader = shader.fragmentShader.replace(
-    "#include <opaque_fragment>",
+  shader.fragmentShader = insertBeforeChunk(
+    shader.fragmentShader,
+    "opaque_fragment",
     `{
   vec3 textureSRGB = torqueLinearToSRGB(diffuseColor.rgb);
   vec3 lightingSRGB = vShapeLighting;
   outgoingLight = torqueSRGBToLinear(clamp(lightingSRGB * textureSRGB, 0.0, 1.0)) + totalEmissiveRadiance;
-}
-#include <opaque_fragment>`,
+}`,
   );
 }
 
@@ -140,11 +147,7 @@ export function resetShapeEnvMap(): void {
  * Blends envmap color with diffuse based on the base texture's alpha channel.
  */
 function injectShapeEnvMap(
-  shader: {
-    uniforms: Record<string, { value: unknown }>;
-    fragmentShader: string;
-    vertexShader: string;
-  },
+  shader: ShaderSource,
   reflectionAmount: number,
 ): void {
   // Shared uniforms — values update when sky loads, no recompile needed.
@@ -155,10 +158,10 @@ function injectShapeEnvMap(
 
   // Per-vertex sphere map UV computation, matching GL_SPHERE_MAP texgen.
   // GL_SPHERE_MAP computes UVs at vertices and interpolates linearly.
-  shader.fragmentShader = shader.fragmentShader.replace(
-    "#include <common>",
-    `#include <common>
-uniform sampler2D shapeEnvMap;
+  shader.fragmentShader = insertAfterChunk(
+    shader.fragmentShader,
+    "common",
+    `uniform sampler2D shapeEnvMap;
 uniform bool shapeEnvMapActive;
 uniform float shapeReflectionAmount;
 uniform bool shapeEnvMapDebugUV;
@@ -166,10 +169,10 @@ varying vec2 vShapeSphereUV;
 `,
   );
 
-  shader.vertexShader = shader.vertexShader.replace(
-    "#include <common>",
-    `#include <common>
-varying vec2 vShapeSphereUV;
+  shader.vertexShader = insertAfterChunk(
+    shader.vertexShader,
+    "common",
+    `varying vec2 vShapeSphereUV;
 `,
   );
   // Basic materials normally skip normals without Three's own env map. Our
@@ -188,10 +191,10 @@ varying vec2 vShapeSphereUV;
   //   m = 2*sqrt(rt.x² + rt.y² + (rt.z+1)²), s = rt.x/m+0.5, t = rt.y/m+0.5
   // Substituting Three.js coords:
   //   m = 2*sqrt(r.x² + r.z² + (r.y+1)²), s = r.x/m+0.5, t = -r.z/m+0.5
-  shader.vertexShader = shader.vertexShader.replace(
-    "#include <fog_vertex>",
-    `#include <fog_vertex>
-{
+  shader.vertexShader = insertAfterChunk(
+    shader.vertexShader,
+    "fog_vertex",
+    `{
   vec3 _eyePos = mvPosition.xyz;
   #ifdef FLAT_SHADED
     vec3 _eyeN = vec3(0.0, 0.0, 1.0);
@@ -213,8 +216,9 @@ varying vec2 vShapeSphereUV;
   //   result = envmap * factor + base * (1 - factor)
   // where factor = base_alpha * vertexAlpha
   // vertexAlpha = environmentMapAlpha(1.0) * reflectionAmount(per-material)
-  shader.fragmentShader = shader.fragmentShader.replace(
-    "#include <opaque_fragment>",
+  shader.fragmentShader = insertBeforeChunk(
+    shader.fragmentShader,
+    "opaque_fragment",
     `// Tribes 2 sphere-map environment reflections (GL_INTERPOLATE)
 if (shapeEnvMapActive && shapeReflectionAmount > 0.0) {
   if (shapeEnvMapDebugUV) {
@@ -232,8 +236,7 @@ if (shapeEnvMapActive && shapeReflectionAmount > 0.0) {
     vec3 _baseSRGB = pow(max(outgoingLight, 0.0), vec3(1.0 / 2.2));
     outgoingLight = pow(mix(_baseSRGB, _envColor, _factor), vec3(2.2));
   }
-}
-#include <opaque_fragment>`,
+}`,
   );
 }
 
@@ -275,7 +278,11 @@ const basicBeforeCompile: Material["onBeforeCompile"] = (shader) => {
   injectCustomFog(shader, globalFogUniforms);
 };
 
-const additiveBeforeCompile: Material["onBeforeCompile"] = (shader) => {
+/**
+ * onBeforeCompile for additively blended meshes (shape materials and the
+ * flare spikes): fog in its additive mode.
+ */
+export const additiveBeforeCompile: Material["onBeforeCompile"] = (shader) => {
   injectCustomFog(shader, globalFogUniforms, { additive: true });
 };
 

@@ -3,7 +3,7 @@ import { isValidElement, type ReactNode, type ReactElement } from "react";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { TimelineEvent } from "../state/demoTimelineStore";
 import { DemoTimeline } from "./DemoTimeline";
-import type { TeamColorScheme } from "./iffTheme";
+import type { TeamColorScheme } from "../iffTheme";
 
 const state = vi.hoisted(() => ({
   events: [] as TimelineEvent[],

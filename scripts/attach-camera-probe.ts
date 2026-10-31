@@ -17,11 +17,12 @@ import { WatchSession } from "../relay/watchSession.js";
 import type { GameConnection } from "../relay/gameConnection.js";
 import type { WatchStateAccumulator } from "../relay/watchState.js";
 import type { ServerInfo } from "../relay/types.js";
+import { ASSET_BASE_DIR } from "../src/resourcePaths";
 
 const filter = (process.argv[2] ?? "blair").toLowerCase();
 const MASTER = process.env.T2_MASTER_SERVER || "master.tribesnext.com";
 const dirname = path.dirname(fileURLToPath(import.meta.url));
-const gameBasePath = path.resolve(dirname, "..", "docs", "base");
+const gameBasePath = path.resolve(dirname, "..", ASSET_BASE_DIR);
 
 /** Private-member access for probing; mirrors the real field types. */
 interface SessionInternals {

@@ -1,0 +1,1876 @@
+import { Quaternion, Vector3 } from "three";
+import type { Camera } from "three";
+import { createLogger } from "../logger";
+import { effectDeltaSec, engineStore } from "../state/engineStore";
+import { cameraRegistry } from "../state/cameraRegistry";
+import {
+  demoDirectorStore,
+  exitDirector,
+  nearFlagStand,
+} from "../state/demoDirectorStore";
+import { streamClock, streamPlaybackStore } from "../state/streamPlaybackStore";
+import {
+  enterWatchFollow,
+  exitToFreeFly,
+  findLivingEntityByTargetId,
+  followFlag,
+} from "../state/watchFollow";
+import { orbitPullbackDir } from "../stream/streamHelpers";
+import { aimCamera, placeCamera, shotPoseAt } from "../director/shotPath";
+import { plannerSolved } from "../director/shotPath";
+import { inRoomUnderTerrain } from "../collision/worldCollision";
+import { subscribeAction } from "../state/inputControls";
+import type {
+  DirectorVec3 as DirectorVec3Tuple,
+  Shot,
+} from "../director/types";
+import { demoClock, describeShot } from "../director/shotLog";
+import { directorCamDebug } from "../state/cameraDebug";
+
+const camlog = createLogger("camdbg");
+import { bearingYaw } from "../director/geometry";
+import { FramePriority } from "./framePriority";
+import { combineCleanups } from "./storeReaction";
+import type { GameEngine } from "./gameEngine";
+
+/**
+ * Shot debugging: every cut, travel and mid-shot correction logs at
+ * info under the "director" module, timestamped like the seek bar, so
+ * a moment seen in playback can be quoted and matched to a decision.
+ * `LOG_LEVEL=director:debug` adds the quieter rails.
+ */
+const log = createLogger("director");
+import {
+  AIM_TOWARD_MIN_RANGE,
+  AIM_SPRING_RATE,
+  AIM_TURN_RATE,
+  DOLLY_AIM_DAMPING,
+  DOLLY_DAMPING,
+  DOLLY_DEFAULT_DISTANCE,
+  DOLLY_GLIDE_MAX_GAP,
+  DOLLY_DEFAULT_HEIGHT,
+  DOLLY_LOOK_LIFT,
+  DOLLY_SIDE_ANGLE,
+  FOLLOW_YAW_DRIFT,
+  GROUND_MIN_CLEARANCE,
+  ORBIT_HEIGHT_FACTOR,
+  orbitLiftFactor,
+  smoothedGroundHeightAt,
+  TERRAIN_FOLLOW_CLEARANCE,
+  TERRAIN_FOLLOW_LOOKAHEAD_SEC,
+  TERRAIN_LIFT_FALL_RATE,
+  TERRAIN_LIFT_RISE_RATE,
+  ORBIT_LOOK_LIFT,
+  PARAM_EASE_RATE,
+  STANDOFF_MIN,
+  STANDOFF_MIN_SCALE,
+  STATIC_PAN_DAMPING,
+  STATIC_PAN_MAX_RATE,
+  STATIC_PAN_DEADBAND_START,
+  STATIC_PAN_DEADBAND_STOP,
+  PAN_STATE_COMMIT_SEC,
+  findOpeningsByRay,
+  surfaceLiftedAnchor,
+  findDoorwaysFromPaths,
+  type Doorway,
+  SUBJECT_MAX_RANGE,
+  SWEEP_LIFT_STEPS,
+  TRANSITION_AIM_LEVER,
+  TRANSITION_ARM_SEC,
+  TRANSITION_MAX_DISTANCE,
+  TRANSITION_MAX_SEC,
+  TRANSITION_MAX_TURN_RATE,
+  TRANSITION_MIN_DISTANCE,
+  TRANSITION_MIN_SEC,
+  TRANSITION_SPEED,
+  VISIBILITY_BLOCKED_STRIKES,
+  VISIBILITY_CHECK_SEC,
+  VISIBILITY_YAW_OFFSETS,
+  springAngle,
+  DOLLY_HEADING_RATE,
+  DOLLY_VELOCITY_SMOOTHING,
+  REANCHOR_COOLDOWN_SEC,
+  REANCHOR_MAX_SWEEP_RAD,
+  REANCHOR_MAX_SWEEP_RATE,
+  REANCHOR_MIN_REMAINING_SEC,
+  CORRECTION_MIN_REMAINING_SEC,
+  chooseClearPlacement,
+  orbitBearingOf,
+  clearStandoff,
+  clearStandoffWide,
+  subjectViewBlocked,
+  easeInSettle,
+  sweepClock,
+  sweepProgress,
+  TRAVEL_RAMP_IN,
+  TRAVEL_RAMP_OUT,
+  TRAVEL_SHOT_FRACTION,
+  groundHeightAt,
+  viewBlocked,
+} from "../director/cameraRig";
+import {
+  findShotIndex,
+  livingPlayerPositionsNear,
+  resolveShotSubjectEntityId,
+  resolveShotSubjectGroup,
+  resolveSubjectGroup,
+  shotContains,
+  shotSubjectOf,
+  subjectHeading,
+  subjectVelocity,
+} from "../director/shotSubjects";
+import { torqueVecToThree, threeToTorque } from "../scene/coordinates";
+
+const _transitionTargetPos = new Vector3();
+const _travelForward = new Vector3();
+const _travelDestAim = new Vector3();
+const _travelAim = new Vector3();
+const _visCandidate = new Vector3();
+const _visForward = new Vector3();
+const _visNewAim = new Vector3();
+const _subjectPos = new Vector3();
+
+/**
+ * Doors near a hold, from the demo's own player paths — computed once
+ * per (dataset, area) and cached: the roof probes across every sample
+ * near the hold are a one-time cost, and doors do not move.
+ */
+const _doorCache = new WeakMap<object, Map<string, Doorway[]>>();
+function doorwaysNear(holdTorque: DirectorVec3Tuple): Doorway[] {
+  const dataset = demoDirectorStore.getState().dataset;
+  if (!dataset) return [];
+  let byArea = _doorCache.get(dataset);
+  if (!byArea) _doorCache.set(dataset, (byArea = new Map()));
+  const key = `${Math.round(holdTorque[0] / 20)},${Math.round(holdTorque[1] / 20)}`;
+  let doors = byArea.get(key);
+  if (!doors) {
+    doors = findDoorwaysFromPaths(dataset.playerSamples, holdTorque, 60);
+    byArea.set(key, doors);
+    log.debug(
+      "doorways near [%d, %d]: %s",
+      Math.round(holdTorque[0]),
+      Math.round(holdTorque[1]),
+      doors
+        .map((d) => `[${d.pos.map((v) => v.toFixed(0))}]x${d.crossings}`)
+        .join(" ") || "none",
+    );
+  }
+  return doors;
+}
+/**
+ * The tripod pan's per-shot state, bundled so a shot boundary resets it
+ * in ONE place (its refs used to be scattered, and a forgotten reset —
+ * a pending state or a stale previous target surviving into the next
+ * shot — has caused real bugs).
+ */
+interface PanState {
+  state: "visible" | "gone" | "respawned elsewhere" | "returned home" | null;
+  pending: { state: string; sinceSec: number } | null;
+  /** Mid-reframe (deadband hysteresis). */
+  active: boolean;
+  prevTarget: Vector3;
+  prevValid: boolean;
+}
+
+function newPanState(): PanState {
+  return {
+    state: null,
+    pending: null,
+    active: false,
+    prevTarget: new Vector3(),
+    prevValid: false,
+  };
+}
+
+function resetPanState(pan: PanState): void {
+  pan.state = null;
+  pan.pending = null;
+  pan.active = false;
+  pan.prevValid = false;
+}
+
+/**
+ * The tripod pan for a fixed shot with a lookSubject: subject state
+ * machine (visible / gone / respawned / returned home, with commit
+ * hysteresis), the anchor-homed aim target, the one-frame continuity
+ * debounce for teleport flickers, and the deadband-gated, rate-capped
+ * easing of `aim` (mutated in place; the caller looks at it).
+ */
+function driveSubjectPan(
+  pan: PanState,
+  shot: Extract<Shot, { kind: "fixedOrbit" }>,
+  subject: NonNullable<Extract<Shot, { kind: "fixedOrbit" }>["lookSubject"]>,
+  camera: { position: Vector3 },
+  aim: Vector3,
+  seedAim: boolean,
+  cx: number,
+  cy: number,
+  cz: number,
+  t: number,
+  demoDelta: number,
+  rawDelta: number,
+): void {
+  const subjectGroup = resolveShotSubjectGroup(subject);
+  const lookLift = shot.lookLift ?? ORBIT_LOOK_LIFT;
+  // Coverage gate for PLAYER subjects: a player only leaves a
+  // fixed shot's coverage by dying and respawning — the body that
+  // reappears across the map is a different scene, not this
+  // shot's subject moving. (Flags slide continuously, and the
+  // strayed rail re-anchors on them — logged — so they stay.)
+  let state: "visible" | "gone" | "respawned elsewhere" | "returned home" =
+    "visible";
+  if (!subjectGroup) {
+    state = "gone";
+  } else if (
+    Math.hypot(subjectGroup.position.x - cx, subjectGroup.position.z - cz) >
+    Math.max(SUBJECT_MAX_RANGE, shot.radius)
+  ) {
+    if (subject.type === "player") {
+      state = "respawned elsewhere";
+    } else if (nearFlagStand(subjectGroup.position, subject.slot)) {
+      state = "returned home";
+    }
+  }
+  // A player's death ENDS this shot's story: the body that comes
+  // back is a new scene, wherever it spawns — never re-acquire.
+  // (A flag that reappears is still the flag.)
+  if (
+    subject.type === "player" &&
+    state === "visible" &&
+    (pan.state === "gone" || pan.state === "respawned elsewhere")
+  ) {
+    state = pan.state as typeof state;
+  }
+  // Hysteresis: the flag ghost flickers around a capture (hidden,
+  // visible, teleported home within a second) and reacting to each
+  // flicker swings the aim mid-ceremony. A new state must PERSIST
+  // briefly before the pan acts on it; holds lose nothing by
+  // committing late, and tracking resumes a beat later at worst.
+  if (state === pan.state) {
+    pan.pending = null;
+  } else if (pan.state == null) {
+    pan.state = state;
+  } else if (pan.pending?.state !== state) {
+    pan.pending = { state, sinceSec: t };
+  } else if (t - pan.pending.sinceSec >= PAN_STATE_COMMIT_SEC) {
+    log.info(
+      "%s pan: subject %s — %s",
+      demoClock(t),
+      state,
+      state === "visible" ? "tracking again" : "holding the last framing",
+    );
+    pan.state = state;
+    pan.pending = null;
+  }
+  // While a non-visible state change is PENDING (the hysteresis
+  // window right after a capture/return teleport), tracking must
+  // stop IMMEDIATELY — half a beat of lerp toward the teleported
+  // flag reads as the camera lunging at the home base before the
+  // hold commits.
+  const onSubject =
+    pan.state === "visible" &&
+    subjectGroup &&
+    (pan.pending == null || pan.pending.state === "visible");
+  // The aim's HOME blends between the anchor and the subject by how
+  // far the subject has strayed: inside the shot radius the
+  // anchor-centred frame contains it by construction
+  // (radiusForSpread sizes the frame for exactly that), so the aim
+  // point is the STATIC anchor and the camera holds dead still
+  // while a carrier dances around the stand. Only as the subject
+  // actually leaves the framed area does the aim ramp toward
+  // tracking it (full tracking by twice the radius) — continuous,
+  // so nothing flips at the boundary.
+  let panTarget: Vector3 | null = null;
+  if (onSubject) {
+    const fromAnchor = Math.hypot(
+      subjectGroup.position.x - cx,
+      subjectGroup.position.z - cz,
+    );
+    const track = Math.min(
+      1,
+      Math.max(0, fromAnchor / Math.max(1, shot.radius) - 1),
+    );
+    panTarget = _staticLook
+      .copy(subjectGroup.position)
+      .sub(_panAnchor.set(cx, cy, cz))
+      .multiplyScalar(track)
+      .add(_panAnchor);
+    panTarget.y += lookLift;
+    // Lead room: aim slightly AHEAD of a moving subject so they travel
+    // into frame space instead of being pinned dead centre — scaled by
+    // the tracking blend, so anchored framings stay anchored.
+    const entityId = resolveShotSubjectEntityId(subject);
+    if (entityId && subjectVelocity(entityId, _panLead)) {
+      panTarget.addScaledVector(_panLead, 0.35 * track);
+    }
+  } else if (pan.state === "returned home") {
+    panTarget = _staticLook.set(cx, cy + lookLift, cz);
+  }
+  // Continuity gate: a pan target that moved 60m+ since last frame
+  // is never the subject moving — it is a flag item unhiding at a
+  // STALE position, or a capture teleport the state machine hasn't
+  // committed yet (measured 633m single-frame target jumps at
+  // drops). Hold the aim and let the target become continuous.
+  if (panTarget) {
+    const discontinuous =
+      pan.prevValid && panTarget.distanceTo(pan.prevTarget) > 60;
+    if (discontinuous) {
+      camlog.info(
+        "pan target discontinuity (%dm) — holding aim",
+        Math.round(panTarget.distanceTo(pan.prevTarget)),
+      );
+    }
+    // The previous target always advances — the gate is a ONE-frame
+    // debounce (a stale-position flicker never repeats a position;
+    // a target that genuinely settled somewhere new is continuous
+    // with itself next frame and the rate-capped pan swings over).
+    pan.prevTarget.copy(panTarget);
+    pan.prevValid = true;
+    if (discontinuous) panTarget = null;
+  }
+  if (seedAim) {
+    // Open the shot already framing its aim point. Seeding the pan
+    // at the shot's centre made every shot whose subject sat off-
+    // centre OPEN with a slow whip-pan across empty ground — a
+    // camera move that means nothing. The damped pan below is for
+    // FOLLOWING the subject's motion, not for correcting the
+    // opening frame.
+    if (panTarget) {
+      aim.copy(panTarget);
+    } else {
+      aim.set(cx, cy + lookLift, cz);
+    }
+  }
+  // ALWAYS through the damped point — a subject dying mid-shot
+  // used to hard-snap the aim back to the centre in one frame,
+  // then swing it to their respawn when a new body resolved.
+  // A LOST player holds the last framing (swinging back to the
+  // now-empty anchor is the "mysterious rotate-back") — but a flag
+  // that went HOME concluded its story AT this shot's anchor (the
+  // capper and the defence are there), so the aim eases back onto
+  // the scene rather than staying parked on the patch of dirt the
+  // teleport whipped it toward.
+  if (panTarget) {
+    _panDirCurrent.copy(aim).sub(camera.position);
+    _panDirDesired.copy(panTarget).sub(camera.position);
+    let angle = 0;
+    if (_panDirCurrent.lengthSq() > 1e-6 && _panDirDesired.lengthSq() > 1e-6) {
+      angle = _panDirCurrent.angleTo(_panDirDesired);
+    }
+    // Tripod deadband with hysteresis: rock-still while the
+    // subject sits within the comfort zone of the current framing
+    // (a tossed flag wobbling the aim point is NOT a reason to
+    // move); one smooth rate-capped reframe when it nears the
+    // edge, locked again once it is back well inside.
+    if (!pan.active && angle > STATIC_PAN_DEADBAND_START) {
+      pan.active = true;
+    } else if (pan.active && angle < STATIC_PAN_DEADBAND_STOP) {
+      pan.active = false;
+    }
+    if (pan.active) {
+      // Damped, but never faster than a human tripod turn: damping
+      // alone scales with distance, and a flag flung off the stand
+      // by the killing blow used to whip the aim after it. The
+      // rate cap is enforced on the ACHIEVED rotation (lerping the
+      // aim POINT can turn the view far more than the dir-angle
+      // times the lerp fraction when the two points sit at very
+      // different depths), and per RENDERED frame — a demo-clock
+      // hitch must not deliver the whole pan in one frame.
+      const ease = 1 - Math.exp(-STATIC_PAN_DAMPING * demoDelta);
+      _panProposed.copy(aim).lerp(panTarget, ease);
+      _panDirDesired.copy(_panProposed).sub(camera.position);
+      const achieved =
+        _panDirCurrent.lengthSq() > 1e-6 && _panDirDesired.lengthSq() > 1e-6
+          ? _panDirCurrent.angleTo(_panDirDesired)
+          : 0;
+      const maxStep = STATIC_PAN_MAX_RATE * Math.min(demoDelta, rawDelta);
+      if (achieved > maxStep && achieved > 1e-4) {
+        camlog.info(
+          "pan step clamped: wanted %s rad in one frame (ease %s, target moved %sm)",
+          achieved.toFixed(3),
+          ease.toFixed(3),
+          aim.distanceTo(panTarget).toFixed(1),
+        );
+        aim.lerp(panTarget, (ease * maxStep) / achieved);
+      } else {
+        aim.copy(_panProposed);
+      }
+    }
+  }
+  directorCamDebug.panState = pan.state ?? "-";
+  directorCamDebug.panActive = pan.active;
+}
+
+const _sweepFrom = new Vector3();
+const _orbitAim = new Vector3();
+const _sweepAim = new Vector3();
+const _sweepTo = new Vector3();
+const _dollyDesired = new Vector3();
+const _dollySubject = new Vector3();
+const _dollyVelocity = new Vector3();
+const _dollyOut = new Vector3();
+const _staticLook = new Vector3();
+const _panDirCurrent = new Vector3();
+const _panDirDesired = new Vector3();
+const _panAnchor = new Vector3();
+const _panProposed = new Vector3();
+const _panLead = new Vector3();
+
+/**
+ * Auto-director playback driver — while demoDirectorStore is "playing",
+ * looks up the planned shot for the current demo time each frame and
+ * drives the existing follow/orbit selection state (watchFollow +
+ * StreamPlaybackSession do the actual camera work, inheriting respawn
+ * re-lock and flag hand-off), positioning the camera directly only for
+ * fixedOrbit establishing shots. F or Escape is the one interrupt back
+ * to free-fly; the plan is demo-time-indexed, so seeks and speed
+ * changes re-sync in a single frame.
+ */
+export function installDirectorCamera(engine: GameEngine): () => void {
+  let shotIndex = -1;
+  let appliedShot: Shot | null = null;
+  let orbitAngle = 0;
+  let currentHeightScale = 1;
+  let currentRadiusScale = 1;
+  /**
+   * Where a fixed shot is orbiting RIGHT NOW. A shot's planned centre is
+   * where its subject was when the plan was made; when the subject has
+   * since moved out from behind cover — or simply moved — the camera has
+   * to re-anchor on where they actually are, or it keeps framing the
+   * spot they left.
+   */
+  let centerOverride: DirectorVec3Tuple | null = null;
+  // Shot-to-shot travel: where the camera was when the shot changed,
+  // and how far through the move we are. "armed" means the new pose
+  // hasn't been measured yet (it is only known once this frame's shot
+  // has written the camera).
+  const travelFrom = new Vector3();
+  const travelFromQuat = new Quaternion();
+  const travelFromAim = new Vector3();
+  let travelState: "idle" | "armed" | "active" = "idle";
+  let travelElapsed = 0;
+  let travelDuration = 0;
+  /** Floor on the next travel's duration — a correction whose turn
+   *  would be too quick stretches its flight instead of being refused. */
+  let travelMinDuration = 0;
+  /** How long the shot being travelled TO runs. */
+  let travelBudget = Infinity;
+  /** Demo seconds a travel has sat armed without the pose settling. */
+  let travelArmedSec = 0;
+  let sweepLift = 0;
+  /** Which VISIBILITY_CHECK_SEC slot of demo time was last checked. */
+  let visibilitySlot = -1;
+  let visibilityStrikes = 0;
+  let visibilityYaw: number | null = null;
+  /**
+   * A shorter orbit standoff that fits the space the subject is in, when
+   * the shot's own distance does not. Cleared when the shot changes.
+   */
+  let visibilityDistance: number | null = null;
+  /** Demo time of the last visibility correction (cooldown). */
+  let lastCorrection = -Infinity;
+  /** Consecutive too-disruptive holds within one shot: after two, the
+   *  sweep cap is waived — being parked on a wall for the rest of the
+   *  shot is worse than one big (paced) move. */
+  let budgetHolds = 0;
+  /** Recent fixed-shot anchors and their orbit phases, so cutting back
+   *  to the same spot RESUMES the orbit instead of restarting it from
+   *  the planned angle — three restarts of the same rotation read as a
+   *  broken record. A short ring, because the classic churn is A-B-A:
+   *  a single-slot memory is erased by the B in between. */
+  const recentOrbits: { anchor: DirectorVec3Tuple; angle: number }[] = [];
+  /** The pan's view of its subject (visible / gone / respawned), so
+   *  transitions log once instead of the pan moving silently. */
+  const panState: PanState = newPanState();
+
+  const dollyPos = new Vector3();
+  const dollyAim = new Vector3();
+  let dollySeeded = false;
+  let dollyHeading = 0;
+  /** Smoothed subject velocity for the dolly's feed-forward. */
+  const dollyVel = new Vector3();
+  // Smoothed terrain-follow state: extra lift above the shot's natural
+  // height (-1 = seed on the next frame), and the previous frame's
+  // position for the motion look-ahead.
+  let terrainLift = -1;
+  const terrainPrev: { x: number; z: number; valid: boolean } = {
+    x: 0,
+    z: 0,
+    valid: false,
+  };
+
+  /**
+   * Commit a fixed-camera placement: bearing, height and standoff
+   * scales, and the anchor the orbit maths reads. `travel` eases the
+   * camera over (mid-shot corrections); without it the placement lands
+   * on the next frame's write (shot-apply time, where the cut or the
+   * shot-change travel machinery handles the motion). `paceSweep` (the
+   * view change this placement implies, radians) stretches the flight
+   * so a quick hop never reads as a whip.
+   */
+  const commitPlacement = (
+    placement: {
+      angle: number;
+      heightScale: number;
+      radiusScale: number;
+    },
+    anchor: DirectorVec3Tuple,
+    options?: {
+      travel?: { position: Vector3; quaternion: Quaternion };
+      paceSweep?: number;
+    },
+  ) => {
+    if (options?.travel) {
+      if (options.paceSweep != null) {
+        travelMinDuration = options.paceSweep / REANCHOR_MAX_SWEEP_RATE;
+      }
+      travelFrom.copy(options.travel.position);
+      travelFromQuat.copy(options.travel.quaternion);
+      travelState = "armed";
+      travelArmedSec = 0;
+    }
+    orbitAngle = placement.angle;
+    currentHeightScale = placement.heightScale;
+    currentRadiusScale = placement.radiusScale;
+    centerOverride = anchor;
+  };
+
+  /**
+   * Fly rather than cut when the new shot's camera is nearby. Called
+   * once per frame AFTER whatever owns this shot has written the camera
+   * — that written pose is the destination, so this works for the
+   * director's own fixed/dolly shots and for follow shots positioned by
+   * StreamPlaybackSession alike.
+   */
+  const applyTravel = (camera: Camera, delta: number) => {
+    if (travelState === "armed") {
+      // Decide once the destination is actually known. For the
+      // director's own shots that is this very frame; for a follow shot
+      // StreamPlaybackSession only writes the new pose on the NEXT frame,
+      // so an unchanged pose means "not known yet" and we keep waiting
+      // rather than concluding there is nothing to travel.
+      const distance = travelFrom.distanceTo(camera.position);
+      if (
+        distance > TRANSITION_MIN_DISTANCE &&
+        distance <= TRANSITION_MAX_DISTANCE
+      ) {
+        // Pace by the view SWING as well as the distance: the one hard
+        // invariant is the turn-rate cap, and the duration is DERIVED
+        // from it, never clamped below it (a 171° swing compressed into
+        // 1.6s was the signature whip-pan). The cubic ease peaks at
+        // 1.5x the average rate; the 2x divisor leaves margin.
+        const swing =
+          2 *
+          Math.acos(
+            Math.min(1, Math.abs(travelFromQuat.dot(camera.quaternion))),
+          );
+        const needed = Math.max(
+          TRANSITION_MIN_SEC,
+          distance / TRANSITION_SPEED,
+          (swing * 2) / TRANSITION_MAX_TURN_RATE,
+          travelMinDuration,
+        );
+        // Not everything nearby is flyable: a move that would need
+        // longer than a travel may take is a re-establish (cut), and a
+        // straight line that passes through geometry would fly the
+        // camera through the wall on its way.
+        const blocked = viewBlocked(travelFrom, camera.position);
+        // A travel that would swallow the shot it is arriving at is not
+        // a travel, it is the shot. Cut instead.
+        const budget = travelBudget * TRAVEL_SHOT_FRACTION;
+        if (needed > TRANSITION_MAX_SEC || needed > budget || blocked) {
+          travelState = "idle";
+          travelMinDuration = 0;
+          log.info(
+            "%s travel: cut (%s)",
+            demoClock(streamClock.time),
+            blocked
+              ? "flight path passes through geometry"
+              : needed > budget
+                ? `${needed.toFixed(1)}s would eat the ${travelBudget.toFixed(1)}s shot`
+                : `${Math.round((swing * 180) / Math.PI)}° swing needs ${needed.toFixed(1)}s`,
+          );
+        } else {
+          travelState = "active";
+          travelElapsed = 0;
+          travelDuration = needed;
+          travelMinDuration = 0;
+          // The travel blends an AIM POINT, never quaternions: slerping
+          // toward an endpoint the live pan rewrites every frame flips
+          // direction whenever it crosses the 180° short arc (measured
+          // 18+ rad/s whips). An aim point moves continuously.
+          _travelForward.set(0, 0, -1).applyQuaternion(travelFromQuat);
+          travelFromAim
+            .copy(travelFrom)
+            .addScaledVector(_travelForward, TRANSITION_AIM_LEVER);
+          log.info(
+            "%s travel: flying %dm over %ss (swing %d°)",
+            demoClock(streamClock.time),
+            Math.round(distance),
+            needed.toFixed(2),
+            Math.round((swing * 180) / Math.PI),
+          );
+        }
+      } else if (
+        distance > TRANSITION_MAX_DISTANCE ||
+        // Demo SECONDS, not frames: a frame count makes the decision
+        // depend on the machine it runs on.
+        (travelArmedSec += delta) > TRANSITION_ARM_SEC
+      ) {
+        // Too far to fly, or the pose never moved: cut.
+        travelState = "idle";
+        if (distance > TRANSITION_MAX_DISTANCE) {
+          log.info(
+            "%s travel: cut (%dm is beyond flying range)",
+            demoClock(streamClock.time),
+            Math.round(distance),
+          );
+        }
+      }
+    }
+    directorCamDebug.travel = travelState;
+    if (travelState !== "active") {
+      directorCamDebug.travelT = 0;
+      return;
+    }
+    travelElapsed += delta;
+    // Settle rather than a symmetric cubic: a travel ends by handing the
+    // frame to the shot it flew to, and arriving still moving makes the
+    // hand-off read as a lurch. The long tail lands it softly.
+    const t = easeInSettle(
+      Math.min(1, travelElapsed / travelDuration),
+      TRAVEL_RAMP_IN,
+      TRAVEL_RAMP_OUT,
+    );
+    directorCamDebug.travelT = t;
+    _travelForward.set(0, 0, -1).applyQuaternion(camera.quaternion);
+    _travelDestAim
+      .copy(camera.position)
+      .addScaledVector(_travelForward, TRANSITION_AIM_LEVER);
+    _transitionTargetPos.copy(camera.position);
+    camera.position.lerpVectors(travelFrom, _transitionTargetPos, t);
+    _travelAim.lerpVectors(travelFromAim, _travelDestAim, t);
+    camera.lookAt(_travelAim);
+    if (travelElapsed >= travelDuration) {
+      travelState = "idle";
+    }
+  };
+
+  /**
+   * Find a follow-shot orbit bearing that can actually see the subject:
+   * sweep yaw offsets from `baseYaw`, requiring outward room AND a
+   * verified sightline from the promised eye point. Null when every
+   * bearing is walled. `_subjectPos` must hold the (lifted) subject.
+   */
+  const findClearFollowYaw = (
+    baseYaw: number,
+    pitch: number,
+    wanted: number,
+  ): { yaw: number; offset: number; room: number } | null => {
+    for (const offset of VISIBILITY_YAW_OFFSETS) {
+      const yaw = baseYaw + offset;
+      orbitPullbackDir(yaw, pitch, _visCandidate);
+      const room = clearStandoffWide(_subjectPos, _visCandidate, wanted);
+      if (room <= 0) continue;
+      // Verify the promised eye point looking back in: the outward cast
+      // starts from a lifted origin that can escape a low roof and
+      // report room a real camera would not have.
+      if (
+        subjectViewBlocked(
+          _visNewAim.copy(_subjectPos).addScaledVector(_visCandidate, room),
+          _subjectPos,
+        )
+      ) {
+        continue;
+      }
+      return { yaw, offset, room };
+    }
+    return null;
+  };
+
+  /**
+   * Two safety rails applied to whatever the current shot produced:
+   * keep the camera above ground, and keep the subject actually
+   * visible. Both are throttled — a full-scene raycast per frame is far
+   * too costly — and both correct rather than merely detect.
+   */
+  const enforceCameraSanity = (
+    camera: { position: Vector3; quaternion: Quaternion },
+    shot: Shot,
+    delta: number,
+    /**
+     * The point the current shot is looking at, when it has a fixed
+     * one; re-aimed here if the rail moves the camera. Omit for shots
+     * whose orientation is driven elsewhere (a travel, a follow).
+     *
+     * The terrain rail moves the camera AFTER the drive has aimed it,
+     * and a camera translated without being re-aimed is pointing
+     * wherever it was pointing from the old spot — four metres lower.
+     * That is why a player framed on the chest ended up at the bottom
+     * of the picture with the base behind him in the middle.
+     */
+    aim?: Vector3,
+  ) => {
+    const aimedFromY = camera.position.y;
+    // ── Never below the terrain — and smoothly above it ──
+    // Three (x, y, z) is Torque (y, z, x), so the sampler takes the
+    // camera's z as Torque x and its x as Torque y. Rather than hugging
+    // every jag of the ground at minimum clearance (turbulence), the
+    // camera rides a smoothed track a few metres up: terrain is sampled
+    // ahead along the motion so climbs start before a ridge, and the
+    // lift eases at capped rates. The instant clamp stays as backstop.
+    const naturalY = camera.position.y;
+    // Over an empty terrain square (the mouth of an underground base)
+    // both samplers return null and the rail stands down — a camera
+    // below ground level there is where it belongs. No roof test: an
+    // open-top bucket base sitting in a hole has no ceiling to detect.
+    let ground = groundHeightAt(camera.position.x, camera.position.z);
+    // A BASEMENT is not the ground. Below the surface but in a room — a
+    // roof's front face above, a floor's front face below, the same
+    // test the free-space grid and the path check use — the terrain
+    // has nothing to say. Harvester's inventory station sits 23 m under
+    // intact terrain; the planner put the camera in the room with a
+    // clear sight line, and this clamp hoisted it through the roof to
+    // a close-up of the dirt.
+    const inBasement =
+      ground != null &&
+      naturalY < ground &&
+      inRoomUnderTerrain([camera.position.z, camera.position.x, naturalY]);
+    if (inBasement) ground = null;
+    // The desired track rides the SMOOTHED surface (spatially low-pass,
+    // so jagged heightmap cells don't re-appear in the camera's path);
+    // the raw height only backs the hard clamp below. Sweeps are
+    // exempt from the track: their paths are AUTHORED low on purpose
+    // (the roster pass flies at knee height for the low hero angle),
+    // and they carry their own occlusion lift — only the hard floor
+    // applies.
+    const soft =
+      plannerSolved(shot) || inBasement
+        ? null
+        : smoothedGroundHeightAt(camera.position.x, camera.position.z);
+    let required =
+      soft != null ? soft + TERRAIN_FOLLOW_CLEARANCE - naturalY : 0;
+    const prev = terrainPrev;
+    if (soft != null && prev.valid && delta > 0) {
+      const vx = (camera.position.x - prev.x) / delta;
+      const vz = (camera.position.z - prev.z) / delta;
+      if (Math.hypot(vx, vz) > 2) {
+        for (const ahead of TERRAIN_FOLLOW_LOOKAHEAD_SEC) {
+          const g = smoothedGroundHeightAt(
+            camera.position.x + vx * ahead,
+            camera.position.z + vz * ahead,
+          );
+          if (g != null) {
+            required = Math.max(
+              required,
+              g + TERRAIN_FOLLOW_CLEARANCE - naturalY,
+            );
+          }
+        }
+      }
+    }
+    const liftTarget = Math.max(0, required);
+    if (terrainLift < 0) {
+      // Fresh shot: open ON the track rather than climbing onto it.
+      terrainLift = liftTarget;
+    } else {
+      const rate =
+        liftTarget > terrainLift
+          ? TERRAIN_LIFT_RISE_RATE
+          : TERRAIN_LIFT_FALL_RATE;
+      terrainLift += Math.max(
+        -rate * delta,
+        Math.min(rate * delta, liftTarget - terrainLift),
+      );
+    }
+    camera.position.y = naturalY + terrainLift;
+    if (ground != null && camera.position.y < ground + GROUND_MIN_CLEARANCE) {
+      camera.position.y = ground + GROUND_MIN_CLEARANCE;
+      terrainLift = camera.position.y - naturalY;
+    }
+    prev.x = camera.position.x;
+    prev.z = camera.position.z;
+    prev.valid = true;
+    // Aim from where the camera ENDED UP. Skipping this is what left a
+    // chest-height portrait staring over its subject's head: the drive
+    // aimed correctly, then the rail lifted the camera out from under
+    // the aim.
+    //
+    // Not mid-travel. There the orientation belongs to the flight's
+    // aim blend, and `aim` is the DESTINATION's — re-aiming at it on
+    // the frames the terrain lift changed snapped the lens from the
+    // blended aim onto the subject and back, one frame at a time
+    // (Raindance 5:58, two 35-49 rad/s flips inside a 2s flight).
+    if (
+      aim &&
+      travelState === "idle" &&
+      camera.position.y !== aimedFromY &&
+      "lookAt" in camera
+    ) {
+      (camera as unknown as { lookAt: (v: Vector3) => void }).lookAt(aim);
+    }
+
+    // ── Keep the subject in view ──
+    // Not while the camera is still on its way there. This runs after
+    // the travel has written the in-flight position, and from halfway
+    // across a base the destination's subject is naturally behind a
+    // wall — the rail then re-anchored mid-flight, which armed a second
+    // travel from mid-air and read as the camera unable to make up its
+    // mind (Raindance 5:58, two flights and two 40+ rad/s spikes in a
+    // second). The destination was validated; judge it on arrival.
+    if (travelState !== "idle") {
+      visibilityStrikes = 0;
+      return;
+    }
+    const subject = shotSubjectOf(shot);
+    if (!subject && shot.kind !== "fixedOrbit") return;
+    // Follow shots are positioned by StreamPlaybackSession, which is lazily
+    // mounted and so can write the camera AFTER this clamp — their
+    // terrain clearance is applied THERE (the smoothed-track clamp on
+    // the orbit candidate), not here.
+    // Fire on DEMO-TIME boundaries, not on an accumulated frame delta.
+    // The correction this gate leads to re-solves the camera's bearing
+    // from wherever the orbit happens to be, so a check landing a frame
+    // earlier or later put the camera somewhere visibly different —
+    // which is why replaying the same cast did not look the same twice.
+    const checkSlot = Math.floor(streamClock.time / VISIBILITY_CHECK_SEC);
+    if (checkSlot === visibilitySlot) return;
+    visibilitySlot = checkSlot;
+    // Probe the point the shot actually AIMS at. Using the rig default
+    // here while the shot aimed at its own `lookLift` meant the planner
+    // certified one point and the runtime tested another — so a
+    // portrait validated on a visible chest got re-anchored a beat in
+    // because the top of the subject's head was behind a ledge.
+    const probeLift =
+      shot.kind === "fixedOrbit"
+        ? (shot.lookLift ?? ORBIT_LOOK_LIFT)
+        : ORBIT_LOOK_LIFT;
+    if (subject) {
+      const group = resolveShotSubjectGroup(subject);
+      if (!group) return;
+      _subjectPos.copy(group.position);
+      _subjectPos.y += probeLift;
+    } else if (shot.kind === "fixedOrbit") {
+      // No named subject: the anchor IS the subject. A camera that
+      // cannot see its own centre is staring at a roof or a hillside,
+      // whatever the plan intended it to show.
+      const anchorNow = centerOverride ?? shot.center;
+      _subjectPos.set(anchorNow[1], anchorNow[2] + probeLift, anchorNow[0]);
+    } else {
+      return;
+    }
+    // Out of range counts as losing the subject just as much as a wall
+    // does — but measured from the shot's ANCHOR, never from the camera:
+    // a wide shot's camera is a full radius away from a perfectly
+    // centred subject, and measuring from it made every big shot
+    // instantly "out of range" and sent the camera chasing its own
+    // framing. The bound also scales with the shot — a 110m overview is
+    // allowed to hold a subject its own radius away.
+    let strayed = false;
+    if (shot.kind === "fixedOrbit") {
+      const anchorNow = centerOverride ?? shot.center;
+      const fromAnchor = Math.hypot(
+        _subjectPos.x - anchorNow[1],
+        _subjectPos.z - anchorNow[0],
+      );
+      if (fromAnchor > Math.max(SUBJECT_MAX_RANGE, shot.radius)) {
+        // Only a FLAG earns a re-anchor chase — it slides there
+        // continuously and stays the story. A player this far out has
+        // died and respawned: a different scene. Guard the anchor
+        // instead of raycasting at a body across the map. And a flag
+        // that JUMPED to its home stand didn't slide — it was returned
+        // or capped, and warping the camera home after it is the most
+        // anti-climactic move a broadcast can make: the story stays at
+        // the scene (the aftermath shot owns what happens next).
+        if (
+          subject?.type === "flag" &&
+          !nearFlagStand(_subjectPos, subject.slot)
+        ) {
+          strayed = true;
+        } else {
+          const anchorHold = centerOverride ?? shot.center;
+          _subjectPos.set(
+            anchorHold[1],
+            anchorHold[2] + probeLift,
+            anchorHold[0],
+          );
+        }
+      }
+    }
+    // At-scene subjects get the occlusion check too — the stand camera
+    // that could never see its flag through the base wall used to hide
+    // behind an "at the scene" bypass here for its entire duration. A
+    // subject ducking briefly behind a pillar is debounced by the strike
+    // counter, and the reanchor cooldown bounds any churn.
+    if (!strayed && !subjectViewBlocked(camera.position, _subjectPos)) {
+      visibilityStrikes = 0;
+      return;
+    }
+    if (++visibilityStrikes < VISIBILITY_BLOCKED_STRIKES) return;
+    visibilityStrikes = 0;
+    // A correction is itself a camera move; a second one on its heels
+    // reads as the camera spinning in confusion (dropped flags roll,
+    // scrums shuffle). Hold what we have until the last one has settled.
+    if (streamClock.time - lastCorrection < REANCHOR_COOLDOWN_SEC) {
+      return;
+    }
+    // And NO correction in the shot's final stretch — the cut is coming
+    // anyway; a retarget seconds before it is a jump with no payoff.
+    if (shot.endSec - streamClock.time < CORRECTION_MIN_REMAINING_SEC) {
+      return;
+    }
+    lastCorrection = streamClock.time;
+
+    if (shot.kind === "fixedOrbit") {
+      // Re-anchor around the SUBJECT (not the shot's stale centre) and
+      // fly to the new spot rather than snapping. Three (x, y, z) →
+      // Torque (z, x, y), undoing THE SAME lift that was added above —
+      // adding one height and subtracting a different one is how the
+      // planner and the rail ended up describing different cameras.
+      let anchor: DirectorVec3Tuple = [
+        _subjectPos.z,
+        _subjectPos.x,
+        _subjectPos.y - probeLift,
+      ];
+      // A dropped flag can clip into a hillside; anchoring the
+      // correction on the buried point makes every placement garbage.
+      anchor = surfaceLiftedAnchor(anchor) ?? anchor;
+      const placement = chooseClearPlacement(
+        anchor,
+        shot.radius,
+        orbitLiftFactor(shot.radius, shot.heightFactor ?? ORBIT_HEIGHT_FACTOR),
+        orbitAngle,
+        { minScale: shot.lookSubject ? 0 : STANDOFF_MIN_SCALE },
+      );
+      if (!placement.clear) {
+        log.info(
+          "%s visibility: subject %s but no clear placement found",
+          demoClock(streamClock.time),
+          strayed ? "out of range" : "blocked",
+        );
+        return;
+      }
+      // Disruption budget: how far would the view swing, and how fast?
+      const lift =
+        orbitLiftFactor(shot.radius, shot.heightFactor ?? ORBIT_HEIGHT_FACTOR) *
+        placement.heightScale;
+      const radius = shot.radius * placement.radiusScale;
+      _visCandidate.set(
+        _subjectPos.x + Math.cos(placement.angle) * radius,
+        _subjectPos.y - probeLift + radius * lift,
+        _subjectPos.z + Math.sin(placement.angle) * radius,
+      );
+      _visForward.set(0, 0, -1).applyQuaternion(camera.quaternion);
+      _visNewAim.copy(_subjectPos).sub(_visCandidate).normalize();
+      const sweep = Math.acos(
+        Math.max(-1, Math.min(1, _visForward.dot(_visNewAim))),
+      );
+      const remaining = shot.endSec - streamClock.time;
+      if (
+        (sweep > REANCHOR_MAX_SWEEP_RAD && budgetHolds < 2) ||
+        remaining < REANCHOR_MIN_REMAINING_SEC
+      ) {
+        // The one correction that is NEVER disruptive: keep the current
+        // bearing and shorten the leash until the wall is behind the
+        // camera instead of in front of it. Zero sweep — the lens keeps
+        // pointing where it points, the camera just moves toward the
+        // subject. Only when even that has no room does the frame stay
+        // imperfect.
+        const bearing = orbitBearingOf(
+          camera.position,
+          _subjectPos.x,
+          _subjectPos.z,
+        );
+        const lift0 = orbitLiftFactor(
+          shot.radius,
+          shot.heightFactor ?? ORBIT_HEIGHT_FACTOR,
+        );
+        const norm = Math.hypot(1, lift0);
+        _visNewAim.set(
+          Math.cos(bearing) / norm,
+          lift0 / norm,
+          Math.sin(bearing) / norm,
+        );
+        const desired = shot.radius * norm;
+        const room = clearStandoffWide(_subjectPos, _visNewAim, desired);
+        // (The final-stretch gate above already guarantees ≥2s remain.)
+        if (room > 0) {
+          log.info(
+            "%s visibility: pulling in on current bearing to %dm (swing would be %d°)",
+            demoClock(streamClock.time),
+            Math.round(room),
+            Math.round((sweep * 180) / Math.PI),
+          );
+          commitPlacement(
+            {
+              angle: bearing,
+              heightScale: 1,
+              radiusScale: Math.min(1, room / desired),
+            },
+            anchor,
+            { travel: camera },
+          );
+          return;
+        }
+        budgetHolds += 1;
+        log.info(
+          "%s visibility: holding imperfect frame — correction too disruptive (%d° sweep, %ss left)",
+          demoClock(streamClock.time),
+          Math.round((sweep * 180) / Math.PI),
+          remaining.toFixed(1),
+        );
+        return;
+      }
+      budgetHolds = 0;
+      log.info(
+        "%s visibility: %s — re-anchoring on subject (angle %d°, r×%s)",
+        demoClock(streamClock.time),
+        strayed ? "subject left the frame" : "subject behind geometry",
+        Math.round(((((placement.angle * 180) / Math.PI) % 360) + 360) % 360),
+        placement.radiusScale.toFixed(2),
+      );
+      // A quick hop must not read as a whip: paceSweep stretches the
+      // flight so the view never turns faster than the sweep-rate cap.
+      commitPlacement(placement, anchor, {
+        travel: camera,
+        paceSweep: sweep,
+      });
+      return;
+    }
+
+    if (shot.kind === "followFlag" || shot.kind === "followPlayer") {
+      // Swing the orbit round the subject until the line is clear, and
+      // where no bearing has room for the full standoff, pull in to what
+      // does fit — a subject indoors has metres, not tens of metres. The
+      // aim steering turns at its own rate, so this reads as the camera
+      // repositioning rather than a cut.
+      const state = streamPlaybackStore.getState();
+      const wanted = shot.distance ?? state.orbitOverrideDistance;
+      const clear = findClearFollowYaw(
+        state.orbitOverrideYaw,
+        state.orbitOverridePitch,
+        wanted,
+      );
+      if (clear) {
+        // Never pull in past the shot's declared framing floor: a
+        // wide-by-intent shot squeezed to a portrait is the plan
+        // being overruled, not a rail doing its job.
+        const floor = shot.minDistance ?? 0;
+        const room = Math.max(clear.room, floor);
+        log.info(
+          "%s visibility: follow subject blocked — swinging yaw %d°%s",
+          demoClock(streamClock.time),
+          Math.round((clear.offset * 180) / Math.PI),
+          room < wanted ? ` and pulling in to ${Math.round(room)}m` : "",
+        );
+        visibilityYaw = clear.yaw;
+        visibilityDistance = room < wanted ? room : null;
+        return;
+      }
+      log.info(
+        "%s visibility: follow subject blocked on every bearing — holding",
+        demoClock(streamClock.time),
+      );
+    }
+  };
+
+  /**
+   * Everything that happens once at a shot boundary: log it, arm the
+   * shot-to-shot travel, reset the per-shot correction state, hand the
+   * camera to the right owner (applyShot), then do the geometry-aware
+   * entry work — lifting a sweep until both ends can see, framing a
+   * doorway from its walked crossings, and choosing/resuming a clear
+   * fixedOrbit placement around the live subject.
+   */
+  const onShotChange = (
+    shot: Shot,
+    index: number,
+    shots: readonly Shot[],
+    t: number,
+    fallbackCamera: Camera,
+  ): void => {
+    // What the incoming shot can afford to spend on being arrived at.
+    travelBudget = Math.max(0, shot.endSec - shot.startSec);
+    // A jump of more than one shot means a seek re-synced the plan.
+    if (shotIndex >= 0 && Math.abs(index - shotIndex) > 1) {
+      log.info(
+        "%s seek: re-synced from shot #%d to #%d",
+        demoClock(t),
+        shotIndex + 1,
+        index + 1,
+      );
+    }
+    log.info("%s %s", demoClock(t), describeShot(shot, index, shots.length));
+    directorCamDebug.shot = `#${index + 1} ${shot.kind} :: ${shot.reason}`;
+    directorCamDebug.panState = "";
+    directorCamDebug.panActive = false;
+    shotIndex = index;
+    appliedShot = shot;
+    // License the follow spring to snap: a shot boundary is the one
+    // moment a discontinuous camera move is an EDIT rather than a
+    // glitch (see StreamPlaybackSession's mid-shot teleport freeze).
+    streamPlaybackStore.setState({
+      orbitSnapNonce: streamPlaybackStore.getState().orbitSnapNonce + 1,
+    });
+    const leaving = cameraRegistry.perspective ?? fallbackCamera;
+    travelFrom.copy(leaving.position);
+    travelFromQuat.copy(leaving.quaternion);
+    travelState = "armed";
+    travelArmedSec = 0;
+    visibilityStrikes = 0;
+    visibilityYaw = null;
+    visibilityDistance = null;
+    lastCorrection = -Infinity;
+    budgetHolds = 0;
+    resetPanState(panState);
+    travelMinDuration = 0;
+    currentRadiusScale = 1;
+    centerOverride = null;
+    terrainLift = -1;
+    terrainPrev.valid = false;
+    applyShot(shot);
+    dollySeeded = false;
+    if (shot.kind === "followFlag" || shot.kind === "followPlayer") {
+      // Entry pre-clear: fixed shots already choose a placement that can
+      // see their subject before the first frame — follow shots used to
+      // open on the planned aim and only get swung clear by the periodic
+      // check half a second later, a visible "position, then adjust".
+      // Sweep for a clear bearing NOW, from the yaw the aim would
+      // command, and open there instead.
+      const subject = shotSubjectOf(shot);
+      const group = subject ? resolveShotSubjectGroup(subject) : null;
+      if (group) {
+        _subjectPos.copy(group.position);
+        _subjectPos.y += ORBIT_LOOK_LIFT;
+        const playbackState = streamPlaybackStore.getState();
+        const wanted = shot.distance ?? playbackState.orbitOverrideDistance;
+        const pitch = shot.pitch ?? playbackState.orbitOverridePitch;
+        let entryYaw = playbackState.orbitOverrideYaw;
+        if (shot.aim?.mode === "hold") {
+          entryYaw = shot.aim.yaw;
+        } else if (shot.aim?.mode === "toward") {
+          entryYaw = bearingYaw(
+            [group.position.z, group.position.x, 0],
+            shot.aim.target,
+          );
+        } else {
+          const heading = subjectHeading(resolveShotSubjectEntityId(subject!));
+          if (heading != null) {
+            entryYaw =
+              shot.aim?.mode === "backward" ? heading + Math.PI : heading;
+          }
+        }
+        const clear = findClearFollowYaw(entryYaw, pitch, wanted);
+        if (clear && (clear.offset !== 0 || clear.room < wanted)) {
+          log.info(
+            "%s entry: planned bearing blocked — opening at %d°%s",
+            demoClock(t),
+            Math.round((clear.offset * 180) / Math.PI),
+            clear.room < wanted
+              ? ` and pulled in to ${Math.round(clear.room)}m`
+              : "",
+          );
+          visibilityYaw = clear.yaw;
+          visibilityDistance = clear.room < wanted ? clear.room : null;
+          if (shot.transitionIn === "cut") {
+            // A cut has no continuity to preserve: open ON the clear
+            // bearing rather than swinging onto it in view.
+            streamPlaybackStore.setState({
+              orbitOverrideYaw: clear.yaw,
+              ...(clear.room < wanted
+                ? { orbitOverrideDistance: clear.room }
+                : null),
+            });
+          }
+        }
+      }
+    }
+    if (shot.kind === "sweep" && shot.pathSolved) {
+      // The staging pass verified this exact path against geometry and
+      // player visibility — fly it as-is. Re-probing here once hoisted
+      // verified low roster pans into the roof above the ranks.
+      sweepLift = 0;
+    } else if (shot.kind === "sweep") {
+      // Legacy plans without solved paths: find a height at which both
+      // ends of the pass can see what they are pointed at.
+      sweepLift = 0;
+      for (const lift of SWEEP_LIFT_STEPS) {
+        _sweepFrom.set(shot.from[1], shot.from[2] + lift, shot.from[0]);
+        torqueVecToThree(shot.target, _sweepTo);
+        const startClear = !viewBlocked(_sweepFrom, _sweepTo);
+        const endTarget = shot.targetTo ?? shot.target;
+        _sweepFrom.set(shot.to[1], shot.to[2] + lift, shot.to[0]);
+        torqueVecToThree(endTarget, _sweepTo);
+        const endClear = !viewBlocked(_sweepFrom, _sweepTo);
+        sweepLift = lift;
+        if (startClear && endClear) break;
+      }
+      if (sweepLift > 0) {
+        log.info(
+          "%s sweep: lifted %dm so both ends of the pass can see",
+          demoClock(t),
+          sweepLift,
+        );
+      }
+    }
+    let doorwayPlaced = false;
+    if (shot.kind === "fixedOrbit" && shot.doorwayOf) {
+      // A doorway watch. The definitive door signal is where players
+      // actually WALKED: consecutive samples flipping between roofed
+      // and open sky crossed a door between them (computed once per
+      // demo and cached). The straight-ray fan from the hold and the
+      // live players is the fallback for sparse data.
+      const doors = doorwaysNear(shot.doorwayOf);
+      const planned = shot.startAngle ?? 0;
+      const height = orbitLiftFactor(
+        shot.radius,
+        shot.heightFactor ?? ORBIT_HEIGHT_FACTOR,
+      );
+      const norm = Math.hypot(1, height);
+      for (const door of doors) {
+        // Camera on the OUTSIDE of the door, looking in at the mouth.
+        const angle = Math.atan2(door.outward[0], door.outward[1]);
+        _subjectPos.set(
+          door.pos[1],
+          door.pos[2] + ORBIT_LOOK_LIFT,
+          door.pos[0],
+        );
+        _visCandidate.set(
+          Math.cos(angle) / norm,
+          height / norm,
+          Math.sin(angle) / norm,
+        );
+        const room = clearStandoff(
+          _subjectPos,
+          _visCandidate,
+          shot.radius * norm,
+        );
+        if (room <= 0) continue;
+        commitPlacement(
+          {
+            angle,
+            heightScale: 1,
+            radiusScale: Math.min(1, room / (shot.radius * norm)),
+          },
+          door.pos,
+        );
+        doorwayPlaced = true;
+        log.info(
+          "%s doorway: %d player crossings mark the door — framing its mouth from outside (%dm back)",
+          demoClock(t),
+          door.crossings,
+          Math.round(shot.radius * currentRadiusScale),
+        );
+        break;
+      }
+      if (!doorwayPlaced) {
+        // Fallback: straight-ray fan from the hold and the players
+        // around it.
+        torqueVecToThree(shot.doorwayOf, _subjectPos);
+        const origins = [
+          _subjectPos.clone(),
+          ...livingPlayerPositionsNear(_subjectPos, 40, 8),
+        ];
+        let opening: {
+          origin: Vector3;
+          angle: number;
+          escape: number;
+        } | null = null;
+        let bestScore = -Infinity;
+        for (const origin of origins) {
+          for (const d of findOpeningsByRay(origin)) {
+            const delta = Math.abs(
+              ((d.angle - planned + Math.PI * 3) % (Math.PI * 2)) - Math.PI,
+            );
+            const score = Math.min(d.escape, 30) * 2 - delta * 6;
+            if (score > bestScore) {
+              bestScore = score;
+              opening = { origin, angle: d.angle, escape: d.escape };
+            }
+          }
+        }
+        if (opening) {
+          commitPlacement(
+            {
+              angle: opening.angle,
+              heightScale: 1,
+              radiusScale:
+                Math.max(
+                  STANDOFF_MIN,
+                  Math.min(shot.radius, opening.escape * 0.8),
+                ) / shot.radius,
+            },
+            threeToTorque(opening.origin),
+          );
+          doorwayPlaced = true;
+          log.info(
+            "%s doorway: no walked crossings — ray fan found an opening at %d°",
+            demoClock(t),
+            Math.round(((((opening.angle * 180) / Math.PI) % 360) + 360) % 360),
+          );
+        } else {
+          log.info(
+            "%s doorway: no opening found — falling back to a clear framing",
+            demoClock(t),
+          );
+        }
+      }
+    }
+    if (shot.kind === "fixedOrbit" && !doorwayPlaced && shot.staged) {
+      // Plan-time solved placement: verified against the subject's
+      // whole path through the shot, so there is nothing to search for
+      // at the cut — convert the absolute solved values into the
+      // runtime's scale form and go.
+      const staged = shot.staged;
+      if (staged.anchor) centerOverride = staged.anchor;
+      orbitAngle = staged.angle;
+      currentRadiusScale = staged.radius / Math.max(1e-6, shot.radius);
+      const plannedLift = orbitLiftFactor(
+        shot.radius,
+        shot.heightFactor ?? ORBIT_HEIGHT_FACTOR,
+      );
+      currentHeightScale =
+        plannedLift > 1e-6 ? staged.liftFactor / plannedLift : 1;
+      if (staged.visibility < 1) {
+        log.info(
+          "%s apply: staged placement sees %d%% of the shot",
+          demoClock(t),
+          Math.round(staged.visibility * 100),
+        );
+      }
+    } else if (shot.kind === "fixedOrbit" && !doorwayPlaced) {
+      // Enter the orbit from the planned bearing (or the camera's
+      // current one), then nudge it to an angle that can actually see
+      // the subject rather than a hillside or a base wall.
+      const camera = cameraRegistry.perspective ?? fallbackCamera;
+      // If the shot's subject has already strayed from the planned
+      // centre (a flag carried off between planning and now), anchor
+      // on where it actually is from the first frame — otherwise the
+      // shot opens on an empty anchor and only the visibility rail
+      // drags it over a second later.
+      let anchor = shot.center;
+      // A centroid-derived anchor can land inside a hillside on slope
+      // maps; a camera framing a buried point shows dirt, and every
+      // correction around it digs deeper. Lift to the surface first.
+      const lifted = surfaceLiftedAnchor(anchor);
+      if (lifted) {
+        anchor = lifted;
+        centerOverride = lifted;
+        log.info(
+          "%s apply: anchor was buried in the terrain — lifted %dm to the surface",
+          demoClock(t),
+          Math.round(lifted[2] - shot.center[2]),
+        );
+      }
+      const subject = shot.lookSubject
+        ? resolveShotSubjectGroup(shot.lookSubject)
+        : null;
+      if (subject) {
+        _subjectPos.copy(subject.position);
+        const strayed =
+          Math.hypot(
+            _subjectPos.x - shot.center[1],
+            _subjectPos.z - shot.center[0],
+          ) > SUBJECT_MAX_RANGE;
+        if (strayed) {
+          anchor = threeToTorque(_subjectPos);
+          centerOverride = anchor;
+          log.info(
+            "%s apply: subject already %dm from planned centre — anchoring on it",
+            demoClock(t),
+            Math.round(
+              Math.hypot(
+                _subjectPos.x - shot.center[1],
+                _subjectPos.z - shot.center[0],
+              ),
+            ),
+          );
+        }
+      }
+      // Returning to (near) the same anchor resumes the previous
+      // orbit's phase — a restarted rotation from the planned angle
+      // reads as a broken record when the same stand is revisited.
+      const resumed =
+        recentOrbits.find(
+          (o) =>
+            Math.hypot(o.anchor[0] - anchor[0], o.anchor[1] - anchor[1]) <= 25,
+        )?.angle ?? null;
+      if (resumed != null) {
+        log.info("%s apply: resuming the earlier orbit phase", demoClock(t));
+      }
+      // Already IN the scene (the camera was just following the carrier
+      // who dropped here): continuity beats composition — enter from
+      // the bearing the viewer is already on rather than swinging to
+      // the planned one. Distant cuts keep the composed angle; there is
+      // nothing on screen to stay continuous with.
+      const alreadyNear =
+        Math.hypot(
+          camera.position.x - anchor[1],
+          camera.position.z - anchor[0],
+        ) <= Math.max(60, shot.radius * 1.5);
+      if (resumed == null && alreadyNear && shot.startAngle != null) {
+        log.info(
+          "%s apply: already at the scene — keeping the current bearing",
+          demoClock(t),
+        );
+      }
+      const planned =
+        resumed ??
+        (alreadyNear || shot.startAngle == null
+          ? orbitBearingOf(camera.position, anchor[1], anchor[0])
+          : shot.startAngle);
+      const placement = chooseClearPlacement(
+        anchor,
+        shot.radius,
+        orbitLiftFactor(shot.radius, shot.heightFactor ?? ORBIT_HEIGHT_FACTOR),
+        planned,
+        { minScale: shot.lookSubject ? 0 : STANDOFF_MIN_SCALE },
+      );
+      if (!placement.clear) {
+        // Every bearing/height candidate was walled: the shot opens on
+        // its planned angle KNOWING it cannot see the subject. Loud on
+        // purpose — these are exactly the shots the plan should not
+        // have ordered here.
+        log.info(
+          "%s apply: no bearing can see the subject — parking on the planned angle",
+          demoClock(t),
+        );
+      }
+      orbitAngle = placement.angle;
+      currentHeightScale = placement.heightScale;
+      currentRadiusScale = placement.radiusScale;
+    }
+  };
+
+  /** Per-kind camera drives, one per shot mechanism — each owns its
+   *  whole frame: position/aim writes, then travel easing and the
+   *  sanity rails. Split from the frame loop so the loop reads as
+   *  dispatch. */
+  const driveFixedOrbit = (
+    shot: Extract<Shot, { kind: "fixedOrbit" }>,
+    t: number,
+    isPlaying: boolean,
+    demoDelta: number,
+    rawDelta: number,
+    fallbackCamera: Camera,
+  ): void => {
+    // Direct camera write: freeFly mode means nothing else touches the
+    // camera (inputs are unmounted). Torque [x,y,z] → Three (y,z,x).
+    if (isPlaying) {
+      orbitAngle += (shot.angularSpeed ?? 0.1) * demoDelta;
+    }
+    const camera = cameraRegistry.perspective ?? fallbackCamera;
+    const anchor = centerOverride ?? shot.center;
+    // Remember this orbit's phase, replacing an earlier entry for the
+    // same spot; keep only a handful so stale anchors age out.
+    {
+      const ring = recentOrbits;
+      const existing = ring.findIndex(
+        (o) =>
+          Math.hypot(o.anchor[0] - anchor[0], o.anchor[1] - anchor[1]) <= 25,
+      );
+      const entry = { anchor, angle: orbitAngle };
+      if (existing >= 0) ring[existing] = entry;
+      else {
+        ring.push(entry);
+        if (ring.length > 4) ring.shift();
+      }
+    }
+    const cx = anchor[1];
+    const cy = anchor[2];
+    const cz = anchor[0];
+    const radius = shot.radius * currentRadiusScale;
+    // Through the SHARED definition, so the placement that was
+    // validated is the placement that flies. The runtime rail may have
+    // re-solved the bearing and standoff since, so those are passed in.
+    const pose = shotPoseAt(shot, 0, {
+      angle: orbitAngle,
+      radius,
+      heightScale: currentHeightScale,
+      anchor,
+    })!;
+    placeCamera(camera, pose.eye);
+    // Locked-off but panning: aim at the subject's live position when
+    // the shot names one (a dropped flag slides after landing), eased
+    // so the pan is gentle. Otherwise just look at the center point.
+    let fixedAim: Vector3 | undefined;
+    if (shot.lookSubject) {
+      const seedAim = !dollySeeded;
+      dollySeeded = true;
+      driveSubjectPan(
+        panState,
+        shot,
+        shot.lookSubject,
+        camera,
+        dollyAim,
+        seedAim,
+        cx,
+        cy,
+        cz,
+        t,
+        demoDelta,
+        rawDelta,
+      );
+      camera.lookAt(dollyAim);
+    } else {
+      aimCamera(camera, pose.aim, _orbitAim);
+      fixedAim = _orbitAim;
+    }
+    applyTravel(camera, demoDelta);
+    enforceCameraSanity(camera, shot, demoDelta, fixedAim);
+    return;
+  };
+
+  const driveSweep = (
+    shot: Extract<Shot, { kind: "sweep" }>,
+    t: number,
+    demoDelta: number,
+    fallbackCamera: Camera,
+  ): void => {
+    // Roster-lineup flyby: glide along a fixed path looking at a fixed
+    // point. Eased at both ends so it starts and stops like a crane
+    // move rather than a slide.
+    const camera = cameraRegistry.perspective ?? fallbackCamera;
+    // Clock to path: how far along the move we are BY NOW. Then the
+    // pose from the shared definition — position and aim together, on
+    // that one parameter. Deriving them here was how the two drifted.
+    const pose = shotPoseAt(shot, sweepProgress(shot, sweepClock(shot, t)))!;
+    placeCamera(camera, pose.eye, sweepLift);
+    // The look-at pans too when the shot names an end target, so a
+    // pass across a line of faces tracks along it instead of swinging
+    // past a fixed point.
+    aimCamera(camera, pose.aim, _sweepAim);
+    applyTravel(camera, demoDelta);
+    enforceCameraSanity(camera, shot, demoDelta, _sweepAim);
+    return;
+  };
+
+  const driveDolly = (
+    shot: Extract<Shot, { kind: "dolly" }>,
+    demoDelta: number,
+    fallbackCamera: Camera,
+  ): void => {
+    // Film-style flying camera: damped pursuit of a trailing
+    // three-quarter offset off the subject's path, aim eased onto the
+    // subject. Direct camera writes in freeFly, like fixedOrbit.
+    const camera = cameraRegistry.perspective ?? fallbackCamera;
+    const entityId = resolveShotSubjectEntityId(shot.subject);
+    const seeding = !dollySeeded;
+    if (seeding) {
+      dollyVel.set(0, 0, 0);
+      const entryHeading = subjectHeading(entityId);
+      if (entryHeading != null) dollyHeading = entryHeading;
+    }
+    const group = entityId ? resolveSubjectGroup(entityId) : null;
+    if (group) {
+      const heading = subjectHeading(entityId);
+      if (heading != null) {
+        // Slew rather than snap: the raw heading flicks with every
+        // jink, and at offset distance each flick teleports the
+        // desired camera point sideways — the "jumpy" in a jumpy
+        // tracking shot.
+        dollyHeading = springAngle(
+          dollyHeading,
+          heading,
+          AIM_SPRING_RATE,
+          demoDelta,
+          DOLLY_HEADING_RATE * demoDelta,
+        );
+      }
+      _dollySubject.copy(group.position);
+      _dollySubject.y += DOLLY_LOOK_LIFT;
+      const distance = shot.distance ?? DOLLY_DEFAULT_DISTANCE;
+      if (shot.awayFrom) {
+        // Profile framing: ride outside the subject relative to the
+        // map's midpoint, so the lens looks INWARD across them at the
+        // space between the bases — a trailing camera on a cross-map
+        // run mostly stares at the empty map edge beyond the carrier.
+        _dollyOut
+          .set(
+            _dollySubject.x - shot.awayFrom[1],
+            0,
+            _dollySubject.z - shot.awayFrom[0],
+          )
+          .normalize();
+        if (_dollyOut.lengthSq() < 0.5) _dollyOut.set(1, 0, 0);
+        _dollyDesired.set(
+          _dollySubject.x + _dollyOut.x * distance,
+          _dollySubject.y + (shot.height ?? DOLLY_DEFAULT_HEIGHT),
+          _dollySubject.z + _dollyOut.z * distance,
+        );
+      } else {
+        const angle =
+          dollyHeading +
+          Math.PI +
+          (shot.side ?? 1) * (shot.sideAngle ?? DOLLY_SIDE_ANGLE);
+        _dollyDesired.set(
+          _dollySubject.x + Math.cos(angle) * distance,
+          _dollySubject.y + (shot.height ?? DOLLY_DEFAULT_HEIGHT),
+          _dollySubject.z + Math.sin(angle) * distance,
+        );
+      }
+      // Velocity feed-forward: a first-order follow lags by v/k, which
+      // at ski speeds (~70 u/s) would trail tens of metres behind and
+      // shrink the subject to a dot. Leading the target by exactly
+      // v/k cancels that, so the camera holds its intended framing
+      // while keeping the eased, hand-flown feel.
+      if (entityId && subjectVelocity(entityId, _dollyVelocity)) {
+        dollyVel.lerp(
+          _dollyVelocity,
+          1 - Math.exp(-DOLLY_VELOCITY_SMOOTHING * demoDelta),
+        );
+      } else {
+        dollyVel.multiplyScalar(
+          Math.exp(-DOLLY_VELOCITY_SMOOTHING * demoDelta),
+        );
+      }
+      _dollyDesired.addScaledVector(dollyVel, 1 / DOLLY_DAMPING);
+      // Same feed-forward on the aim point, so the subject stays
+      // framed instead of drifting ahead of a lagging look-at.
+      _dollySubject.addScaledVector(dollyVel, 1 / DOLLY_AIM_DAMPING);
+      if (seeding) {
+        // A dolly OPENS on its mark. Seeding from wherever the camera
+        // happened to be turned a cut across the map into a damped
+        // glide — hundreds of metres, fastest at the first frame, with
+        // the aim swinging the whole way. Only a genuinely nearby
+        // entry (already riding beside this subject) glides in.
+        dollySeeded = true;
+        const gap = camera.position.distanceTo(_dollyDesired);
+        if (gap > DOLLY_GLIDE_MAX_GAP) {
+          dollyPos.copy(_dollyDesired);
+          dollyAim.copy(_dollySubject);
+        } else {
+          dollyPos.copy(camera.position);
+          camera.getWorldDirection(_dollyOut);
+          dollyAim.copy(camera.position).addScaledVector(_dollyOut, 20);
+        }
+      }
+      dollyPos.lerp(_dollyDesired, 1 - Math.exp(-DOLLY_DAMPING * demoDelta));
+      dollyAim.lerp(
+        _dollySubject,
+        1 - Math.exp(-DOLLY_AIM_DAMPING * demoDelta),
+      );
+    }
+    if (!dollySeeded) {
+      // Subject never resolved this frame: hold the current pose so
+      // nothing snaps to the origin while it comes into scope.
+      dollySeeded = true;
+      dollyPos.copy(camera.position);
+      camera.getWorldDirection(_dollyOut);
+      dollyAim.copy(camera.position).addScaledVector(_dollyOut, 20);
+    }
+    // Subject missing (between bodies / not ghosted): the camera
+    // glides to rest where it was, still watching the last position.
+    camera.position.copy(dollyPos);
+    camera.lookAt(dollyAim);
+    applyTravel(camera, demoDelta);
+    enforceCameraSanity(camera, shot, demoDelta);
+    return;
+  };
+
+  const driveFollow = (
+    shot: Extract<Shot, { kind: "followFlag" | "followPlayer" }>,
+    isPlaying: boolean,
+    demoDelta: number,
+    fallbackCamera: Camera,
+  ): void => {
+    // Follow shots: keep the selection state converged on the shot's
+    // subject (the flag may not be ghosted yet; the player may be
+    // between bodies) — the frame this resolves, the shot takes hold.
+    const playbackState = streamPlaybackStore.getState();
+    if (shot.kind === "followFlag") {
+      if (playbackState.followFlagSlot !== shot.slot) {
+        followFlag(shot.slot);
+      }
+    } else if (
+      playbackState.followTargetId !== shot.targetId ||
+      playbackState.followEntityId == null
+    ) {
+      const entityId = findLivingEntityByTargetId(shot.targetId);
+      if (entityId) enterWatchFollow(entityId);
+    }
+
+    // Ease framing parameters toward the shot's targets (continuous
+    // transitions glide; cuts were snapped in applyShot), and steer the
+    // orbit yaw with the shot's aim: behind the subject looking forward,
+    // ahead looking back at pursuers, a held world bearing, or (aimless
+    // shots) a slow broadcast drift.
+    const updates: Partial<{
+      orbitOverrideDistance: number;
+      orbitOverridePitch: number;
+      orbitOverrideYaw: number;
+    }> = {};
+    const ease = Math.min(1, demoDelta * PARAM_EASE_RATE);
+    // A standoff the visibility check found room for outranks the shot's
+    // own distance: seeing the subject beats framing intent.
+    const wantDistance = visibilityDistance ?? shot.distance;
+    if (wantDistance != null) {
+      const diff = wantDistance - playbackState.orbitOverrideDistance;
+      if (Math.abs(diff) > 0.05) {
+        updates.orbitOverrideDistance =
+          playbackState.orbitOverrideDistance + diff * ease;
+      }
+    }
+    if (shot.pitch != null) {
+      const diff = shot.pitch - playbackState.orbitOverridePitch;
+      if (Math.abs(diff) > 0.005) {
+        updates.orbitOverridePitch =
+          playbackState.orbitOverridePitch + diff * ease;
+      }
+    }
+    if (isPlaying) {
+      const aim = shot.aim;
+      // A yaw found by the visibility check outranks the shot's own aim
+      // for the REST of the shot — seeing the subject beats framing
+      // intent. Forgetting it on arrival let a held aim drag the camera
+      // straight back into the wall it had just escaped, with the
+      // correction cooldown then locking in the stare.
+      let targetYaw: number | null = visibilityYaw;
+      if (targetYaw != null) {
+        // Keep the corrected bearing; later checks may replace it.
+      } else if (aim?.mode === "hold") {
+        targetYaw = aim.yaw;
+      } else if (aim?.mode === "toward") {
+        // Look across the subject at a world point (their destination
+        // or the crowd). Near the target the bearing degenerates, so
+        // hold the last yaw rather than spinning through it.
+        const group = playbackState.followEntityId
+          ? resolveSubjectGroup(playbackState.followEntityId)
+          : null;
+        if (group) {
+          // group.position is Three-space: x = Torque y, z = Torque x.
+          const dx = aim.target[0] - group.position.z;
+          const dy = aim.target[1] - group.position.x;
+          if (Math.hypot(dx, dy) >= AIM_TOWARD_MIN_RANGE) {
+            targetYaw = bearingYaw(
+              [group.position.z, group.position.x, 0],
+              aim.target,
+            );
+          }
+        }
+      } else if (aim?.mode === "forward" || aim?.mode === "backward") {
+        const heading = subjectHeading(playbackState.followEntityId);
+        if (heading != null) {
+          targetYaw = aim.mode === "forward" ? heading : heading + Math.PI;
+        }
+      }
+      updates.orbitOverrideYaw =
+        targetYaw != null
+          ? springAngle(
+              playbackState.orbitOverrideYaw,
+              targetYaw,
+              AIM_SPRING_RATE,
+              demoDelta,
+              AIM_TURN_RATE * demoDelta,
+            )
+          : playbackState.orbitOverrideYaw + FOLLOW_YAW_DRIFT * demoDelta;
+    }
+    if (Object.keys(updates).length > 0) {
+      streamPlaybackStore.setState(updates);
+    }
+    // Follow shots are positioned by StreamPlaybackSession; blending on
+    // top of its write eases the entry into them too.
+    const followCamera = cameraRegistry.perspective ?? fallbackCamera;
+    applyTravel(followCamera, demoDelta);
+    enforceCameraSanity(followCamera, shot, demoDelta);
+  };
+
+  return combineCleanups(
+    subscribeAction("directorInterrupt", exitDirector),
+    engine.scheduler.add(FramePriority.CameraDirector, (ctx) => {
+      const delta = ctx.delta;
+      if (engineStore.getState().playback.status === "seeking") return;
+      const { status, plan, planComplete } = demoDirectorStore.getState();
+      if (status !== "playing" || !plan || plan.shots.length === 0) {
+        shotIndex = -1;
+        appliedShot = null;
+        return;
+      }
+
+      const t = streamClock.time;
+      const shots = plan.shots;
+      let index = shotIndex;
+      if (index < 0 || !shotContains(shots[index], t)) {
+        // Normal advance hits the next shot; anything else is a seek.
+        index =
+          index >= 0 &&
+          index + 1 < shots.length &&
+          shotContains(shots[index + 1], t)
+            ? index + 1
+            : findShotIndex(shots, t);
+      }
+      if (index < 0) {
+        // Truly past the plan's end: hand back control, re-armed for a
+        // replay. A fractional seam INSIDE the plan (a set-piece boundary
+        // that escaped assembly) must never end the broadcast — ride the
+        // current shot through it instead.
+        if (t < shots[shots.length - 1].endSec && shotIndex >= 0) {
+          return;
+        }
+        // The plan GROWS while it plays. Outrunning it is the planner
+        // being behind, not the broadcast being over — hold the last
+        // shot and let the next slice arrive.
+        if (!planComplete) return;
+        exitDirector();
+        return;
+      }
+      const shot = shots[index];
+      if (shotIndex !== index || appliedShot !== shot) {
+        onShotChange(shot, index, shots, t, ctx.camera);
+      }
+
+      // ALL camera motion runs on the demo clock, not wall time: paused
+      // playback freezes the camera entirely (a rotating orbit must not
+      // keep rotating over a frozen world), and at 2x the camera moves
+      // twice as fast to stay in step with it.
+      const isPlaying = engineStore.getState().playback.status === "playing";
+      const demoDelta = effectDeltaSec(delta);
+
+      if (shot.kind === "fixedOrbit") {
+        driveFixedOrbit(shot, t, isPlaying, demoDelta, delta, ctx.camera);
+        return;
+      }
+      if (shot.kind === "sweep") {
+        driveSweep(shot, t, demoDelta, ctx.camera);
+        return;
+      }
+      if (shot.kind === "dolly") {
+        driveDolly(shot, demoDelta, ctx.camera);
+        return;
+      }
+      driveFollow(shot, isPlaying, demoDelta, ctx.camera);
+    }),
+  );
+}
+
+function applyShot(shot: Shot): void {
+  if (
+    shot.kind === "fixedOrbit" ||
+    shot.kind === "dolly" ||
+    shot.kind === "sweep"
+  ) {
+    // Free-fly = nothing else drives the camera; directorCamera
+    // writes it directly.
+    exitToFreeFly();
+    return;
+  }
+  if (shot.kind === "followFlag") {
+    followFlag(shot.slot);
+  } else {
+    const entityId = findLivingEntityByTargetId(shot.targetId);
+    if (entityId) enterWatchFollow(entityId);
+  }
+  if (shot.transitionIn === "cut") {
+    streamPlaybackStore.setState({
+      ...(shot.distance != null
+        ? { orbitOverrideDistance: shot.distance }
+        : null),
+      ...(shot.pitch != null ? { orbitOverridePitch: shot.pitch } : null),
+      // A fixed-bearing shot starts on its bearing — a fresh cut has no
+      // continuity to preserve, so don't swing into it.
+      ...(shot.aim?.mode === "hold"
+        ? { orbitOverrideYaw: shot.aim.yaw }
+        : null),
+    });
+  }
+}

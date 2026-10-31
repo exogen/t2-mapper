@@ -1,67 +1,27 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  createLiveParser,
-  GhostStateAccumulator,
-  type PacketData,
-} from "t2-demo-parser";
+import { createLiveParser } from "t2-demo-parser";
 import { WatchStateAccumulator } from "../../relay/watchState";
-import { buildCatchupPayload } from "../../relay/watchCatchup";
 import {
-  deserializeCatchupPayload,
-  serializeCatchupPayload,
-} from "../../relay/watchSerialize";
-import { LiveStreamAdapter } from "./liveStreaming";
-import type { RelayClient } from "./relayClient";
+  remoteCommandPacket,
+  serverMessagePacket,
+  testCatchupPayload,
+} from "../../relay/serverPacketFixtures";
 import { decodeCheckpoint, encodeCheckpoint } from "./checkpointCodec";
 import {
   flagReturnDelaySec,
   flagReturnSecondsRemaining,
 } from "./flagReturnTimer";
+import { TestLiveStream } from "./streamTestFixtures";
 
-class FlagStream extends LiveStreamAdapter {
+class FlagStream extends TestLiveStream {
   now = 0;
-  constructor() {
-    super({} as RelayClient, { mode: "watch" });
-  }
   protected override getTimeSec() {
     return this.now;
   }
-  message(...args: string[]) {
-    this.handleServerMessage(args);
-  }
   snapshot() {
     // Bypass the per-tick cache after directly injecting messages/restores.
-    return this["buildSnapshot"]();
+    return this.buildSnapshot(false);
   }
-  command(funcName: string, ...args: string[]) {
-    this.processEvent(
-      {
-        classId: 0,
-        parsedData: { type: "RemoteCommandEvent", funcName, args },
-      },
-      undefined,
-    );
-  }
-  checkpoint() {
-    return this.captureSimulationState();
-  }
-  restore(state: ReturnType<FlagStream["checkpoint"]>) {
-    this.restoreSimulationState(state);
-  }
-}
-
-function packet(...messages: string[][]): PacketData {
-  return {
-    gameState: {},
-    ghosts: [],
-    events: messages.map((args) => ({
-      parsedData: {
-        type: "RemoteCommandEvent",
-        funcName: "ServerMessage",
-        args,
-      },
-    })),
-  } as unknown as PacketData;
 }
 
 describe("flag return timers", () => {
@@ -227,38 +187,25 @@ describe("flag return timers", () => {
     vi.spyOn(Date, "now").mockImplementation(() => now);
     const watchState = new WatchStateAccumulator();
     watchState.applyPacket(
-      packet(
+      serverMessagePacket(
         ["MsgClientReady", "", "CTFGame"],
         ["MsgCTFFlagDropped", "", "Alice", "Storm", "1"],
       ),
     );
     now += 12_000;
     expect(watchState.getHudState().flagDropElapsedSec).toEqual({ 1: 12 });
-    const payload = buildCatchupPayload({
-      watchState,
-      packetParser: createLiveParser().packetParser,
-      ghostState: new GhostStateAccumulator(),
-      epoch: 1,
-      serverAddress: "test:28000",
-    });
     const stream = new FlagStream();
-    stream.hydrate(deserializeCatchupPayload(serializeCatchupPayload(payload)));
+    stream.hydrate(
+      testCatchupPayload({
+        watchState,
+        packetParser: createLiveParser().packetParser,
+      }),
+    );
     expect(stream.snapshot().flagDroppedAtSec).toEqual({ 1: -12 });
     expect(flagReturnSecondsRemaining(stream.snapshot(), 1, 0)).toBe(33);
     expect(flagReturnSecondsRemaining(stream.snapshot(), 1, 5)).toBe(28);
 
-    watchState.applyPacket({
-      gameState: {},
-      events: [
-        {
-          parsedData: {
-            type: "RemoteCommandEvent",
-            funcName: "MissionEnd",
-            args: ["1"],
-          },
-        },
-      ],
-    } as unknown as PacketData);
+    watchState.applyPacket(remoteCommandPacket("MissionEnd", "1"));
     now += 90_000;
     expect(watchState.getHudState().flagDropElapsedSec).toEqual({ 1: 12 });
     watchState.beginMissionChange();

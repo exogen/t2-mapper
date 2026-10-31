@@ -5,6 +5,7 @@ import { createFreeSpaceBuild } from "./freeSpace";
 import { CausalView } from "./causalView";
 import { DIRECTOR_LOOKAHEAD_SEC } from "./tunables";
 import * as variety from "./variety";
+import { directorDataset, STAND_1, STAND_2 } from "./directorTestFixtures";
 import type {
   DirectorDataset,
   DirectorFlagSample,
@@ -12,9 +13,6 @@ import type {
   DirectorVec3,
   Shot,
 } from "./types";
-
-const STAND_1: DirectorVec3 = [0, 0, 100];
-const STAND_2: DirectorVec3 = [800, 0, 100];
 
 /** A carry: flag 2 grabbed at 30, skied home, capped at 90. */
 function dataset(): DirectorDataset {
@@ -58,19 +56,7 @@ function dataset(): DirectorDataset {
       armor: "heavy",
     });
   }
-  return {
-    durationSec: 120,
-    flagSampleStepSec: 0.5,
-    playerSampleStepSec: 1,
-    gameClassName: "CTFGame",
-    teams: [
-      { teamId: 1, name: "Storm" },
-      { teamId: 2, name: "Inferno" },
-    ],
-    flagStands: [
-      { slot: 1, teamId: 1, name: "Storm", pos: STAND_1 },
-      { slot: 2, teamId: 2, name: "Inferno", pos: STAND_2 },
-    ],
+  return directorDataset({
     events: [
       {
         timeSec: 2,
@@ -103,17 +89,11 @@ function dataset(): DirectorDataset {
     ],
     flagSamples,
     playerSamples,
-    structures: [],
-    structureInventory: [],
-    mortarShots: [],
-    deaths: [],
-    stations: [],
     playerNames: [
       { targetId: 5, name: "slayer", displayName: "Slayer" },
       { targetId: 9, name: "guard", displayName: "Guard" },
     ],
-    scoreSamples: [],
-  };
+  });
 }
 
 function concernsFlag(shot: Shot, slot: number): boolean {

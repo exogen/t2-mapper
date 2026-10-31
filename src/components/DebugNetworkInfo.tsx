@@ -1,6 +1,6 @@
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { formatPing } from "../stringUtils";
-import styles from "./DebugNetworkInfo.module.css";
+import styles from "./DebugInfoPanel.module.css";
 
 /** Display host of a ws:// or wss:// relay URL. */
 function relayHost(url: string): string {

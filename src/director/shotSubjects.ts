@@ -19,6 +19,7 @@ import {
 import { threeForwardHeading } from "../stream/streamHelpers";
 import type { Shot, ShotSubject } from "./types";
 import { AIM_MIN_SPEED } from "./cameraRig";
+import { torqueVecToThree } from "../scene/coordinates";
 
 export function shotContains(shot: Shot, t: number): boolean {
   return t >= shot.startSec && t < shot.endSec;
@@ -34,7 +35,7 @@ export function subjectVelocity(
   const velocity =
     entity && "keyframes" in entity ? entity.keyframes?.[0]?.velocity : null;
   if (!velocity) return null;
-  return out.set(velocity[1], velocity[2], velocity[0]);
+  return torqueVecToThree(velocity, out);
 }
 
 /**
@@ -64,7 +65,7 @@ export function subjectHeading(entityId: string | null): number | null {
 /**
  * The scene group a subject entity renders at, walking mount chains
  * (a carrier in a vehicle portals into the vehicle's group) — the
- * group position is already frame-interpolated by StreamingController.
+ * group position is already frame-interpolated by StreamPlaybackSession.
  */
 export function resolveSubjectGroup(entityId: string): Object3D | null {
   const root = streamPlaybackStore.getState().root;

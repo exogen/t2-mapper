@@ -1,15 +1,15 @@
 import untypedManifest from "./manifest.json";
+import {
+  ASSET_BASE_DIR,
+  winningSource,
+  winningSourcePath,
+  type ResourceEntry,
+} from "./resourcePaths";
 import { normalizePath } from "./stringUtils";
-
-// Source tuple: [sourcePath] or [sourcePath, actualPath] if casing differs
-type SourceTuple =
-  [sourcePath: string] | [sourcePath: string, actualPath: string];
-// Resource entry: [firstSeenPath, ...sourceTuples]
-type ResourceEntry = [firstSeenPath: string, ...SourceTuple[]];
 
 /**
  * Manifest format: keys are normalized (lowercased, forward-slash) paths,
- * values are ResourceEntry arrays (see above):
+ * values are ResourceEntry arrays (see `./resourcePaths`):
  * [firstSeenPath, ...sourceTuples] where each source tuple is either:
  * - [sourcePath] if the file has the same casing as firstSeenPath
  * - [sourcePath, actualPath] if the file has different casing in that source
@@ -62,10 +62,16 @@ export function getResourceMap() {
 export function getSourceAndPath(
   resourceKey: string,
 ): [sourceName: string, pathInSource: string] {
-  const entry = manifest.resources[resourceKey];
-  const [firstSeenPath, ...sources] = entry;
-  const [sourcePath, actualPath] = sources[sources.length - 1];
-  return [sourcePath, actualPath ?? firstSeenPath];
+  const { source, actualPath } = winningSource(manifest.resources[resourceKey]);
+  return [source, actualPath];
+}
+
+/**
+ * Where a resource's winning source lives, relative to the asset root:
+ * `@vl2/<source>/<path>` inside a VL2, `<path>` for a loose file.
+ */
+export function getWinningSourcePath(resourceKey: string): string {
+  return winningSourcePath(manifest.resources[resourceKey]);
 }
 
 /**
@@ -144,13 +150,7 @@ export function getStandardTextureResourceKey(resourcePath: string) {
 // const palettedTextureExt = ["", ".bm8", ".bmp", ".jpg", ".png", ".gif"];
 
 export function getLocalFilePath(resourcePath: string): string {
-  const resourceKey = getResourceKey(resourcePath);
-  const [sourcePath, actualPath] = getSourceAndPath(resourceKey);
-  if (sourcePath) {
-    return `docs/base/@vl2/${sourcePath}/${actualPath}`;
-  } else {
-    return `docs/base/${actualPath}`;
-  }
+  return `${ASSET_BASE_DIR}/${getWinningSourcePath(getResourceKey(resourcePath))}`;
 }
 
 export function getMissionInfo(missionName: string) {

@@ -14,8 +14,8 @@ vi.mock("react", async (original) => ({
   useRef: (current: unknown) => ({ current }),
   useEffect: (fn: () => void) => test.effects.push(fn),
 }));
-vi.mock("@react-three/fiber", () => ({
-  useFrame: (fn: () => void) => test.frames.push(fn),
+vi.mock("./useEngine", () => ({
+  useEngineFrame: (_stage: number, fn: () => void) => test.frames.push(fn),
 }));
 vi.mock("zustand", () => ({
   useStore: (

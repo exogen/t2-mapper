@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { Group, Object3D, Vector3 } from "three";
-import { DTSNode, DTSObject } from "./dtsModel";
+import { DTSAnimationTransform, DTSNode, DTSObject } from "./dtsModel";
 
 describe.each([DTSNode, DTSObject])("%s identity transforms", (Type) => {
   it("matches Three through direct edits, identity resets and parent motion", () => {
@@ -110,5 +110,69 @@ describe.each([DTSNode, DTSObject])("%s identity transforms", (Type) => {
     expect(multiply).not.toHaveBeenCalled();
     expect(object.matrixWorld.elements).toEqual(parent.matrixWorld.elements);
     expect(child.matrixWorld.elements[12]).toBeCloseTo(2 * Math.cos(0.7));
+  });
+});
+
+describe("pose change tracking", () => {
+  it("skips descendants when a track rewrites a bone's unchanged pose", () => {
+    const root = new Group();
+    const bone = new DTSNode();
+    bone.position.set(1, 2, 3);
+    const child = new Group();
+    child.matrixAutoUpdate = false;
+    bone.add(child);
+    root.add(bone);
+    root.matrixAutoUpdate = false;
+    root.updateMatrixWorld();
+    const multiply = vi.spyOn(child.matrixWorld, "multiplyMatrices");
+    // PropertyBinding marks the node whenever a track writes it.
+    bone.position.set(1, 2, 3);
+    bone.matrixWorldNeedsUpdate = true;
+    root.updateMatrixWorld();
+    expect(multiply).not.toHaveBeenCalled();
+    bone.position.set(4, 2, 3);
+    bone.matrixWorldNeedsUpdate = true;
+    root.updateMatrixWorld();
+    expect(multiply).toHaveBeenCalledOnce();
+    expect(child.getWorldPosition(new Vector3()).toArray()).toEqual([4, 2, 3]);
+  });
+
+  it("keeps a pose helper's children current after a world query cleared its mark", () => {
+    const root = new Group();
+    root.matrixAutoUpdate = false;
+    const helper = new DTSAnimationTransform();
+    // Queries target bones, which stay auto-updated.
+    const queried = new DTSNode();
+    const sibling = new Group();
+    sibling.matrixAutoUpdate = false;
+    helper.add(queried, sibling);
+    root.add(helper);
+    root.updateMatrixWorld();
+    helper.position.set(0, 5, 0);
+    helper.matrixWorldNeedsUpdate = true;
+    // A mount or collision query updates the chain to one child only.
+    expect(queried.getWorldPosition(new Vector3()).y).toBe(5);
+    root.updateMatrixWorld();
+    expect(sibling.getWorldPosition(new Vector3()).y).toBe(5);
+  });
+
+  it("recomposes a pose that returned to its last value after a world query composed another", () => {
+    const root = new Group();
+    root.matrixAutoUpdate = false;
+    const helper = new DTSAnimationTransform();
+    const bone = new DTSNode();
+    helper.add(bone);
+    root.add(helper);
+    root.updateMatrixWorld();
+    // A track writes an intermediate pose and a query composes it...
+    helper.position.set(0, 5, 0);
+    helper.matrixWorldNeedsUpdate = true;
+    expect(bone.getWorldPosition(new Vector3()).y).toBe(5);
+    // ...then the frame's final pose is the previous one again.
+    helper.position.set(0, 0, 0);
+    helper.matrixWorldNeedsUpdate = true;
+    root.updateMatrixWorld();
+    expect(helper.matrix.elements[13]).toBe(0);
+    expect(bone.getWorldPosition(new Vector3()).y).toBe(0);
   });
 });

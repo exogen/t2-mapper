@@ -1,7 +1,7 @@
 import { Quaternion, Vector3 } from "three";
 import { cameraRegistry } from "../state/cameraRegistry";
 import { streamClock, streamPlaybackStore } from "../state/streamPlaybackStore";
-import { encodeViewHash, parseViewHash } from "./viewHash";
+import { encodeViewHash, parseViewHash } from "../viewHash";
 
 /**
  * A moment in a demo that a link can point at: the second the viewer

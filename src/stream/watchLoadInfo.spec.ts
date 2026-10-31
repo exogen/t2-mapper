@@ -1,21 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  createLiveParser,
-  GhostStateAccumulator,
-  passiveObserverProtocolState,
-} from "t2-demo-parser";
-import {
   command,
   netString,
-  serverPacket,
+  watchRelaySource,
 } from "../../relay/serverPacketFixtures";
-import { GAME_PROTOCOL_VERSION } from "../../relay/shared";
-import { buildCatchupPayload } from "../../relay/watchCatchup";
-import {
-  deserializeCatchupPayload,
-  serializeCatchupPayload,
-} from "../../relay/watchSerialize";
-import { WatchStateAccumulator } from "../../relay/watchState";
 import { LiveStreamAdapter } from "./liveStreaming";
 import type { RelayClient } from "./relayClient";
 
@@ -25,44 +13,14 @@ const begin = ["MsgLoadInfo", "", "Katabatic", "Katabatic", "CTF"];
 const done = ["MsgLoadInfoDone", ""];
 
 function relay() {
-  const { packetParser } = createLiveParser({
-    protocolVersion: GAME_PROTOCOL_VERSION,
-  });
-  const first = serverPacket(1, {
-    events: [netString(0, 1, "ServerMessage")],
-  });
-  packetParser.setConnectionProtocolState(
-    passiveObserverProtocolState(first[0]),
-  );
-  const watchState = new WatchStateAccumulator();
-  const ghostState = new GhostStateAccumulator();
-  watchState.applyPacket(packetParser.parsePacket(first));
-  let packetSequence = 1;
-  let eventSequence = 1;
+  const source = watchRelaySource();
+  source.send((seq) => netString(seq, 1, "ServerMessage"));
   return {
-    message(...messages: string[][]) {
-      const packet = serverPacket(++packetSequence, {
-        events: messages.map((args) => command(eventSequence++, 1, ...args)),
-      });
-      const parsed = packetParser.parsePacket(packet);
-      expect(parsed.parseFault).toBeUndefined();
-      watchState.applyPacket(parsed);
-      ghostState.applyPacket(parsed);
-      return packet;
-    },
-    payload() {
-      return deserializeCatchupPayload(
-        serializeCatchupPayload(
-          buildCatchupPayload({
-            packetParser,
-            ghostState,
-            watchState,
-            epoch: 1,
-            serverAddress: "test:28000",
-          }),
-        ),
-      );
-    },
+    ...source,
+    message: (...messages: string[][]) =>
+      source.send(
+        ...messages.map((args) => (seq: number) => command(seq, 1, ...args)),
+      ),
   };
 }
 

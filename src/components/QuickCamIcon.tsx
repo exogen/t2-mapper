@@ -8,7 +8,7 @@ import {
   IFF_NEUTRAL,
   resolveIffDisplay,
   rgbString,
-} from "./iffTheme";
+} from "../iffTheme";
 import { useSettings } from "./SettingsProvider";
 
 export function QuickCamIcon({

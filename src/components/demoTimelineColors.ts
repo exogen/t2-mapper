@@ -5,7 +5,7 @@ import {
   resolveIffDisplay,
   rgbString,
   type TeamColorScheme,
-} from "./iffTheme";
+} from "../iffTheme";
 
 /** Shared Command Circuit colors for timeline flags and capture seek markers. */
 export function timelineFlagColor(

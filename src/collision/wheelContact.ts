@@ -6,6 +6,7 @@ import {
 } from "./terrainCollision";
 import { castInteriorRay, playerTrianglesInBox } from "./worldCollision";
 import type { WheelGroundData } from "../particles/groundEffectAssets";
+import { torqueVecToThree, threeToTorque } from "../scene/coordinates";
 
 const basis = new Matrix4().set(0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1);
 /** Torque local coordinates -> Three world coordinates. */
@@ -16,7 +17,7 @@ export function groundActorMatrix(
 ): Matrix4 {
   return out
     .compose(
-      new Vector3(position[1], position[2], position[0]),
+      torqueVecToThree(position, new Vector3()),
       new Quaternion(...rotation),
       new Vector3(1, 1, 1),
     )
@@ -24,7 +25,7 @@ export function groundActorMatrix(
 }
 export function torqueWorldPoint(local: Vec3, matrix: Matrix4): Vec3 {
   const p = new Vector3(...local).applyMatrix4(matrix);
-  return [p.z, p.x, p.y];
+  return threeToTorque(p);
 }
 
 /** Continuous local box/triangle SAT for the wheel's extruded contact volume. */

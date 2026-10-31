@@ -1,38 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { DemoPlayers } from "./demoPlayers.js";
+import { serverMessagePacket } from "./serverPacketFixtures.js";
 import { taglessPlayerName } from "./shared.js";
-import type { PacketData } from "t2-demo-parser";
 import { WatchStateAccumulator } from "./watchState.js";
 
-function message(...args: string[]): PacketData {
-  return {
-    dnetHeader: {
-      gameFlag: true,
-      connectSeqBit: 0,
-      seqNumber: 1,
-      highestAck: 0,
-      packetType: 0,
-      ackByteCount: 0,
-      ackMask: 0,
-    },
-    rateInfo: {},
-    gameState: { lastMoveAck: 0, pinged: false, jammed: false },
-    ghosts: [],
-    events: [
-      {
-        classId: 0,
-        guaranteed: true,
-        dataBitsStart: 0,
-        dataBitsEnd: 0,
-        parsedData: {
-          type: "RemoteCommandEvent",
-          funcName: "ServerMessage",
-          args,
-        },
-      },
-    ],
-  };
-}
+const message = (...args: string[]) => serverMessagePacket(args);
 
 describe("demo player identity", () => {
   it.each([
@@ -138,17 +110,12 @@ describe("demo player identity", () => {
   it("keeps joins and renames that are dropped later in the same packet", () => {
     const watch = new WatchStateAccumulator();
     const players = new DemoPlayers("Recorder");
-    const packet = message("MsgClientJoin", "", "Alice", "10", "1");
-    const messages = [
+    // Same transport packet, ordered reliable events.
+    const combined = serverMessagePacket(
       ["MsgClientJoin", "", "Alice", "10", "1"],
       ["MsgClientNameChanged", "", "Alice", "Bob", "10"],
       ["MsgClientDrop", "", "Bob", "10"],
-    ];
-    // Same transport packet, ordered reliable events.
-    const combined = {
-      ...packet,
-      events: messages.flatMap((args) => message(...args).events),
-    };
+    );
     watch.applyPacket(combined, () => players.sample(watch.getPlayerRoster()));
     expect(watch.getPlayerRoster().size).toBe(0);
     expect(players.metadata()).toEqual({

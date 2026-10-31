@@ -15,13 +15,13 @@ export const MAX_ORBIT_DISTANCE = 45;
  * Store for mutable streaming playback state that needs to be shared between
  * the playback controller (writer) and entity rendering components (readers).
  *
- * These values are updated every frame and read imperatively in useFrame
- * callbacks — they intentionally bypass React's render cycle. Use
+ * These values are updated every frame and read imperatively by engine
+ * frame callbacks — they intentionally bypass React's render cycle. Use
  * `streamPlaybackStore.getState()` to read current values.
  */
 /**
  * Current playback time in seconds, written every frame by the streaming
- * controller and read imperatively in useFrame callbacks. A module-scope
+ * controller and read imperatively by engine frame callbacks. A module-scope
  * mutable (not store state) so per-frame clock updates never notify
  * store subscribers.
  */
@@ -43,7 +43,7 @@ export const streamClock = {
  * and where the broadcast intends to begin (the first cue's demo time
  * from the `.commentary.json` sidecar — the intro may start before the
  * plan's first scene, so the director starts playback there). Written
- * by CommentaryAudio (same module-scope-mutable pattern as
+ * by the commentary audio system (same module-scope-mutable pattern as
  * streamClock); read at trigger time by in-game sound players — the
  * booth replaces the game announcer and ducks voice binds while it's
  * on air — and by the director when it seeks past dead air.
@@ -165,5 +165,5 @@ export function resetStreamPlayback(): void {
     lastFollowGhostIndex: null,
     followFlagSlot: null,
   });
-  // root is managed by the React ref callback in EntityScene — don't clear it
+  // root is the engine's entity root (installEntityViews) — don't clear it
 }

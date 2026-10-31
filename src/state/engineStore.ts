@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { createStore } from "zustand/vanilla";
 import { subscribeWithSelector } from "zustand/middleware";
 import { useStoreWithEqualityFn } from "zustand/traditional";
@@ -7,11 +6,9 @@ import type { SeekProgress } from "../stream/PlaybackClock";
 import { setStreamSnapshot } from "./streamSnapshotStore";
 import { demoLoadStore } from "./demoLoadStore";
 import { streamClock } from "./streamPlaybackStore";
-import type {
-  RuntimeMutationEvent,
-  TorqueObject,
-  TorqueRuntime,
-} from "../torqueScript";
+import type { RuntimeMutationEvent, TorqueRuntime } from "../torqueScript";
+import { normalizeGlobalName } from "../torqueScript/reactivity";
+import { clamp } from "../mathUtils";
 
 export type PlaybackStatus =
   | "stopped"
@@ -40,7 +37,7 @@ export interface PlaybackSliceState {
   resumeAfterSeek: SettledPlaybackStatus | null;
   seekProgress: SeekProgress | null;
   /** Seek target in seconds. Written by UI seek actions, read by
-   *  StreamingController to detect and execute seeks. */
+   *  StreamPlaybackSession to detect and execute seeks. */
   seekTime: number;
   /** Bumped on EVERY seekPlayback call. The controller keys seek
    *  detection on this, not on seekTime equality — two seeks to the
@@ -129,17 +126,6 @@ export function isCurrentPlayback(
     playback.recording === recording &&
     (nonce == null || playback.seekNonce === nonce)
   );
-}
-
-function normalizeGlobalName(name: string): string {
-  const normalized = normalizeName(name.trim());
-  return normalized.startsWith("$") ? normalized.slice(1) : normalized;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  if (value < min) return min;
-  if (value > max) return max;
-  return value;
 }
 
 function buildRuntimeIndexes(
@@ -546,7 +532,7 @@ export const engineStore = createStore<EngineStoreState>()(
 // Components use effectNow() instead of performance.now() so that effect
 // timers (explosions, particles, shockwaves, animation threads) automatically
 // pause when the demo is paused and speed up / slow down with the playback
-// rate. The StreamingController component calls advanceEffectClock()
+// rate. The StreamPlaybackSession calls advanceEffectClock()
 // once per frame.
 
 let _effectClockMs = 0;
@@ -580,8 +566,8 @@ export function worldDeltaSec(renderDeltaSec: number): number {
 }
 
 /**
- * Advance the effect clock. Called once per frame from
- * StreamingController before other useFrame callbacks run.
+ * Advance the effect clock. Called once per frame by the stream playback
+ * session, before the later frame stages run.
  */
 export function advanceEffectClock(deltaSec: number, rate: number): void {
   _effectClockMs += deltaSec * rate * 1000;
@@ -602,36 +588,9 @@ engineStore.subscribe(
   },
 );
 
-export function useEngineStoreApi() {
-  return engineStore;
-}
-
 export function useEngineSelector<T>(
   selector: (state: EngineStoreState) => T,
   equality?: (a: T, b: T) => boolean,
 ): T {
   return useStoreWithEqualityFn(engineStore, selector, equality);
-}
-
-export function useDatablockByName(
-  name: string | undefined,
-): TorqueObject | undefined {
-  const runtime = useEngineSelector((state) => state.runtime.runtime);
-  const normalizedName = name ? normalizeName(name) : "";
-  const objectId = useEngineSelector((state) =>
-    normalizedName
-      ? state.runtime.datablockIdsByName[normalizedName]
-      : undefined,
-  );
-  const version = useEngineSelector((state) =>
-    objectId == null ? -1 : (state.runtime.objectVersionById[objectId] ?? -1),
-  );
-
-  return useMemo(() => {
-    if (!runtime || !normalizedName || objectId == null || version === -1) {
-      return undefined;
-    }
-    const object = runtime.state.objectsById.get(objectId);
-    return object ? { ...object } : undefined;
-  }, [runtime, normalizedName, objectId, version]);
 }

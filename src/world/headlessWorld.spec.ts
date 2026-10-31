@@ -2,7 +2,8 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Group, Mesh } from "three";
-import { getActualResourceKey, getSourceAndPath } from "../manifest";
+import { getActualResourceKey, getWinningSourcePath } from "../manifest";
+import { shapeResourcePath } from "../resourcePaths";
 import { createDIFTestBuffer } from "../dif/difTestFixtures";
 import { createDTSTestBuffer } from "../dts/dtsTestFixtures";
 import { DTSLoader } from "../dts/dtsLoader";
@@ -143,13 +144,9 @@ describe("HeadlessWorld native DTS collision", () => {
       const root = await mkdtemp(path.join(tmpdir(), "native-dts-collision-"));
       try {
         const name = "borg18.dts";
-        const [source, actual] = getSourceAndPath(
-          getActualResourceKey(`shapes/${name}`),
-        );
         const file = path.join(
           root,
-          ...(source ? ["@vl2", source] : []),
-          actual,
+          getWinningSourcePath(getActualResourceKey(shapeResourcePath(name))),
         );
         const buffer = createDTSTestBuffer(
           24,
@@ -210,10 +207,10 @@ describe("HeadlessWorld native DIF", () => {
     const root = await mkdtemp(path.join(tmpdir(), "native-dif-"));
     try {
       const name = "bbunk1.dif";
-      const [source, actual] = getSourceAndPath(
-        getActualResourceKey(`interiors/${name}`),
+      const file = path.join(
+        root,
+        getWinningSourcePath(getActualResourceKey(`interiors/${name}`)),
       );
-      const file = path.join(root, ...(source ? ["@vl2", source] : []), actual);
       const { buffer } = createDIFTestBuffer({
         collision: true,
         vehicleCollision: "box",

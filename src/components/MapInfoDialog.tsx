@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { FaVolumeUp, FaVolumeMute } from "react-icons/fa";
-import { useQuery } from "@tanstack/react-query";
-import { loadMission, getUrlForPath, RESOURCE_ROOT_URL } from "../loaders";
-import { getStandardTextureResourceKey, hasMission } from "../manifest";
+import { guiTextureToUrl, RESOURCE_ROOT_URL } from "../loaders";
+import { hasMission } from "../manifest";
 import {
   isStreamingSource,
   useDataSource,
@@ -17,15 +16,8 @@ import {
 } from "./GuiMarkup";
 import type * as AST from "../torqueScript/ast";
 import { missionLoadScreenUrl, RawPreviewImage } from "./missionPreview";
+import { useParsedMission } from "./useParsedMission";
 import styles from "./MapInfoDialog.module.css";
-
-function useParsedMission(name: string, enabled: boolean) {
-  return useQuery({
-    queryKey: ["parsedMission", name],
-    queryFn: () => loadMission(name),
-    enabled,
-  });
-}
 
 function getMissionGroupProps(ast: AST.Program): Record<string, string> {
   for (const node of ast.body) {
@@ -54,17 +46,12 @@ function getBitmapUrl(
   bitmap: string | null,
   missionName: string,
 ): string | null {
-  // Try bitmap from pragma comment first (single-player missions use this)
-  if (bitmap) {
-    try {
-      const key = getStandardTextureResourceKey(`textures/gui/${bitmap}`);
-      return getUrlForPath(key);
-    } catch {
-      /* expected */
-    }
-  }
-  // Fall back to Load_<MissionName>.png convention (multiplayer missions)
-  return missionLoadScreenUrl(missionName);
+  // Try bitmap from pragma comment first (single-player missions use this),
+  // then the Load_<MissionName>.png convention (multiplayer missions).
+  return (
+    (bitmap ? guiTextureToUrl(bitmap) : null) ??
+    missionLoadScreenUrl(missionName)
+  );
 }
 
 function MusicPlayer({ track }: { track: string }) {
@@ -152,7 +139,7 @@ export function MapInfoDialog({
     }
   }, []);
 
-  // While open: block key presses from reaching drei, and handle close
+  // While open: block key presses from reaching the game, and handle close
   // keys. Releases still reach the input tracker, or a key held as the
   // dialog opened would stay down after it closes.
   useEffect(() => {

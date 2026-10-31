@@ -1,6 +1,5 @@
 import React, { useMemo } from "react";
-import { getUrlForPath } from "../loaders";
-import { getStandardTextureResourceKey } from "../manifest";
+import { guiTextureToUrl } from "../loaders";
 import styles from "./GuiMarkup.module.css";
 
 // Tokenizer
@@ -234,12 +233,7 @@ const bitmapUrlCache = new Map<string, string | null>();
 
 function getBitmapUrl(name: string): string | null {
   if (bitmapUrlCache.has(name)) return bitmapUrlCache.get(name)!;
-  let url: string | null;
-  try {
-    url = getUrlForPath(getStandardTextureResourceKey(`textures/gui/${name}`));
-  } catch {
-    url = null;
-  }
+  const url = guiTextureToUrl(name);
   bitmapUrlCache.set(name, url);
   return url;
 }

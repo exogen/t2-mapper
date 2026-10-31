@@ -1,10 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
 import picomatch from "picomatch";
-import { loadMission } from "../loaders";
 import { type ParsedMission } from "../mission";
 import { createScriptLoader } from "../torqueScript/scriptLoader.browser";
 import { memo, useEffect, useState } from "react";
 import { RuntimeProvider } from "./RuntimeProvider";
+import { useParsedMission } from "./useParsedMission";
 import {
   createProgressTracker,
   createScriptCache,
@@ -46,13 +45,6 @@ const fileSystem: FileSystemHandler = {
     return resourceKeys[resourceKey] != null;
   },
 };
-
-function useParsedMission(name: string) {
-  return useQuery({
-    queryKey: ["parsedMission", name],
-    queryFn: () => loadMission(name),
-  });
-}
 
 interface ExecutedMissionState {
   ready: boolean;

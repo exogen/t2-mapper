@@ -45,6 +45,7 @@ import {
 import { castTerrainRay, type Vec3 } from "./collision/terrainCollision";
 import { TERRAIN_SIZE } from "./terrain";
 import { getShapeBounds } from "./stream/shapeBounds";
+import { torqueVecToThree } from "./scene/coordinates";
 
 /** How far the probe casts up (for a roof) and down (for the floor). */
 export const SHAPE_LIGHT_PROBE_REACH = 100;
@@ -76,12 +77,12 @@ export interface ShapeLightUniforms {
 export const shapeSunUniforms = {
   shapeSunColor: { value: new Color(0.7, 0.7, 0.7) },
   shapeSunAmbient: { value: new Color(0.533, 0.533, 0.533) },
-  /** Toward the light, view space; LightPool refreshes it each render. */
+  /** Toward the light, view space; the light pool refreshes it each render. */
   shapeSunViewDir: { value: new Vector3(0, 1, 0) },
   shapeInteriorViewDir: { value: new Vector3(0, 1, 0) },
 };
 
-/** Toward the sun, Three world space (set by SceneLighting). */
+/** Toward the sun, Three world space (set by the scene lighting system). */
 export const shapeSunWorldDir = new Vector3(0, 1, 0);
 /** Toward the indoor light, Three world space: −direction, Torque→Three. */
 export const shapeInteriorWorldDir = new Vector3(
@@ -258,7 +259,7 @@ export function sampleInteriorLightmap(
     outside = (surface.flags & DIFSurfaceFlags.OutsideVisible) !== 0;
     const plane = interior.planes[surface.planeIndex & 0x7fff];
     const normal = interior.normals[plane.normalIndex];
-    _faceNormal.set(normal[1], normal[2], normal[0]);
+    torqueVecToThree(normal, _faceNormal);
     if (surface.planeIndex & 0x8000) _faceNormal.negate();
   } else {
     const geometry: BufferGeometry = mesh.geometry;

@@ -22,15 +22,7 @@
  */
 
 import { castWorldRay, getColliderDump } from "../collision/worldCollision";
-
-/**
- * three-space (X-right, Y-up, Z-back) → Torque space (X, Y, Z-up).
- * The collider dump reports three-space boxes; every cast* function
- * takes Torque. Mixing them up is silent — the rays simply miss.
- */
-function threeToTorque(v: [number, number, number]): [number, number, number] {
-  return [v[2], v[0], v[1]];
-}
+import { threeToTorque } from "../scene/coordinates";
 
 /**
  * A deterministic lattice of downward probes in TORQUE space (X, Y,
@@ -127,6 +119,8 @@ export function raycastFingerprint(
     for (let y = -extent; y <= extent; y += step) probeAt(x, y);
   }
 
+  // The collider dump reports three-space boxes; every cast* function
+  // takes Torque. Mixing them up is silent — the rays simply miss.
   for (const collider of getColliderDump()) {
     const centre = threeToTorque([
       (collider.worldBoxMin[0] + collider.worldBoxMax[0]) / 2,

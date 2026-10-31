@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { Quaternion, Vector3 } from "three";
 import {
+  collectEffectShapeNames,
+  collectShapeConstructorSequences,
   resolveShockLanceVisual,
   resolveLinkBeamVisual,
   orientationAlongDirection,
@@ -208,5 +210,56 @@ describe("orientationAlongDirection", () => {
     const q = orientationAlongDirection([0, 0, -1])!;
     expect(rotate(q, [1, 0, 0])).toEqual([0, -1, 0]);
     expect(orientationAlongDirection([0, 0, 0])).toBeNull();
+  });
+});
+
+describe("collectShapeConstructorSequences", () => {
+  it("maps lowercase shape names to their sequence lists", () => {
+    const sequences = collectShapeConstructorSequences([
+      { shape: "Light_Male.dts", sequences: ["root", "run"] },
+      { shapeFile: "other.dts" },
+      { shape: "heavy_male.dts" },
+      undefined,
+    ]);
+    expect([...sequences]).toEqual([["light_male.dts", ["root", "run"]]]);
+  });
+
+  it("lets a later datablock for the same shape win", () => {
+    const sequences = collectShapeConstructorSequences([
+      { shape: "light_male.dts", sequences: ["old"] },
+      { shape: "LIGHT_MALE.dts", sequences: ["new"] },
+    ]);
+    expect(sequences.get("light_male.dts")).toEqual(["new"]);
+  });
+});
+
+describe("collectEffectShapeNames", () => {
+  it("collects every explosion's shape, whatever references it", () => {
+    expect(
+      collectEffectShapeNames([
+        { explosion: 2, underwaterExplosion: 3 },
+        { dtsFileName: "disc_explosion.dts", subExplosions: [4] },
+        { dtsFileName: "underwater_explosion.dts" },
+        { dtsFileName: "sub_explosion.dts" },
+        { dtsFileName: "unreferenced_explosion.dts" },
+      ]),
+    ).toEqual([
+      "disc_explosion.dts",
+      "underwater_explosion.dts",
+      "sub_explosion.dts",
+      "unreferenced_explosion.dts",
+    ]);
+  });
+
+  it("collects ShapeBase debris and Debris shapes once each", () => {
+    expect(
+      collectEffectShapeNames([
+        { debrisShapeName: "debris_generic.dts" },
+        { shapeName: "debris_player.dts", numBounces: 3 },
+        { shapeName: "turret_base.dts" },
+        { debrisShapeName: "debris_generic.dts", dtsFileName: "" },
+        undefined,
+      ]),
+    ).toEqual(["debris_generic.dts", "debris_player.dts"]);
   });
 });

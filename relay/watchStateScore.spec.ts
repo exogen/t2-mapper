@@ -1,20 +1,8 @@
 import { describe, it, expect } from "vitest";
+import { serverMessagePacket } from "./serverPacketFixtures.js";
 import { WatchStateAccumulator } from "./watchState.js";
 
-function serverMessage(...args: string[]) {
-  return {
-    gameState: {},
-    events: [
-      {
-        parsedData: {
-          type: "RemoteCommandEvent",
-          funcName: "ServerMessage",
-          args,
-        },
-      },
-    ],
-  } as never;
-}
+const serverMessage = (...args: string[]) => serverMessagePacket(args);
 
 // MsgClientJoin: [type, message, name, clientId, targetId, isBot, …]
 const join = (name: string, id: string) =>

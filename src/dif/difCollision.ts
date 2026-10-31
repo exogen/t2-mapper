@@ -14,6 +14,7 @@ import type {
   DIFInterior,
   DIFVehicleCollisionData,
 } from "./dif";
+import { torqueVecToThree } from "../scene/coordinates";
 
 export type DIFHullType = "standard" | "vehicle";
 
@@ -46,8 +47,8 @@ export class DIFCollision {
     this.points = interior.points.map(([x, y, z]) => new Vector3(y, z, x));
     const box = (min: number[], max: number[]) =>
       new Box3(
-        new Vector3(min[1], min[2], min[0]),
-        new Vector3(max[1], max[2], max[0]),
+        torqueVecToThree(min, new Vector3()),
+        torqueVecToThree(max, new Vector3()),
       );
     this.bounds = box(interior.boundingBox.min, interior.boundingBox.max);
     this.hullBoxes = interior.convexHulls.map((hull) =>
@@ -374,8 +375,8 @@ export class DIFVehicleCollision {
     this.boxes = data.convexHulls.map(
       ({ min, max }) =>
         new Box3(
-          new Vector3(min[1], min[2], min[0]),
-          new Vector3(max[1], max[2], max[0]),
+          torqueVecToThree(min, new Vector3()),
+          torqueVecToThree(max, new Vector3()),
         ),
     );
     this.bounds = new Box3();

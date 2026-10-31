@@ -57,6 +57,8 @@ const FAN: ReadonlyArray<readonly [0 | 1, number, number, number, 0 | 1 | 2]> =
     [1, 2, 1, 0.1, 1],
     [0, 2, 1, 0.9, 0],
   ];
+/** One fan's vertices while they're written out: x, y, z, u, v, shade. */
+const fanVerts = new Float64Array(FAN.length * 6);
 
 export class FlareSpikes {
   readonly spikes: FlareSpike[] = [];
@@ -146,35 +148,36 @@ export class FlareSpikes {
         bz = p1z * c;
 
       const f = brightness * Math.max(0, bright);
-      const shade = [f * brightness, f * 0.5, f * 0.25];
 
       for (let fan = 0; fan < 8; fan += 2) {
         // Triangle fan of six vertices → four triangles.
-        const fanVerts = FAN.map(([ring, off, u, tv, shadeIdx]) => {
-          const k = (fan + off) & 7;
-          const [oa, ob] = RING[k];
-          const ox = dx + oa * ax + ob * bx;
-          const oy = dy + oa * ay + ob * by;
-          const oz = dz + oa * az + ob * bz;
+        for (let i = 0; i < FAN.length; i++) {
+          const [ring, off, u, tv, shadeIdx] = FAN[i];
+          const [oa, ob] = RING[(fan + off) & 7];
           const scale = ring === 0 ? s.baseScale : tip;
           const back = ring === 0 ? 0 : pull;
-          return [
-            ox * scale - dx * back,
-            oy * scale - dy * back,
-            oz * scale - dz * back,
-            u,
-            tv,
-            shade[shadeIdx],
-          ] as const;
-        });
+          const o = i * 6;
+          fanVerts[o] = (dx + oa * ax + ob * bx) * scale - dx * back;
+          fanVerts[o + 1] = (dy + oa * ay + ob * by) * scale - dy * back;
+          fanVerts[o + 2] = (dz + oa * az + ob * bz) * scale - dz * back;
+          fanVerts[o + 3] = u;
+          fanVerts[o + 4] = tv;
+          fanVerts[o + 5] =
+            shadeIdx === 0
+              ? f * brightness
+              : shadeIdx === 1
+                ? f * 0.5
+                : f * 0.25;
+        }
         for (let tri = 1; tri < 5; tri++) {
-          for (const idx of [0, tri, tri + 1]) {
-            const [x, y, z, u, tv, sh] = fanVerts[idx];
-            positions[v * 3] = x;
-            positions[v * 3 + 1] = y;
-            positions[v * 3 + 2] = z;
-            uvs[v * 2] = u;
-            uvs[v * 2 + 1] = tv;
+          for (let corner = 0; corner < 3; corner++) {
+            const o = (corner === 0 ? 0 : tri + corner - 1) * 6;
+            const sh = fanVerts[o + 5];
+            positions[v * 3] = fanVerts[o];
+            positions[v * 3 + 1] = fanVerts[o + 1];
+            positions[v * 3 + 2] = fanVerts[o + 2];
+            uvs[v * 2] = fanVerts[o + 3];
+            uvs[v * 2 + 1] = fanVerts[o + 4];
             colors[v * 3] = color[0] * sh;
             colors[v * 3 + 1] = color[1] * sh;
             colors[v * 3 + 2] = color[2] * sh;

@@ -1,6 +1,7 @@
 import { Box3, Triangle, Vector3 } from "three";
 import { terrainTrianglesInBox } from "./terrainCollision";
 import { playerTrianglesInBox } from "./worldCollision";
+import { torqueVecToThree } from "../scene/coordinates";
 
 /** Player::findContact / updatePos use an upright box, not the rendered DTS. */
 export class PlayerCollision {
@@ -45,8 +46,8 @@ export class PlayerCollision {
     this.terrainEnd = this.triangles.length;
     // The registry and triangle emitters use Three axes; all prediction math
     // uses Torque axes. Convert the working set once, outside the retry loop.
-    this.box.min.set(min.y, min.z, min.x);
-    this.box.max.set(max.y, max.z, max.x);
+    torqueVecToThree(min, this.box.min);
+    torqueVecToThree(max, this.box.max);
     playerTrianglesInBox(this.box, this.triangles, this.collideWithField);
     for (let i = 0; i < this.triangles.length; i += 3) {
       const x = this.triangles[i],

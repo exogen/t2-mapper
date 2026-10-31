@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { planShotsCausal } from "./switcher";
 import { describeScenes } from "./scene";
+import { directorDataset, STAND_1, STAND_2 } from "./directorTestFixtures";
 import type {
   DirectorDataset,
   DirectorFlagSample,
@@ -9,9 +10,6 @@ import type {
   Shot,
   ShotPlan,
 } from "./types";
-
-const STAND_1: DirectorVec3 = [0, 0, 100];
-const STAND_2: DirectorVec3 = [800, 0, 100];
 
 function dataset(): DirectorDataset {
   const flagSamples: DirectorFlagSample[] = [];
@@ -58,19 +56,7 @@ function dataset(): DirectorDataset {
       pack: "shield pack",
     });
   }
-  return {
-    durationSec: 120,
-    flagSampleStepSec: 0.5,
-    playerSampleStepSec: 1,
-    gameClassName: "CTFGame",
-    teams: [
-      { teamId: 1, name: "Storm" },
-      { teamId: 2, name: "Inferno" },
-    ],
-    flagStands: [
-      { slot: 1, teamId: 1, name: "Storm", pos: STAND_1 },
-      { slot: 2, teamId: 2, name: "Inferno", pos: STAND_2 },
-    ],
+  return directorDataset({
     events: [
       // The whistle, so the switcher leaves the pre-match line-ups and
       // covers the run.
@@ -91,9 +77,6 @@ function dataset(): DirectorDataset {
     ],
     flagSamples,
     playerSamples,
-    structures: [],
-    structureInventory: [],
-    mortarShots: [],
     deaths: [
       {
         timeSec: 50,
@@ -119,7 +102,7 @@ function dataset(): DirectorDataset {
       { targetId: 21, name: "shooter", displayName: "Shooter" },
     ],
     scoreSamples: [{ timeSec: 31, teamId: 1, score: 1 }],
-  };
+  });
 }
 
 /** A one-shot plan, for describing a single synthetic shot. */

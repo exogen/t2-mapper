@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { TimelineEvent } from "../state/demoTimelineStore";
-import type { TeamColorScheme } from "./iffTheme";
+import type { TeamColorScheme } from "../iffTheme";
 import { DemoPlaybackControls } from "./DemoPlaybackControls";
 
 const state = vi.hoisted(() => ({

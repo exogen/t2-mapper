@@ -2,24 +2,19 @@ import { expect, it } from "vitest";
 import { createLiveParser, GhostStateAccumulator } from "t2-demo-parser";
 import type { PacketData, ParsedData } from "t2-demo-parser";
 import { WatchStateAccumulator } from "../../relay/watchState";
-import { buildCatchupPayload } from "../../relay/watchCatchup";
-import {
-  deserializeCatchupPayload,
-  serializeCatchupPayload,
-} from "../../relay/watchSerialize";
 import { GAME_PROTOCOL_VERSION } from "../../relay/shared";
-import { LiveStreamAdapter } from "./liveStreaming";
-import type { RelayClient } from "./relayClient";
+import {
+  decodedPacket,
+  testCatchupPayload,
+} from "../../relay/serverPacketFixtures";
+import { TestLiveStream } from "./streamTestFixtures";
 
 const dataBlocks: Array<[number, ParsedData]> = [
   [1, { shapeName: "light_male.dts" }],
   [2, { shapeName: "flag.dts", mountPoint: 2 }],
 ];
 
-class ImageStream extends LiveStreamAdapter {
-  constructor() {
-    super({} as RelayClient, { mode: "watch" });
-  }
+class ImageStream extends TestLiveStream {
   override getDataBlockData(id: number) {
     return dataBlocks.find(([blockId]) => blockId === id)?.[1];
   }
@@ -48,21 +43,12 @@ it.each(["baseb", "beagle", "base", "customTeamSkin", ""])(
       early.receive(packet);
     };
     const stringPacket = (value?: string) =>
-      ({
-        gameState: {},
-        ghosts: [],
-        events: [
-          {
-            classId: 0,
-            parsedData: {
-              type: "NetStringEvent",
-              id: 10,
-              hasValue: value !== undefined,
-              value,
-            },
-          },
-        ],
-      }) as unknown as PacketData;
+      decodedPacket({
+        type: "NetStringEvent",
+        id: 10,
+        hasValue: value !== undefined,
+        value,
+      });
     const imagePacket = (dataBlockId: number) =>
       ({
         gameState: {},
@@ -102,19 +88,7 @@ it.each(["baseb", "beagle", "base", "customTeamSkin", ""])(
     } as unknown as PacketData);
     receive(stringPacket("reused"));
     const late = new ImageStream();
-    late.hydrate(
-      deserializeCatchupPayload(
-        serializeCatchupPayload(
-          buildCatchupPayload({
-            packetParser,
-            ghostState,
-            watchState,
-            epoch: 1,
-            serverAddress: "test:28000",
-          }),
-        ),
-      ),
-    );
+    late.hydrate(testCatchupPayload({ packetParser, ghostState, watchState }));
     expect(early.image()).toMatchObject({
       shapeName: "flag.dts",
       skinName: originalSkin || undefined,

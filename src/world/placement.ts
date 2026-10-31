@@ -14,11 +14,7 @@
  */
 
 import { Box3, Matrix4, Quaternion, Vector3 } from "three";
-import {
-  matrixFToQuaternion,
-  torqueScaleToThree,
-  torqueToThree,
-} from "../scene/coordinates";
+import { matrixFToQuaternion, torqueToThree } from "../scene/coordinates";
 import type {
   SceneInteriorInstance,
   SceneTerrainBlock,
@@ -44,7 +40,7 @@ export const MOUNTED_OBJECT_ROTATION: [number, number, number] = [
 ];
 
 /**
- * Where a streamed ghost sits, matching what `StreamingController`
+ * Where a streamed ghost sits, matching what `StreamPlaybackSession`
  * applies imperatively each frame.
  *
  * The asymmetry here is easy to get wrong and silent when you do:
@@ -62,7 +58,7 @@ export function streamEntityPlacement(entity: {
 } {
   const p = entity.position ?? [0, 0, 0];
   return {
-    position: [p[1], p[2], p[0]],
+    position: torqueToThree(p),
     rotation: entity.rotation ?? [0, 0, 0, 1],
   };
 }
@@ -92,7 +88,7 @@ export function interiorPlacement(
   return {
     position: torqueToThree(scene.transform.position),
     quaternion: matrixFToQuaternion(scene.transform),
-    scale: torqueScaleToThree(scene.scale),
+    scale: torqueToThree(scene.scale),
   };
 }
 

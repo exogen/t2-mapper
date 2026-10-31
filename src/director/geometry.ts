@@ -10,10 +10,6 @@ export function dist(a: DirectorVec3, b: DirectorVec3): number {
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }
 
-export function clamp(value: number, min: number, max: number): number {
-  return value < min ? min : value > max ? max : value;
-}
-
 export function centroid(points: DirectorVec3[]): DirectorVec3 {
   const sum: DirectorVec3 = [0, 0, 0];
   for (const p of points) {

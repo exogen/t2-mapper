@@ -1,5 +1,5 @@
 import { constants, deflateRawSync } from "node:zlib";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BlockTypeMove, BlockTypePacket, DemoParser } from "t2-demo-parser";
 import { buildHeader, buildInitialBlock } from "../../relay/demoWriter";
 import {
@@ -10,7 +10,7 @@ import {
 } from "../../relay/serverPacketFixtures";
 import { createDemoStreamingRecording } from "./demoStreaming";
 import { scanDemoTimeline } from "./demoTimelineScanner";
-import { loadDemoParser } from "./loadDemoParser";
+import { loadDemoParser, shareDemoParser } from "./loadDemoParser";
 
 function block(type: number, payload: Uint8Array): Uint8Array {
   const bytes = new Uint8Array(payload.length + 2);
@@ -100,5 +100,62 @@ describe("unfinished demo loading", () => {
     await expect(
       loadDemoParser(bytes.subarray(0, byteLength + 1)),
     ).rejects.toThrow("truncated demo: initial block");
+  });
+});
+
+function drainCount(parser: DemoParser): number {
+  let count = 0;
+  while (parser.nextBlock()) count++;
+  return count;
+}
+
+describe("shared demo parsers", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("forks the first parser of a buffer instead of inflating it again", async () => {
+    const buffer = recording(true);
+    const load = vi.spyOn(DemoParser.prototype, "load");
+    const first = await loadDemoParser(new Uint8Array(buffer));
+    expect(drainCount(first)).toBe(21);
+    const second = await loadDemoParser(new Uint8Array(buffer));
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(second).not.toBe(first);
+    expect(second.blockCursor).toBe(0);
+    expect(drainCount(second)).toBe(21);
+  });
+
+  it("forks a progressive download's parser once it's shared", async () => {
+    const buffer = recording(true);
+    const bytes = new Uint8Array(buffer);
+    const { byteLength, header } = DemoParser.peekHeader(bytes);
+    const prefixEnd = byteLength + header.initialBlockSize;
+    const progressive = new DemoParser(bytes.slice(0, prefixEnd), {
+      incremental: true,
+    });
+    await progressive.load();
+    progressive.push(bytes.slice(prefixEnd));
+    progressive.finish();
+    shareDemoParser(buffer, progressive);
+
+    const load = vi.spyOn(DemoParser.prototype, "load");
+    const parser = await loadDemoParser(bytes);
+    expect(load).not.toHaveBeenCalled();
+    expect(drainCount(parser)).toBe(21);
+  });
+
+  it("shares any whole view, but inflates again for part of a buffer or a strict load", async () => {
+    const buffer = recording(true);
+    await loadDemoParser(new Uint8Array(buffer));
+    const load = vi.spyOn(DemoParser.prototype, "load");
+    await loadDemoParser(new Uint8Array(buffer, 0, buffer.byteLength));
+    expect(load).not.toHaveBeenCalled();
+    await loadDemoParser(new Uint8Array(buffer), { allowPartial: false });
+    expect(load).toHaveBeenCalledTimes(1);
+    const copy = new Uint8Array(buffer.byteLength + 1);
+    copy.set(new Uint8Array(buffer));
+    await loadDemoParser(copy.subarray(0, buffer.byteLength));
+    expect(load).toHaveBeenCalledTimes(2);
   });
 });

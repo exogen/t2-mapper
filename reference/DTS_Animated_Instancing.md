@@ -197,8 +197,6 @@ On the same paused Massive scene, this reduced local matrix compositions from
 15,920 to 10,550 per traversal (5,370 pose helpers). Four alternating batches of
 100 traversals averaged 2.48 ms with native auto-update and 2.46 ms with changed
 helpers only. This is essentially unchanged timing, not evidence of an FPS gain.
-`profile-dts-demo.ts` reports this isolated comparison separately from active
-playback profiling.
 
 ## Lazy scene hierarchy
 
@@ -367,8 +365,6 @@ No runtime optimization was retained: these static branches are a small part
 of the current scene, and the measured saving does not justify the added
 invalidation machinery. These are isolated headless CPU measurements, not
 active-playback frame times or evidence about all static DTS shapes.
-`scripts/benchmark-static-transforms.ts` retains the experiment, pauses the
-render loop during measurement, and restores all overridden methods afterward.
 
 ## React entity-list experiment (2026-09-28)
 
@@ -463,35 +459,16 @@ evidence of a performance improvement.
 
 ## Reproduce
 
-Use the existing development server on port 3000:
-
-```sh
-node --import=tsx scripts/benchmark-static-transforms.ts \
-  http://localhost:3000/demos/the-cut-back-to-ymir_20260830T0352_twl-wilderzone_4a1b2f.rec \
-  /private/tmp/static-transforms 1500
-```
-
-The static-transform command accepts any supported demo URL; the example uses
-a recording already present in the local `demos` folder.
-
-```sh
-node --import=tsx scripts/compare-dts-instances.ts \
-  https://demos.tribes2.online/demos/the-cut-back-to-ymir_20260906T0129_s5-massive_2b28bf.rec \
-  /private/tmp/dts-instances-comparison 1500
-node --import=tsx scripts/check-dts-instances.ts /private/tmp/dts-shape-comparison
-```
-
 For CPU timings and an all-asset geometry/pose comparison:
 
 ```sh
 node --import=tsx scripts/benchmark-dts.ts light_male vehicle_air_scout borg18 weapon_energy
 node --import=tsx scripts/check-dts-lazy.ts
-node --import=tsx scripts/check-projectile-views.ts /private/tmp/projectile-views
-DTS_WAIT_TIMELINE=1 node --import=tsx scripts/profile-dts-demo.ts \
-  https://demos.tribes2.online/demos/the-cut-back-to-ymir_20260906T0129_s5-massive_2b28bf.rec \
-  /private/tmp/dts-playback-profile 1500 30
 ```
 
-Set `DTS_PROFILE=1` on the comparison command to save a Chrome CPU profile.
-Both scripts save JSON metrics and before/after PNGs. The comparison explicitly
-disables the app-owned pool and installs its own adapter for A/B measurements.
+The browser-side comparison and profiling scripts used above
+(`compare-dts-instances.ts`, `check-dts-instances.ts`,
+`check-projectile-views.ts`, `profile-dts-demo.ts`,
+`benchmark-static-transforms.ts`) drove react-three-fiber's store and were
+removed with it. `scripts/benchmark-playback-fps.ts` measures playback frame
+times against a production build.

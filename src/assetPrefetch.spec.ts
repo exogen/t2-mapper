@@ -2,17 +2,11 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createDIFTestBuffer } from "./dif/difTestFixtures";
 
 const mocks = vi.hoisted(() => ({
-  preloadDIF: vi.fn(),
-  preloadGLTF: vi.fn(),
-  preloadTexture: vi.fn(),
+  loadShape: vi.fn(async () => {}),
+  loadInterior: vi.fn(),
+  loadSharedTexture: vi.fn(async () => {}),
 }));
-vi.mock("@react-three/fiber", () => ({
-  useLoader: { preload: mocks.preloadDIF },
-}));
-vi.mock("@react-three/drei", () => ({
-  useGLTF: { preload: mocks.preloadGLTF },
-  useTexture: { preload: mocks.preloadTexture },
-}));
+vi.mock("./engine/shapeCache", () => ({ loadShape: mocks.loadShape }));
 vi.mock("./loaders", () => ({
   interiorToUrl: (name: string) => `/interiors/${name}`,
   shapeToUrl: (name: string) => `/shapes/${name}`,
@@ -21,6 +15,10 @@ vi.mock("./loaders", () => ({
   loadTerrain: vi.fn(),
 }));
 vi.mock("./textureUtils", () => ({ loadTexture: vi.fn() }));
+vi.mock("./engine/interiorCache", () => ({ loadInterior: mocks.loadInterior }));
+vi.mock("./engine/textures", () => ({
+  loadSharedTexture: mocks.loadSharedTexture,
+}));
 
 import { startAssetPrefetch, stopAssetPrefetch } from "./assetPrefetch";
 import { InteriorLoader } from "./interiorLoader";
@@ -36,17 +34,14 @@ it("prefetches interiors and their textures through one loader request", async (
   const { buffer } = createDIFTestBuffer({ materialNames: ["test", "unused"] });
   const fetch = vi.fn();
   vi.stubGlobal("fetch", fetch);
-  mocks.preloadDIF.mockImplementationOnce((Loader) =>
-    new Loader().parse(buffer),
+  mocks.loadInterior.mockImplementationOnce(async () =>
+    new InteriorLoader().parse(buffer),
   );
   startAssetPrefetch(() => [{ kind: "interior", name: "native-test.dif" }]);
   await vi.advanceTimersByTimeAsync(1000);
-  expect(mocks.preloadDIF).toHaveBeenCalledWith(
-    InteriorLoader,
-    "/interiors/native-test.dif",
-  );
-  expect(mocks.preloadGLTF).not.toHaveBeenCalled();
-  expect(mocks.preloadTexture).toHaveBeenCalledWith("/textures/test.png");
-  expect(mocks.preloadTexture).toHaveBeenCalledTimes(1);
+  expect(mocks.loadInterior).toHaveBeenCalledWith("/interiors/native-test.dif");
+  expect(mocks.loadShape).not.toHaveBeenCalled();
+  expect(mocks.loadSharedTexture).toHaveBeenCalledWith("/textures/test.png");
+  expect(mocks.loadSharedTexture).toHaveBeenCalledTimes(1);
   expect(fetch).not.toHaveBeenCalled();
 });

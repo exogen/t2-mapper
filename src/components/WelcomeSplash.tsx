@@ -1,19 +1,9 @@
 import { useEffect } from "react";
+import { setWelcomeSplashOpen } from "../state/welcomeSplashState";
 import { PiCassetteTapeFill } from "react-icons/pi";
 import { BsFillLightningChargeFill } from "react-icons/bs";
 import { LoadingIndicator } from "./LoadingIndicator";
 import styles from "./WelcomeSplash.module.css";
-
-/**
- * Whether the welcome splash is currently mounted — read imperatively by
- * the canvas click handler to suppress click-to-pointer-lock while the
- * splash invites clicking around it.
- */
-let _splashOpen = false;
-
-export function isWelcomeSplashOpen(): boolean {
-  return _splashOpen;
-}
 
 /**
  * First-visit welcome shown over the explore view when the URL carries no
@@ -38,10 +28,8 @@ export function WelcomeSplash({
   loading?: { isLoading: boolean; progress: number | null } | null;
 }) {
   useEffect(() => {
-    _splashOpen = true;
-    return () => {
-      _splashOpen = false;
-    };
+    setWelcomeSplashOpen(true);
+    return () => setWelcomeSplashOpen(false);
   }, []);
   return (
     <div className={styles.Positioner}>

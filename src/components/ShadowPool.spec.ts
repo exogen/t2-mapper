@@ -11,7 +11,7 @@ import {
   type WebGLRenderer,
   type Object3D,
 } from "three";
-import { ShadowPoolRuntime } from "./shadowPoolRuntime";
+import { ShadowPoolRuntime } from "../engine/shadowPoolRuntime";
 import { buildDTS } from "../dts/dtsBuilder";
 import { DTSMesh } from "../dts/dtsModel";
 import { batchDTSRigidMeshes } from "../dts/dtsRigidBatch";
@@ -25,7 +25,7 @@ import {
   addShadowCaster,
   removeShadowCaster,
   type ShadowCaster,
-} from "./shadowCasters";
+} from "../engine/shadowCasters";
 import { setTerrainCollisionData } from "../collision/terrainCollision";
 import {
   registerInteriorCollider,
@@ -89,6 +89,20 @@ afterEach(() => {
   setTerrainCollisionData(null);
   unregisterInteriorCollider("shadow-test");
   vi.restoreAllMocks();
+});
+
+describe("off-screen casters", () => {
+  it("cast while culled, and stop once dormant (footprint out of view too)", () => {
+    const { frame } = setup();
+    const culling = root as Mesh & { culled?: boolean; dormant?: boolean };
+    Object.assign(culling, { visible: false, culled: true, dormant: false });
+    frame();
+    expect(runtime.decals.children[0].visible).toBe(true);
+    culling.dormant = true;
+    frame();
+    expect(runtime.decals.children[0].visible).toBe(false);
+    Object.assign(culling, { visible: true, culled: false, dormant: false });
+  });
 });
 
 describe("shadow receiver reuse", () => {

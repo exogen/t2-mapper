@@ -10,7 +10,6 @@ import {
   BlockTypeMove,
   BlockTypePacket,
   DemoParser,
-  type PacketData,
   type ParsedData,
 } from "t2-demo-parser";
 import {
@@ -24,7 +23,14 @@ import type { ServerMessage } from "./types";
 import { GAME_PROTOCOL_VERSION } from "./shared";
 import { relayLog } from "./logger";
 import { extractWavTag } from "../src/stream/streamHelpers";
-import { gravityEvent, serverPacket } from "./serverPacketFixtures";
+import {
+  decodedPacket,
+  gravityEvent,
+  remoteCommandEvent,
+  remoteCommandPacket,
+  serverMessagePacket,
+  serverPacket,
+} from "./serverPacketFixtures";
 
 const missionCyclingReason =
   "Server is cycling missions.  Please try to connect in a moment.";
@@ -160,11 +166,7 @@ describe("watch mission controls", () => {
   let viewer: FakeWebSocket;
   let saved: Record<string, unknown>;
 
-  const remote = (funcName: string, ...args: string[]): ParsedData => ({
-    type: "RemoteCommandEvent",
-    funcName,
-    args,
-  });
+  const remote = remoteCommandEvent;
   const join = (
     id: number,
     admin = "0",
@@ -1836,21 +1838,13 @@ describe("watch observer recovery", () => {
   let session: any;
 
   function events(...data: ParsedData[]) {
-    session.parserKit.packetParser.parsePacket = () => ({
-      gameState: {},
-      ghosts: [],
-      events: data.map((parsedData) => ({ parsedData })),
-    });
+    session.parserKit.packetParser.parsePacket = () => decodedPacket(...data);
     conn.emit("packet", new Uint8Array([1, 2, 3]));
   }
 
   function messages(...commands: string[][]) {
     events(
-      ...commands.map((args) => ({
-        type: "RemoteCommandEvent",
-        funcName: "ServerMessage",
-        args,
-      })),
+      ...commands.map((args) => remoteCommandEvent("ServerMessage", ...args)),
     );
   }
 
@@ -2058,11 +2052,9 @@ describe("WatchSessionManager", () => {
     const conn = connections[0];
     conn.setStatus("authenticating");
     const session = (manager as any).sessions.get("1.2.3.4:28000");
-    session.handleResponderEvent({
-      type: "RemoteCommandEvent",
-      funcName: "MissionStartPhase1",
-      args: ["1", "Galadon"],
-    });
+    session.handleResponderEvent(
+      remoteCommandEvent("MissionStartPhase1", "1", "Galadon"),
+    );
     expect(conn.noAuthPromotions).toBe(1);
     expect(conn.status).toBe("connected");
     expect(manager.getStatusSummary()[0].status).not.toBe("authenticating");
@@ -2110,21 +2102,13 @@ describe("WatchSessionManager", () => {
     const first = new FakeWebSocket();
     manager.watch(first as unknown as WebSocket, address);
     const session = manager.getSession(address)!;
-    session["watchState"].applyPacket({
-      gameState: {},
-      ghosts: [],
-      events: [
+    session["watchState"].applyPacket(
+      serverMessagePacket(
         ["MsgClientReady", "", "CTFGame"],
         ["MsgCTFFlagDropped", "", "Alice", "Storm", "1"],
         ["MsgSystemClock", "", "20", "1200000"],
-      ].map((args) => ({
-        parsedData: {
-          type: "RemoteCommandEvent",
-          funcName: "ServerMessage",
-          args,
-        },
-      })),
-    } as unknown as PacketData);
+      ),
+    );
     connections[0].setStatus("connected");
     const cached = session["cachedPayload"];
     const concurrent = new FakeWebSocket();
@@ -3328,33 +3312,18 @@ describe("WatchSession delayed transitions", () => {
   it("includes delayed mission-phase metadata in reconnect snapshots", () => {
     const { manager, connections, session } = start();
     const state = session as any;
-    const parsed = {
-      gameState: {},
-      ghosts: [],
-      events: [
-        {
-          parsedData: {
-            type: "RemoteCommandEvent",
-            funcName: "MissionStartPhase1",
-            args: ["1", "DelayedMap"],
-          },
-        },
-        {
-          parsedData: {
-            type: "RemoteCommandEvent",
-            funcName: "ServerMessage",
-            args: ["MsgMissionStart", "Match started"],
-          },
-        },
-        {
-          parsedData: {
-            type: "RemoteCommandEvent",
-            funcName: "ServerMessage",
-            args: ["MsgMissionDropInfo", "", "DelayedMap", "CTF", "Server"],
-          },
-        },
-      ],
-    };
+    const parsed = decodedPacket(
+      remoteCommandEvent("MissionStartPhase1", "1", "DelayedMap"),
+      remoteCommandEvent("ServerMessage", "MsgMissionStart", "Match started"),
+      remoteCommandEvent(
+        "ServerMessage",
+        "MsgMissionDropInfo",
+        "",
+        "DelayedMap",
+        "CTF",
+        "Server",
+      ),
+    );
     state.parserKit.packetParser.parsePacket = () => parsed;
     state.replica.kit.packetParser.parsePacket = () => parsed;
     connections[0].emit("packet", new Uint8Array([1, 2, 3]));
@@ -3378,19 +3347,8 @@ describe("WatchSession delayed transitions", () => {
       const session = manager.getSession(address) as any;
       connections[0].setStatus(tourneyDelayMs ? "connected" : "authenticating");
       session.watchState.tournamentMode = false;
-      session.parserKit.packetParser.parsePacket = () => ({
-        gameState: {},
-        ghosts: [],
-        events: [
-          {
-            parsedData: {
-              type: "RemoteCommandEvent",
-              funcName: "MissionStartPhase1",
-              args: ["1", "NewMap"],
-            },
-          },
-        ],
-      });
+      session.parserKit.packetParser.parsePacket = () =>
+        remoteCommandPacket("MissionStartPhase1", "1", "NewMap");
       connections[0].emit("packet", new Uint8Array([1, 2, 3]));
       expect(catchup(ws).missionName).toBe("NewMap");
       // One compressed snapshot; its packet must not also be raw-forwarded.
@@ -3493,11 +3451,9 @@ describe("WatchSession demo recording", () => {
   }
 
   function firePhase1(session: any, missionName: string): void {
-    session.handleResponderEvent({
-      type: "RemoteCommandEvent",
-      funcName: "MissionStartPhase1",
-      args: ["1", missionName],
-    });
+    session.handleResponderEvent(
+      remoteCommandEvent("MissionStartPhase1", "1", missionName),
+    );
   }
 
   /** MsgMissionDropInfo: the stream names the server (seconds after Phase1). */
@@ -3507,19 +3463,14 @@ describe("WatchSession demo recording", () => {
     missionName = "Katabatic",
     serverName = "Test Server",
   ): void {
-    session.parserKit.packetParser.parsePacket = () => ({
-      gameState: {},
-      ghosts: [],
-      events: [
-        {
-          parsedData: {
-            type: "RemoteCommandEvent",
-            funcName: "ServerMessage",
-            args: ["MsgMissionDropInfo", "", missionName, "CTF", serverName],
-          },
-        },
-      ],
-    });
+    session.parserKit.packetParser.parsePacket = () =>
+      serverMessagePacket([
+        "MsgMissionDropInfo",
+        "",
+        missionName,
+        "CTF",
+        serverName,
+      ]);
     conn.emit("packet", new Uint8Array([9, 9, 9]));
   }
 
@@ -3596,15 +3547,10 @@ describe("WatchSession demo recording", () => {
       session.watchState.matchStarted = true;
       fireDropInfo(session, connections[0]);
       const original = session.recorder;
-      const remote = (funcName: string, ...args: string[]) => ({
-        parsedData: { type: "RemoteCommandEvent", funcName, args },
-      });
-      const events = (...commands: ReturnType<typeof remote>[]) => {
-        session.parserKit.packetParser.parsePacket = () => ({
-          gameState: {},
-          ghosts: [],
-          events: commands,
-        });
+      const remote = remoteCommandEvent;
+      const events = (...commands: ParsedData[]) => {
+        session.parserKit.packetParser.parsePacket = () =>
+          decodedPacket(...commands);
         connections.at(-1)!.emit("packet", new Uint8Array([1, 2, 3]));
       };
       const command = (text: string) =>
@@ -3708,19 +3654,8 @@ describe("WatchSession demo recording", () => {
     coordinator.updateMission(session.key, session.controls.snapshot());
     try {
       // No MissionEnd or EndGhosting, including a restart of the same map.
-      session.parserKit.packetParser.parsePacket = () => ({
-        gameState: {},
-        ghosts: [],
-        events: [
-          {
-            parsedData: {
-              type: "RemoteCommandEvent",
-              funcName: "MissionStartPhase1",
-              args: ["2", "Katabatic"],
-            },
-          },
-        ],
-      });
+      session.parserKit.packetParser.parsePacket = () =>
+        remoteCommandPacket("MissionStartPhase1", "2", "Katabatic");
       connections[0].emit("packet", new Uint8Array([1, 2, 3]));
       expect(session.controls.recording).toBe(true);
       expect(session.controls.recordingDecision).toBeUndefined();
@@ -3783,27 +3718,16 @@ describe("WatchSession demo recording", () => {
       ["MsgClientNameChanged", "", "Alice", "Bob", "10"],
       ["MsgClientDrop", "", "Bob", "10"],
     ];
-    session.parserKit.packetParser.parsePacket = () => ({
-      gameState: {},
-      ghosts: [],
-      events: [
-        ...commands.map((args) => ({
-          parsedData: {
-            type: "RemoteCommandEvent",
-            funcName: "ServerMessage",
-            args,
-          },
-        })),
+    session.parserKit.packetParser.parsePacket = () =>
+      decodedPacket(
+        ...commands.map((args) => remoteCommandEvent("ServerMessage", ...args)),
         {
-          parsedData: {
-            type: "GhostingMessageEvent",
-            message: 2,
-            sequence: 0,
-            ghostCount: 0,
-          },
+          type: "GhostingMessageEvent",
+          message: 2,
+          sequence: 0,
+          ghostCount: 0,
         },
-      ],
-    });
+      );
     try {
       connections[0].emit("packet", new Uint8Array([1, 2, 3]));
       expect(session.recorder).toBeNull();

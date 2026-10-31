@@ -1,23 +1,17 @@
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  BlockTypeMove,
-  GhostStateAccumulator,
-  createLiveParser,
-  type DemoParser,
-  type PacketData,
-  type ParsedData,
-} from "t2-demo-parser";
+import { GhostStateAccumulator, createLiveParser } from "t2-demo-parser";
 import { WatchStateAccumulator } from "../../relay/watchState";
-import { buildCatchupPayload } from "../../relay/watchCatchup";
 import {
-  deserializeCatchupPayload,
-  serializeCatchupPayload,
-} from "../../relay/watchSerialize";
+  decodedPacket,
+  serverMessagePacket,
+  testCatchupPayload,
+} from "../../relay/serverPacketFixtures";
 import { LiveStreamAdapter } from "./liveStreaming";
 import { createRecordingFromParser } from "./demoStreaming";
 import { streamEntityToGameEntity } from "./entityBridge";
 import type { RelayClient } from "./relayClient";
 import type { StreamSnapshot } from "./types";
+import { fakeDemoParser, moveBlock } from "./streamTestFixtures";
 import { flagLabel } from "../state/flagTeam";
 import { setStreamSnapshot } from "../state/streamSnapshotStore";
 
@@ -29,14 +23,6 @@ const names = [
   { name: "Bot", raw: "\x0eBot" },
 ];
 
-function packet(...events: ParsedData[]): PacketData {
-  return {
-    gameState: {},
-    ghosts: [],
-    events: events.map((parsedData) => ({ parsedData })),
-  } as unknown as PacketData;
-}
-
 function fixture() {
   const kit = createLiveParser({
     dataBlocks: [[1, { shapeName: "light_male.dts" }]],
@@ -45,7 +31,7 @@ function fixture() {
   const ghostState = new GhostStateAccumulator();
   watchState.dataBlockClassNames.set(1, "PlayerData");
   ghostState.applyPacket({
-    ...packet(),
+    ...decodedPacket(),
     ghosts: names.map((_, index) => ({
       index,
       type: "create",
@@ -60,7 +46,11 @@ function fixture() {
     })),
   });
   watchState.applyPacket(
-    packet({ type: "NetStringEvent", id: 20, value: "_ClientConnection" }),
+    decodedPacket({
+      type: "NetStringEvent",
+      id: 20,
+      value: "_ClientConnection",
+    }),
   );
   // Exercise both immediate and deferred string resolution at the relay.
   names.forEach(({ raw }, index) => {
@@ -74,21 +64,15 @@ function fixture() {
       renderFlags: 0,
     };
     watchState.applyPacket(
-      packet(...(index % 2 ? [target, string] : [string, target])),
+      decodedPacket(...(index % 2 ? [target, string] : [string, target])),
     );
   });
   const payload = () =>
-    deserializeCatchupPayload(
-      serializeCatchupPayload(
-        buildCatchupPayload({
-          packetParser: kit.packetParser,
-          watchState,
-          ghostState,
-          epoch: 1,
-          serverAddress: "test:28000",
-        }),
-      ),
-    );
+    testCatchupPayload({
+      packetParser: kit.packetParser,
+      watchState,
+      ghostState,
+    });
   return { kit, watchState, ghostState, payload };
 }
 
@@ -113,7 +97,7 @@ describe("initial target names", () => {
   it("retains the original flag target when catch-up only contains its carrier's ghost", () => {
     const { watchState, payload } = fixture();
     watchState.applyPacket(
-      packet(
+      decodedPacket(
         { type: "NetStringEvent", id: 30, value: "Storm" },
         { type: "NetStringEvent", id: 31, value: "Flag" },
         {
@@ -151,7 +135,7 @@ describe("initial target names", () => {
   });
   it("does not reattach a freed ghost to a reissued target during relay catch-up", () => {
     const { ghostState, watchState, payload } = fixture();
-    const updates = packet(
+    const updates = decodedPacket(
       { type: "TargetFreeEvent", targetId: 32 },
       { type: "TargetInfoEvent", targetId: 32, nameTag: 1, typeTag: 20 },
     );
@@ -178,7 +162,7 @@ describe("initial target names", () => {
   it("preserves colors when a recorded demo already has players at its start", () => {
     const { kit, watchState, payload } = fixture();
     watchState.applyPacket(
-      packet(
+      decodedPacket(
         { type: "NetStringEvent", id: 30, value: "Flag" },
         {
           type: "TargetInfoEvent",
@@ -191,39 +175,19 @@ describe("initial target names", () => {
       ),
     );
     const initial = payload();
-    let cursor = 0;
-    const parser = {
-      header: { demoLengthMs: 1000 },
+    const parser = fakeDemoParser({
+      blocks: Array.from({ length: 32 }, moveBlock),
+      demoLengthMs: 1000,
       initialBlock: {
         ...initial,
         dataBlocks: new Map(initial.dataBlocks),
         taggedStrings: new Map(initial.taggedStrings),
-        initialEvents: [],
-        demoValues: [],
-        firstPerson: true,
-        lastMoveAck: 0,
-        lastClientMove: 0,
-        firstMoveIndex: 0,
-        sensorGroup: 0,
-        moves: [],
       },
-      getRegistry: () => kit.registry,
-      getGhostTracker: () => kit.ghostTracker,
-      getPacketParser: () => kit.packetParser,
-      reset: () => {
-        cursor = 0;
-      },
-      nextBlock: () =>
-        cursor++ < 32
-          ? {
-              type: BlockTypeMove,
-              parsed: { yaw: 0, pitch: 0, x: 0, y: 0, z: 0, trigger: [] },
-            }
-          : undefined,
-      decompressedByteLength: 1,
+      registry: kit.registry,
+      ghostTracker: kit.ghostTracker,
+      packetParser: kit.packetParser,
       bufferedMoveTicks: 32,
-      isComplete: true,
-    } as unknown as DemoParser;
+    });
     const stream = createRecordingFromParser(parser, {
       checkpoints: false,
     }).streamingPlayback;
@@ -248,28 +212,20 @@ describe("initial target names", () => {
     const { watchState, payload } = fixture();
     const changed = "\x10\x0bNEW|\x0cAlice\x11";
     watchState.applyPacket(
-      packet(
-        {
-          type: "RemoteCommandEvent",
-          funcName: "ServerMessage",
-          args: [
-            "MsgClientJoin",
-            "",
-            names[0].raw,
-            "7",
-            "32",
-            "0",
-            "0",
-            "0",
-            "0",
-            "12345",
-          ],
-        },
-        {
-          type: "RemoteCommandEvent",
-          funcName: "ServerMessage",
-          args: ["MsgClientNameChanged", "", names[0].raw, changed, "7"],
-        },
+      serverMessagePacket(
+        [
+          "MsgClientJoin",
+          "",
+          names[0].raw,
+          "7",
+          "32",
+          "0",
+          "0",
+          "0",
+          "0",
+          "12345",
+        ],
+        ["MsgClientNameChanged", "", names[0].raw, changed, "7"],
       ),
     );
     const stream = new LiveStreamAdapter({} as RelayClient, { mode: "watch" });
@@ -285,7 +241,9 @@ describe("initial target names", () => {
       playerName: "NEW|Alice",
       playerRawName: changed,
     });
-    watchState.applyPacket(packet({ type: "TargetFreeEvent", targetId: 32 }));
+    watchState.applyPacket(
+      decodedPacket({ type: "TargetFreeEvent", targetId: 32 }),
+    );
     expect(payload().targetEntries.some((entry) => entry.targetId === 32)).toBe(
       false,
     );

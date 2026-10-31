@@ -4,6 +4,10 @@
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.puppeteer.tsbuildinfo",
     "lib": ["ES2023", "DOM"]
   },
-  "include": ["scripts/play-demo.ts", "scripts/screenshot.ts"],
+  "include": [
+    "scripts/play-demo.ts",
+    "scripts/screenshot.ts",
+    "scripts/benchmark-playback-fps.ts"
+  ],
   "exclude": []
 }

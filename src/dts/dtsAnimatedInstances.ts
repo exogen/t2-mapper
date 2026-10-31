@@ -38,9 +38,13 @@ import {
 } from "../shapeLighting";
 import { getDTSMaterialMapConfiguration } from "./dtsMaterialMaps";
 import { getShapeShaderConfiguration } from "../shapeMaterial";
+import {
+  insertAfterChunk,
+  replaceChunk,
+  type ShaderSource,
+} from "../shaderUtils";
 
 type ShapeMaterial = MeshBasicMaterial | MeshLambertMaterial;
-type Shader = Parameters<Material["onBeforeCompile"]>[0];
 
 type SourceMesh = DTSMeshBatch | DTSRenderable;
 type InstanceSource = {
@@ -1022,7 +1026,7 @@ function supportsInstanceTransform(matrix: Matrix4) {
 }
 
 function injectAnimatedInstances(
-  shader: Shader,
+  shader: ShaderSource,
   bones: { value: DataTexture | null },
   skins: { value: DataArrayTexture | null },
   skinned: boolean,
@@ -1032,13 +1036,13 @@ function injectAnimatedInstances(
   shader.uniforms.bindMatrix = { value: new Matrix4() };
   shader.uniforms.bindMatrixInverse = { value: new Matrix4() };
   shader.uniforms.dtsSkinArray = skins;
-  shader.vertexShader = shader.vertexShader
-    .replace(
-      "#include <common>",
-      `#include <common>
-    attribute vec4 dtsInstanceLight;
+  shader.vertexShader = insertAfterChunk(
+    shader.vertexShader,
+    "common",
+    `    attribute vec4 dtsInstanceLight;
     attribute vec4 dtsInstanceState;`,
-    )
+  );
+  shader.vertexShader = shader.vertexShader
     .replace(
       "uniform int shapeLightMode;",
       "#define shapeLightMode int(dtsInstanceLight.w + 0.5)",
@@ -1050,10 +1054,11 @@ function injectAnimatedInstances(
     .replace(
       "uniform float shapeBoundRadius;",
       "#define shapeBoundRadius dtsInstanceState.x",
-    )
-    .replace(
-      "#include <skinning_pars_vertex>",
-      `
+    );
+  shader.vertexShader = replaceChunk(
+    shader.vertexShader,
+    "skinning_pars_vertex",
+    `
     ${
       skinned
         ? `uniform mat4 bindMatrix;
@@ -1073,33 +1078,36 @@ function injectAnimatedInstances(
     attribute vec3 dtsInstanceUV1;
     varying vec4 vDtsInstanceState;
   `,
-    )
-    .replace(
-      "#include <uv_vertex>",
-      `#include <uv_vertex>
-    vDtsInstanceState = dtsInstanceState;
+  );
+  shader.vertexShader = insertAfterChunk(
+    shader.vertexShader,
+    "uv_vertex",
+    `    vDtsInstanceState = dtsInstanceState;
     #ifdef USE_MAP
       vMapUv = vec2(dot(dtsInstanceUV0, vec3(MAP_UV, 1.0)), dot(dtsInstanceUV1, vec3(MAP_UV, 1.0)));
     #endif
   `,
-    );
-  shader.fragmentShader = shader.fragmentShader
-    .replace(
-      "#include <common>",
-      `#include <common>
-    uniform highp sampler2DArray dtsSkinArray;
+  );
+  shader.fragmentShader = insertAfterChunk(
+    shader.fragmentShader,
+    "common",
+    `    uniform highp sampler2DArray dtsSkinArray;
     varying vec4 vDtsInstanceState;
   `,
-    )
-    .replace("uniform float opacity;", "#define opacity vDtsInstanceState.z");
-  if (array)
-    shader.fragmentShader = shader.fragmentShader
-      .replace(
-        "#include <map_fragment>",
-        "diffuseColor *= texture(dtsSkinArray, vec3(vMapUv, vDtsInstanceState.y));",
-      )
-      .replaceAll(
-        "texture2D(map, vMapUv)",
-        "texture(dtsSkinArray, vec3(vMapUv, vDtsInstanceState.y))",
-      );
+  );
+  shader.fragmentShader = shader.fragmentShader.replace(
+    "uniform float opacity;",
+    "#define opacity vDtsInstanceState.z",
+  );
+  if (array) {
+    shader.fragmentShader = replaceChunk(
+      shader.fragmentShader,
+      "map_fragment",
+      "diffuseColor *= texture(dtsSkinArray, vec3(vMapUv, vDtsInstanceState.y));",
+    );
+    shader.fragmentShader = shader.fragmentShader.replaceAll(
+      "texture2D(map, vMapUv)",
+      "texture(dtsSkinArray, vec3(vMapUv, vDtsInstanceState.y))",
+    );
+  }
 }

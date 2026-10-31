@@ -4,7 +4,7 @@ import { FaClipboardCheck } from "react-icons/fa6";
 import { useSettings } from "./SettingsProvider";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import { cameraRegistry } from "../state/cameraRegistry";
-import { encodeViewHash } from "./viewHash";
+import { encodeViewHash } from "../viewHash";
 import { useModeQueryState } from "./useQueryParams";
 import buttonStyles from "./Button.module.css";
 import styles from "./CopyCoordinatesButton.module.css";

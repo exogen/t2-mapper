@@ -170,6 +170,20 @@ describe("engine DTS hull rays", () => {
     expect(ray([0, 0, 0], [20, 0, 0])).toBeNull();
     refresh.forEach((spy) => expect(spy).toHaveBeenCalledTimes(5));
   });
+  it("rejects a shape whose bounds miss the query without posing its hulls", () => {
+    const { scene } = buildDTS(createDTSCollisionTestShape());
+    const meshes = getDTSCollisionMeshes(scene, "TSStatic");
+    registerStaticShapeCollider("far", meshes);
+    const refresh = meshes.map((mesh) => vi.spyOn(mesh, "updateForCollision"));
+    expect(ray([100, 0, 0], [120, 0, 0])).toBeNull();
+    expect(pointObstructed([0, 100, 0], 0.5, { includeStatics: true })).toBe(
+      false,
+    );
+    refresh.forEach((spy) => expect(spy).not.toHaveBeenCalled());
+    scene.position.z = 110;
+    expect(ray([100, 0, 0], [120, 0, 0])?.t).toBeCloseTo(0.45);
+    refresh.forEach((spy) => expect(spy).toHaveBeenCalledOnce());
+  });
   function register(type: "TSStatic" | "ShapeBase" = "TSStatic") {
     const model = buildDTS(createDTSCollisionTestShape());
     registerStaticShapeCollider(

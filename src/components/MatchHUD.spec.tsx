@@ -8,7 +8,7 @@ import type {
   StreamSnapshot,
   TeamScore,
 } from "../stream/types";
-import type { TeamColorScheme } from "./iffTheme";
+import type { TeamColorScheme } from "../iffTheme";
 import type { ScoreStyle } from "./SettingsProvider";
 
 const state = vi.hoisted(() => ({

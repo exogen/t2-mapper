@@ -372,13 +372,6 @@ export function selectSceneEntities(state: GameEntityState): GameEntity[] {
       result.push(entity);
   return result;
 }
-export function useSceneEntities(): GameEntity[] {
-  return useStoreWithEqualityFn(
-    gameEntityStore,
-    selectSceneEntities,
-    entitySetEqual,
-  );
-}
 
 /**
  * Hook returning the count of entities of a render type. Unlike
@@ -410,11 +403,11 @@ export function useGameEntitiesByRenderType(
 
 // ── Scene infrastructure queries ──
 
-// Scene infrastructure selectors use Object.is equality (default) on the
-// extracted data object — these are set once and referentially stable, so
-// the hooks won't re-render when unrelated (dynamic) entities update.
+// Scene infrastructure selectors return the extracted data object, which
+// is set once and referentially stable, so Object.is equality ignores
+// unrelated (dynamic) entity updates.
 
-function selectSkyData(state: GameEntityState): SceneSky | null {
+export function selectSkyData(state: GameEntityState): SceneSky | null {
   const entities = isStreamingSource(state.dataSource)
     ? state.streamEntities
     : state.missionEntities;
@@ -428,7 +421,7 @@ function selectSkyData(state: GameEntityState): SceneSky | null {
 let lastSunInputs: SceneSun[] = [];
 let lastSunResult: SceneSun | null = null;
 
-function selectSunData(state: GameEntityState): SceneSun | null {
+export function selectSunData(state: GameEntityState): SceneSun | null {
   const entities = isStreamingSource(state.dataSource)
     ? state.streamEntities
     : state.missionEntities;
@@ -480,7 +473,7 @@ function selectSunData(state: GameEntityState): SceneSun | null {
   return lastSunResult;
 }
 
-function selectMissionAreaData(
+export function selectMissionAreaData(
   state: GameEntityState,
 ): SceneMissionArea | null {
   const entities = isStreamingSource(state.dataSource)
@@ -490,21 +483,6 @@ function selectMissionAreaData(
     if (e.renderType === "MissionArea") return e.missionAreaData;
   }
   return null;
-}
-
-/** Hook returning the Sky data, or null if no sky entity exists. */
-export function useSceneSky(): SceneSky | null {
-  return useStoreWithEqualityFn(gameEntityStore, selectSkyData);
-}
-
-/** Hook returning the Sun data, or null if no sun entity exists. */
-export function useSceneSun(): SceneSun | null {
-  return useStoreWithEqualityFn(gameEntityStore, selectSunData);
-}
-
-/** Hook returning the MissionArea data, or null if none exists. */
-export function useSceneMissionArea(): SceneMissionArea | null {
-  return useStoreWithEqualityFn(gameEntityStore, selectMissionAreaData);
 }
 
 /** Hook returning which data source is currently populating entities. */

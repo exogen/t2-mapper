@@ -16,6 +16,7 @@ import {
   getFollowTargets,
 } from "./watchFollow";
 import { cameraTourStore } from "./cameraTourStore";
+import { torqueToThree } from "../scene/coordinates";
 
 function eventPlayerNames(event: TimelineEvent): (string | undefined)[] {
   const snapshot = streamSnapshotStore.getState().snapshot;
@@ -135,11 +136,10 @@ export function seekToTimelineEvent(
       cancel();
       exitDirector();
       exitToFreeFly();
-      const [x, y, z] = generator.position;
       cameraTourStore.getState().flyTo({
         entityId: entity?.id ?? `timeline-generator-${event.timeSec}`,
         label: event.generatorLabel ?? "Generator",
-        position: [y, z, x],
+        position: torqueToThree(generator.position),
       });
       return;
     }

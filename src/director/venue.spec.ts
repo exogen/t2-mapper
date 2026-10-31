@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { directorDataset } from "./directorTestFixtures";
 import type { DirectorDataset, DirectorVec3 } from "./types";
 
 /** Flat terrain at z=100 everywhere; six force fields on the map. */
@@ -30,24 +31,13 @@ function dataset(standGap: number): DirectorDataset {
       teamId,
       pos: [teamId * 50 + i, 0, z] as DirectorVec3,
     }));
-  return {
+  return directorDataset({
     durationSec: 10,
-    flagSampleStepSec: 0.5,
-    playerSampleStepSec: 1,
-    gameClassName: "CTFGame",
-    teams: [
-      { teamId: 1, name: "Storm" },
-      { teamId: 2, name: "Inferno" },
-    ],
     flagStands: [
       { slot: 1, teamId: 1, name: "Storm", pos: [0, 0, 100] },
       // Inferno's stand is in a basement, well under the terrain.
       { slot: 2, teamId: 2, name: "Inferno", pos: [standGap, 0, 80] },
     ],
-    events: [],
-    flagSamples: [],
-    playerSamples: [],
-    structures: [],
     structureInventory: [
       ...hardware(1, "generator", 70, 2),
       ...hardware(1, "inventory station", 101, 3),
@@ -57,12 +47,7 @@ function dataset(standGap: number): DirectorDataset {
       ...hardware(1, "spider clamp turret", 100),
       ...hardware(2, "generator", 70, 2),
     ],
-    mortarShots: [],
-    deaths: [],
-    stations: [],
-    playerNames: [],
-    scoreSamples: [],
-  };
+  });
 }
 
 describe("describeVenue", () => {

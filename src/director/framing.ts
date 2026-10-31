@@ -82,7 +82,7 @@ function fogCap(dataset?: DirectorDataset): number {
  * Orbit angle that puts a base BEHIND the subject, so the shot
  * establishes where on the map we are. The camera sits at
  * center + (cos θ, sin θ)·R in Three space — where Three x is Torque y
- * and Three z is Torque x (see DirectorController) — and looks back at
+ * and Three z is Torque x (see directorCamera) — and looks back at
  * the center, so aiming past the subject at `landmark` means placing
  * the camera diametrically opposite it.
  */
@@ -326,7 +326,7 @@ export function pathAwareAngle(
   for (const offset of PATH_ANGLE_OFFSETS) {
     const angle = preferredAngle + offset;
     // The runtime places the eye at Torque (center.x + sinθ·r,
-    // center.y + cosθ·r) — see DirectorController's orbit maths.
+    // center.y + cosθ·r) — see directorCamera's orbit maths.
     const camX = center[0] + Math.sin(angle) * radius;
     const camY = center[1] + Math.cos(angle) * radius;
     let min = Infinity;

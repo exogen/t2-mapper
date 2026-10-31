@@ -20,15 +20,15 @@ import { Vector2, type Texture } from "three";
 import { injectEffectLights } from "./effectLightUniforms";
 import { globalSunUniforms } from "./globalSunUniforms";
 import { lightsFragmentBeginByType } from "./lightsChunk";
-import { glslColorSpace, glslDebugGrid } from "./shaderUtils";
+import {
+  glslColorSpace,
+  glslDebugGrid,
+  insertAfterChunk,
+  insertBeforeChunk,
+  replaceChunk,
+  type ShaderSource,
+} from "./shaderUtils";
 import { TERRAIN_SIZE } from "./terrain";
-
-/** The subset of Three's onBeforeCompile shader object this module touches. */
-interface TerrainShader {
-  uniforms: Record<string, { value: unknown }>;
-  vertexShader: string;
-  fragmentShader: string;
-}
 
 /** TerrainRender::renderBlock (Tribes2.exe 0x5a62c0): texels per world unit. */
 export const TERRAIN_DETAIL_TEXELS_PER_UNIT = 62;
@@ -44,7 +44,7 @@ export function updateTerrainTextureShader({
   detailTexture = null,
   lightmap = null,
 }: {
-  shader: TerrainShader;
+  shader: ShaderSource;
   baseTextures: Texture[];
   alphaTextures: Texture[];
   visibilityMask: Texture | null;
@@ -97,10 +97,10 @@ export function updateTerrainTextureShader({
     };
     shader.uniforms.terrainSquareSize = { value: squareSize };
     shader.uniforms.detailViewportHeight = detailViewportHeight;
-    shader.vertexShader = shader.vertexShader.replace(
-      "#include <common>",
-      `#include <common>
-uniform float terrainSquareSize;
+    shader.vertexShader = insertAfterChunk(
+      shader.vertexShader,
+      "common",
+      `uniform float terrainSquareSize;
 uniform float detailViewportHeight;
 varying float vTerrainDetailFade;
 #ifdef USE_FOG
@@ -112,10 +112,10 @@ varying float vTerrainDetailFade;
   uniform vec4 fogVolumeData[3];
 #endif`,
     );
-    shader.vertexShader = shader.vertexShader.replace(
-      "#include <worldpos_vertex>",
-      `#include <worldpos_vertex>
-// dglProjectRadius(1, 1) uses the physical viewport and projection scale.
+    shader.vertexShader = insertAfterChunk(
+      shader.vertexShader,
+      "worldpos_vertex",
+      `// dglProjectRadius(1, 1) uses the physical viewport and projection scale.
 float detailDistance = terrainSquareSize * detailViewportHeight * projectionMatrix[1][1] / 128.0
   - floor(terrainSquareSize / 2.0);
 float detailVertexDistance = length(mvPosition.xyz);
@@ -151,28 +151,28 @@ float detailFade = detailDistance > 0.0
 // The original detail pass interpolates a byte-valued vertex color.
 vTerrainDetailFade = floor(detailFade * 255.0 + 0.5) / 255.0;`,
     );
-    shader.fragmentShader = shader.fragmentShader.replace(
-      "#include <premultiplied_alpha_fragment>",
+    shader.fragmentShader = insertBeforeChunk(
+      shader.fragmentShader,
+      "premultiplied_alpha_fragment",
       `// The engine draws detail AFTER fog with DST_COLOR, ONE_MINUS_SRC_ALPHA.
 vec4 terrainDetail = texture2D(detailTexture, vTerrainUv * detailTiling);
 gl_FragColor.rgb *= terrainDetail.rgb * vTerrainDetailFade
-  + vec3(1.0 - terrainDetail.a * vTerrainDetailFade);
-#include <premultiplied_alpha_fragment>`,
+  + vec3(1.0 - terrainDetail.a * vTerrainDetailFade);`,
     );
   }
 
   // Provide terrain UVs without setting MeshLambertMaterial.map (which would
   // allocate a texture unit for an unused `map` sampler). The geometry's UV
   // attribute maps [0,1] across each terrain tile.
-  shader.vertexShader = shader.vertexShader.replace(
-    "#include <common>",
-    `#include <common>
-varying vec2 vTerrainUv;`,
+  shader.vertexShader = insertAfterChunk(
+    shader.vertexShader,
+    "common",
+    "varying vec2 vTerrainUv;",
   );
-  shader.vertexShader = shader.vertexShader.replace(
-    "#include <uv_vertex>",
-    `#include <uv_vertex>
-vTerrainUv = uv;`,
+  shader.vertexShader = insertAfterChunk(
+    shader.vertexShader,
+    "uv_vertex",
+    "vTerrainUv = uv;",
   );
 
   // Declare our uniforms and color space functions at the top of the fragment shader
@@ -199,11 +199,10 @@ ${glslDebugGrid}
 ` + shader.fragmentShader;
 
   if (visibilityMask) {
-    const clippingPlaceholder = "#include <clipping_planes_fragment>";
-    shader.fragmentShader = shader.fragmentShader.replace(
-      clippingPlaceholder,
-      `${clippingPlaceholder}
-  // Early discard for invisible areas (before fog/lighting)
+    shader.fragmentShader = insertAfterChunk(
+      shader.fragmentShader,
+      "clipping_planes_fragment",
+      `  // Early discard for invisible areas (before fog/lighting)
   float visibility = texture2D(visibilityMask, vTerrainUv).r;
   if (visibility < 0.5) {
     discard;
@@ -214,8 +213,9 @@ ${glslDebugGrid}
 
   // Replace the default map sampling block with our layered blend.
   // vTerrainUv is computed from the geometry's UV attribute in the vertex shader.
-  shader.fragmentShader = shader.fragmentShader.replace(
-    "#include <map_fragment>",
+  shader.fragmentShader = replaceChunk(
+    shader.fragmentShader,
+    "map_fragment",
     `
   // Sample stored color values: Torque blends and filters texture bytes in gamma space.
   vec2 baseUv = vTerrainUv;
@@ -287,8 +287,9 @@ ${glslDebugGrid}
   // self-shadowing and building shadows all come from the baked lightmap
   // (terrainLightmap.ts), so there is no runtime shadow to sample.
   if (lightmap) {
-    shader.fragmentShader = shader.fragmentShader.replace(
-      "#include <lights_fragment_begin>",
+    shader.fragmentShader = replaceChunk(
+      shader.fragmentShader,
+      "lights_fragment_begin",
       `${lightsFragmentBeginByType({
         directional: "RE_Direct_EffectLightIgnore",
         punctual: "RE_Direct_EffectLightIgnore",
@@ -300,24 +301,26 @@ ${glslDebugGrid}
 `,
     );
 
-    shader.fragmentShader = shader.fragmentShader.replace(
-      "#include <lights_fragment_end>",
-      `#include <lights_fragment_end>
-  // Clear Three.js lighting - we compute sun/ambient in gamma space
+    shader.fragmentShader = insertAfterChunk(
+      shader.fragmentShader,
+      "lights_fragment_end",
+      `  // Clear Three.js lighting - we compute sun/ambient in gamma space
   reflectedLight.directDiffuse = vec3(0.0);
   reflectedLight.indirectDiffuse = vec3(0.0);
 `,
     );
   } else {
-    shader.fragmentShader = shader.fragmentShader.replace(
-      "#include <lights_fragment_begin>",
+    shader.fragmentShader = replaceChunk(
+      shader.fragmentShader,
+      "lights_fragment_begin",
       lightsFragmentBeginByType({ punctual: "RE_Direct_EffectLightIgnore" }),
     );
   }
 
   // Replace opaque_fragment with Torque-style gamma-space calculation
-  shader.fragmentShader = shader.fragmentShader.replace(
-    "#include <opaque_fragment>",
+  shader.fragmentShader = insertBeforeChunk(
+    shader.fragmentShader,
+    "opaque_fragment",
     `// Torque-style terrain lighting: output = clamp(lighting × texture, 0, 1) in sRGB space
 {
   // Terrain samplers preserve stored color values through blending/filtering.
@@ -359,21 +362,20 @@ ${glslDebugGrid}
 
   // Convert back to linear for Three.js output pipeline
   outgoingLight = torqueSRGBToLinear(resultSRGB) + totalEmissiveRadiance;
-}
-#include <opaque_fragment>`,
+}`,
   );
 
   // Add debug grid overlay AFTER opaque_fragment sets gl_FragColor
   // Uses #if so material.defines.DEBUG_MODE (0 or 1) can trigger recompilation
-  shader.fragmentShader = shader.fragmentShader.replace(
-    "#include <tonemapping_fragment>",
+  shader.fragmentShader = insertBeforeChunk(
+    shader.fragmentShader,
+    "tonemapping_fragment",
     `#if DEBUG_MODE
   // Debug mode: overlay green grid matching terrain grid squares (256x256)
   float gridIntensity = torqueDebugGrid(vTerrainUv, 256.0, 1.5);
   vec3 gridColor = vec3(0.0, 0.8, 0.4); // Green
   gl_FragColor.rgb = mix(gl_FragColor.rgb, gridColor, gridIntensity * 0.1);
 #endif
-
-#include <tonemapping_fragment>`,
+`,
   );
 }

@@ -6,6 +6,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
+import { ASSET_BASE_DIR } from "../src/resourcePaths";
 
 interface GltfNode {
   name?: string;
@@ -255,8 +256,8 @@ const files = process.argv.slice(2);
 if (files.length === 0) {
   // Default files to inspect
   const defaultFiles = [
-    "docs/base/@vl2/shapes.vl2/shapes/light_male.glb",
-    "docs/base/@vl2/shapes.vl2/shapes/weapon_disc.glb",
+    `${ASSET_BASE_DIR}/@vl2/shapes.vl2/shapes/light_male.glb`,
+    `${ASSET_BASE_DIR}/@vl2/shapes.vl2/shapes/weapon_disc.glb`,
   ];
   for (const f of defaultFiles) {
     await inspectGlb(f);

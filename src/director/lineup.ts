@@ -17,7 +17,8 @@ import {
   DIRECTOR_ROSTER_MIN_TRAVEL,
   DIRECTOR_ROSTER_STANDOFF,
 } from "./tunables";
-import { centroid, clamp, dist, sweepTravel } from "./geometry";
+import { centroid, dist, sweepTravel } from "./geometry";
+import { clamp } from "../mathUtils";
 
 /** The wide establishing pass: the whole squad and their base. */
 export function rosterWide(

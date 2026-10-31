@@ -12,16 +12,16 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { ASSET_BASE_DIR } from "../src/resourcePaths";
 
 const REPO_URL =
   process.env.ASSETS_REPO_URL || "https://github.com/exogen/t2-mapper.git";
 const REPO_DIR = process.env.ASSETS_REPO_DIR || "/data/t2-mapper";
 const REPO_REF = process.env.ASSETS_REPO_REF || "main";
 /** Comma-separated gitignore-style patterns (non-cone sparse checkout). */
-const SPARSE_PATTERNS = (
-  process.env.ASSETS_SPARSE_PATTERNS ||
-  "docs/base/**/*.dts,docs/base/**/*.dif,docs/base/**/*.ter"
-).split(",");
+const SPARSE_PATTERNS = process.env.ASSETS_SPARSE_PATTERNS
+  ? process.env.ASSETS_SPARSE_PATTERNS.split(",")
+  : ["dts", "dif", "ter"].map((ext) => `${ASSET_BASE_DIR}/**/*.${ext}`);
 
 function git(args: string[], cwd?: string): void {
   execFileSync("git", args, { stdio: "inherit", cwd });

@@ -415,9 +415,9 @@ export type ShotSubject =
 /**
  * One planned camera shot. Three mechanism kinds, riding the existing
  * follow/orbit machinery: followFlag/followPlayer drive the watchFollow
- * selection state (StreamingController positions the camera, inheriting
+ * selection state (StreamPlaybackSession positions the camera, inheriting
  * respawn re-lock and carrier hand-off); fixedOrbit is written directly
- * by DirectorController. Identities are flag slots and target ids — the
+ * by directorCamera. Identities are flag slots and target ids — the
  * respawn/hand-off-stable keys the follow layer re-resolves per frame.
  */
 export type Shot =
@@ -555,7 +555,7 @@ export type Shot =
   | (ShotBase & {
       /** Cinematic flying camera: trails the subject at a three-quarter
        *  angle with damped, eased motion — film-style, not a rigid
-       *  orbit lock. Driven directly by DirectorController in freeFly. */
+       *  orbit lock. Driven directly by directorCamera in freeFly. */
       kind: "dolly";
       subject: ShotSubject;
       /** Nominal trailing distance and height above the subject. */

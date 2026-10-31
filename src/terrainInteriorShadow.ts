@@ -13,11 +13,7 @@ import {
   castInteriorRay,
   interiorWorldBounds,
 } from "./collision/worldCollision";
-
-/** Three (x, y, z) → Torque (z, x, y), matching torqueToThree's inverse. */
-function toTorque(x: number, y: number, z: number): [number, number, number] {
-  return [z, x, y];
-}
+import { threeToTorque } from "./scene/coordinates";
 
 /**
  * A test for "does a building stand between this terrain point and the
@@ -43,8 +39,8 @@ export function createInteriorSunOccluder(
     const dist = (bounds.max.y - y) / dir.y + 1;
     return (
       castInteriorRay(
-        toTorque(x, y, z),
-        toTorque(x + dir.x * dist, y + dir.y * dist, z + dir.z * dist),
+        threeToTorque([x, y, z]),
+        threeToTorque([x + dir.x * dist, y + dir.y * dist, z + dir.z * dist]),
       ) !== null
     );
   };

@@ -15,13 +15,16 @@ import { latestAction, type ActionSlot } from "./actionSlot";
 import { WatchStateAccumulator } from "../../relay/watchState";
 import type { ConnectionState } from "../../relay/connectionState";
 import { PlayerResolver } from "../../relay/playerReference";
-import { buildCatchupPayload } from "../../relay/watchCatchup";
 import { GAME_PROTOCOL_VERSION } from "../../relay/shared";
 import {
   CatchupDataBlockCache,
   serializeCatchupPayload,
   deserializeCatchupPayload,
 } from "../../relay/watchSerialize";
+import {
+  serverMessagePacket,
+  testCatchupPayload,
+} from "../../relay/serverPacketFixtures";
 
 /**
  * The watch-mode equivalence test: a late joiner hydrated from a relay
@@ -76,38 +79,21 @@ describe("live wire protocol propagation", () => {
     const adapter = new LiveStreamAdapter(fakeRelay, { mode: "watch" });
     const hydrate = (name: string) => {
       const watchState = new WatchStateAccumulator();
-      watchState.applyPacket({
-        gameState: {},
-        events: [
-          {
-            parsedData: {
-              type: "RemoteCommandEvent",
-              funcName: "ServerMessage",
-              args: [
-                "MsgClientJoin",
-                "",
-                name,
-                "7",
-                "32",
-                "0",
-                "0",
-                "0",
-                "1",
-                "0",
-              ],
-            },
-          },
-        ],
-      } as unknown as PacketData);
-      const payload = buildCatchupPayload({
-        packetParser: createLiveParser({
-          protocolVersion: GAME_PROTOCOL_VERSION,
-        }).packetParser,
-        ghostState: new GhostStateAccumulator(),
-        watchState,
-        epoch: 1,
-        serverAddress: "test:28000",
-      });
+      watchState.applyPacket(
+        serverMessagePacket([
+          "MsgClientJoin",
+          "",
+          name,
+          "7",
+          "32",
+          "0",
+          "0",
+          "0",
+          "1",
+          "0",
+        ]),
+      );
+      const payload = testCatchupPayload({ watchState, viaWire: false });
       delete payload.hudState.playerIdentity;
       delete payload.hudState.targetGenerations;
       for (const player of payload.hudState.playerRoster)
@@ -134,25 +120,8 @@ describe("live wire protocol propagation", () => {
         ["MsgCTFAddTeam", "", "1", "Storm", "Alice", "0"],
         ["MsgClientNameChanged", "", "Alice", "\x0cSmurf", "7"],
       ];
-      watchState.applyPacket({
-        gameState: {},
-        events: messages.map((args) => ({
-          parsedData: {
-            type: "RemoteCommandEvent",
-            funcName: "ServerMessage",
-            args,
-          },
-        })),
-      } as unknown as PacketData);
-      const payload = buildCatchupPayload({
-        packetParser: createLiveParser({
-          protocolVersion: GAME_PROTOCOL_VERSION,
-        }).packetParser,
-        ghostState: new GhostStateAccumulator(),
-        watchState,
-        epoch: 1,
-        serverAddress: "test:28000",
-      });
+      watchState.applyPacket(serverMessagePacket(...messages));
+      const payload = testCatchupPayload({ watchState, viaWire: false });
       if (legacy) {
         delete payload.hudState.flags;
         delete payload.hudState.playerIdentity;
@@ -187,20 +156,10 @@ describe("live wire protocol propagation", () => {
       watchState.applyMissionStart("MissionStartPhase3", ["21", "Katabatic"]),
     ).toBe(false);
     expect(watchState.matchStarted).toBe(true);
-    const payload = buildCatchupPayload({
-      packetParser: createLiveParser({ protocolVersion: GAME_PROTOCOL_VERSION })
-        .packetParser,
-      ghostState: new GhostStateAccumulator(),
-      watchState,
-      epoch: 1,
-      serverAddress: "test:28000",
-    });
     const adapter = new LiveStreamAdapter(fakeRelay, { mode: "watch" });
     adapter.onMissionIdentity = vi.fn();
     adapter.onMissionChange = vi.fn();
-    adapter.hydrate(
-      deserializeCatchupPayload(serializeCatchupPayload(payload)),
-    );
+    adapter.hydrate(testCatchupPayload({ watchState }));
     expect(adapter.missionSequence).toBe("21");
     expect(adapter.onMissionIdentity).toHaveBeenLastCalledWith(
       "21",
@@ -227,33 +186,16 @@ describe("live wire protocol propagation", () => {
 
   it("hydrates the loading-screen text the relay saw before MissionStartPhase1", () => {
     const watchState = new WatchStateAccumulator();
-    watchState.applyPacket({
-      gameState: {},
-      events: [
+    watchState.applyPacket(
+      serverMessagePacket(
         ["MsgLoadInfo", "", "Surreal", "Surreal", "Capture the Flag"],
         ["MsgLoadRulesLine", "", "R1"],
         ["MsgLoadInfoDone", ""],
-      ].map((args) => ({
-        parsedData: {
-          type: "RemoteCommandEvent",
-          funcName: "ServerMessage",
-          args,
-        },
-      })),
-    } as unknown as PacketData);
-    watchState.applyMissionStart("MissionStartPhase1", ["3", "Surreal"]);
-    const payload = buildCatchupPayload({
-      packetParser: createLiveParser({ protocolVersion: GAME_PROTOCOL_VERSION })
-        .packetParser,
-      ghostState: new GhostStateAccumulator(),
-      watchState,
-      epoch: 1,
-      serverAddress: "test:28000",
-    });
-    const adapter = new LiveStreamAdapter(fakeRelay, { mode: "watch" });
-    adapter.hydrate(
-      deserializeCatchupPayload(serializeCatchupPayload(payload)),
+      ),
     );
+    watchState.applyMissionStart("MissionStartPhase1", ["3", "Surreal"]);
+    const adapter = new LiveStreamAdapter(fakeRelay, { mode: "watch" });
+    adapter.hydrate(testCatchupPayload({ watchState }));
     expect(adapter.getSnapshot().loadInfo).toEqual({
       quoteLines: [],
       objectiveLines: [],
@@ -272,30 +214,20 @@ describe("live wire protocol propagation", () => {
 
   it("preserves player admin privileges through catch-up serialization and hydration", () => {
     const watchState = new WatchStateAccumulator();
-    watchState.applyPacket({
-      gameState: {},
-      events: [
-        {
-          parsedData: {
-            type: "RemoteCommandEvent",
-            funcName: "ServerMessage",
-            args: ["MsgClientJoin", "", "Admin", "7", "-1", "0", "1", "1"],
-          },
-        },
-      ],
-    } as unknown as PacketData);
-    const payload = buildCatchupPayload({
-      packetParser: createLiveParser({ protocolVersion: GAME_PROTOCOL_VERSION })
-        .packetParser,
-      ghostState: new GhostStateAccumulator(),
-      watchState,
-      epoch: 1,
-      serverAddress: "test:28000",
-    });
-    const adapter = new LiveStreamAdapter(fakeRelay, { mode: "watch" });
-    adapter.hydrate(
-      deserializeCatchupPayload(serializeCatchupPayload(payload)),
+    watchState.applyPacket(
+      serverMessagePacket([
+        "MsgClientJoin",
+        "",
+        "Admin",
+        "7",
+        "-1",
+        "0",
+        "1",
+        "1",
+      ]),
     );
+    const adapter = new LiveStreamAdapter(fakeRelay, { mode: "watch" });
+    adapter.hydrate(testCatchupPayload({ watchState }));
     expect(adapter.getSnapshot().playerRoster).toEqual([
       expect.objectContaining({
         clientId: 7,
@@ -308,13 +240,11 @@ describe("live wire protocol propagation", () => {
   it("preserves the exported version through serialization, late joins and reconnects", () => {
     const adapter = new LiveStreamAdapter(fakeRelay, { mode: "watch" });
     for (const [i, version] of [52, 51, null, 52, undefined].entries()) {
-      const payload = buildCatchupPayload({
+      const payload = testCatchupPayload({
         packetParser: createLiveParser({ protocolVersion: version })
           .packetParser,
-        ghostState: new GhostStateAccumulator(),
-        watchState: new WatchStateAccumulator(),
         epoch: i + 1,
-        serverAddress: "test:28000",
+        viaWire: false,
       });
       // Older relays omitted the field; explicit null denotes demo-derived state.
       if (version === undefined) delete payload.protocolVersion;
@@ -535,18 +465,13 @@ describe("watch catch-up equivalence", () => {
 
       const dataBlockCache = new CatchupDataBlockCache();
       const buildPayload = (epoch: number) =>
-        deserializeCatchupPayload(
-          serializeCatchupPayload(
-            buildCatchupPayload({
-              packetParser: sim.parser,
-              ghostState: sim.ghostState,
-              watchState: sim.watchState,
-              epoch,
-              serverAddress: "test:28000",
-            }),
-            dataBlockCache,
-          ),
-        );
+        testCatchupPayload({
+          packetParser: sim.parser,
+          ghostState: sim.ghostState,
+          watchState: sim.watchState,
+          epoch,
+          dataBlockCache,
+        });
 
       // Reference watcher: hydrates at the very beginning (epoch 1).
       const reference = new LiveStreamAdapter(fakeRelay, { mode: "watch" });

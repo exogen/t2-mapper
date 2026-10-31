@@ -124,11 +124,13 @@ export function useCameraTour<T>(
 }
 
 /** Returns true if this entity is the active debug tour target. */
-export function useIsDebugTourTarget(entityId: string): boolean {
-  return useCameraTour((s) => {
-    const anim = s.animation;
-    if (!anim || anim.tourType !== "debug") return false;
-    const target = anim.targets[anim.currentIndex];
-    return target?.entityId === entityId;
-  });
+/** Whether a debug (entity list) tour is currently showing this entity. */
+export function isDebugTourTarget(
+  state: { animation: TourAnimation | null },
+  entityId: string,
+): boolean {
+  const anim = state.animation;
+  if (!anim || anim.tourType !== "debug") return false;
+  const target = anim.targets[anim.currentIndex];
+  return target?.entityId === entityId;
 }

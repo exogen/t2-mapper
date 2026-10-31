@@ -4,22 +4,12 @@ import { createSwitcherStream, runSwitcher } from "./switcher";
 import * as predictors from "./predictors";
 import * as variety from "./variety";
 import * as framing from "./framing";
+import { directorDataset } from "./directorTestFixtures";
 import type { DirectorDataset, Shot } from "./types";
 
 function fixture(message: boolean, brief: boolean): DirectorDataset {
-  const ds: DirectorDataset = {
+  const ds = directorDataset({
     durationSec: 75,
-    flagSampleStepSec: 0.5,
-    playerSampleStepSec: 1,
-    gameClassName: "CTFGame",
-    teams: [
-      { teamId: 1, name: "Storm" },
-      { teamId: 2, name: "Inferno" },
-    ],
-    flagStands: [
-      { slot: 1, teamId: 1, name: "Storm", pos: [0, 0, 100] },
-      { slot: 2, teamId: 2, name: "Inferno", pos: [800, 0, 100] },
-    ],
     events: [
       { timeSec: 0, type: "match-start", description: "Match started" },
       ...(message
@@ -34,19 +24,11 @@ function fixture(message: boolean, brief: boolean): DirectorDataset {
           ]
         : []),
     ],
-    flagSamples: [],
-    playerSamples: [],
     playerNames: [
       { targetId: 5, name: "actual", displayName: "Actual" },
       { targetId: 9, name: "predicted", displayName: "Predicted" },
     ],
-    structures: [],
-    structureInventory: [],
-    mortarShots: [],
-    deaths: [],
-    stations: [],
-    scoreSamples: [],
-  };
+  });
   for (let t = 0; t <= 75; t += 0.5) {
     ds.flagSamples.push({
       timeSec: t,

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RelayEventHandler } from "../stream/relayClient";
 import type { ServerInfo } from "../../relay/types";
+import type { LiveStreamAdapter } from "../stream/liveStreaming";
 
 vi.mock("../logger", () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
@@ -36,6 +37,7 @@ import {
   selectConnectionFailureMessage,
 } from "./liveConnectionStore";
 import { casterStore } from "./casterStore";
+import { gameEntityStore } from "./gameEntityStore";
 
 describe("watch connection metadata", () => {
   const address = "test:28000";
@@ -619,5 +621,78 @@ describe("watch connection metadata", () => {
       watchStatus: "connecting",
       serverAddress: "other:28000",
     });
+  });
+});
+
+describe("session adapter callbacks", () => {
+  const address = "test:28000";
+  const state = () => liveConnectionStore.getState();
+  const handlers = () =>
+    (state()._relay as unknown as { handlers: RelayEventHandler }).handlers;
+  const fault = { stage: "ghost", message: "bad read" } as Parameters<
+    NonNullable<LiveStreamAdapter["onParseFault"]>
+  >[0];
+
+  beforeEach(() => {
+    liveConnectionStore.setState(
+      { ...liveConnectionStore.getInitialState(), _pending: [] },
+      true,
+    );
+    state().connectRelay("ws://test");
+    handlers().onOpen!();
+  });
+  afterEach(() => {
+    state().leaveServer();
+    state().disconnectRelay();
+  });
+
+  it("reports the recorder name only for a player session", () => {
+    state().joinServer(address, "Warrior");
+    const player = state().adapter!;
+    player.connectedPlayerName = "Server-Assigned";
+    player.onMissionInfoChange!();
+    expect(gameEntityStore.getState().recorderName).toBe("Server-Assigned");
+
+    state().watchServer(address);
+    const watcher = state().adapter!;
+    watcher.connectedPlayerName = "Relay Observer";
+    watcher.onMissionInfoChange!();
+    expect(gameEntityStore.getState().recorderName).toBe("Server-Assigned");
+  });
+
+  it("ignores a superseded adapter", () => {
+    state().watchServer(address);
+    const old = state().adapter!;
+    state().watchServer("other:28000");
+    old.onReady!();
+    old.onMissionChange!("OldMap");
+    expect(state()).toMatchObject({ liveReady: false });
+    expect(state().mapName).not.toBe("OldMap");
+    state().adapter!.onReady!();
+    expect(state()).toMatchObject({ liveReady: true });
+    state().adapter!.onMissionChange!("NewMap");
+    expect(state()).toMatchObject({ mapName: "NewMap", liveReady: false });
+  });
+
+  it("rejoins or re-watches after a parse fault on the current adapter", () => {
+    const relay = state()._relay!;
+    state().joinServer(address, "Warrior");
+    const joined = state().adapter!;
+    vi.mocked(relay.joinServer).mockClear();
+    joined.onParseFault!(fault);
+    expect(relay.joinServer).toHaveBeenCalledExactlyOnceWith(
+      address,
+      "Warrior",
+    );
+    expect(state().adapter).not.toBe(joined);
+    joined.onParseFault!(fault);
+    expect(relay.joinServer).toHaveBeenCalledTimes(1);
+
+    state().watchServer(address);
+    const watched = state().adapter!;
+    vi.mocked(relay.watchServer).mockClear();
+    watched.onParseFault!(fault);
+    expect(relay.watchServer).toHaveBeenCalledOnce();
+    expect(state().adapter).not.toBe(watched);
   });
 });

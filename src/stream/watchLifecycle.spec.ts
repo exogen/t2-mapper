@@ -1,63 +1,12 @@
 import { describe, expect, it } from "vitest";
+import type { GhostUpdate, PacketData, ParsedData } from "t2-demo-parser";
 import {
-  createLiveParser,
-  GhostStateAccumulator,
-  passiveObserverProtocolState,
-  type GhostUpdate,
-  type PacketData,
-  type ParsedData,
-} from "t2-demo-parser";
-import {
-  serverPacket,
   type ServerEvent,
+  watchRelaySource,
 } from "../../relay/serverPacketFixtures";
-import { GAME_PROTOCOL_VERSION } from "../../relay/shared";
-import { buildCatchupPayload } from "../../relay/watchCatchup";
-import {
-  deserializeCatchupPayload,
-  serializeCatchupPayload,
-} from "../../relay/watchSerialize";
-import { WatchStateAccumulator } from "../../relay/watchState";
 import { GhostMessage } from "./entityClassification";
-import { LiveStreamAdapter } from "./liveStreaming";
 import { latestAction } from "./actionSlot";
-import type { RelayClient } from "./relayClient";
-
-class Viewer extends LiveStreamAdapter {
-  constructor() {
-    super({} as RelayClient, { mode: "watch" });
-  }
-  ghost(update: GhostUpdate) {
-    this.processGhostUpdate(update);
-  }
-}
-
-function relay() {
-  const kit = createLiveParser({ protocolVersion: GAME_PROTOCOL_VERSION });
-  kit.packetParser.setConnectionProtocolState(
-    passiveObserverProtocolState(serverPacket(1)[0]),
-  );
-  const ghostState = new GhostStateAccumulator();
-  const watchState = new WatchStateAccumulator();
-  return {
-    ...kit,
-    ghostState,
-    watchState,
-    payload() {
-      return deserializeCatchupPayload(
-        serializeCatchupPayload(
-          buildCatchupPayload({
-            packetParser: kit.packetParser,
-            ghostState,
-            watchState,
-            epoch: 1,
-            serverAddress: "test:28000",
-          }),
-        ),
-      );
-    },
-  };
-}
+import { TestLiveStream } from "./streamTestFixtures";
 
 const ghostingEvent = (seq: number, message: number): ServerEvent => ({
   seq,
@@ -71,19 +20,12 @@ const ghostingEvent = (seq: number, message: number): ServerEvent => ({
 
 describe("watch world readiness", () => {
   it("restores completion and clears it on EndGhosting, mission change and reconnect", () => {
-    const source = relay();
-    const early = new Viewer();
+    const source = watchRelaySource();
+    const early = new TestLiveStream();
     early.hydrate(source.payload());
-    const late = new Viewer();
-    let sequence = 0;
+    const late = new TestLiveStream();
     const send = (message: number) => {
-      const packet = serverPacket(sequence + 1, {
-        events: [ghostingEvent(sequence++, message)],
-      });
-      const parsed = source.packetParser.parsePacket(packet);
-      expect(parsed.parseFault).toBeUndefined();
-      source.watchState.applyPacket(parsed);
-      source.ghostState.applyPacket(parsed);
+      const packet = source.send((seq) => ghostingEvent(seq, message));
       early.feedPacket(packet);
       late.hydrate(source.payload());
       expect(late.getSnapshot().ghostAlwaysDoneSec).toBe(
@@ -106,7 +48,7 @@ describe("watch world readiness", () => {
     late.hydrate(source.payload());
     expect(late.getSnapshot().ghostAlwaysDoneSec).toBeNull();
     send(GhostMessage.GhostAlwaysDone);
-    late.hydrate(relay().payload());
+    late.hydrate(watchRelaySource().payload());
     expect(late.getSnapshot().ghostAlwaysDoneSec).toBeNull();
 
     const oldRelay = source.payload();
@@ -142,8 +84,8 @@ describe("watch player actions", () => {
       },
     },
   ])("matches uninterrupted playback after $name", ({ update }) => {
-    const source = relay();
-    const early = new Viewer();
+    const source = watchRelaySource();
+    const early = new TestLiveStream();
     early.hydrate(source.payload());
     const apply = (type: "create" | "update", parsedData: ParsedData) => {
       const ghost: GhostUpdate = {
@@ -169,9 +111,9 @@ describe("watch player actions", () => {
       actionAnimPos: 0.5,
     });
     apply("update", update);
-    const late = new Viewer();
+    const late = new TestLiveStream();
     late.hydrate(source.payload());
-    const pose = (viewer: Viewer) => {
+    const pose = (viewer: TestLiveStream) => {
       const player = viewer.getSnapshot().entities[0];
       return {
         mountObjectId: player.mountObjectId,

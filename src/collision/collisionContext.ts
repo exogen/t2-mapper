@@ -21,9 +21,10 @@
  * see their own world. That module is Node-only and is never imported
  * by the browser bundle, so `node:async_hooks` never reaches Vite.
  */
-import type { Box3, BufferGeometry, Matrix3, Matrix4 } from "three";
+import type { Box3, BufferGeometry, Matrix3, Matrix4, Sphere } from "three";
 import type { Mesh } from "three";
 import type { MeshBVH } from "three-mesh-bvh";
+import type { DTSShape } from "../dts/dtsModel";
 import type { TerrainCollisionData } from "./terrainCollision";
 import type { WaterInfo } from "./waterLevel";
 
@@ -46,6 +47,9 @@ export interface MeshCollider {
 
 export interface InteriorEntry {
   colliders: MeshCollider[];
+  /** The animated DTS shape posing every collider, with its bounding
+   *  sphere, so a query can reject the whole shape before posing each hull. */
+  shape?: { root: DTSShape; sphere: Sphere };
 }
 
 export interface ForceFieldEntry {

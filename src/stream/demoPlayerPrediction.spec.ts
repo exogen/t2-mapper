@@ -1,15 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  BlockTypeMove,
-  BlockTypePacket,
-  type DemoParser,
-  type MoveData,
-  type ParsedData,
-  type PacketData,
-  type PacketParser,
-} from "t2-demo-parser";
-import { LiveStreamAdapter } from "./liveStreaming";
-import type { RelayClient } from "./relayClient";
+import { BlockTypeMove, type MoveData, type ParsedData } from "t2-demo-parser";
 import type { StreamEntity } from "./types";
 import {
   createRecordingFromParser,
@@ -20,6 +10,12 @@ import { clearWorldColliders } from "../collision/worldCollision";
 import { setTerrainCollisionData } from "../collision/terrainCollision";
 import { registerCollisionLoadFailure } from "../collision/collisionContext";
 import { PlayerPrediction } from "./playerPrediction";
+import {
+  fakeDemoParser,
+  moveBlock,
+  packetBlock,
+  TestLiveStream,
+} from "./streamTestFixtures";
 
 const armor = { boxSize: { x: 1, y: 1, z: 2 }, mass: 90, maxEnergy: 100 };
 const neutral = {
@@ -38,16 +34,10 @@ const pose = (x: number) => ({
   rotationZ: 0,
   move: neutral,
 });
-const move = () => ({
-  type: BlockTypeMove,
-  parsed: { yaw: 0, pitch: 0, x: 0, y: 0, z: 0, trigger: [] },
-});
+const move = moveBlock;
 const atTick = (tick: number) => tick * 0.032 + 1e-9;
 function packet(ghosts: unknown[] = [], gameState: ParsedData = {}) {
-  return {
-    type: BlockTypePacket,
-    parsed: { ghosts, events: [], gameState: { lastMoveAck: 0, ...gameState } },
-  };
+  return packetBlock({ ghosts, gameState });
 }
 function update(parsedData: ParsedData) {
   return { index: 0, type: "update", classId: 1, parsedData };
@@ -63,10 +53,14 @@ function demo(
   fromConnect = false,
   firstMoveIndex = 0,
 ) {
-  let cursor = 0;
-  const packetParser = { protocolRejected: 0, protocolNoDispatch: 0 };
-  const parser = {
-    header: { demoLengthMs: 100000 },
+  let packetDataBlocks: Map<number, unknown> | undefined;
+  const packetParser = {
+    protocolRejected: 0,
+    protocolNoDispatch: 0,
+    getDataBlockDataMap: () => packetDataBlocks,
+  };
+  const parser = fakeDemoParser({
+    blocks,
     initialBlock: {
       dataBlocks: new Map([
         [1, { className: "PlayerData", data: armor }],
@@ -90,57 +84,28 @@ function demo(
       controlObjectData: control
         ? { ...pose(0), energyLevel: 100 }
         : { cameraMode: 0 },
-      targetEntries: [],
-      sensorGroupColors: [],
-      taggedStrings: new Map(),
-      initialEvents: [],
-      demoValues: [],
-      firstPerson: true,
       lastMoveAck: firstMoveIndex,
       lastClientMove,
       firstMoveIndex,
-      sensorGroup: 0,
       moves,
     },
-    getRegistry: () => ({
-      getGhostParser: (classId: number) => ({
-        name: ["", "Player", "TerrainBlock", "InteriorInstance"][classId],
-      }),
-      getEventParser: () => undefined,
-    }),
-    getGhostTracker: () => ({ getGhost: () => ({ classId: 1 }) }),
-    getPacketParser: () => packetParser,
-    reset: () => {
-      cursor = 0;
-    },
-    nextBlock: () => {
-      const block = blocks[cursor++] as
-        { discarded?: "rejected" | "noDispatch" } | undefined;
-      if (block?.discarded === "rejected") packetParser.protocolRejected++;
-      if (block?.discarded === "noDispatch") packetParser.protocolNoDispatch++;
-      return block;
-    },
-    createCheckpoint: () => ({
-      cursor,
-      owner: {},
-      blockStreamOffset: cursor,
-      blockCursor: cursor,
-      ghosts: new Map(),
-    }),
-    restoreCheckpoint: (checkpoint: { cursor: number }) => {
-      cursor = checkpoint.cursor;
-    },
+    ghostClasses: (classId) =>
+      ["", "Player", "TerrainBlock", "InteriorInstance"][classId],
+    packetParser,
     decompressedByteLength: blocks.length + 1,
-    bufferedMoveTicks: 10000,
-    isComplete: true,
-  } as unknown as DemoParser;
+    onBlock: (block) => {
+      const { discarded } = (block ?? {}) as {
+        discarded?: "rejected" | "noDispatch";
+      };
+      if (discarded === "rejected") packetParser.protocolRejected++;
+      if (discarded === "noDispatch") packetParser.protocolNoDispatch++;
+    },
+  });
   if (fromConnect) {
     const initial = parser.initialBlock;
-    Object.assign(packetParser, {
-      dataBlockDataMap: new Map(
-        [...initial.dataBlocks].map(([id, block]) => [id, block.data]),
-      ),
-    });
+    packetDataBlocks = new Map(
+      [...initial.dataBlocks].map(([id, block]) => [id, block.data]),
+    );
     blocks.unshift(packet(initial.initialGhosts));
     initial.dataBlocks.clear();
     initial.initialGhosts = [];
@@ -711,33 +676,17 @@ it("restores the contact grace period and its animation transition across seek c
 it.each(["play", "watch"] as const)(
   "matches demo ticks, interpolation and animation in live %s mode",
   (mode) => {
-    class Live extends LiveStreamAdapter {
-      constructor() {
-        super({} as RelayClient, { mode });
-        this.registry = {
-          getGhostParser: () => ({ name: "Player" }),
-          getEventParser: () => undefined,
-        } as typeof this.registry;
-      }
+    class Live extends TestLiveStream {
       override getDataBlockData() {
         return armor;
       }
     }
-    const live = new Live();
-    const internals = live as unknown as {
-      packetParser: PacketParser;
-      hydratedEpoch: number;
-    };
+    const live = new Live(mode, "Player");
     // Protocol hydration is covered by watchCatchup.spec. Here, decode identical
     // packet contents for both transports, then exercise their production ticks.
-    internals.hydratedEpoch = 1;
-    const send = (block: ReturnType<typeof packet>) => {
-      vi.spyOn(internals.packetParser, "parsePacket").mockReturnValueOnce({
-        ...block.parsed,
-        dnetHeader: { packetType: 0 },
-      } as unknown as PacketData);
-      live.feedPacket(new Uint8Array([0]));
-    };
+    (live as unknown as { hydratedEpoch: number }).hydratedEpoch = 1;
+    const send = (block: ReturnType<typeof packet>) =>
+      live.feedDecoded(block.parsed);
     send(
       packet([
         {
@@ -780,21 +729,12 @@ it.each(["play", "watch"] as const)(
 );
 
 it("uses the same control-move replay for live and recorded packets", () => {
-  class Live extends LiveStreamAdapter {
+  class Live extends TestLiveStream {
     override getDataBlockData() {
       return armor;
     }
     seed() {
-      this.registry = {
-        getGhostParser: () => ({ name: "Player" }),
-        getEventParser: () => undefined,
-      } as typeof this.registry;
-      this.processGhostUpdate({
-        index: 0,
-        type: "create",
-        classId: 1,
-        parsedData: { ...pose(0), dataBlockId: 1 },
-      });
+      this.createGhost(0, 1, { ...pose(0), dataBlockId: 1 });
       this.processControlObject({
         controlObjectGhostIndex: 0,
         controlObjectData: { ...pose(0), energyLevel: 100 },
@@ -802,7 +742,7 @@ it("uses the same control-move replay for live and recorded packets", () => {
       this.correctControlPlayer({ ...pose(0), energyLevel: 100 });
     }
   }
-  const live = new Live({} as RelayClient);
+  const live = new Live("play", "Player");
   live.seed();
   const correction = packet([], {
     lastMoveAck: 1,
@@ -814,13 +754,7 @@ it("uses the same control-move replay for live and recorded packets", () => {
   live.stepToTime(0.032);
   live.submitMove(move().parsed, 1);
   live.stepToTime(0.064);
-  const parser = (live as unknown as { packetParser: PacketParser })
-    .packetParser;
-  vi.spyOn(parser, "parsePacket").mockReturnValueOnce({
-    ...correction.parsed,
-    dnetHeader: { packetType: 0 },
-  } as unknown as PacketData);
-  live.feedPacket(new Uint8Array([0]));
+  live.feedDecoded(correction.parsed);
   live.submitMove(move().parsed, 2);
   const expected = recorded.stepToTime(0.096);
   const actual = live.stepToTime(0.096);

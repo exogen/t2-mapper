@@ -7,8 +7,8 @@ import {
   type DemoParser,
 } from "t2-demo-parser";
 import type { ParsedData } from "t2-demo-parser";
+import { clamp } from "../mathUtils";
 import {
-  clamp,
   TICK_DURATION_MS,
   streamTimeToTick,
   MAX_PITCH,
@@ -19,7 +19,7 @@ import {
   parseColorSegments,
   backpackBitmapToIndex,
   collectPreloadShapeNames,
-  collectEffectShapeNames,
+  collectShapeConstructorSequences,
   torqueQuatHeading,
   torqueQuatPitch,
   torqueQuatToThreeJS,
@@ -27,12 +27,12 @@ import {
 import type { Vec3 } from "./streamHelpers";
 import type { StreamRecording, StreamSnapshot, TeamScore } from "./types";
 import { StreamEngine, type MutableEntity } from "./StreamEngine";
-import { flagReturnDelaySec } from "./flagReturnTimer";
 import { assertDemoBlockParsed } from "./demoParseError";
 import { loadDemoParser } from "./loadDemoParser";
 import { collisionState } from "../collision/collisionContext";
 import { decodeFlagStatus } from "../../relay/serverMessageDecode";
 import { refreshFlagCarriers, type FlagState } from "../../relay/flagState";
+import { cloneData } from "../cloneData";
 
 interface DemoMissionInfo {
   /** Mission display name from readplayerinfo row 2 (e.g. "S5-WoodyMyrk"). */
@@ -576,7 +576,7 @@ export class DemoStreamAdapter extends StreamEngine {
   ): void {
     this.parser.restoreCheckpoint(checkpoint.parser);
     this.ghostTracker = this.parser.getGhostTracker();
-    Object.assign(this, structuredClone(checkpoint.cursor));
+    Object.assign(this, cloneData(checkpoint.cursor));
     // Recording attribution belongs to the first discovery, not the seek
     // position. Apply it before restoration publishes mission metadata.
     const info = this.initialMissionInfo;
@@ -600,10 +600,7 @@ export class DemoStreamAdapter extends StreamEngine {
     this.exhausted = false;
     this.exhaustedAtBytes = 0;
     this._cachedSnapshot = null;
-    this._cachedSnapshotTick = -1;
-    this._cachedSnapshotGen = -1;
     this._shapeConstructorCache = null;
-    this._shapeConstructorCacheSize = -1;
   }
 
   private readonly parser: DemoParser;
@@ -693,10 +690,12 @@ export class DemoStreamAdapter extends StreamEngine {
     if (initialBlock?.data) {
       return initialBlock.data;
     }
-    const packetParser = this.parser.getPacketParser() as unknown as {
-      dataBlockDataMap?: Map<number, ParsedData>;
-    };
-    return packetParser.dataBlockDataMap?.get(dataBlockId);
+    return this.getDataBlockDataMap()?.get(dataBlockId);
+  }
+
+  /** Seeded with the initial block's datablocks, then grows with packets. */
+  protected getDataBlockDataMap(): ReadonlyMap<number, ParsedData> | undefined {
+    return this.parser.getPacketParser().getDataBlockDataMap();
   }
 
   private _shapeConstructorCache: Map<string, string[]> | null = null;
@@ -708,26 +707,19 @@ export class DemoStreamAdapter extends StreamEngine {
     // the packet stream instead, accumulated by the packet parser. Scan
     // both, and rebuild when more datablocks have arrived, or every
     // player renders with an empty action map and the dead keep walking.
-    const packetParser = this.parser.getPacketParser() as unknown as {
-      dataBlockDataMap?: Map<number, ParsedData>;
-    };
-    const packetMap = packetParser.dataBlockDataMap;
+    const packetMap = this.getDataBlockDataMap();
     const size = this.initialBlock.dataBlocks.size + (packetMap?.size ?? 0);
     if (
       !this._shapeConstructorCache ||
       size !== this._shapeConstructorCacheSize
     ) {
-      const cache = new Map<string, string[]>();
-      const ingest = (data: ParsedData | undefined) => {
-        const shape = data?.shape as string | undefined;
-        const seqs = data?.sequences as string[] | undefined;
-        if (shape && Array.isArray(seqs)) cache.set(shape.toLowerCase(), seqs);
-      };
-      for (const [, db] of this.initialBlock.dataBlocks) {
-        if (db.className === "TSShapeConstructor") ingest(db.data);
-      }
-      if (packetMap) for (const [, data] of packetMap) ingest(data);
-      this._shapeConstructorCache = cache;
+      const initial = Array.from(this.initialBlock.dataBlocks.values())
+        .filter((db) => db.className === "TSShapeConstructor")
+        .map((db) => db.data);
+      this._shapeConstructorCache = collectShapeConstructorSequences([
+        ...initial,
+        ...(packetMap?.values() ?? []),
+      ]);
       this._shapeConstructorCacheSize = size;
     }
     return this._shapeConstructorCache.get(shapeName.toLowerCase());
@@ -777,12 +769,9 @@ export class DemoStreamAdapter extends StreamEngine {
     // reference so resolveGhostClassName doesn't use the stale one.
     this.ghostTracker = this.parser.getGhostTracker();
     this._cachedSnapshot = null;
-    this._cachedSnapshotTick = -1;
-    this._cachedSnapshotGen = -1;
 
     this.resetSharedState();
     this._shapeConstructorCache = null;
-    this._shapeConstructorCacheSize = -1;
     const info = this.initialMissionInfo;
     this.missionDisplayName = info.missionDisplayName;
     this.missionTypeDisplayName = info.missionType;
@@ -1097,14 +1086,19 @@ export class DemoStreamAdapter extends StreamEngine {
   }
 
   getSnapshot(): StreamSnapshot {
-    if (
-      this._cachedSnapshot &&
-      this._cachedSnapshotTick === this.moveTicks &&
+    return this.currentSnapshot() ?? this.rebuildSnapshot();
+  }
+
+  /** The cached snapshot, unless the tick or the entity set has moved on. */
+  private currentSnapshot(): StreamSnapshot | null {
+    return this._cachedSnapshotTick === this.moveTicks &&
       this._cachedSnapshotGen === this.entityGeneration
-    ) {
-      return this._cachedSnapshot;
-    }
-    const snapshot = this.buildSnapshot();
+      ? this._cachedSnapshot
+      : null;
+  }
+
+  private rebuildSnapshot(): StreamSnapshot {
+    const snapshot = this.buildSnapshot(this.exhausted);
     this._cachedSnapshot = snapshot;
     this._cachedSnapshotTick = this.moveTicks;
     this._cachedSnapshotGen = this.entityGeneration;
@@ -1112,14 +1106,9 @@ export class DemoStreamAdapter extends StreamEngine {
   }
 
   protected getPreloadShapeNames(): string[] {
+    // Initial block only: the parser keeps no class names for datablocks
+    // that arrive in packets (from-connect recordings).
     return collectPreloadShapeNames(this.initialBlock.dataBlocks.values());
-  }
-
-  getEffectShapes(): string[] {
-    return collectEffectShapeNames(
-      Array.from(this.initialBlock.dataBlocks.values(), (block) => block.data),
-      (id) => this.getDataBlockData(id),
-    );
   }
 
   // A cold seek can precede collision asset loading. Reconstruct once those
@@ -1232,25 +1221,11 @@ export class DemoStreamAdapter extends StreamEngine {
       movesProcessed += 1;
     }
 
-    if (
-      movesProcessed === 0 &&
-      !didReset &&
-      wasExhausted === this.exhausted &&
-      this._cachedSnapshot &&
-      this._cachedSnapshotTick === this.moveTicks &&
-      this._cachedSnapshotGen === this.entityGeneration
-    ) {
-      return this._cachedSnapshot;
+    if (movesProcessed === 0 && !didReset && wasExhausted === this.exhausted) {
+      const cached = this.currentSnapshot();
+      if (cached) return cached;
     }
-
-    const snapshot = this.buildSnapshot();
-    this._cachedSnapshot = snapshot;
-    this._cachedSnapshotTick = this.moveTicks;
-    // Must stamp the generation too, or the fast path above never hits and
-    // buildSnapshot() re-runs on every rendered frame (getSnapshot sets all
-    // three; this path drives demo playback and previously set only two).
-    this._cachedSnapshotGen = this.entityGeneration;
-    return snapshot;
+    return this.rebuildSnapshot();
   }
 
   /**
@@ -1465,61 +1440,6 @@ export class DemoStreamAdapter extends StreamEngine {
     this.controlMovesAvailable = false;
     const id = this.entityIdByGhostIndex.get(this.latestControl.ghostIndex);
     if (id) this.entities.get(id)?.playerPrediction?.discardMove();
-  }
-
-  // ── Build snapshot (with generation-counter caching) ──
-
-  private buildSnapshot(): StreamSnapshot {
-    const entities = this.buildEntityList();
-    const timeSec = this.getTimeSec();
-
-    const { chatMessages, serverEvents, audioEvents } =
-      this.buildTimeFilteredEvents(timeSec);
-
-    const {
-      weaponsHud,
-      inventoryHud,
-      backpackHud,
-      teamScores,
-      flagTargets,
-      playerTargets,
-      playerRoster,
-    } = this.buildCachedHudState();
-
-    return {
-      timeSec,
-      gravity: this.gravity,
-      ghostAlwaysDoneSec: this.ghostAlwaysDoneSec,
-      exhausted: this.exhausted,
-      camera: this.camera,
-      entities,
-      flagTargets,
-      playerTargets,
-      playerIdentityScope: this.conn.playerIdentity.scope,
-      flags: Array.from(this.conn.flags.values()),
-      controlPlayerGhostId: this.controlPlayerGhostId,
-      flagDroppedAtSec: this.conn.flagDroppedAtSec,
-      flagReturnDelaySec: flagReturnDelaySec(
-        this.gameClassName,
-        this.missionTypeDisplayName,
-      ),
-      playerSensorGroup: this.conn.playerSensorGroup,
-      status: this.lastStatus,
-      chatMessages,
-      serverEvents,
-      audioEvents,
-      weaponsHud,
-      backpackHud,
-      inventoryHud,
-      teamScores,
-      playerRoster,
-      connectedClientId: this.connectedClientId,
-      matchClockMs: this.computeMatchClockMs(timeSec),
-      matchEnded: this.matchEnded,
-      matchEndedAtSec: this.matchEndedAtSec,
-      matchStarted: this.matchStarted,
-      loadInfo: this.serverLoadInfo,
-    };
   }
 
   // ── Type guards ──

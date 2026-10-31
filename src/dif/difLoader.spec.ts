@@ -1,4 +1,3 @@
-import { buildGraph } from "@react-three/fiber";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SRGBColorSpace, Texture, TextureLoader, Vector3 } from "three";
 import { createDIFModel, DIFLoader } from "./difLoader";
@@ -53,15 +52,6 @@ describe("native DIF meshes", () => {
     expect(Array.from(geometry.attributes.uv1.array)).toEqual([
       0.125, 0.5, 0.125, 1, 0.5, 0.5, 0.5, 1,
     ]);
-  });
-
-  it("retains surface meshes when React Three Fiber adds its scene graph lookups", () => {
-    const model = createDIFModel(createDIFTestBuffer().buffer);
-    const original = model.surfaceMeshes;
-    const loaded = Object.assign(model, buildGraph(model.scene));
-    expect(loaded.surfaceMeshes).toBe(original);
-    expect(loaded.surfaceMeshes.map((mesh) => mesh.name)).toHaveLength(2);
-    expect(Array.isArray(loaded.meshes)).toBe(false);
   });
 
   it("selects a single LOD without a DOM", () => {

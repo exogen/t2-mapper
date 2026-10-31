@@ -1,14 +1,12 @@
 import { afterEach, expect, it } from "vitest";
-import { LiveStreamAdapter } from "./liveStreaming";
-import type { RelayClient } from "./relayClient";
 import type { MutableEntity } from "./StreamEngine";
 import { clearShapeBounds, registerShapeBounds } from "./shapeBounds";
-import { encodeCheckpoint, decodeCheckpoint } from "./checkpointCodec";
 import { Group, PerspectiveCamera } from "three";
 import { applyStreamEntityPose } from "./interpolateEntity";
 import { streamEntityToGameEntity } from "./entityBridge";
+import { TestLiveStream } from "./streamTestFixtures";
 
-class DebrisStream extends LiveStreamAdapter {
+class DebrisStream extends TestLiveStream {
   blocks: Record<number, Record<string, unknown>> = {
     1: {
       shapeName: "vehicle_air_scout.dts",
@@ -22,23 +20,19 @@ class DebrisStream extends LiveStreamAdapter {
     4: { lifetime: 10 },
   };
   constructor() {
-    super({} as RelayClient);
+    super("play");
   }
   override getDataBlockData(id: number) {
     return this.blocks[id];
   }
   add(damageState = 0, type = "Vehicle") {
-    const entity: MutableEntity = {
+    const entity = this.addEntity({
       id: "source",
       ghostIndex: 1,
       className: type === "Vehicle" ? "FlyingVehicle" : type,
       type,
-      spawnTick: 0,
       position: [10, 20, 30],
-      rotation: [0, 0, 0, 1],
-    };
-    this.entities.set(entity.id, entity);
-    this.entityIdByGhostIndex.set(1, entity.id);
+    });
     this.applyGhostData(entity, { dataBlockId: 1, damageState });
     return entity;
   }
@@ -66,12 +60,6 @@ class DebrisStream extends LiveStreamAdapter {
   remove() {
     this.entities.delete(this.entityIdByGhostIndex.get(1)!);
   }
-  roundTrip() {
-    const saved = this.captureSimulationState();
-    this.restoreSimulationState(
-      decodeCheckpoint(encodeCheckpoint(saved)) as typeof saved,
-    );
-  }
 }
 afterEach(clearShapeBounds);
 it("spawns authored pieces and explosion debris once on destruction, retaining them after ghost removal and checkpoint restore", () => {
@@ -97,7 +85,7 @@ it("spawns authored pieces and explosion debris once on destruction, retaining t
   expect(stream.debrisHistory.events).toHaveLength(2);
   stream.remove();
   const events = structuredClone(stream.debrisHistory.events);
-  stream.roundTrip();
+  stream.roundTripCheckpoint();
   expect(stream.debrisHistory.events).toEqual(events);
   expect(stream.debrisHistory.generation).toBe(1);
 });

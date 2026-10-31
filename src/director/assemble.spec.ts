@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { framesTheSame, sameAim, sanitizeLookSubjects } from "./assemble";
+import { directorDataset } from "./directorTestFixtures";
 import type { DirectorDataset, Shot } from "./types";
 
 const follow = (over: Partial<Extract<Shot, { kind: "followFlag" }>>) =>
@@ -69,29 +70,19 @@ describe("framesTheSame", () => {
 });
 
 describe("sanitizeLookSubjects", () => {
-  const dataset = (flagPos: [number, number, number]): DirectorDataset => ({
-    durationSec: 60,
-    flagSampleStepSec: 0.5,
-    playerSampleStepSec: 1,
-    gameClassName: "CTFGame",
-    teams: [{ teamId: 1, name: "Storm" }],
-    flagStands: [{ slot: 1, teamId: 1, name: "Storm", pos: flagPos }],
-    events: [],
-    flagSamples: Array.from({ length: 121 }, (_, i) => ({
-      timeSec: i * 0.5,
-      slot: 1,
-      pos: flagPos,
-      carrierTargetId: null,
-      status: "home" as const,
-    })),
-    playerSamples: [],
-    structures: [],
-    structureInventory: [],
-    mortarShots: [],
-    deaths: [],
-    stations: [],
-    playerNames: [],
-  });
+  const dataset = (flagPos: [number, number, number]): DirectorDataset =>
+    directorDataset({
+      durationSec: 60,
+      teams: [{ teamId: 1, name: "Storm" }],
+      flagStands: [{ slot: 1, teamId: 1, name: "Storm", pos: flagPos }],
+      flagSamples: Array.from({ length: 121 }, (_, i) => ({
+        timeSec: i * 0.5,
+        slot: 1,
+        pos: flagPos,
+        carrierTargetId: null,
+        status: "home" as const,
+      })),
+    });
   const battleShot = (): Shot => ({
     kind: "fixedOrbit",
     center: [0, 0, 100],

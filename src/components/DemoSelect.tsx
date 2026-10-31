@@ -27,6 +27,7 @@ import {
   type DemoIndexEntry,
 } from "../stream/demoIndex";
 import { useDemoIndex } from "./useDemoIndex";
+import { useComboboxShortcut } from "./useComboboxShortcut";
 import { registerDemoSelectFocus } from "./demoSelectFocus";
 import { searchDemos } from "./demoSearch";
 import { useDemoQueryState } from "./useQueryParams";
@@ -160,18 +161,7 @@ export function DemoSelect() {
     return () => registerDemoSelectFocus(null);
   }, []);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === "KeyK" && (e.metaKey || e.ctrlKey)) {
-        e.stopPropagation();
-        e.preventDefault();
-        inputRef.current?.focus();
-        combobox.show();
-      }
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [combobox]);
+  useComboboxShortcut(inputRef, combobox);
 
   const demosByFilename = useMemo(
     () => new Map((demos ?? []).map((demo) => [demo.filename, demo])),

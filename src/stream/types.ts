@@ -317,6 +317,8 @@ export interface StreamEntity {
   lightDelayMS?: number;
   lightOnlyStatic?: boolean;
   lightAnchor?: LightAnchor;
+  /** Item mStatic flag (from InitialUpdateMask). Static items (flags at
+   *  flagstand) skip all physics in Item::processTick. */
   isStaticItem?: boolean;
   playerName?: string;
   /** TargetInfoEvent's resolved typeTag (e.g. "Flag", "_ClientConnection"). */
@@ -361,7 +363,7 @@ export interface StreamEntity {
   rotation?: [number, number, number, number];
   /** Velocity in Torque world space [x, y, z]. */
   velocity?: [number, number, number];
-  /** Ghost scale in Three.js axis order. */
+  /** Ghost scale in Three.js axis order (StaticShape PositionMask). */
   scale?: [number, number, number];
   /** Projectiles: age in ms since the muzzle, from the tick clock. */
   projectileAgeMS?: number;
@@ -378,7 +380,8 @@ export interface StreamEntity {
   /** ShapeBase fade value (0=invisible, 1=fully visible). Matches mFadeVal. */
   fadeVal?: number;
   /** Cloak level (0=visible, 1=fully cloaked). Separate from fadeVal so the
-   *  renderer can apply the cloak texture effect. */
+   *  renderer can apply the cloak texture effect. Interpolated client-side
+   *  at rate dt*2 per tick (0.5s transition). Binary-verified. */
   cloakLevel?: number;
   faceViewer?: boolean;
   /** DTS animation thread states from ghost ThreadMask data. */
@@ -399,7 +402,7 @@ export interface StreamEntity {
   maintainEmitterId?: number;
   /** Entity ID of the object this entity is mounted on (vehicle, etc.). */
   mountObjectId?: string;
-  /** Mount point node index on the mount target (0 = pilot). */
+  /** Mount point node index on the mount target (0 = pilot, 1+ = passenger/turret). */
   mountNode?: number;
   /** Player skin (team skin like "base", "baseb"). */
   skinName?: string;
@@ -423,7 +426,8 @@ export interface StreamEntity {
   viewQuantized?: boolean;
   /** Arm blend animation action index from Player ghost (networked). */
   armAction?: number;
-  /** ShapeBase sound slots (from ghost SoundMask). */
+  /** ShapeBase sound slots (4 max, from ghost SoundMask), including
+   *  repeated play commands. */
   soundSlots?: SoundSlot[];
   /** WayPoint display label. */
   label?: string;
@@ -437,13 +441,13 @@ export interface StreamEntity {
   audioMinLoopGap?: number;
   audioMaxLoopGap?: number;
   clientAnimation?: ClientAnimationState;
-  /** WheeledVehicle per-wheel state. */
+  /** WheeledVehicle per-wheel state, from ghost data. */
   wheels?: WheelState[];
-  /** Vehicle steering angle (radians). */
+  /** Vehicle steering angle (radians), from ghost data. */
   steeringYaw?: number;
-  /** Vehicle frozen state (deployed). */
+  /** Vehicle frozen state (deployed MPB, etc.). */
   frozen?: boolean;
-  /** Vehicle max steering angle (radians). */
+  /** Vehicle max steering angle (radians), from the VehicleData datablock. */
   maxSteeringAngle?: number;
   /** Scene infrastructure data (terrain, interior, sky, etc.). */
   sceneData?: SceneObject;

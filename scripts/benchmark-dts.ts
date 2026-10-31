@@ -9,6 +9,7 @@ import { isDTSMesh, isDTSMeshBatch, type DTSShape } from "../src/dts/dtsModel";
 
 import { mergeDSQ, parseDSQ } from "../src/dts/dsq";
 import { batchDTSRigidMeshes } from "../src/dts/dtsRigidBatch";
+import { ASSET_BASE_DIR } from "../src/resourcePaths";
 
 const names = process.argv.slice(2);
 async function readBuffer(file: string) {
@@ -35,7 +36,7 @@ const rows = [];
 for (const name of names) {
   const file = name.endsWith(".dts")
     ? name
-    : path.join("docs/base/@vl2/shapes.vl2/shapes", `${name}.dts`);
+    : path.join(ASSET_BASE_DIR, "@vl2/shapes.vl2/shapes", `${name}.dts`);
   const bytes = await fs.readFile(file);
   const buffer = bytes.buffer.slice(
     bytes.byteOffset,
