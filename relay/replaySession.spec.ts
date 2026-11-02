@@ -484,27 +484,26 @@ describe("replay sessions", () => {
     expect(manager.getStatusSummary()).toEqual([]);
   });
 
-  it("contains a fatal snapshot error during disconnect without throwing from the socket handler", async () => {
+  it("keeps playing without creating a snapshot when the creator disconnects", async () => {
     const { manager, source } = setup();
     const { owner, id } = await create(manager);
     const watcher = new Socket();
     await manager.handle(watcher.ws, { type: "joinReplay", sessionId: id });
     await action(manager, owner, "play");
-    source.catchup = () => {
+    source.catchup = vi.fn(() => {
       throw new Error("Invalid source snapshot");
-    };
+    });
+    const epoch = watcher.state().epoch;
     expect(() => manager.detach(owner.ws)).not.toThrow();
+    expect(source.catchup).not.toHaveBeenCalled();
     expect(watcher.state()).toMatchObject({
-      status: "ended",
-      closed: true,
-      error: "Invalid source snapshot",
+      status: "playing",
+      closed: false,
+      epoch,
     });
-    expect(retained(manager, id)).toMatchObject({
-      source: null,
-      catchupCache: undefined,
-    });
+    expect(retained(manager, id)?.source).toBe(source);
     await vi.advanceTimersByTimeAsync(100);
-    expect(source.tick).toBe(0);
+    expect(source.tick).toBe(3);
   });
 
   it("closes a corrupt running source and releases parsed state immediately", async () => {
@@ -784,7 +783,7 @@ describe("replay sessions", () => {
       totalBytes: 100,
     });
     expect(manager.getStatusSummary()[0]).toMatchObject({
-      status: "paused",
+      status: "playing",
       watcherCount: 0,
     });
 
@@ -1125,7 +1124,7 @@ describe("replay sessions", () => {
     });
   });
 
-  it("auto-pauses on owner disconnect and lets only the capability holder reclaim controls", async () => {
+  it("keeps playing on owner disconnect and lets only the capability holder reclaim controls", async () => {
     const { manager, source } = setup();
     const { owner, id, token } = await create(manager);
     const watcher = new Socket();
@@ -1136,23 +1135,61 @@ describe("replay sessions", () => {
     });
     await action(manager, owner, "play");
     await vi.advanceTimersByTimeAsync(32);
+    const epoch = watcher.state().epoch;
     manager.detach(owner.ws);
-    expect(watcher.state().status).toBe("paused");
+    expect(watcher.state()).toMatchObject({ status: "playing", epoch });
     await vi.advanceTimersByTimeAsync(64);
-    expect(source.tick).toBe(1);
+    expect(source.tick).toBe(3);
+    await action(manager, watcher, "pause");
+    expect(watcher.messages().at(-1)).toMatchObject({
+      type: "replayError",
+      message: expect.stringContaining("creator"),
+    });
     const returning = new Socket();
     await manager.handle(returning.ws, {
       type: "joinReplay",
       sessionId: id,
       ownerToken: token,
     });
-    expect(returning.state().isOwner).toBe(true);
+    expect(returning.state()).toMatchObject({
+      isOwner: true,
+      status: "playing",
+      tick: 3,
+      epoch,
+    });
+    // Returning cancels the old creator-absence deadline.
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(manager.getStatusSummary()).toHaveLength(1);
+    await action(manager, returning, "pause");
+    const pausedTick = source.tick;
+    await vi.advanceTimersByTimeAsync(64);
+    expect(source.tick).toBe(pausedTick);
     await action(manager, returning, "play");
     await vi.advanceTimersByTimeAsync(32);
-    expect(source.tick).toBe(2);
+    expect(source.tick).toBeGreaterThan(pausedTick);
     manager.detach(returning.ws);
     await vi.advanceTimersByTimeAsync(1000);
     expect(manager.getStatusSummary()).toEqual([]);
+  });
+
+  it("expires a playing room without its creator even when watchers join", async () => {
+    const { manager, source } = setup();
+    const { owner, id } = await create(manager);
+    await action(manager, owner, "play");
+    manager.detach(owner.ws);
+    await vi.advanceTimersByTimeAsync(900);
+    expect(source.tick).toBe(28);
+    const watcher = new Socket();
+    await manager.handle(watcher.ws, { type: "joinReplay", sessionId: id });
+    expect(watcher.state()).toMatchObject({ status: "playing", tick: 28 });
+    await vi.advanceTimersByTimeAsync(99);
+    expect(manager.getStatusSummary()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(manager.getStatusSummary()).toEqual([]);
+    expect(watcher.state()).toMatchObject({ status: "ended", closed: true });
+    const finalTick = source.tick;
+    await vi.advanceTimersByTimeAsync(64);
+    expect(source.tick).toBe(finalTick);
   });
 
   it("rejects stale revisions and clamps seeks to the recording", async () => {
@@ -1301,25 +1338,51 @@ describe("replay sessions", () => {
     expect(owner.state()).toMatchObject({ tick: 200, epoch, status: "paused" });
   });
 
-  it("finishes a tick before canonicalizing a backpressured owner's disconnect", async () => {
-    const { manager } = setup({ maxBufferedBytes: 1000 });
+  it("continues streaming complete ticks when a backpressured creator disconnects", async () => {
+    const { manager, source } = setup({ maxBufferedBytes: 1000 });
     const { owner, id } = await create(manager);
     const watcher = new Socket();
     await manager.handle(watcher.ws, { type: "joinReplay", sessionId: id });
     await action(manager, owner, "play");
+    const epoch = watcher.state().epoch;
+    const start = watcher.frames.length;
     owner.bufferedAmount = 1001;
-    await vi.advanceTimersByTimeAsync(32);
+    await vi.advanceTimersByTimeAsync(64);
     expect(owner.close).toHaveBeenCalledWith(1013, expect.any(String));
-    expect(watcher.state()).toMatchObject({ status: "paused", tick: 1 });
-    const messages = watcher.messages();
-    const tickIndex = messages.findIndex(
-      (message) => message.type === "replayTick",
+    expect(source.tick).toBe(2);
+    expect(watcher.state()).toMatchObject({ status: "playing", epoch });
+    const messages = watcher.frames
+      .slice(start)
+      .filter((frame): frame is string => typeof frame === "string")
+      .map((frame) => JSON.parse(frame) as ServerMessage);
+    expect(
+      messages.filter((message) => message.type === "replayTick"),
+    ).toMatchObject([
+      { tick: 1, epoch },
+      { tick: 2, epoch },
+    ]);
+    expect(messages.some((message) => message.type === "catchupBegin")).toBe(
+      false,
     );
-    const snapshotIndex = messages.findLastIndex(
-      (message) => message.type === "catchupBegin",
-    );
-    expect(tickIndex).toBeGreaterThan(-1);
-    expect(snapshotIndex).toBeGreaterThan(tickIndex);
+  });
+
+  it("reaches natural EOF after its creator leaves", async () => {
+    const { manager, source } = setup();
+    source.durationTicks = 2;
+    const { owner, id } = await create(manager);
+    const watcher = new Socket();
+    await manager.handle(watcher.ws, { type: "joinReplay", sessionId: id });
+    await action(manager, owner, "play");
+    await vi.advanceTimersByTimeAsync(32);
+    manager.detach(owner.ws);
+    await vi.advanceTimersByTimeAsync(64);
+    expect(source.complete).toBe(true);
+    expect(watcher.state()).toMatchObject({
+      status: "ended",
+      tick: 2,
+      closed: false,
+    });
+    expect(watcher.frames).toContainEqual(new Uint8Array([255]));
   });
 
   it("cancels orphaned hosted preparation immediately and ignores a late download completion", async () => {

@@ -88,7 +88,6 @@ interface Session {
   expires: ReturnType<typeof setTimeout> | null;
   anchorTick: number;
   anchorTime: number;
-  processingFrame: boolean;
   catchupCache?: {
     tick: number;
     epoch: number;
@@ -498,7 +497,6 @@ export class ReplaySessionManager {
       expires: null,
       anchorTick: 0,
       anchorTime: 0,
-      processingFrame: false,
       uploaded: false,
     };
     this.sessions.set(session.id, session);
@@ -650,8 +648,6 @@ export class ReplaySessionManager {
     if (message.action === "play") {
       if (session.source.complete)
         throw new Error("Seek to an earlier point to replay again");
-      if (!this.hasOwner(session))
-        throw new Error("The replay creator is disconnected");
       session.status = "playing";
       session.error = undefined;
       session.anchorTick = session.source.tick;
@@ -779,7 +775,6 @@ export class ReplaySessionManager {
       ) {
         const before = session.source.tick;
         const events = session.source.advanceOneTick();
-        session.processingFrame = true;
         for (const event of events) {
           for (const ws of [...session.participants.keys()]) {
             if (event.kind === "packet")
@@ -804,11 +799,6 @@ export class ReplaySessionManager {
             }
           }
         }
-        session.processingFrame = false;
-        if (!this.hasOwner(session)) {
-          this.pauseWithoutOwner(session);
-          return;
-        }
         if (session.source.tick === before && !session.source.complete)
           throw new Error("Replay source did not advance");
       }
@@ -821,7 +811,6 @@ export class ReplaySessionManager {
         this.refreshExpiry(session);
       } else if (session.status === "playing") this.schedule(session);
     } catch (error) {
-      session.processingFrame = false;
       this.failSession(session, error);
     }
   }
@@ -986,30 +975,12 @@ export class ReplaySessionManager {
       this.destroy(session);
       return;
     }
-    if (
-      owner &&
-      !this.hasOwner(session) &&
-      session.status === "playing" &&
-      !session.processingFrame
-    )
-      this.pauseWithoutOwner(session);
     this.broadcastState(session);
     this.refreshExpiry(session);
   }
 
   private hasOwner(session: Session): boolean {
     return [...session.participants.values()].some(Boolean);
-  }
-
-  /** Never interleave a replacement snapshot into a committed packet/move batch. */
-  private pauseWithoutOwner(session: Session): void {
-    this.stopTimer(session);
-    session.status = session.source?.complete ? "ended" : "paused";
-    session.epoch++;
-    session.revision++;
-    this.broadcastState(session);
-    this.snapshotAll(session);
-    this.refreshExpiry(session);
   }
 
   private refreshExpiry(session: Session): void {

@@ -342,6 +342,70 @@ describe("replay server/browser interoperability", () => {
     expect(watcher.errors).toHaveLength(1);
   });
 
+  it("keeps streaming after the creator leaves and restores controls only with the creator capability", async () => {
+    const owner = viewer();
+    owner.client.createReplay("fixture.rec", "a".repeat(48), 0);
+    await settle(() => owner.hydrations.length === 1);
+    const id = owner.state!.sessionId;
+    const token = (
+      owner.socket.serverMessages.find(
+        (message) => message.type === "replayState" && message.ownerToken,
+      ) as ReplayState
+    ).ownerToken!;
+    const watcher = viewer();
+    watcher.client.joinReplay(id);
+    await settle(() => watcher.hydrations.length === 1);
+    control(owner, "play");
+    await settle(() => watcher.state?.status === "playing");
+    await vi.advanceTimersByTimeAsync(3 * 32);
+    await settle(() => watcher.adapter.sourceTick === 3);
+    const epoch = watcher.state!.epoch;
+    const beforeLeave = watcher.socket.serverMessages.length;
+
+    owner.client.leaveReplay();
+    await settle(() => watcher.state?.watcherCount === 1);
+    expect(watcher.state).toMatchObject({ status: "playing", epoch });
+    await vi.advanceTimersByTimeAsync(5 * 32);
+    await settle(() => watcher.adapter.sourceTick === 8);
+    expect(watcher.hydrations).toHaveLength(1);
+    expect(watcher.socket.serverMessages.slice(beforeLeave)).not.toContainEqual(
+      expect.objectContaining({ type: "catchupBegin" }),
+    );
+    expect(watcher.ticks).toEqual(
+      Array.from({ length: 8 }, (_, index) => index + 1),
+    );
+    expect(
+      watcher.socket.serverMessages
+        .slice(beforeLeave)
+        .filter((message) => message.type === "replayTick")
+        .every((message) => message.epoch === epoch),
+    ).toBe(true);
+
+    control(watcher, "pause", 8);
+    await settle(() => watcher.errors.length === 1);
+    expect(watcher.errors[0]).toContain("creator");
+    await vi.advanceTimersByTimeAsync(2 * 32);
+    await settle(() => watcher.adapter.sourceTick === 10);
+    expect(watcher.state).toMatchObject({ status: "playing", epoch });
+
+    owner.client.joinReplay(id, token);
+    await settle(() => owner.hydrations.length === 2);
+    expect(owner.state).toMatchObject({
+      isOwner: true,
+      status: "playing",
+      epoch,
+    });
+    expect(watcher.hydrations).toHaveLength(1);
+    control(owner, "pause", 10);
+    await settle(
+      () => owner.hydrations.length === 3 && watcher.hydrations.length === 2,
+    );
+    expect(watcher.state).toMatchObject({ status: "paused", tick: 10 });
+    expect(watcher.state!.epoch).toBeGreaterThan(epoch);
+    expect(watcher.adapter.stepToTime(999).timeSec).toBeCloseTo(10 * 0.032);
+    expect(owner.errors).toEqual([]);
+  });
+
   it("discards an older real gzip snapshot and its buffered frames when pause supersedes it", async () => {
     const NativeDecompressionStream = DecompressionStream;
     const decodes: Array<() => Promise<void>> = [];
