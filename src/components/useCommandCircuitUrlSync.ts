@@ -1,4 +1,8 @@
 import { useEffect } from "react";
+import {
+  replayConnectionStore,
+  useReplaySelector,
+} from "../state/replayConnectionStore";
 import { commandCircuitStore } from "../state/commandCircuitStore";
 import {
   gameEntityStore,
@@ -71,12 +75,14 @@ export function useCommandCircuitUrlSync() {
   const dataSource = useDataSource();
   const loadedMission = useMissionName();
   const liveReady = useLiveSelector((s) => s.liveReady);
+  const replayReady = useReplaySelector((s) => s.ready);
 
   useEffect(() => {
     // Earlier navigation effects may already have unloaded the old scene.
     const scene = gameEntityStore.getState();
     const ready =
-      scene.dataSource === mode &&
+      scene.dataSource === (mode === "replay" ? "live" : mode) &&
+      (mode !== "replay" || replayConnectionStore.getState().ready) &&
       (mode !== "live" || liveConnectionStore.getState().liveReady) &&
       (mode !== "map" ||
         scene.missionName?.toLowerCase() === mission.missionName.toLowerCase());
@@ -89,6 +95,7 @@ export function useCommandCircuitUrlSync() {
     dataSource,
     loadedMission,
     liveReady,
+    replayReady,
     setQuery,
   ]);
 }

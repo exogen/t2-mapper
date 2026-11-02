@@ -4,7 +4,7 @@ import { useInputMode } from "../state/inputModeStore";
 import { useControls } from "./SettingsProvider";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { useCameraOwner } from "../state/cameraOwner";
-import { useLiveSelector } from "../state/liveConnectionStore";
+import { useIsWatchSpectator } from "./useIsWatchSpectator";
 import { InputBindings } from "./InputBindings";
 import { usePlayerOrbitAvailable } from "./usePlayerOrbitLocked";
 import { targetFinderStore } from "../state/targetFinderStore";
@@ -42,7 +42,7 @@ export function ActiveInputBindings() {
   const cameraOwner = useCameraOwner();
   // Watch mode: client-only free-fly camera; server-observer bindings
   // (fly/follow toggle, ObserveClient) don't apply.
-  const isWatcher = useLiveSelector((s) => s.role === "watcher");
+  const isWatcher = useIsWatchSpectator();
   // Flag follow (number keys) is not a player follow — no player cycling.
   const isFlagFollow = useStore(
     streamPlaybackStore,

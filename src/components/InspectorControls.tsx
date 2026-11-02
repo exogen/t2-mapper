@@ -18,6 +18,9 @@ import {
 } from "./SettingsProvider";
 import { CopyCoordinatesButton } from "./CopyCoordinatesButton";
 import { CopyDemoLinkButton } from "./CopyDemoLinkButton";
+import { StartSharedReplayButton } from "./StartSharedReplayButton";
+import { CopyReplaySessionLinkButton } from "./CopyReplaySessionLinkButton";
+import { EndReplaySessionButton } from "./EndReplaySessionButton";
 import { useDemoLoad } from "../state/demoLoadStore";
 import { LoadDemoButton } from "./LoadDemoButton";
 import { JoinServerButton } from "./JoinServerButton";
@@ -38,6 +41,7 @@ import {
   useMissionName,
 } from "../state/gameEntityStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
+import { useIsWatchSpectator } from "./useIsWatchSpectator";
 import { hasMission } from "../manifest";
 import { ChooseMapButton } from "./ChooseMapButton";
 import { MapInfoButton } from "./MapInfoButton";
@@ -193,7 +197,7 @@ export const InspectorControls = memo(function InspectorControls({
     aimCorrection,
     setAimCorrection,
   } = useDebug();
-  const watching = useLiveSelector((s) => s.role === "watcher");
+  const watching = useIsWatchSpectator();
   const showCasterControls =
     (dataSource === "live" && watching) || recording?.source === "demo";
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -243,7 +247,9 @@ export const InspectorControls = memo(function InspectorControls({
               <LoadDemoButton
                 isActive={
                   !choosingMap &&
-                  (recording?.source === "demo" || mode === "demo")
+                  (recording?.source === "demo" ||
+                    mode === "demo" ||
+                    mode === "replay")
                 }
                 choosingMap={choosingMap}
                 onCancelChoosingMap={onCancelChoosingMap}
@@ -256,13 +262,21 @@ export const InspectorControls = memo(function InspectorControls({
                 />
               )}
             </div>
+            {mode === "replay" ? (
+              <>
+                <EndReplaySessionButton />
+                <CopyReplaySessionLinkButton />
+              </>
+            ) : recording?.source === "demo" ? (
+              <StartSharedReplayButton />
+            ) : null}
             {recording?.source === "demo" && demoSourceUrl != null ? (
               // An indexed demo is linked by its moment — the second and
               // the camera — since the link can name the demo. A local
               // upload has no URL to link to, so it keeps the coordinates
               // link like any other loaded map.
               <CopyDemoLinkButton />
-            ) : (
+            ) : mode !== "replay" ? (
               <CopyCoordinatesButton
                 missionName={missionName}
                 missionType={missionType}
@@ -270,7 +284,7 @@ export const InspectorControls = memo(function InspectorControls({
                 // — the mission URL param alone has a default value.
                 disabled={!missionInManifest || dataSource == null}
               />
-            )}
+            ) : null}
             <MapInfoButton missionName={missionName} onClick={onOpenMapInfo} />
             <CommandCircuitButton />
             {onOpenScoreScreen && (

@@ -3,7 +3,7 @@ import { useStore } from "zustand";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { useDataSource } from "../state/gameEntityStore";
-import { useLiveSelector } from "../state/liveConnectionStore";
+import { useIsWatchSpectator } from "./useIsWatchSpectator";
 import { textureToUrl } from "../loaders";
 import type { StreamEntity, WeaponsHudSlot } from "../stream/types";
 import styles from "./PlayerHUD.module.css";
@@ -25,7 +25,7 @@ function Compass({
   commandCircuitActive: boolean;
   showClock: boolean;
 }) {
-  const isWatcher = useLiveSelector((s) => s.role === "watcher");
+  const isWatcher = useIsWatchSpectator();
   const dataSource = useDataSource();
   const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
   const yaw = useStreamSnapshot((snap) => snap?.camera?.yaw);

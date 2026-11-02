@@ -60,7 +60,7 @@ export function useFogQueryState() {
   return [fogEnabledOverride, setFogEnabledOverride] as const;
 }
 
-const APP_MODES = ["map", "demo", "live"] as const;
+const APP_MODES = ["map", "demo", "live", "replay"] as const;
 
 export type AppMode = (typeof APP_MODES)[number];
 
@@ -73,6 +73,7 @@ export function useModeQueryState() {
   const [query, setQuery] = useQueryStates({
     mode: navigationParsers.mode,
     demo: navigationParsers.demo,
+    replay: navigationParsers.replay,
     address: navigationParsers.address,
     name: navigationParsers.name,
   });
@@ -88,6 +89,7 @@ const navigationParsers = {
   mode: parseAsStringLiteral(APP_MODES),
   mission: parseAsMissionWithType,
   demo: parseAsString,
+  replay: parseAsString,
   t: parseAsInteger,
   address: parseAsString,
   name: parseAsString,
@@ -108,6 +110,7 @@ export function normalizeNavigationQuery(query: NavigationQuery) {
     ...(query.mode === null && mode !== "map" ? { mode } : {}),
     ...(mode !== "map" && query.mission !== null ? { mission: null } : {}),
     ...(mode !== "demo" && query.demo !== null ? { demo: null } : {}),
+    ...(mode !== "replay" && query.replay !== null ? { replay: null } : {}),
     ...((mode !== "demo" || !query.demo) && query.t !== null
       ? { t: null }
       : {}),
@@ -125,6 +128,7 @@ export function navigationViewKey(query: NavigationQuery): string {
     query.mission?.missionName,
     query.mission?.missionType,
     query.demo,
+    query.replay,
     query.address,
     query.name,
     query.view,
@@ -154,12 +158,19 @@ export function clearEndedServerQuery(
 export function navigationMode(query: {
   mode: AppMode | null;
   demo: string | null;
+  replay?: string | null;
   address: string | null;
   name: string | null;
 }): AppMode {
   return (
     query.mode ??
-    (query.demo ? "demo" : query.address || query.name ? "live" : "map")
+    (query.replay
+      ? "replay"
+      : query.demo
+        ? "demo"
+        : query.address || query.name
+          ? "live"
+          : "map")
   );
 }
 

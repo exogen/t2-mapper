@@ -29,6 +29,7 @@ export class PlaybackClock {
   private wasSeeking = false;
   private currentSnapshot: StreamSnapshot | null = null;
   private previousSnapshot: StreamSnapshot | null = null;
+  private streamRevision: number | undefined;
 
   reset(
     time: number,
@@ -60,10 +61,21 @@ export class PlaybackClock {
       | "lastStepStartTimeSec"
       | "streamComplete"
       | "seekSceneSnapshot"
-    >,
+    > &
+      Partial<Pick<StreamingPlayback, "playbackRevision" | "getSnapshot">>,
     playback: PlaybackControls,
     delta: number,
   ) {
+    if (
+      stream.playbackRevision !== undefined &&
+      stream.playbackRevision !== this.streamRevision &&
+      stream.getSnapshot
+    ) {
+      this.streamRevision = stream.playbackRevision;
+      const snapshot = stream.getSnapshot();
+      this.reset(snapshot.timeSec, playback.seekNonce, snapshot);
+      delta = 0;
+    }
     if (this.failedSeek?.nonce === playback.seekNonce) return null;
     this.failedSeek = null;
     const isPlaying = playback.status === "playing";

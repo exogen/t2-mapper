@@ -15,6 +15,18 @@ import { streamEntityToGameEntity } from "../stream/entityBridge";
 import type { PlayerEntity } from "../state/gameEntityTypes";
 import type { PlayerRosterEntry, StreamSnapshot } from "../stream/types";
 
+const replay = vi.hoisted(() => ({ active: false, ready: false }));
+vi.mock("./usePlayback", () => ({
+  useRecording: () =>
+    replay.active
+      ? { source: "live", streamingPlayback: { localSpectator: true } }
+      : null,
+}));
+vi.mock("../state/replayConnectionStore", () => ({
+  useReplaySelector: (select: (state: unknown) => unknown) =>
+    select({ ready: replay.ready }),
+}));
+
 vi.mock("../state/gameEntityStore", async (original) => {
   const actual = await original<typeof import("../state/gameEntityStore")>();
   return {
@@ -60,6 +72,7 @@ function body(id: string, targetId = 32): PlayerEntity {
 }
 
 beforeEach(() => {
+  replay.active = replay.ready = false;
   gameEntityStore.getState().beginStreaming("demo");
   setStreamSnapshot({
     playerIdentityScope: "demo",
@@ -189,3 +202,14 @@ it.each([
     if (!enabled) expect(streamPlaybackStore.getState()).toBe(before);
   },
 );
+
+it("allows score-screen follow in a ready replay and waits while it is synchronizing", () => {
+  gameEntityStore.getState().beginStreaming("live");
+  gameEntityStore.getState().setAllStreamEntities([body("original")]);
+  liveConnectionStore.setState({ role: null, liveReady: false });
+  replay.active = true;
+  expect(useFollowCamera().enabled).toBe(false);
+  replay.ready = true;
+  expect(useFollowCamera().followPlayer(alice)).toBe(true);
+  expect(streamPlaybackStore.getState().followEntityId).toBe("original");
+});

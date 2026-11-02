@@ -12,6 +12,10 @@ vi.mock("../state/liveConnectionStore", () => ({
   liveConnectionStore: { getState: () => ({}) },
   useLiveSelector: vi.fn(),
 }));
+vi.mock("../state/replayConnectionStore", () => ({
+  replayConnectionStore: { getState: () => ({ ready: false }) },
+  useReplaySelector: vi.fn(),
+}));
 vi.mock("../state/streamPlaybackStore", () => ({
   streamPlaybackStore: { getState: () => ({}) },
 }));
@@ -28,6 +32,7 @@ function route(view: "cc" | null) {
   let query: NavigationQuery = {
     mode: "demo",
     demo: "a.rec",
+    replay: null,
     view,
     mission: null,
     t: null,

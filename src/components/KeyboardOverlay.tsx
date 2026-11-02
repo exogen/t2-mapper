@@ -18,7 +18,7 @@ import {
 import { useCameraTour } from "../state/cameraTourStore";
 import { useDirector } from "../state/demoDirectorStore";
 import { useCommandCircuit } from "../state/commandCircuitStore";
-import { useLiveSelector } from "../state/liveConnectionStore";
+import { useIsWatchSpectator } from "./useIsWatchSpectator";
 import { QUICK_CAM_SLOTS, useCaster } from "../state/casterStore";
 import { useFlagCameras } from "./useFlagCameras";
 import {
@@ -778,7 +778,7 @@ export function KeyboardOverlay() {
   const isDirecting = useDirector((s) => s.status === "playing");
   const isCommandCircuit = useCommandCircuit((s) => s.active);
   // Watch mode: client-only free-fly, no server-observer controls.
-  const isWatcher = useLiveSelector((s) => s.role === "watcher");
+  const isWatcher = useIsWatchSpectator();
   const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
 
   const isDemo = recording?.source === "demo";

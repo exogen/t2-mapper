@@ -5,7 +5,7 @@ import { LuUsers } from "react-icons/lu";
 import { shallow } from "zustand/shallow";
 import { casterStore, displayTeamName, useCaster } from "../state/casterStore";
 import { useDataSource } from "../state/gameEntityStore";
-import { useLiveSelector } from "../state/liveConnectionStore";
+import { useIsWatchSpectator } from "./useIsWatchSpectator";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import type { TeamScore } from "../stream/types";
@@ -22,7 +22,7 @@ export function EditableTeamName({
   const customNames = useCaster((s) => s.settings?.teamNames);
   const context = useCaster((s) => s.context);
   const dataSource = useDataSource();
-  const watching = useLiveSelector((s) => s.role === "watcher" && s.liveReady);
+  const watching = useIsWatchSpectator({ requireReady: true });
   const name =
     customNames?.[teamId] ||
     displayTeamName(teamId, teams.find((team) => team.teamId === teamId)?.name);

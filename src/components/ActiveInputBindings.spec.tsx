@@ -6,13 +6,18 @@ import type { InputMapEntry } from "./InputControls";
 const fixture = vi.hoisted(() => ({
   source: "demo" as "demo" | "live" | null,
   watcher: false,
+  replay: false,
   owner: "input" as "input" | "tour" | "director" | "commandCircuit",
   targetFinderOpen: false,
   orbit: false,
 }));
 
 vi.mock("./usePlayback", () => ({
-  useRecording: () => fixture.source && { source: fixture.source },
+  useRecording: () =>
+    fixture.source && {
+      source: fixture.source,
+      streamingPlayback: { localSpectator: fixture.replay },
+    },
 }));
 vi.mock("../state/inputModeStore", () => ({ useInputMode: () => "local" }));
 vi.mock("./SettingsProvider", () => ({
@@ -41,6 +46,7 @@ vi.mock("./InputBindings", () => ({
 afterEach(() => {
   fixture.source = "demo";
   fixture.watcher = false;
+  fixture.replay = false;
   fixture.owner = "input";
   fixture.targetFinderOpen = false;
   fixture.orbit = false;
@@ -110,3 +116,38 @@ it("leaves number keys to the target finder while it is open", () => {
   fixture.targetFinderOpen = true;
   expect(renderToStaticMarkup(<ActiveInputBindings />)).toBe("");
 });
+
+it("mounts local camera movement, target finding and quick cams for replay viewers without demo transport", () => {
+  fixture.source = "live";
+  fixture.replay = true;
+  const html = renderToStaticMarkup(<ActiveInputBindings />);
+  for (const action of [
+    "moveForward",
+    "moveBackward",
+    "moveLeft",
+    "moveRight",
+    "findTarget",
+    "toggleObserverMode",
+    "quickCam1",
+    "saveQuickCam1",
+  ])
+    expect(html).toContain(action);
+  for (const action of ["playPause", "seekForward", "increasePlaybackSpeed"])
+    expect(html).not.toContain(action);
+  fixture.replay = false;
+  const player = renderToStaticMarkup(<ActiveInputBindings />);
+  expect(player).not.toContain("moveForward");
+  expect(player).not.toContain("findTarget");
+});
+
+it.each(["tour", "director", "commandCircuit"] as const)(
+  "keeps replay quick cams available while %s owns the camera",
+  (owner) => {
+    fixture.source = "live";
+    fixture.replay = true;
+    fixture.owner = owner;
+    const html = renderToStaticMarkup(<ActiveInputBindings />);
+    expect(html).toContain("quickCam1");
+    expect(html).not.toContain("playPause");
+  },
+);

@@ -3,7 +3,7 @@ import { getPlayerResolver } from "../state/playerResolver";
 import { BsShiftFill } from "react-icons/bs";
 import { FaClosedCaptioning } from "react-icons/fa";
 import { casterStore, useCaster, QUICK_CAM_SLOTS } from "../state/casterStore";
-import { useLiveSelector } from "../state/liveConnectionStore";
+import { useIsWatchSpectator } from "./useIsWatchSpectator";
 import { useFlagCameras } from "./useFlagCameras";
 import { quickCamDisplay } from "./quickCamDisplay";
 import { QuickCamIcon } from "./QuickCamIcon";
@@ -71,7 +71,7 @@ export function QuickCamPanel({ watching }: { watching: boolean }) {
 function CameraBindings({ watching }: { watching: boolean }) {
   const { save, restore } = useQuickCams();
   const settings = useCaster((s) => s.settings);
-  const liveReady = useLiveSelector((s) => s.liveReady);
+  const spectatorReady = useIsWatchSpectator({ requireReady: true });
   const flags = useFlagCameras();
   const players = useStreamSnapshot(getPlayerResolver);
   if (!settings)
@@ -81,7 +81,7 @@ function CameraBindings({ watching }: { watching: boolean }) {
   return (
     <fieldset
       className={cameraStyles.Controls}
-      disabled={watching && !liveReady}
+      disabled={watching && !spectatorReady}
     >
       <p className={styles.Description}>
         Press Save or <BsShiftFill className={cameraStyles.ShiftIcon} />{" "}

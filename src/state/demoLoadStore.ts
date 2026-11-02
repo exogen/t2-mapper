@@ -24,6 +24,10 @@ export interface DemoLoadState {
    * Outlives reset() — it describes the loaded demo, not the load.
    */
   sourceUrl: string | null;
+  /** Shareable reference for the installed demo, independent of a pending load. */
+  sourceReference: string | null;
+  /** Original filename of the installed local demo, independent of a pending load. */
+  sourceFileName: string | null;
   sourceMetadata: SourceDemoMetadata | null;
   /** Published sidecars for the loaded demo; null for external/local demos. */
   sidecarSourceUrl: string | null;
@@ -46,6 +50,8 @@ export interface DemoLoadState {
     sourceUrl: string | null,
     sidecarSourceUrl: string | null,
     sourceMetadata: SourceDemoMetadata | null,
+    sourceReference?: string | null,
+    sourceFileName?: string | null,
   ): void;
   reset(): void;
 }
@@ -55,6 +61,8 @@ export const demoLoadStore = createStore<DemoLoadState>((set) => ({
   progress: null,
   error: null,
   sourceUrl: null,
+  sourceReference: null,
+  sourceFileName: null,
   sourceMetadata: null,
   sidecarSourceUrl: null,
   requestedDemo: null,
@@ -72,8 +80,20 @@ export const demoLoadStore = createStore<DemoLoadState>((set) => ({
   fail(error) {
     set({ phase: "error", progress: null, error });
   },
-  setSourceUrl(sourceUrl, sidecarSourceUrl, sourceMetadata) {
-    set({ sourceUrl, sidecarSourceUrl, sourceMetadata });
+  setSourceUrl(
+    sourceUrl,
+    sidecarSourceUrl,
+    sourceMetadata,
+    sourceReference = null,
+    sourceFileName = null,
+  ) {
+    set({
+      sourceUrl,
+      sourceReference,
+      sourceFileName,
+      sidecarSourceUrl,
+      sourceMetadata,
+    });
   },
   reset() {
     set({ phase: "idle", progress: null, error: null });

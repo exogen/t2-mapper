@@ -1,6 +1,6 @@
 import { referencePlayer } from "../../relay/playerReference";
 import { useDataSource } from "../state/gameEntityStore";
-import { useLiveSelector } from "../state/liveConnectionStore";
+import { useIsWatchSpectator } from "./useIsWatchSpectator";
 import { cameraTourStore } from "../state/cameraTourStore";
 import { commandCircuitStore } from "../state/commandCircuitStore";
 import { exitDirector } from "../state/demoDirectorStore";
@@ -26,7 +26,7 @@ function takeCamera() {
 
 export function useFollowCamera() {
   const source = useDataSource();
-  const watching = useLiveSelector((s) => s.role === "watcher" && s.liveReady);
+  const watching = useIsWatchSpectator({ requireReady: true });
   const enabled = source === "demo" || (source === "live" && watching);
   return {
     enabled,

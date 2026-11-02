@@ -30,6 +30,21 @@ const fixture = vi.hoisted(() => ({
   playerRoster: [] as PlayerRosterEntry[],
   teamScores: [] as TeamScore[],
   quickCamHideUnassignedSlots: false,
+  localSpectator: false,
+  replayReady: false,
+}));
+
+vi.mock("./usePlayback", async (original) => ({
+  ...(await original<typeof import("./usePlayback")>()),
+  useRecording: () =>
+    fixture.localSpectator
+      ? { source: "live", streamingPlayback: { localSpectator: true } }
+      : null,
+}));
+vi.mock("../state/replayConnectionStore", async (original) => ({
+  ...(await original<typeof import("../state/replayConnectionStore")>()),
+  useReplaySelector: (select: (state: unknown) => unknown) =>
+    select({ ready: fixture.replayReady }),
 }));
 
 vi.mock("zustand", async (original) => ({
@@ -77,6 +92,8 @@ vi.mock("../state/liveConnectionStore", async (original) => ({
 }));
 
 beforeEach(() => {
+  fixture.role = "watcher";
+  fixture.localSpectator = fixture.replayReady = false;
   fixture.liveReady = true;
   fixture.source = "live";
   fixture.observerTeamColors = "blueOrange";
@@ -139,6 +156,25 @@ it("offers quick cams in demos without commentary or a live connection", () => {
   expect(html.match(/<fieldset[^>]*>/)?.[0]).not.toContain("disabled");
   expect(html).not.toContain("Play audio commentary");
   expect(html).not.toContain("Show commentary subtitles");
+});
+
+it("enables replay quick cams after hydration without a live watcher connection", () => {
+  fixture.role = "player";
+  fixture.liveReady = false;
+  fixture.localSpectator = true;
+  let panel = renderToStaticMarkup(<QuickCamPanel watching />);
+  let hud = renderToStaticMarkup(<QuickCamHUD />);
+  expect(panel.match(/<fieldset[^>]*>/)?.[0]).toContain("disabled");
+  expect(hud.match(/<button[^>]*data-slot="1"[^>]*>/)?.[0]).toContain(
+    "disabled",
+  );
+  fixture.replayReady = true;
+  panel = renderToStaticMarkup(<QuickCamPanel watching />);
+  hud = renderToStaticMarkup(<QuickCamHUD />);
+  expect(panel.match(/<fieldset[^>]*>/)?.[0]).not.toContain("disabled");
+  expect(hud.match(/<button[^>]*data-slot="1"[^>]*>/)?.[0]).not.toContain(
+    "disabled",
+  );
 });
 
 it("shows default flags, saved views and empty slot shortcuts in the quick cam HUD", () => {

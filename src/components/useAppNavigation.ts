@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { cameraTourStore } from "../state/cameraTourStore";
 import { engineStore } from "../state/engineStore";
 import { liveConnectionStore } from "../state/liveConnectionStore";
+import { replayConnectionStore } from "../state/replayConnectionStore";
 import {
   loadDemoFile,
   loadDemoReference,
@@ -25,6 +26,7 @@ export function useAppNavigation() {
         mode,
         mission: null,
         demo: null,
+        replay: null,
         t: null,
         address: null,
         name: null,
@@ -33,6 +35,7 @@ export function useAppNavigation() {
     }
 
     function leaveStream(closeRelay: boolean) {
+      replayConnectionStore.getState().leave();
       const live = liveConnectionStore.getState();
       live.leaveServer();
       if (closeRelay || live.role === "player") live.disconnectRelay();
@@ -46,6 +49,16 @@ export function useAppNavigation() {
 
     return {
       demoIndex,
+      createReplay(reference: string, tick?: number) {
+        void setQuery(destination("replay"));
+        leaveStream(true);
+        replayConnectionStore.getState().create(reference, tick);
+      },
+      createLocalReplay(buffer: ArrayBuffer, name: string, tick?: number) {
+        void setQuery(destination("replay"));
+        leaveStream(true);
+        replayConnectionStore.getState().createLocal(buffer, name, tick);
+      },
       selectDemo(reference: string) {
         void setQuery({ ...destination("demo"), demo: reference });
         leaveStream(true);

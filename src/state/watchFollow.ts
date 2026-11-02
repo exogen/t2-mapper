@@ -25,7 +25,10 @@ const camlog = createLogger("camdbg");
  */
 
 export function isWatchSpectator(): boolean {
-  return liveConnectionStore.getState().role === "watcher";
+  return (
+    liveConnectionStore.getState().role === "watcher" ||
+    streamPlaybackStore.getState().playback?.localSpectator === true
+  );
 }
 
 /**

@@ -12,6 +12,7 @@ import type {
   GhostingMessageEventData,
 } from "t2-demo-parser";
 import { createLogger } from "../logger";
+import { randomId } from "../randomId";
 import {
   resolveShapeName,
   stripTaggedStringMarkup,
@@ -85,7 +86,7 @@ export class LiveStreamAdapter extends StreamEngine {
 
   constructor(relay: RelayClient, options?: { mode?: "play" | "watch" }) {
     super();
-    this.conn.playerIdentity.scope = crypto.randomUUID();
+    this.conn.playerIdentity.scope = randomId();
     this.setPlayerPredictionEnabled(true);
     this.relay = relay;
     this.mode = options?.mode ?? "play";
@@ -279,6 +280,7 @@ export class LiveStreamAdapter extends StreamEngine {
   hydrate(payload: WatchCatchupPayload): void {
     // Fresh engine state (clears entities, HUD, net strings, targets).
     this.reset();
+    this.seedHydration(payload);
     if (
       typeof payload.worldGravity === "number" &&
       Number.isFinite(payload.worldGravity)
@@ -387,6 +389,17 @@ export class LiveStreamAdapter extends StreamEngine {
       this._ready = true;
       this.onReady?.();
     }
+  }
+
+  /** Replay sources can seed an absolute clock and recorded input cursor. */
+  protected seedHydration(_payload: WatchCatchupPayload): void {}
+
+  /** A source-specific cursor may observe control corrections without parsing twice. */
+  protected onPacketApplied(_packet: PacketData): void {}
+
+  protected invalidateSnapshot(): void {
+    this._snapshot = null;
+    this._serverUpdateId++;
   }
 
   // ── Live-specific: auth event detection ──
@@ -616,6 +629,7 @@ export class LiveStreamAdapter extends StreamEngine {
 
       // Control object state
       this.processControlObject(parsed.gameState);
+      this.onPacketApplied(parsed);
 
       // Events and ghosts are applied one at a time: a handler that
       // throws on one (an unsupported class, a bad datablock reference)

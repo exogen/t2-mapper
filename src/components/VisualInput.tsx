@@ -1,7 +1,7 @@
 import { lazy, Suspense } from "react";
 import { useStore } from "zustand";
 import { useTouchDevice } from "./useTouchDevice";
-import { useLiveSelector } from "../state/liveConnectionStore";
+import { useIsWatchSpectator } from "./useIsWatchSpectator";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { subtitlesStore } from "../state/commentaryTrack";
 import { useSettings } from "./SettingsProvider";
@@ -33,7 +33,7 @@ export function VisualInput() {
   // touch, so joysticks would fight both.
   const { showInputOverlay } = useSettings();
   const recording = useRecording();
-  const isWatcher = useLiveSelector((s) => s.role === "watcher");
+  const isWatcher = useIsWatchSpectator();
   const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
 
   // Demo playback and watch-mode spectating drive the camera from the

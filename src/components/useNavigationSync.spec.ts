@@ -4,13 +4,17 @@ import type { NavigationQuery } from "./useQueryParams";
 const test = vi.hoisted(() => ({
   effects: [] as Array<() => void>,
   previous: { current: null as string | null },
+  replayPrevious: { current: null as string | null },
+  refIndex: 0,
+  replay: { sessionId: null as string | null, join: vi.fn(), leave: vi.fn() },
   query: {} as NavigationQuery,
+  setQuery: vi.fn(),
   load: vi.fn(),
   unload: vi.fn(),
 }));
 vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
-  useRef: () => test.previous,
+  useRef: () => (test.refIndex++ === 0 ? test.previous : test.replayPrevious),
   useEffect: (effect: () => void) => test.effects.push(effect),
 }));
 vi.mock("../manifest", () => ({
@@ -18,7 +22,7 @@ vi.mock("../manifest", () => ({
 }));
 vi.mock("./useQueryParams", async (original) => ({
   ...(await original<typeof import("./useQueryParams")>()),
-  useNavigationQueryState: () => [test.query, vi.fn()],
+  useNavigationQueryState: () => [test.query, test.setQuery],
 }));
 vi.mock("../stream/demoFileLoader", () => ({
   loadDemoReference: test.load,
@@ -33,20 +37,36 @@ vi.mock("../state/gameEntityStore", () => ({
 vi.mock("../state/liveConnectionStore", () => ({
   liveConnectionStore: { getState: () => ({}) },
 }));
+vi.mock("../state/replayConnectionStore", () => ({
+  replayConnectionStore: { getState: () => test.replay },
+  useReplaySelector: (selector: (state: typeof test.replay) => unknown) =>
+    selector(test.replay),
+}));
 
 import { demoLoadStore } from "../state/demoLoadStore";
 import { useNavigationSync } from "./useNavigationSync";
 
 function SyncNavigation() {
+  // eslint-disable-next-line react-hooks/immutability -- Reset the controlled hook runtime before each simulated render.
+  test.refIndex = 0;
   useNavigationSync();
   test.effects.splice(0).forEach((effect) => effect());
 }
 beforeEach(() => {
   vi.clearAllMocks();
   test.previous.current = null;
+  test.replayPrevious.current = null;
+  test.replay.sessionId = null;
+  test.replay.leave.mockImplementation(() => {
+    test.replay.sessionId = null;
+  });
+  test.replay.join.mockImplementation((id: string) => {
+    test.replay.sessionId = id;
+  });
   test.query = {
     mode: null,
     demo: null,
+    replay: null,
     mission: null,
     address: null,
     name: null,
@@ -60,6 +80,53 @@ beforeEach(() => {
   test.load.mockImplementation((requestedDemo: string) =>
     demoLoadStore.setState({ requestedDemo }),
   );
+});
+
+describe("replay URL loading", () => {
+  it("joins invitations once without loading the recording in the browser", () => {
+    test.query.replay = "room-one";
+    SyncNavigation();
+    SyncNavigation();
+    expect(test.replay.join).toHaveBeenCalledExactlyOnceWith("room-one");
+    expect(test.load).not.toHaveBeenCalled();
+    test.query.replay = "room-two";
+    SyncNavigation();
+    expect(test.replay.join).toHaveBeenLastCalledWith("room-two");
+    test.query.mode = "replay";
+    test.query.replay = null;
+    SyncNavigation();
+    expect(test.replay.sessionId).toBeNull();
+  });
+
+  it("publishes a created session ID and keeps it attached when its URL arrives", () => {
+    test.query.mode = "replay";
+    SyncNavigation();
+    expect(test.setQuery).not.toHaveBeenCalled();
+    expect(test.replay.leave).not.toHaveBeenCalled();
+
+    // The creator receives this identifier asynchronously after starting from a demo.
+    test.replay.sessionId = "new-room";
+    SyncNavigation();
+    expect(test.setQuery).toHaveBeenCalledExactlyOnceWith({
+      replay: "new-room",
+    });
+    test.query.replay = "new-room";
+    SyncNavigation();
+    expect(test.replay.join).not.toHaveBeenCalled();
+    expect(test.replay.leave).not.toHaveBeenCalled();
+  });
+
+  it("does not restore an old invitation after browser history removes it", () => {
+    test.query.mode = "replay";
+    test.query.replay = "old-room";
+    SyncNavigation();
+    test.setQuery.mockClear();
+    test.query.replay = null;
+    SyncNavigation();
+    expect(test.replay.leave).toHaveBeenCalledOnce();
+    expect(test.replay.sessionId).toBeNull();
+    expect(test.setQuery).not.toHaveBeenCalledWith({ replay: "old-room" });
+  });
 });
 
 describe("demo URL loading", () => {

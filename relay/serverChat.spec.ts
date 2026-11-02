@@ -178,6 +178,7 @@ vi.mock("./logger", async () => {
 
 /** Real relay message dispatch with fake transports; no network or account. */
 class Browser extends EventEmitter {
+  readonly OPEN = 1;
   readyState = 1;
   send = vi.fn();
   async request(message: ClientMessage) {
@@ -294,6 +295,55 @@ describe("relay browser input", () => {
       address: "192.0.2.1:28000",
       message: "Unable to join the game stream. Please try again.",
     });
+  });
+
+  it("answers a replay socket's ping exactly once", async () => {
+    const browser = await connect("watcher", "false");
+    await browser.request({ type: "joinReplay", sessionId: "missing-room" });
+    browser.send.mockClear();
+    await browser.request({ type: "wsPing", ts: 12345 });
+    expect(browser.send.mock.calls.map(([frame]) => JSON.parse(frame))).toEqual(
+      [{ type: "wsPong", ts: 12345 }],
+    );
+  });
+
+  it("does not let a replay leave demote a live watcher", async () => {
+    const browser = await connect("watcher", "false");
+    await browser.request({ type: "leaveReplay" });
+    await browser.request({ type: "joinServer", address: "192.0.2.2:28000" });
+    expect(JSON.parse(browser.send.mock.calls.at(-1)![0])).toMatchObject({
+      type: "status",
+      status: "disconnected",
+      message:
+        "Please reload the page before switching from watching to playing.",
+    });
+    expect(harness.connections).toHaveLength(0);
+  });
+
+  it("attaches upload progress through the replay socket and releases it on leave", async () => {
+    const browser = await connect("watcher", "false");
+    browser.send.mockClear();
+    const uploadId = "00000000-0000-4000-8000-000000000001";
+    await browser.request({
+      type: "watchReplayUpload",
+      creatorId: "a".repeat(48),
+      uploadId,
+      totalBytes: 123,
+    });
+    expect(
+      browser.send.mock.calls.map(([frame]) => JSON.parse(frame)),
+    ).toContainEqual({
+      type: "replayUploadProgress",
+      uploadId,
+      receivedBytes: 0,
+      totalBytes: 123,
+    });
+    await browser.request({ type: "leaveReplay" });
+    browser.send.mockClear();
+    await browser.request({ type: "wsPing", ts: 123 });
+    expect(browser.send.mock.calls.map(([frame]) => JSON.parse(frame))).toEqual(
+      [{ type: "wsPong", ts: 123 }],
+    );
   });
 
   it.each(["player", "watcher"] as const)(

@@ -1,0 +1,10 @@
+.Button {
+  composes: Button from "./Button.module.css";
+  background: var(--destructive-background);
+}
+
+@media (hover: hover) {
+  .Button:not(:disabled):hover {
+    background: var(--destructive-hover-background);
+  }
+}

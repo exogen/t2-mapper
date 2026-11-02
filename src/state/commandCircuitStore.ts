@@ -93,7 +93,10 @@ export function isCommandFollowActive(): boolean {
   if (gameEntityStore.getState().dataSource === "live") {
     // Spectate mode: follow is purely client-side (the relay's server
     // camera never enters follow) and shared with the 3D orbit view.
-    if (liveConnectionStore.getState().role === "watcher") {
+    if (
+      liveConnectionStore.getState().role === "watcher" ||
+      streamPlaybackStore.getState().playback?.localSpectator === true
+    ) {
       return streamPlaybackStore.getState().followEntityId != null;
     }
     return liveConnectionStore.getState().adapter?.observerMode === "follow";

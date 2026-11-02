@@ -373,7 +373,12 @@ export abstract class StreamEngine implements StreamingPlayback {
   // ── Tick / time ──
   protected tickCount = 0;
   protected groundEffectsEnabled = true;
-  protected pendingPlayerMoves: { id: number; move: PlayerMove }[] = [];
+  protected pendingPlayerMoves: {
+    id: number;
+    move: PlayerMove;
+    /** Replay input retains the view mode needed for its next simulation. */
+    firstPerson?: boolean;
+  }[] = [];
   protected nextPlayerMoveId = 0;
   protected lastClientMoveId = 0;
   protected playerPredictionEnabled = false;
@@ -1548,7 +1553,11 @@ export abstract class StreamEngine implements StreamingPlayback {
   }
 
   /** Newly collected input, never the retransmitted unacknowledged move array. */
-  protected collectMove(move: PlayerMove, id = this.nextPlayerMoveId): void {
+  protected collectMove(
+    move: PlayerMove,
+    id = this.nextPlayerMoveId,
+    firstPerson?: boolean,
+  ): void {
     if (id < this.nextPlayerMoveId) return;
     this.nextPlayerMoveId = id + 1;
     if (this.matchEnded) {
@@ -1557,7 +1566,11 @@ export abstract class StreamEngine implements StreamingPlayback {
       return;
     }
     if (this.playerPredictionEnabled && this.lastControlType === "player")
-      this.pendingPlayerMoves.push({ id, move });
+      this.pendingPlayerMoves.push({
+        id,
+        move,
+        ...(firstPerson === undefined ? {} : { firstPerson }),
+      });
     else this.pendingPlayerMoves.length = 0;
     // The control player's ghost skips MoveMask (the server knows the client
     // predicts its own state). Derive jetting from the move's trigger[3],
@@ -1601,9 +1614,13 @@ export abstract class StreamEngine implements StreamingPlayback {
     );
     this.nextPlayerMoveId = Math.max(this.nextPlayerMoveId, ack);
     if (controlData) {
+      if (controlData.position)
+        for (const pending of this.pendingPlayerMoves)
+          if (pending.firstPerson !== undefined)
+            pending.firstPerson = this.firstPerson;
       this.correctControlPlayer(
         controlData as PlayerPacketData,
-        this.pendingPlayerMoves.map(({ move }) => move),
+        this.pendingPlayerMoves,
       );
       if (controlData.position) this.lastClientMoveId = this.nextPlayerMoveId;
     }
@@ -1611,7 +1628,7 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   protected correctControlPlayer(
     data: PlayerPacketData,
-    moves: readonly PlayerMove[] = [],
+    moves: readonly { move: PlayerMove; firstPerson?: boolean }[] = [],
   ): void {
     if (
       this.matchEnded ||
@@ -1631,7 +1648,8 @@ export abstract class StreamEngine implements StreamingPlayback {
     prediction.readPacketData(data);
     if (this.playerCollisionReady())
       withCollisionQueryBatch(() => {
-        for (const move of moves) {
+        for (const { move, firstPerson } of moves) {
+          prediction.allowFreelook = !(firstPerson ?? this.firstPerson);
           prediction.processTick(
             this.worldGravity,
             move,
@@ -1666,8 +1684,9 @@ export abstract class StreamEngine implements StreamingPlayback {
         prediction.allowFreelook = isControl && !this.firstPerson;
         let processed = !isControl || !this.controlMovesAvailable;
         if (isControl && this.controlMovesAvailable) {
-          for (const { id, move } of this.pendingPlayerMoves) {
+          for (const { id, move, firstPerson } of this.pendingPlayerMoves) {
             if (id < this.lastClientMoveId) continue;
+            prediction.allowFreelook = !(firstPerson ?? this.firstPerson);
             prediction.processTick(
               this.worldGravity,
               move,

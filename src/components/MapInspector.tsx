@@ -50,6 +50,8 @@ import { CommentarySubtitles } from "./CommentarySubtitles";
 import { DemoSeekFeedback } from "./DemoSeekFeedback";
 import { QuickCamControls } from "./QuickCamControls";
 import { unloadDemo } from "../stream/demoFileLoader";
+import { useReplaySelector } from "../state/replayConnectionStore";
+import { ReplayControls, ReplaySessionStatus } from "./ReplayControls";
 import { isRetryableDisconnect, normalizeAddress } from "../../relay/shared";
 import {
   isStreamingSource,
@@ -131,6 +133,7 @@ export function MapInspector() {
       !params.has("mission") &&
       !params.has("mode") &&
       !params.has("demo") &&
+      !params.has("replay") &&
       !params.has("address") &&
       !params.has("name")
     ) {
@@ -162,6 +165,9 @@ export function MapInspector() {
 
   const isCommandCircuit = useCommandCircuit((s) => s.active);
   const liveReady = useLiveSelector((s) => s.liveReady);
+  const replayReady = useReplaySelector((s) => s.ready);
+  const replayConnecting = useReplaySelector((s) => s.connecting);
+  const replayState = useReplaySelector((s) => s.state);
 
   // Starting a tour or opening the command circuit while the splash is
   // up counts as real navigation — retire it (it would otherwise float
@@ -214,7 +220,8 @@ export function MapInspector() {
   const serversLoading = useLiveSelector((s) => s.serversLoading);
   const serverListError = useLiveSelector((s) => s.serverListError);
   const listServers = useLiveSelector((s) => s.listServers);
-  const isWatcher = useLiveSelector((s) => s.role === "watcher");
+  const liveWatcher = useLiveSelector((s) => s.role === "watcher");
+  const isWatcher = liveWatcher || mode === "replay";
   const serverAddress = useLiveSelector((s) => s.serverAddress);
   const disconnectReason = useLiveSelector((s) => s.disconnectReason);
   const sessionEstablished = useLiveSelector((s) => s.sessionEstablished);
@@ -439,11 +446,19 @@ export function MapInspector() {
       ? catchupProgress
       : null
     : missionLoadingProgress;
-  const isLoading = sessionActive
-    ? watchConnecting
-    : mode === "map"
-      ? missionLoadingProgress < 1
-      : false;
+  const isLoading =
+    mode === "replay"
+      ? replayState?.status !== "ended" &&
+        (replayConnecting ||
+          (!!replayState &&
+            (!replayReady ||
+              replayState.status === "seeking" ||
+              replayState.status === "preparing")))
+      : sessionActive
+        ? watchConnecting
+        : mode === "map"
+          ? missionLoadingProgress < 1
+          : false;
 
   const loadingIndicatorUp = showLoadingIndicator && !streamDelayNoticeUp;
 
@@ -562,7 +577,10 @@ export function MapInspector() {
               arrives — matching the dedicated watch page's behavior. */}
           <Activity
             mode={
-              (hasStreamData || sessionActive) && !choosingMap
+              (hasStreamData ||
+                sessionActive ||
+                (mode === "replay" && replayState)) &&
+              !choosingMap
                 ? "visible"
                 : "hidden"
             }
@@ -571,7 +589,9 @@ export function MapInspector() {
           </Activity>
           <Activity
             mode={
-              (!(hasStreamData || sessionActive) && !showJoinScreen) ||
+              (!(hasStreamData || sessionActive) &&
+                !showJoinScreen &&
+                mode !== "replay") ||
               choosingMap
                 ? "visible"
                 : "hidden"
@@ -669,6 +689,10 @@ export function MapInspector() {
                 />
               </Suspense>
             )
+          ) : mode === "replay" &&
+            (!replayState ||
+              (replayState.status === "ended" && !replayReady)) ? (
+            <ReplaySessionStatus />
           ) : showDemoScreen ? (
             <DemoDropScreen />
           ) : (
@@ -762,6 +786,7 @@ export function MapInspector() {
           )}
         </div>
         <footer className={styles.PlayerBar}>
+          {mode === "replay" && <ReplayControls />}
           {recording?.source === "demo" ? (
             <Suspense>
               <DemoPlaybackControls />

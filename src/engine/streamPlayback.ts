@@ -321,6 +321,7 @@ export class StreamPlaybackSession {
   private silencedSeek = -1;
   private lastPublishTime = 0;
   private lastSyncedSnapshot: StreamSnapshot | null = null;
+  private streamRevision: number | undefined;
   private teardown: (() => void) | null = null;
   private readonly removeFrameCallbacks: () => void;
 
@@ -596,6 +597,15 @@ export class StreamPlaybackSession {
     )
       return;
     const clock = this.clock;
+    if (
+      stream.playbackRevision !== undefined &&
+      stream.playbackRevision !== this.streamRevision
+    ) {
+      this.streamRevision = stream.playbackRevision;
+      stopAllTrackedSounds();
+      this.renderFrame = null;
+      this.lastSyncedSnapshot = null;
+    }
     const pending = engineStore.getState().playback;
     if (
       (pending.status === "seeking" || stream.needsReplay) &&
@@ -859,7 +869,9 @@ export class StreamPlaybackSession {
     // In orbitOverride mode with a valid orbit target, use user-controlled
     // yaw/pitch instead of stream data.
     const isWatcher =
-      isLive && liveConnectionStore.getState().role === "watcher";
+      isLive &&
+      (liveConnectionStore.getState().role === "watcher" ||
+        this.stream?.localSpectator === true);
     // The follow target is chosen client-side (followEntityId) in watch
     // AND in demo camera overrides — it wins over the recorder's own
     // orbitTargetId, which is only meaningful for original-mode playback.

@@ -1,7 +1,10 @@
 import { gameEntityStore } from "../state/gameEntityStore";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import { settingsStore } from "../state/settingsStore";
-import { commentaryPlayback } from "../state/streamPlaybackStore";
+import {
+  commentaryPlayback,
+  streamPlaybackStore,
+} from "../state/streamPlaybackStore";
 import { connectAudioPlayback } from "./audioPlayback";
 import { getAudioGraph, getPlaybackFade } from "./audioGraph";
 import { preloadMatchSounds } from "./preloadMatchSounds";
@@ -19,6 +22,7 @@ const COMMENTARY_DUCK = 0.5;
  *  sounds shouldn't keep playing after the disconnect. */
 function liveSessionDead(): boolean {
   if (gameEntityStore.getState().dataSource !== "live") return false;
+  if (streamPlaybackStore.getState().playback?.localSpectator) return false;
   const live = liveConnectionStore.getState();
   return (
     live.gameStatus !== "connected" &&

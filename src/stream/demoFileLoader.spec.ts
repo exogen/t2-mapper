@@ -427,6 +427,70 @@ describe("demo loads during navigation", () => {
     expect(demoLoadStore.getState().sidecarSourceUrl).toBe("same.rec");
   });
 
+  it("keeps the installed demo reference through a pending or failed replacement and clears it for a local file", async () => {
+    const pending = deferred<Response>();
+    const hosted = recording("hosted");
+    const local = recording("local");
+    mocks.parse.mockResolvedValueOnce(hosted).mockResolvedValueOnce(local);
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(response())
+        .mockReturnValueOnce(pending.promise),
+    );
+    await loadDemoReference("TribesForever:22945");
+    expect(demoLoadStore.getState().sourceReference).toBe(
+      "tribesforever:22945",
+    );
+    const replacement = loadDemoReference("tribesforever:22946");
+    expect(demoLoadStore.getState()).toMatchObject({
+      requestedDemo: "tribesforever:22946",
+      sourceReference: "tribesforever:22945",
+    });
+    expect(mocks.current).toBe(hosted);
+    pending.reject(new Error("Unavailable replacement"));
+    await replacement;
+    expect(demoLoadStore.getState()).toMatchObject({
+      phase: "error",
+      requestedDemo: "tribesforever:22946",
+      sourceReference: "tribesforever:22945",
+    });
+    await loadDemoFile({
+      name: "Local recording.rec",
+      arrayBuffer: async () => buffer,
+    } as File);
+    expect(mocks.current).toBe(local);
+    expect(demoLoadStore.getState().sourceReference).toBeNull();
+    expect(demoLoadStore.getState().sourceFileName).toBe("Local recording.rec");
+    unloadDemo();
+    expect(demoLoadStore.getState().sourceReference).toBeNull();
+    expect(demoLoadStore.getState().sourceFileName).toBeNull();
+  });
+
+  it("keeps the installed local filename during a failed replacement and clears it for hosted demos", async () => {
+    mocks.parse.mockResolvedValue(recording("local"));
+    await loadDemoFile({
+      name: "Installed.rec",
+      arrayBuffer: async () => buffer,
+    } as File);
+    const read = deferred<ArrayBuffer>();
+    const replacement = loadDemoFile({
+      name: "Pending.rec",
+      arrayBuffer: () => read.promise,
+    } as File);
+    expect(demoLoadStore.getState().sourceFileName).toBe("Installed.rec");
+    read.reject(new Error("Couldn't read replacement"));
+    await replacement;
+    expect(demoLoadStore.getState().sourceFileName).toBe("Installed.rec");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => response()),
+    );
+    await loadDemoReference("tribesforever:22945");
+    expect(demoLoadStore.getState().sourceFileName).toBeNull();
+  });
+
   it("loads a qualified source through the existing parser without index sidecars", async () => {
     vi.stubGlobal(
       "fetch",

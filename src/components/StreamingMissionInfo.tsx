@@ -8,6 +8,7 @@ import {
   useServerDisplayName,
 } from "../state/gameEntityStore";
 import { selectPing, useLiveSelector } from "../state/liveConnectionStore";
+import { useReplaySelector } from "../state/replayConnectionStore";
 import { useRecording } from "./usePlayback";
 import { useAppNavigation } from "./useAppNavigation";
 import {
@@ -53,36 +54,40 @@ export function StreamingMissionInfo({
     missionTypeDisplayName;
   const serverName = useServerDisplayName();
   const playerName = useRecorderName();
-  const dateString = useRecordingDate();
+  const recordingDate = useRecordingDate();
+  const replay = useReplaySelector((s) => s.state);
+  const dateString = replay ? replay.recordingDate : recordingDate;
+  const dateRecorderName = replay ? (replay.recorderName ?? null) : playerName;
   const isLive = dataSource === "live";
   const demoSourceUrl = useDemoLoad((s) => s.sourceUrl);
-  // When the demo was recorded, on a clock: the index entry's instant
-  // for an indexed demo, or the header read as UTC for a relay recording
-  // (a local upload of one). A retail client's header is the recorder's
-  // own local time with no zone, so that one is shown as written.
+  // Indexed demos use their known instant. Local demos and shared replays
+  // use the recording header: the relay writes UTC; a retail client writes
+  // its local time with no zone, so that one is shown as written.
   const [demoParam] = useDemoQueryState();
   const { data: demos } = useDemoIndex();
   const indexedAt =
-    demoSourceUrl && demoParam
+    !replay && demoSourceUrl && demoParam
       ? demos?.find((d) => d.filename === demoParam)?.recordedAt
       : undefined;
   const recordedIso =
     indexedAt ??
-    (dateString && isRelayRecording(playerName)
+    (dateString && isRelayRecording(dateRecorderName)
       ? parseDemoHeaderDate(dateString)
       : null);
   const [datePart, timePart] = dateString
     ? dateString.split(" ")
     : [null, null];
   const recording = useRecording();
-  const isWatcher = useLiveSelector((s) => s.role === "watcher");
-  const watcherCount = useLiveSelector((s) => s.watcherCount);
+  const liveWatcher = useLiveSelector((s) => s.role === "watcher");
+  const isWatcher = liveWatcher || replay !== null;
+  const liveWatcherCount = useLiveSelector((s) => s.watcherCount);
+  const watcherCount = replay?.watcherCount ?? liveWatcherCount;
   const relayRecording = useLiveSelector((s) => s.recording);
   const streamDelayMs = useLiveSelector((s) => s.streamDelayMs);
   const watchingDisabled = useLiveSelector(
     (s) => s.watchEndReason === "watchingDisabled",
   );
-  const isLiveConnected = useLiveSelector(
+  const liveConnected = useLiveSelector(
     (s) =>
       s.gameStatus === "connected" ||
       s.gameStatus === "authenticating" ||
@@ -90,6 +95,12 @@ export function StreamingMissionInfo({
         s.watchStatus !== null &&
         s.watchStatus !== "ended"),
   );
+  const isLiveConnected =
+    liveConnected || (replay !== null && replay.status !== "ended");
+  // Natural replay EOF remains a shared room until the creator closes it.
+  const showSpectatorCount = replay
+    ? !replay.closed
+    : isLive && isLiveConnected && isWatcher;
   const ping = useLiveSelector(selectPing);
 
   const pingQuality =
@@ -103,7 +114,8 @@ export function StreamingMissionInfo({
 
   // Demo recording attribution pieces, shown on the server line.
   const hasRecorder = !isLive && !!playerName;
-  const hasRecordingDate = !isLive && !!(recordedIso || dateString);
+  const hasRecordingDate =
+    (!isLive || replay !== null) && !!(recordedIso || dateString);
 
   const playerCount = useStreamSnapshot((s) => s?.playerRoster?.length);
   const showPlayerCount =
@@ -113,7 +125,9 @@ export function StreamingMissionInfo({
 
   // The right-side metadata column, omitted entirely when empty (e.g.
   // spectating and demo playback — the server line carries everything).
-  const metadata = isLive ? (
+  const metadata = replay ? (
+    <span className={styles.ReplayBadge}>Replay</span>
+  ) : isLive ? (
     isLiveConnected ? (
       playerName && !isWatcher ? (
         <div className={styles.Attribution}>
@@ -152,7 +166,10 @@ export function StreamingMissionInfo({
             </>
           ) : null}
         </div>
-        {serverName || hasRecorder || hasRecordingDate ? (
+        {serverName ||
+        hasRecorder ||
+        hasRecordingDate ||
+        (replay && showSpectatorCount) ? (
           <div className={styles.ServerInfo}>
             {hasRecorder ? (
               <>
@@ -197,7 +214,7 @@ export function StreamingMissionInfo({
                 <span className={styles.PlayerCount}>{playerCount}</span>
               </button>
             ) : null}
-            {isLive && isLiveConnected && isWatcher ? (
+            {showSpectatorCount ? (
               <>
                 <LuEye
                   className={`${styles.SpectatorIcon} ${styles.MetaGap}`}
@@ -228,7 +245,10 @@ export function StreamingMissionInfo({
               <>
                 <IoCalendarNumberOutline
                   className={
-                    hasRecorder || serverName || showPlayerCount
+                    hasRecorder ||
+                    serverName ||
+                    showPlayerCount ||
+                    showSpectatorCount
                       ? `${styles.CalendarIcon} ${styles.MetaGap}`
                       : styles.CalendarIcon
                   }
@@ -284,9 +304,9 @@ export function StreamingMissionInfo({
         <button
           type="button"
           className={styles.DisconnectButton}
-          title="Disconnect"
-          aria-label="Disconnect"
-          onClick={navigation.disconnectServer}
+          title={replay ? "Leave replay" : "Disconnect"}
+          aria-label={replay ? "Leave replay" : "Disconnect"}
+          onClick={replay ? navigation.demoIndex : navigation.disconnectServer}
           disabled={isWatcher ? false : !isLiveConnected}
         >
           <LuCircleArrowOutUpLeft />

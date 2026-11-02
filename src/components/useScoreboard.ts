@@ -1,9 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { useDataSource } from "../state/gameEntityStore";
-import {
-  liveConnectionStore,
-  useLiveSelector,
-} from "../state/liveConnectionStore";
+import { liveConnectionStore } from "../state/liveConnectionStore";
+import { useIsWatchSpectator } from "./useIsWatchSpectator";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import type { TeamScore } from "../stream/types";
 import { useCaster, displayTeamName } from "../state/casterStore";
@@ -16,7 +14,7 @@ export function getScoreboardTeamName(team: TeamScore): string {
 /** Shared by the full score screen and the HUD (which unmounts while it is open). */
 export function useScoreboard() {
   const dataSource = useDataSource();
-  const isWatcher = useLiveSelector((s) => s.role === "watcher");
+  const isWatcher = useIsWatchSpectator();
   const connectedClientId = useStreamSnapshot(
     (snap) => snap?.connectedClientId,
   );

@@ -29,6 +29,7 @@ import { DEMO_CHECKPOINT_SUFFIX, readDemoCheckpoints } from "./demoCheckpoints";
 
 interface LoadedDemoSource {
   url: string;
+  reference: string | null;
   sidecarSourceUrl: string | null;
   metadata: SourceDemoMetadata | null;
   installed: boolean;
@@ -70,6 +71,8 @@ export function unloadDemo(): void {
     progress: null,
     error: null,
     sourceUrl: null,
+    sourceReference: null,
+    sourceFileName: null,
     sourceMetadata: null,
     sidecarSourceUrl: null,
     downloadedSec: null,
@@ -105,6 +108,7 @@ export async function loadDemoFile(
             return null;
           })
         : undefined,
+      file.name ?? null,
     );
   } catch (err) {
     log.error("Failed to load demo: %o", err);
@@ -157,6 +161,10 @@ async function loadRemoteDemo(
     }
     const loadedSource: LoadedDemoSource = {
       url,
+      reference: reference?.includes(":")
+        ? reference.slice(0, reference.indexOf(":")).toLowerCase() +
+          reference.slice(reference.indexOf(":"))
+        : reference,
       sidecarSourceUrl: source.sidecarSourceUrl,
       metadata: null,
       installed: false,
@@ -464,6 +472,7 @@ function installRecording(
   recording: StreamRecording,
   source: LoadedDemoSource | null,
   demoBuffer: ArrayBuffer | null = null,
+  fileName: string | null = null,
 ): void {
   scanAbort?.abort();
   scanAbort = null;
@@ -482,6 +491,8 @@ function installRecording(
       source?.url ?? null,
       source?.sidecarSourceUrl ?? null,
       source?.metadata ?? null,
+      source?.reference ?? null,
+      fileName,
     );
   // Which commentary tracks this demo has, from its record sidecar.
   void commentaryTracksStore.getState().load(source?.sidecarSourceUrl ?? null);
@@ -497,6 +508,7 @@ async function loadDemoBuffer(
   source: LoadedDemoSource | null,
   token: number,
   localCheckpoints?: Promise<string | null>,
+  fileName: string | null = null,
 ): Promise<boolean> {
   try {
     demoLoadStore.getState().begin("parsing");
@@ -507,7 +519,7 @@ async function loadDemoBuffer(
     if (localCheckpoints)
       await installCheckpoints(buffer, recording, localCheckpoints, token);
     if (parseToken !== token) return false;
-    installRecording(recording, source, buffer);
+    installRecording(recording, source, buffer, fileName);
     if (!localCheckpoints)
       void installCheckpoints(buffer, recording, source?.checkpoints, token);
 

@@ -1,4 +1,9 @@
 import type { FlagState } from "./flagState.js";
+import type {
+  ReplayClientMessage,
+  ReplayServerMessage,
+  ReplayCatchupState,
+} from "./replayTypes.js";
 import type { ServerMessageRosterEntry } from "./serverMessageState.js";
 import type {
   ConnectionProtocolState,
@@ -10,6 +15,7 @@ import type {
 
 /** Messages from browser client to relay server. */
 export type ClientMessage =
+  | ReplayClientMessage
   | { type: "listServers" }
   | { type: "joinServer"; address: string; warriorName?: string }
   | { type: "watchServer"; address: string; channelId?: string }
@@ -28,6 +34,7 @@ export type ClientMessage =
 
 /** Messages from relay server to browser client. */
 export type ServerMessage =
+  | ReplayServerMessage
   | { type: "serverList"; servers: ServerInfo[] }
   | {
       type: "status";
@@ -163,6 +170,7 @@ export interface WatchTargetEntry {
  * in lockstep with the relay's.
  */
 export interface WatchCatchupPayload {
+  replay?: ReplayCatchupState;
   epoch: number;
   serverAddress: string;
 

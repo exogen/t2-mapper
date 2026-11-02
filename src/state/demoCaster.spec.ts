@@ -96,6 +96,23 @@ it("isolates different demos, including local files without a source URL", () =>
   expect(displayTeamName(1, "Storm")).toBe("Storm");
 });
 
+it("keeps distinct local-demo scopes on HTTP/LAN hosts without randomUUID", () => {
+  let seed = 0;
+  vi.stubGlobal("crypto", {
+    getRandomValues: (bytes: Uint8Array) => bytes.fill(++seed),
+  });
+  const recording = demo();
+  syncDemoCaster(recording, null, null);
+  const firstScope = state().context!.server;
+  state().renameTeam(1, "Local team");
+  syncDemoCaster(recording, null, null);
+  expect(state().context!.server).toBe(firstScope);
+  expect(displayTeamName(1, "Storm")).toBe("Local team");
+  syncDemoCaster(demo(), null, null);
+  expect(state().context!.server).not.toBe(firstScope);
+  expect(displayTeamName(1, "Storm")).toBe("Storm");
+});
+
 it("leaves live caster settings alone during live snapshot publication", () => {
   state().activate("example:28000", "3", "Katabatic");
   state().renameTeam(1, "Live team");

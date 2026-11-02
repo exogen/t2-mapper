@@ -18,6 +18,9 @@ import { BrowserAudit } from "./browserAudit.js";
 import { EventLoopMonitor } from "./eventLoopMonitor.js";
 import { handleDemoDownload } from "./demoDownload.js";
 import { DemoSourceCache } from "./demoSourceCache.js";
+import { ReplaySessionManager } from "./replaySession.js";
+import { createReplayDemoLoader } from "./replayDemoLoader.js";
+import { handleReplayUpload } from "./replayUpload.js";
 import { DemoCheckpointPublisher } from "./demoCheckpointPublisher.js";
 import { loadCredentials } from "./auth.js";
 import { WatchSessionManager, normalizeAddress } from "./watchSession.js";
@@ -87,6 +90,28 @@ const demoSourceCache = demoUploadConfig
   : null;
 
 // ── Demo recording (env-gated) ──
+const replaySessions = new ReplaySessionManager({
+  loadDemo: createReplayDemoLoader({ cache: demoSourceCache }),
+  maxSessions: loadPatrolInteger(
+    process.env.REPLAY_MAX_SESSIONS,
+    "REPLAY_MAX_SESSIONS",
+    4,
+    1,
+  ),
+  maxParticipants: loadPatrolInteger(
+    process.env.REPLAY_MAX_VIEWERS,
+    "REPLAY_MAX_VIEWERS",
+    64,
+    1,
+  ),
+  idleTtlMs: loadPatrolInteger(
+    process.env.REPLAY_IDLE_TTL_MS,
+    "REPLAY_IDLE_TTL_MS",
+    10 * 60_000,
+    1,
+  ),
+});
+
 const DEMO_RECORD_ENABLED =
   process.env.DEMO_RECORD_ENABLED === "1" ||
   process.env.DEMO_RECORD_ENABLED === "true";
@@ -196,6 +221,7 @@ const eventLoopMonitor = new EventLoopMonitor();
 
 /** HTTP health checks and demo downloads; WebSocket upgrades are separate. */
 const httpServer = http.createServer(async (req, res) => {
+  if (await handleReplayUpload(req, res, replaySessions)) return;
   if (await handleDemoDownload(req, res, TRUST_FLY_PROXY, demoSourceCache))
     return;
   if (req.url === "/health") {
@@ -635,6 +661,7 @@ function drainSessions(timeoutMs: number): Promise<unknown> {
   eventLoopMonitor.stop();
   patroller?.stop();
   watchSessions.shutdown();
+  replaySessions.shutdown();
   return Promise.race([
     Promise.allSettled([
       demoCoordinator.shutdown(timeoutMs),
@@ -708,7 +735,7 @@ wss.on("connection", (ws, req) => {
   liveSockets.add(ws);
 
   /** First joinServer/watchServer claims the socket for that mode. */
-  let role: "idle" | "player" | "watcher" = "idle";
+  let role: "idle" | "player" | "watcher" | "replay" = "idle";
   let serverAddress: string | null = null;
   const browserContext = () => ({ role, serverAddress });
   ws.on("ping", (data) => audit.control("ping", data, browserContext()));
@@ -945,12 +972,62 @@ wss.on("connection", (ws, req) => {
       gameConnection.disconnect();
     }
     watchRequest.leave();
+    replaySessions.detach(ws);
   });
 
   async function handleClientMessage(
     ws: WebSocket,
     message: ClientMessage,
   ): Promise<void> {
+    if (
+      message.type === "watchReplayUpload" ||
+      message.type === "createReplay" ||
+      message.type === "joinReplay" ||
+      message.type === "leaveReplay" ||
+      message.type === "syncReplay" ||
+      message.type === "controlReplay"
+    ) {
+      if (role === "player") {
+        sendToClient(ws, {
+          type: "replayError",
+          message: "Leave the game before joining a replay.",
+        });
+        return;
+      }
+      // A replay leave must not demote a live watcher while its game stream
+      // remains attached. Each mode owns its own detach operation.
+      if (message.type === "leaveReplay" && role !== "replay") return;
+      if (
+        message.type === "watchReplayUpload" ||
+        message.type === "createReplay" ||
+        message.type === "joinReplay"
+      ) {
+        watchRequest.leave();
+        role = "replay";
+        serverAddress = null;
+      }
+      await replaySessions.handle(ws, message);
+      if (message.type === "leaveReplay") role = "idle";
+      return;
+    }
+    if (role === "replay") {
+      if (message.type === "wsPing") {
+        sendToClient(ws, { type: "wsPong", ts: message.ts });
+        return;
+      } else if (
+        message.type === "watchServer" ||
+        message.type === "leaveServer"
+      ) {
+        replaySessions.detach(ws);
+        role = "idle";
+      } else {
+        sendToClient(ws, {
+          type: "error",
+          message: "Replay spectators cannot send game commands.",
+        });
+        return;
+      }
+    }
     // Enforce this before either player or watcher dispatch. Hiding the
     // input alone cannot prevent commands from a modified browser client.
     if (

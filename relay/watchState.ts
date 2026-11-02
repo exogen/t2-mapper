@@ -4,7 +4,33 @@ import { ConnectionState } from "./connectionState.js";
 import { isServerMessageCommand } from "./serverMessageDecode.js";
 import type { ServerMessageRosterEntry as RosterEntry } from "./serverMessageState.js";
 import { stripTaggedStringMarkup } from "./shared.js";
-import type { WatchHudStatePayload, WatchTargetEntry } from "./types.js";
+import type {
+  WatchCatchupPayload,
+  WatchHudStatePayload,
+  WatchTargetEntry,
+} from "./types.js";
+
+export interface WatchStateOptions {
+  /** Seconds in the source's clock: wall time for live, demo time for replay. */
+  now?: () => number;
+  identityScope?: string;
+}
+
+type WatchStateSeed = Pick<
+  WatchCatchupPayload,
+  | "taggedStrings"
+  | "dataBlocks"
+  | "targetEntries"
+  | "sensorGroupColors"
+  | "playerSensorGroup"
+  | "controlObjectGhostIndex"
+  | "controlObjectData"
+  | "missionName"
+  | "missionSequence"
+  | "worldGravity"
+  | "ghostingComplete"
+  | "hudState"
+>;
 
 /**
  * Connection-scope game state a late joiner can't recover from the live
@@ -18,10 +44,7 @@ import type { WatchHudStatePayload, WatchTargetEntry } from "./types.js";
  */
 
 export class WatchStateAccumulator {
-  private readonly state = new ConnectionState({
-    now: () => Date.now() / 1000,
-    identityScope: randomUUID(),
-  });
+  private readonly state: ConnectionState;
   /** Datablock class names from SimDataBlockEvents (for CRC + payload). */
   readonly dataBlockClassNames = new Map<number, string>();
 
@@ -57,7 +80,14 @@ export class WatchStateAccumulator {
    */
   sawMissionDropReady = false;
 
-  constructor(initialRoster?: ReadonlyMap<number, RosterEntry>) {
+  constructor(
+    initialRoster?: ReadonlyMap<number, RosterEntry>,
+    options: WatchStateOptions = {},
+  ) {
+    this.state = new ConnectionState({
+      now: options.now ?? (() => Date.now() / 1000),
+      identityScope: options.identityScope ?? randomUUID(),
+    });
     if (initialRoster)
       for (const [id, entry] of initialRoster) {
         this.state.playerRoster.set(id, { ...entry });
@@ -66,6 +96,48 @@ export class WatchStateAccumulator {
           entry.clientGeneration ?? 0,
         );
       }
+  }
+
+  /** Seed a recording's retained state without dispatching its pending events. */
+  seed(seed: WatchStateSeed): void {
+    this.state.seedTables(seed);
+    this.state.hydrateHud(seed.hudState);
+    this.playerSensorGroup = seed.playerSensorGroup;
+    this.controlObjectGhostIndex = seed.controlObjectGhostIndex;
+    this.controlObjectData = structuredClone(seed.controlObjectData);
+    this.missionName = seed.missionName;
+    this.missionSequence = seed.missionSequence ?? null;
+    this.worldGravity = seed.worldGravity;
+    this.ghostingComplete = seed.ghostingComplete ?? false;
+    for (const [id, block] of seed.dataBlocks)
+      this.dataBlockClassNames.set(id, block.className);
+  }
+
+  /** Checkpoints own their mutable data; subsequent packets cannot change them. */
+  save() {
+    return structuredClone({
+      connection: this.state.save(),
+      dataBlockClassNames: this.dataBlockClassNames,
+      missionName: this.missionName,
+      missionSequence: this.missionSequence,
+      worldGravity: this.worldGravity,
+      ghostingComplete: this.ghostingComplete,
+      controlObjectGhostIndex: this.controlObjectGhostIndex,
+      controlObjectData: this.controlObjectData,
+      selfClientId: this.selfClientId,
+      tournamentMode: this.tournamentMode,
+      sawMissionDropReady: this.sawMissionDropReady,
+    });
+  }
+
+  restore(saved: ReturnType<WatchStateAccumulator["save"]>): void {
+    const { connection, dataBlockClassNames, ...fields } =
+      structuredClone(saved);
+    this.state.restore(connection);
+    this.dataBlockClassNames.clear();
+    for (const [id, name] of dataBlockClassNames)
+      this.dataBlockClassNames.set(id, name);
+    Object.assign(this, fields);
   }
 
   get netStrings(): Map<number, string> {
@@ -116,6 +188,12 @@ export class WatchStateAccumulator {
   beginMissionChange(): void {
     this.state.beginMissionChange();
     this.ghostingComplete = false;
+    this.clearControlObject();
+  }
+
+  private clearControlObject(): void {
+    this.controlObjectGhostIndex = -1;
+    this.controlObjectData = undefined;
   }
 
   /** Mission-phase metadata is shared by live and delayed catch-up state. */
@@ -166,6 +244,9 @@ export class WatchStateAccumulator {
           this.ghostingComplete = true; // GhostAlwaysDone
         } else if (data.message === 2) {
           this.ghostingComplete = false; // EndGhosting
+          // A snapshot between teardown and the next control update must not
+          // seed the previous world's camera or replay inputs against its body.
+          this.clearControlObject();
         }
       } else if (data.type === "SimDataBlockEvent") {
         const objectId = data.objectId as number | undefined;

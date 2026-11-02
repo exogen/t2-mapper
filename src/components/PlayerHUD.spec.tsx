@@ -4,6 +4,26 @@ import { PlayerHUD } from "./PlayerHUD";
 import { casterStore } from "../state/casterStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import type { HudPosition, MatchHudStyle } from "./SettingsProvider";
+import type { StreamEntity } from "../stream/types";
+
+const fixture = vi.hoisted(() => ({
+  replay: false,
+  watcher: false,
+  entities: [] as StreamEntity[],
+  cameraYaw: 0,
+}));
+
+vi.mock("./usePlayback", () => ({
+  useRecording: () =>
+    fixture.replay
+      ? { source: "live", streamingPlayback: { localSpectator: true } }
+      : null,
+}));
+vi.mock("../state/liveConnectionStore", async (original) => ({
+  ...(await original<typeof import("../state/liveConnectionStore")>()),
+  useLiveSelector: (select: (state: unknown) => unknown) =>
+    select({ role: fixture.watcher ? "watcher" : null }),
+}));
 
 const settings = vi.hoisted(() => ({
   showChat: false,
@@ -45,18 +65,22 @@ vi.mock("../state/streamSnapshotStore", async (original) => ({
   useStreamSnapshot: (select: (snapshot: unknown) => unknown) =>
     select({
       controlPlayerGhostId: "player",
-      entities: [],
+      entities: fixture.entities,
+      status: { health: 0.9, energy: 0.8, heat: 0.3 },
       teamScores: [
         { teamId: 1, name: "Storm", score: 3, playerCount: 5 },
         { teamId: 2, name: "Inferno", score: 2, playerCount: 5 },
       ],
       playerSensorGroup: 0,
-      camera: { yaw: 0 },
+      camera: { yaw: fixture.cameraYaw },
       weaponsHud: { slots: [{ index: 0, ammo: 5 }], activeIndex: 0 },
     }),
 }));
 
 beforeEach(() => {
+  fixture.replay = fixture.watcher = false;
+  fixture.entities = [];
+  fixture.cameraYaw = 0;
   settings.showScoreHud = settings.showQuickCamHud = false;
   settings.scoreHudPosition = settings.quickCamHudPosition = "left";
   settings.matchHudStyle = "classic";
@@ -124,4 +148,45 @@ it("toggles either Match HUD style while preserving mini scores and showing the 
     expect(hidden).toContain('aria-label="Player scores"');
     expect(hidden.match(/02:03/g)).toHaveLength(1);
   }
+});
+
+it("uses the replay viewer's local compass instead of the recorder's heading", () => {
+  settings.showCompass = true;
+  fixture.cameraYaw = Math.PI / 2;
+  const recorder = renderToStaticMarkup(
+    <PlayerHUD onOpenScoreScreen={() => {}} />,
+  );
+  expect(recorder).toContain('transform="rotate(-90 36 36)"');
+  fixture.replay = true;
+  const replay = renderToStaticMarkup(
+    <PlayerHUD onOpenScoreScreen={() => {}} />,
+  );
+  expect(replay).not.toContain('transform="rotate(-90 36 36)"');
+  expect(replay).toContain('<svg viewBox="0 0 72 72"');
+});
+
+it("shows the followed replay player's health and equipment rather than the recorder's inventory", () => {
+  fixture.replay = true;
+  fixture.entities = [
+    {
+      id: "followed",
+      type: "Player",
+      className: "Player",
+      health: 0.25,
+      energy: 0.5,
+      imageSlots: [
+        { shapeName: "weapon_disc.dts", mountPoint: 0, dataBlockId: 1 },
+      ],
+    } as StreamEntity,
+  ];
+  streamPlaybackStore.setState({
+    cameraMode: "orbitOverride",
+    followEntityId: "followed",
+  });
+  const html = renderToStaticMarkup(<PlayerHUD onOpenScoreScreen={() => {}} />);
+  expect(html).toContain("width:25%");
+  expect(html).toContain("width:50%");
+  expect(html).toContain('alt="Spinfusor"');
+  expect(html).not.toContain('alt="Blaster"');
+  expect(html).not.toContain("width:90%");
 });

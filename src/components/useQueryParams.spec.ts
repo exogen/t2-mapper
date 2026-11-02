@@ -15,6 +15,7 @@ const empty: NavigationQuery = {
   mode: null,
   mission: null,
   demo: null,
+  replay: null,
   t: null,
   address: null,
   name: null,
@@ -23,7 +24,7 @@ const empty: NavigationQuery = {
 
 describe("navigation URL updates", () => {
   it("does not write an already canonical route", () => {
-    for (const mode of ["map", "demo", "live"] as const) {
+    for (const mode of ["map", "demo", "live", "replay"] as const) {
       expect(normalizeNavigationQuery({ ...empty, mode })).toEqual({});
     }
     expect(normalizeNavigationQuery(empty)).toEqual({});
@@ -35,6 +36,9 @@ describe("navigation URL updates", () => {
     ).toEqual({ mode: "demo" });
     expect(normalizeNavigationQuery({ ...empty, name: "A" })).toEqual({
       mode: "live",
+    });
+    expect(normalizeNavigationQuery({ ...empty, replay: "room" })).toEqual({
+      mode: "replay",
     });
   });
 

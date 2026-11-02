@@ -260,4 +260,7 @@ it("omits markers before scanning and when the duration is zero", () => {
   expect(
     markers({ type: "flag-cap", timeSec: 25, description: "Flag captured" }),
   ).toEqual([]);
+  const emptyTimeline = renderToStaticMarkup(<DemoPlaybackControls />);
+  expect(emptyTimeline).not.toContain("NaN");
+  expect(emptyTimeline).toContain('data-disabled=""');
 });

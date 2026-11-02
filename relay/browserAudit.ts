@@ -33,7 +33,7 @@ export function browserIdentity(req: IncomingMessage, trustFlyProxy: boolean) {
 }
 
 export interface BrowserContext {
-  role: "idle" | "player" | "watcher";
+  role: "idle" | "player" | "watcher" | "replay";
   serverAddress: string | null;
 }
 
@@ -65,6 +65,11 @@ export class BrowserAudit {
     }
 
     const text = buffer.toString("utf8");
+    // Replay credentials and upload correlations stay private in audit logs.
+    const auditText = text.replace(
+      /("(?:ownerToken|uploadId|creatorId)"\s*:\s*")(?:\\[\s\S]|[^"\\])*/gi,
+      "$1[redacted]",
+    );
     let message: unknown;
     let validJson = true;
     try {
@@ -72,6 +77,23 @@ export class BrowserAudit {
     } catch {
       validJson = false;
     }
+    const auditInput =
+      validJson &&
+      message !== null &&
+      typeof message === "object" &&
+      !Array.isArray(message) &&
+      ("ownerToken" in message ||
+        "uploadId" in message ||
+        "creatorId" in message)
+        ? Object.fromEntries(
+            Object.entries(message).map(([key, value]) => [
+              key,
+              key === "ownerToken" || key === "uploadId" || key === "creatorId"
+                ? "[redacted]"
+                : value,
+            ]),
+          )
+        : message;
     const inputType =
       message !== null &&
       typeof message === "object" &&
@@ -84,13 +106,14 @@ export class BrowserAudit {
       inputType,
       ...(buffer.length > MAX_LOG_PAYLOAD_BYTES
         ? {
-            payloadPreview: buffer
-              .subarray(0, MAX_LOG_PAYLOAD_BYTES)
-              .toString("utf8"),
+            payloadPreview: (auditInput !== message
+              ? JSON.stringify(auditInput)
+              : auditText
+            ).slice(0, MAX_LOG_PAYLOAD_BYTES),
           }
         : validJson
-          ? { input: message }
-          : { payload: text }),
+          ? { input: auditInput }
+          : { payload: auditText }),
     });
     return { inputSeq, message, validJson };
   }

@@ -6,7 +6,7 @@ import { LuCircleDashed } from "react-icons/lu";
 import { QUICK_CAM_SLOTS, useCaster } from "../state/casterStore";
 import { useDataSource } from "../state/gameEntityStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
-import { useLiveSelector } from "../state/liveConnectionStore";
+import { useIsWatchSpectator } from "./useIsWatchSpectator";
 import { useFlagCameras } from "./useFlagCameras";
 import { quickCamDisplay } from "./quickCamDisplay";
 import { QuickCamIcon } from "./QuickCamIcon";
@@ -39,8 +39,8 @@ export function QuickCamHUD({
   const flags = useFlagCameras();
   const players = useStreamSnapshot(getPlayerResolver);
   const source = useDataSource();
-  const liveReady = useLiveSelector((s) => s.role === "watcher" && s.liveReady);
-  const ready = source === "demo" || (source === "live" && liveReady);
+  const spectatorReady = useIsWatchSpectator({ requireReady: true });
+  const ready = source === "demo" || (source === "live" && spectatorReady);
   const { restore } = useQuickCams();
   useEffect(() => {
     if (lastCameraAction === seenAction.current) return;

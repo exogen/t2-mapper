@@ -690,6 +690,10 @@ export interface PreloadAsset {
 }
 
 export interface StreamingPlayback {
+  /** Authoritative hydration replaced the timeline; rebase render clocks/snapshots. */
+  readonly playbackRevision?: number;
+  /** Camera and follow controls are entirely local to this spectator. */
+  readonly localSpectator?: boolean;
   /** Simulation position after checkpoint restore, before the last step's ticks. */
   readonly lastStepStartTimeSec?: number;
   readonly debrisHistory?: import("./debrisHistory").DebrisHistory;

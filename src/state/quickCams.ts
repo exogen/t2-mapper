@@ -6,6 +6,7 @@ import {
 } from "./casterStore";
 import { cameraRegistry } from "./cameraRegistry";
 import { liveConnectionStore } from "./liveConnectionStore";
+import { replayConnectionStore } from "./replayConnectionStore";
 import { gameEntityStore } from "./gameEntityStore";
 import { streamPlaybackStore } from "./streamPlaybackStore";
 import { cameraTourStore } from "./cameraTourStore";
@@ -17,9 +18,15 @@ import { exitToFreeFly, followFlag, resolveFlagEntityId } from "./watchFollow";
 function ready() {
   const source = gameEntityStore.getState().dataSource;
   const live = liveConnectionStore.getState();
+  const playback = streamPlaybackStore.getState().playback;
+  const replay = replayConnectionStore.getState();
   return (
     source === "demo" ||
-    (source === "live" && live.role === "watcher" && live.liveReady)
+    (source === "live" &&
+      ((live.role === "watcher" && live.liveReady) ||
+        (playback?.localSpectator === true &&
+          replay.adapter === playback &&
+          replay.ready)))
   );
 }
 

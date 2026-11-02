@@ -34,11 +34,16 @@ const effective = () => ({
   fogEnabled: selectFogEnabled(store.getState()),
 });
 
-it.each<AppMode>(["map", "demo", "live"])(
+it.each<AppMode>(["map", "demo", "live", "replay"])(
   "allows all three features in development %s mode",
   (mode) => {
     vi.stubEnv("NODE_ENV", "development");
-    applyModeFeatureAccess(mode, mode, null, store);
+    applyModeFeatureAccess(
+      mode,
+      mode === "replay" ? "live" : mode,
+      null,
+      store,
+    );
     expect(effective()).toEqual({
       canShowDebugVisuals: true,
       canShowEntityList: true,

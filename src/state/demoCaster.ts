@@ -1,5 +1,6 @@
 import type { StreamRecording } from "../stream/types";
 import { casterStore } from "./casterStore";
+import { randomId } from "../randomId";
 
 const scopes = new WeakMap<
   StreamRecording,
@@ -16,7 +17,7 @@ export function syncDemoCaster(
   const readyTime = ghostAlwaysDoneSec ?? 0;
   let scope = scopes.get(recording);
   if (!scope || scope.readyTime !== readyTime) {
-    const id = scope?.id ?? sourceUrl ?? crypto.randomUUID();
+    const id = scope?.id ?? sourceUrl ?? randomId();
     scope = {
       id,
       readyTime,

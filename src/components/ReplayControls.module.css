@@ -1,0 +1,35 @@
+.Landing {
+  height: 100%;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  background: #101819;
+  color: #e5eeee;
+  padding: 24px;
+  box-sizing: border-box;
+}
+.Card {
+  width: min(100%, 560px);
+}
+.Card h1 {
+  font-size: 26px;
+}
+.Card p {
+  line-height: 1.6;
+  color: #b4c8ca;
+}
+.UploadProgress {
+  margin-block: 24px;
+}
+.Card [role="alert"] {
+  color: #ffc4b7;
+}
+
+.LandingButton {
+  composes: Button from "./Button.module.css";
+}
+.Error {
+  padding: 0 10px 8px;
+  color: #ffc4b7;
+  font-size: 13px;
+}

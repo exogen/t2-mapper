@@ -8,7 +8,7 @@ export function modeFeatureAccess(
   dataSource: DataSource | null,
 ): FeatureAccess {
   // Keep restrictions active while navigation is retiring an old stream.
-  const isLive = mode === "live" || dataSource === "live";
+  const isLive = mode === "live" || mode === "replay" || dataSource === "live";
   const isDemo = mode === "demo" || dataSource === "demo";
   const isMap = !isLive && !isDemo;
   const isNonProduction = process.env.NODE_ENV !== "production";

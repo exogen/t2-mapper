@@ -25,7 +25,6 @@ import {
   startDirector,
   useDirector,
 } from "../state/demoDirectorStore";
-import * as Slider from "@radix-ui/react-slider";
 import { isCurrentPlayback, useEngineSelector } from "../state/engineStore";
 import { useDemoLoad } from "../state/demoLoadStore";
 import { useDemoTimeline } from "../state/demoTimelineStore";
@@ -34,21 +33,9 @@ import { LoadingIndicator } from "./LoadingIndicator";
 import { useSettings } from "./SettingsProvider";
 import { timelineFlagColor } from "./demoTimelineColors";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
+import { PlaybackSeekBar } from "./PlaybackSeekBar";
+import playbackStyles from "./PlaybackControls.module.css";
 import styles from "./DemoPlaybackControls.module.css";
-
-/**
- * Keys the focused seek bar would otherwise step on. [ and ] seek, so
- * arrows stay the camera's, and Page Up/Down's 0.1 s steps are no use.
- * Home and End still jump to the ends.
- */
-const UNSTEPPED_KEYS = new Set([
-  "ArrowUp",
-  "ArrowDown",
-  "ArrowLeft",
-  "ArrowRight",
-  "PageUp",
-  "PageDown",
-]);
 
 /**
  * iOS-app-download-style progress: a ring with a pie wedge filling
@@ -176,21 +163,21 @@ export function DemoPlaybackControls() {
     scrubRecording.current = recording;
   };
   const handleSeekChange = useCallback(
-    (value: number[]) => {
+    (time: number) => {
       if (
         !recording ||
         scrubRecording.current !== recording ||
         !isCurrentPlayback(recording)
       )
         return;
-      setDragValue(value[0]);
+      setDragValue(time);
     },
     [recording],
   );
 
   const handleSeekCommit = useCallback(
-    (value: number[]) => {
-      if (recording && scrubRecording.current === recording) seek(value[0]);
+    (time: number) => {
+      if (recording && scrubRecording.current === recording) seek(time);
       scrubRecording.current = null;
       setDragValue(null);
     },
@@ -290,9 +277,9 @@ export function DemoPlaybackControls() {
       : (replay?.currentTimeSec ?? 0);
 
   return (
-    <div className={styles.Root}>
+    <div className={playbackStyles.Root}>
       <button
-        className={styles.PlayPause}
+        className={playbackStyles.PlayPause}
         onClick={toggle}
         aria-label={
           isSeeking
@@ -317,7 +304,7 @@ export function DemoPlaybackControls() {
         {pendingSeekProgress != null ? (
           <ScanProgressPie progress={pendingSeekProgress} />
         ) : isSeeking ? (
-          <span className={styles.PlaySpinner}>
+          <span className={playbackStyles.PlaySpinner}>
             <LoadingIndicator isLoading inline />
           </span>
         ) : isPlaying ? (
@@ -356,87 +343,30 @@ export function DemoPlaybackControls() {
           <RiMovieAiLine />
         )}
       </button>
-      <span className={styles.Time}>
+      <span className={playbackStyles.Time}>
         {formatPlayheadTimeAligned(currentTime, duration)}
-        <span className={styles.TotalTime}>
+        <span className={playbackStyles.TotalTime}>
           {` / ${formatPlayheadTime(duration)}`}
         </span>
       </span>
-      <Slider.Root
-        className={styles.SeekRoot}
-        min={0}
-        max={duration}
-        step={0.01}
-        value={[dragValue ?? currentTime]}
-        onPointerDownCapture={beginScrub}
-        onKeyDownCapture={beginScrub}
-        // A prevented key skips Radix's own handling.
-        onKeyDown={(e) => {
-          if (UNSTEPPED_KEYS.has(e.key)) e.preventDefault();
-        }}
+      <PlaybackSeekBar
+        currentTime={currentTime}
+        duration={duration}
+        dragValue={dragValue}
+        onBeginScrub={beginScrub}
         onValueChange={handleSeekChange}
         onValueCommit={handleSeekCommit}
-        aria-busy={isSeeking}
-        data-seeking={isSeeking}
+        seeking={isSeeking}
+        bufferedTime={downloadComplete ? duration : (downloadedSec ?? 0)}
+        progress={{
+          time: replayTime,
+          ratio: progress,
+          label:
+            pendingSeekSec != null
+              ? "Downloading demo"
+              : "Replaying demo ticks",
+        }}
       >
-        <Slider.Track className={styles.SeekTrack}>
-          {/* YouTube-style layers: gray = demo time available locally,
-              colored Range = played. Stays at 100% once complete —
-              "fully downloaded" must not look like "nothing yet". */}
-          {duration > 0 && (
-            <div
-              className={styles.SeekBuffered}
-              aria-hidden="true"
-              style={{
-                width: downloadComplete
-                  ? "100%"
-                  : `${Math.min(100, ((downloadedSec ?? 0) / duration) * 100)}%`,
-              }}
-            />
-          )}
-          <Slider.Range className={styles.SeekRange} />
-          {isSeeking && duration > 0 && (
-            <div
-              className={styles.SeekReplayRange}
-              role="progressbar"
-              aria-label={
-                pendingSeekSec != null
-                  ? "Downloading demo"
-                  : "Replaying demo ticks"
-              }
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={
-                progress != null ? Math.round(progress * 100) : undefined
-              }
-              style={{
-                width: `${(Math.max(0, Math.min(duration, replayTime)) / duration) * 100}%`,
-              }}
-            />
-          )}
-          {/* While scrubbing, mark where playback actually still is —
-              the thumb is the ghost until release commits the seek. */}
-          {dragValue != null && duration > 0 && (
-            <div
-              className={styles.SeekLiveTick}
-              aria-hidden="true"
-              style={{
-                left: `${Math.min(100, (currentTime / duration) * 100)}%`,
-              }}
-            />
-          )}
-        </Slider.Track>
-        <Slider.Thumb
-          className={styles.SeekThumb}
-          aria-label="Seek"
-          data-seeking={isSeeking && !dragging}
-        >
-          {dragValue != null && (
-            <div className={styles.SeekTooltip} aria-hidden="true">
-              {formatPlayheadTime(dragValue)}
-            </div>
-          )}
-        </Slider.Thumb>
         {/* Timeline markers sit ABOVE the track (they'd be clipped by
             its overflow: hidden), and AFTER the thumb in the DOM so the
             playhead comes first in the tab order. */}
@@ -487,7 +417,7 @@ export function DemoPlaybackControls() {
             ))}
           </div>
         )}
-      </Slider.Root>
+      </PlaybackSeekBar>
       <div
         className={styles.Field}
         title="Playback speed (< slows down, > speeds up)"

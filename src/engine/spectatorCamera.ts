@@ -3,6 +3,7 @@ import {
   liveConnectionStore,
   type LiveConnectionState,
 } from "../state/liveConnectionStore";
+import { replayConnectionStore } from "../state/replayConnectionStore";
 import { engineStore } from "../state/engineStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { cycleWatchObserverMode, exitWatchFollow } from "../state/watchFollow";
@@ -28,7 +29,14 @@ function watchedAdapter(state: LiveConnectionState) {
     : null;
 }
 
-const isWatching = () => watchedAdapter(liveConnectionStore.getState()) != null;
+function replayAdapter() {
+  const replay = replayConnectionStore.getState();
+  return replay.adapter;
+}
+
+const isWatching = () =>
+  replayAdapter() != null ||
+  watchedAdapter(liveConnectionStore.getState()) != null;
 
 /**
  * Watch-mode companion to InputConsumer: wires the watch adapter into the
@@ -42,6 +50,7 @@ const isWatching = () => watchedAdapter(liveConnectionStore.getState()) != null;
 export function installSpectator(engine: GameEngine): () => void {
   let activeAdapter: LiveStreamAdapter | null = null;
   let placed = false;
+  let replayMission: string | null = null;
 
   const detach = () => {
     if (!activeAdapter) return;
@@ -51,33 +60,53 @@ export function installSpectator(engine: GameEngine): () => void {
     }
     streamPlaybackStore.setState({ cameraMode: "original" });
     activeAdapter = null;
+    placed = false;
+  };
+
+  const attach = () => {
+    const adapter =
+      replayAdapter() ?? watchedAdapter(liveConnectionStore.getState());
+    if (!adapter) {
+      detach();
+      return;
+    }
+    if (activeAdapter === adapter) return;
+    log.info("wiring watch adapter to engine store");
+    const liveState = liveConnectionStore.getState();
+    const replay =
+      adapter === replayAdapter() ? replayConnectionStore.getState() : null;
+    const recording: StreamRecording = {
+      source: "live",
+      duration: Infinity,
+      missionName: replay ? adapter.missionName : (liveState.mapName ?? null),
+      gameType: null,
+      serverDisplayName: replay
+        ? adapter.serverDisplayName
+        : (liveState.serverName ?? null),
+      recorderName: null,
+      recordingDate: null,
+      streamingPlayback: adapter,
+    };
+    engineStore.getState().setRecording(recording);
+    engineStore
+      .getState()
+      .setPlaybackStatus(
+        replay
+          ? replay.state?.status === "playing" && replay.ready
+            ? "playing"
+            : "paused"
+          : "playing",
+      );
+    streamPlaybackStore.setState({ cameraMode: "freeFly" });
+    activeAdapter = adapter;
+    placed = false;
+    replayMission = null;
   };
 
   return combineCleanups(
     detach,
-    reaction(liveConnectionStore, watchedAdapter, (adapter) => {
-      if (!adapter) {
-        detach();
-        return;
-      }
-      if (activeAdapter === adapter) return;
-      log.info("wiring watch adapter to engine store");
-      const liveState = liveConnectionStore.getState();
-      const liveRecording: StreamRecording = {
-        source: "live",
-        duration: Infinity,
-        missionName: liveState.mapName ?? null,
-        gameType: null,
-        serverDisplayName: liveState.serverName ?? null,
-        recorderName: null,
-        recordingDate: null,
-        streamingPlayback: adapter,
-      };
-      engineStore.getState().setRecording(liveRecording);
-      engineStore.getState().setPlaybackStatus("playing");
-      streamPlaybackStore.setState({ cameraMode: "freeFly" });
-      activeAdapter = adapter;
-    }),
+    reaction(liveConnectionStore, watchedAdapter, attach),
+    reaction(replayConnectionStore, (state) => state.adapter, attach),
     // Re-place the camera whenever the world (re)hydrates: initial join
     // and every mission change / session reconnect drop liveReady to
     // false first. A follow target from the old mission is meaningless —
@@ -86,10 +115,22 @@ export function installSpectator(engine: GameEngine): () => void {
       liveConnectionStore,
       (state) => state.liveReady,
       (liveReady) => {
-        if (!liveReady) {
+        if (!liveReady && activeAdapter !== replayAdapter()) {
           placed = false;
           exitWatchFollow();
         }
+      },
+    ),
+    reaction(
+      replayConnectionStore,
+      (state) => (state.ready ? state.missionIdentity : null),
+      (mission) => {
+        if (!mission) return;
+        if (replayMission && replayMission !== mission) {
+          placed = false;
+          exitWatchFollow();
+        }
+        replayMission = mission;
       },
     ),
     // Client-side fly↔follow controls, mirroring the real observer's:
@@ -115,7 +156,11 @@ export function installSpectator(engine: GameEngine): () => void {
       ) {
         streamPlaybackStore.setState({ cameraMode: "freeFly" });
       }
-      if (placed || !liveConnectionStore.getState().liveReady) return;
+      const ready =
+        activeAdapter === replayAdapter()
+          ? replayConnectionStore.getState().ready
+          : liveConnectionStore.getState().liveReady;
+      if (placed || !ready) return;
       // The relay only sends neutral moves, so its server-side observer camera
       // sits exactly where the server placed it (an observer drop point,
       // chosen per map on connect and on each mission change). Placing

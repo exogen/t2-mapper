@@ -1,7 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ParsedData } from "t2-demo-parser";
 import { LiveStreamAdapter } from "./liveStreaming";
 import type { RelayClient } from "./relayClient";
+import { ReplayStreamAdapter } from "./replayStreaming";
+
+afterEach(() => vi.unstubAllGlobals());
+
+it("constructs live and replay adapters on HTTP/LAN hosts without randomUUID", () => {
+  let seed = 0;
+  vi.stubGlobal("crypto", {
+    getRandomValues: (bytes: Uint8Array) => bytes.fill(++seed),
+  });
+  const live = new LiveStreamAdapter({} as RelayClient, { mode: "watch" });
+  const replay = new ReplayStreamAdapter({} as RelayClient);
+  const scope = (adapter: LiveStreamAdapter) =>
+    (adapter as unknown as { conn: { playerIdentity: { scope: string } } }).conn
+      .playerIdentity.scope;
+  expect(scope(live)).toBe("01".repeat(24));
+  expect(scope(replay)).toBe("02".repeat(24));
+});
 
 function dataBlocks(live: LiveStreamAdapter): Map<number, ParsedData> {
   const { packetParser } = live as unknown as {

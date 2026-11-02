@@ -79,6 +79,86 @@ describe("browser identity", () => {
 });
 
 describe("browser input audit", () => {
+  it.each(["createReplay", "watchReplayUpload"])(
+    "redacts private browser-session identities from %s without changing dispatch",
+    (type) => {
+      const { entries, audit } = captureAudit();
+      const creatorId = "c".repeat(48);
+      const raw = JSON.stringify({ type, creatorId });
+      expect(audit.receive(Buffer.from(raw), false, context).message).toEqual({
+        type,
+        creatorId,
+      });
+      audit.receive(Buffer.from(raw + "invalid"), false, context);
+      audit.receive(Buffer.from(raw + " ".repeat(20_000)), false, context);
+      audit.receive(
+        Buffer.from(raw.replace("creatorId", "\\u0063reatorId")),
+        false,
+        context,
+      );
+      expect(JSON.stringify(entries)).not.toContain(creatorId);
+      expect(entries[0].input).toEqual({ type, creatorId: "[redacted]" });
+    },
+  );
+  it("redacts private upload correlations while preserving dispatch", () => {
+    const { entries, audit } = captureAudit();
+    const raw = JSON.stringify({
+      type: "watchReplayUpload",
+      uploadId: "private-upload-correlation",
+      totalBytes: 123,
+    });
+    expect(
+      audit.receive(Buffer.from(raw), false, context).message,
+    ).toMatchObject({
+      uploadId: "private-upload-correlation",
+    });
+    audit.receive(Buffer.from(raw + "invalid"), false, context);
+    audit.receive(Buffer.from(raw + " ".repeat(20_000)), false, context);
+    audit.receive(
+      Buffer.from(
+        '{"type":"watchReplayUpload","\\u0075ploadId":"private-upload-correlation"}',
+      ),
+      false,
+      context,
+    );
+    expect(JSON.stringify(entries)).not.toContain("private-upload-correlation");
+    expect(entries[0].input).toMatchObject({
+      uploadId: "[redacted]",
+      totalBytes: 123,
+    });
+  });
+  it("redacts replay owner credentials without changing the dispatched input", () => {
+    const { entries, audit } = captureAudit();
+    const raw = JSON.stringify({
+      type: "joinReplay",
+      sessionId: "room",
+      ownerToken: "private-credential",
+    });
+    const input = audit.receive(Buffer.from(raw), false, context);
+    expect(input.message).toMatchObject({ ownerToken: "private-credential" });
+    audit.receive(Buffer.from(raw + "invalid"), false, context);
+    audit.receive(Buffer.from(raw + " ".repeat(20_000)), false, context);
+    audit.receive(
+      Buffer.from(
+        JSON.stringify({
+          type: "joinReplay",
+          ownerToken: 'private-credential"escaped\\suffix',
+        }),
+      ),
+      false,
+      context,
+    );
+    expect(JSON.stringify(entries)).not.toContain("private-credential");
+    expect(entries[0].input).toMatchObject({ ownerToken: "[redacted]" });
+    audit.receive(
+      Buffer.from(
+        '{"type":"joinReplay","\\u006fwnerToken":"private-credential"}',
+      ),
+      false,
+      context,
+    );
+    expect(JSON.stringify(entries)).not.toContain("private-credential");
+  });
   it("logs each input at info even with diagnostics silenced, without accepting forged identity", () => {
     const { entries, audit } = captureAudit();
     const input = {

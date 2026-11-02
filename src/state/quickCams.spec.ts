@@ -4,13 +4,17 @@ import { casterStore } from "./casterStore";
 import { saveQuickCam, restoreQuickCam } from "./quickCams";
 import { cameraRegistry } from "./cameraRegistry";
 import { liveConnectionStore } from "./liveConnectionStore";
+import { replayConnectionStore } from "./replayConnectionStore";
 import { gameEntityStore } from "./gameEntityStore";
 import {
   streamPlaybackStore,
   resetStreamPlayback,
 } from "./streamPlaybackStore";
 import { setStreamSnapshot } from "./streamSnapshotStore";
-import { commandCircuitStore } from "./commandCircuitStore";
+import {
+  commandCircuitStore,
+  isCommandFollowActive,
+} from "./commandCircuitStore";
 import { cameraTourStore } from "./cameraTourStore";
 import { demoDirectorStore } from "./demoDirectorStore";
 import {
@@ -26,6 +30,7 @@ import {
 import { streamEntityToGameEntity } from "../stream/entityBridge";
 import type { StreamSnapshot } from "../stream/types";
 import { getPlayerResolver } from "./playerResolver";
+import type { ReplayStreamAdapter } from "../stream/replayStreaming";
 
 function body(
   id: string,
@@ -48,6 +53,7 @@ function body(
 }
 
 beforeEach(() => {
+  replayConnectionStore.getState().leave();
   const storage = new Map<string, string>();
   vi.stubGlobal("sessionStorage", {
     getItem: (key: string) => storage.get(key) ?? null,
@@ -61,6 +67,7 @@ beforeEach(() => {
   exitToFreeFly();
 });
 afterEach(() => {
+  replayConnectionStore.getState().leave();
   casterStore.getState().suspend();
   resetStreamPlayback();
   setStreamSnapshot(null);
@@ -72,6 +79,51 @@ afterEach(() => {
   cameraTourStore.getState().cancel();
   demoDirectorStore.setState({ status: "idle" });
   vi.unstubAllGlobals();
+});
+
+it("saves and recalls replay cameras only after the current adapter is ready", () => {
+  const adapter = { localSpectator: true } as ReplayStreamAdapter;
+  liveConnectionStore.setState({ role: null, liveReady: false });
+  streamPlaybackStore.setState({ playback: adapter });
+  replayConnectionStore.setState({ sessionId: "room", adapter, ready: false });
+  cameraRegistry.perspective!.position.set(4, 5, 6);
+  saveQuickCam(3);
+  expect(casterStore.getState().settings?.quickCams[3]).toBeUndefined();
+  replayConnectionStore.setState({ ready: true });
+  saveQuickCam(3);
+  expect(casterStore.getState().settings?.quickCams[3]).toMatchObject({
+    kind: "fly",
+    position: [4, 5, 6],
+  });
+  cameraRegistry.perspective!.position.set(40, 50, 60);
+  replayConnectionStore.setState({ ready: false });
+  expect(restoreQuickCam(3)).toBeUndefined();
+  expect(cameraRegistry.perspective!.position.toArray()).toEqual([40, 50, 60]);
+  replayConnectionStore.setState({ ready: true });
+  expect(restoreQuickCam(3)?.kind).toBe("fly");
+  expect(cameraRegistry.perspective!.position.toArray()).toEqual([4, 5, 6]);
+  // A stale ready room must not authorize an unrelated playback source.
+  streamPlaybackStore.setState({ playback: null });
+  cameraRegistry.perspective!.position.set(7, 8, 9);
+  saveQuickCam(4);
+  expect(casterStore.getState().settings?.quickCams[4]).toBeUndefined();
+});
+
+it("shares replay command-circuit follow with the local camera", () => {
+  const adapter = { localSpectator: true } as ReplayStreamAdapter;
+  liveConnectionStore.setState({ role: null, adapter: null, liveReady: false });
+  streamPlaybackStore.setState({
+    playback: adapter,
+    cameraMode: "freeFly",
+    followEntityId: null,
+  });
+  expect(isCommandFollowActive()).toBe(false);
+  body("followed", 30);
+  enterWatchFollow("followed");
+  expect(isCommandFollowActive()).toBe(true);
+  commandCircuitStore.getState().activate();
+  exitWatchFollow();
+  expect(isCommandFollowActive()).toBe(false);
 });
 
 it.each([undefined, "12345"])(
