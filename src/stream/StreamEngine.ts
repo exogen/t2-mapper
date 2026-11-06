@@ -5,6 +5,11 @@ import {
 import { refreshFlagCarriers } from "../../relay/flagState";
 import type { PlayerRecord } from "../../relay/playerReference";
 import { DebrisHistory, debrisRetention } from "./debrisHistory";
+import { LightningHistory } from "./lightningHistory";
+import {
+  resolveStreamLightning,
+  resolveStreamPrecipitation,
+} from "../weather/data";
 import { THRUST_BACKWARD, THRUST_DOWN, THRUST_FORWARD } from "./types";
 import { GroundEffectHistory, type GroundActor } from "./groundEffectHistory";
 import { timelineRandom } from "./timelineRandom";
@@ -23,7 +28,8 @@ import { collisionState } from "../collision/collisionContext";
 // runtime (15 modules and a 0.2MB generated parser) into every
 // consumer. The demo/live path takes its scene objects from GHOSTS
 // and never interprets a line of TorqueScript.
-import { ghostToSceneObject } from "../scene/ghostToScene";
+import { ghostToSceneObject, updateSkyFromGhost } from "../scene/ghostToScene";
+import type { SkyWeather } from "../scene/skyWeather";
 import { updateInteriorAlarm } from "../scene/interiorAlarm";
 import { getImageMountOffset } from "./imageMount";
 import {
@@ -123,8 +129,15 @@ import {
 } from "./actionSlot";
 import { updateShapeThread } from "./shapeThreads";
 import { ImageAnimation } from "./imageAnimation";
-import { getShapeBounds } from "./shapeBounds";
+import { getShapeBounds, getShapeCenter } from "./shapeBounds";
 import { DEFAULT_WORLD_GRAVITY, worldGravityToMS2 } from "./worldGravity";
+import { resolveEmitterData } from "../particles/ParticleSystem";
+import type { EmitterDataResolved } from "../particles/types";
+import type {
+  LightningStrike,
+  LightningTargetTransform,
+  PrecipitationState,
+} from "../weather/types";
 import type {
   ParsedData,
   GhostAlwaysObjectEventData,
@@ -184,6 +197,18 @@ export interface MutableEntity extends Omit<
   /** Move tick when this ghost instance first entered scope. */
   spawnTick: number;
   maxEnergy?: number;
+  /** Retained across checkpoints to rebuild the canonical ambient emitter. */
+  particleEmitterDataBlockId?: number;
+  /** Normally empty: native sends datablocks before ghosts. Retain source
+   * times while a hydrated/partial stream is waiting for its weather data. */
+  pendingWeather?: (
+    | {
+        time: number;
+        fields: ParsedData;
+        precipitationSeed?: PrecipitationState;
+      }
+    | { strike: Omit<LightningStrike, "id" | "config"> }
+  )[];
   /** pickActionAnimation is held off until then (a ski jump's +0x98c). */
   pickHeldUntilSec?: number;
   playerPrediction?: PlayerPrediction;
@@ -272,7 +297,125 @@ interface PendingExplosion {
 export abstract class StreamEngine implements StreamingPlayback {
   readonly groundEffectHistory = new GroundEffectHistory();
   readonly debrisHistory = new DebrisHistory();
+  readonly lightningHistory = new LightningHistory();
+  private _worldGeneration = 0;
+
+  /** Render effects must discard the previous world after reset or restore. */
+  get worldGeneration(): number {
+    return this._worldGeneration;
+  }
+
   private groundLifetimeData = new Map<number, number>();
+  private ambientEmitterData = new Map<
+    number,
+    {
+      raw: ParsedData;
+      particleIds: number[];
+      particles: (ParsedData | undefined)[];
+      resolved: EmitterDataResolved | undefined;
+    }
+  >();
+  private weatherData = new WeakMap<MutableEntity, unknown[]>();
+
+  /** Refresh only when a mask or a referenced datablock identity changes. */
+  private refreshWeather(entity: MutableEntity): void {
+    if (
+      (entity.className !== "Precipitation" &&
+        entity.className !== "Lightning") ||
+      entity.dataBlockId == null
+    )
+      return;
+    const raw = this.getDataBlockData(entity.dataBlockId);
+    if (!raw) return;
+    const references =
+      entity.className === "Precipitation"
+        ? [raw.soundProfile]
+        : [
+            raw.thunderSound,
+            ...(Array.isArray(raw.strikeSounds) ? raw.strikeSounds : []),
+          ];
+    const dependencies: unknown[] = [raw];
+    for (const reference of references) {
+      const profile =
+        typeof reference === "number"
+          ? this.getDataBlockData(reference)
+          : undefined;
+      const description =
+        typeof profile?.description === "number"
+          ? this.getDataBlockData(profile.description)
+          : undefined;
+      dependencies.push(reference, profile, description);
+    }
+    const previous = this.weatherData.get(entity);
+    if (
+      !entity.pendingWeather?.length &&
+      previous?.length === dependencies.length &&
+      dependencies.every((value, index) => previous[index] === value)
+    )
+      return;
+    const updates: NonNullable<MutableEntity["pendingWeather"]> = entity
+      .pendingWeather?.length
+      ? entity.pendingWeather
+      : [{ time: this.getTimeSec(), fields: {} }];
+    for (const update of updates) {
+      if ("strike" in update) {
+        if (entity.lightning)
+          this.lightningHistory.add({
+            ...update.strike,
+            config: entity.lightning,
+          });
+      } else if (entity.className === "Precipitation") {
+        const config = resolveStreamPrecipitation(
+          raw,
+          update.fields,
+          (id) => this.getDataBlockData(id),
+          update.time,
+          entity.precipitation,
+        );
+        const seed = update.precipitationSeed;
+        entity.precipitation = seed
+          ? { ...config, ...seed, storm: seed.storm }
+          : config;
+      } else {
+        entity.lightning = resolveStreamLightning(
+          raw,
+          update.fields,
+          (id) => this.getDataBlockData(id),
+          entity.lightning,
+        );
+      }
+    }
+    entity.pendingWeather = undefined;
+    this.weatherData.set(entity, dependencies);
+  }
+
+  /** A repeated dummy update must not restart its emission clock. */
+  private resolveAmbientEmitterData(
+    id: number,
+  ): EmitterDataResolved | undefined {
+    const raw = this.getDataBlockData(id);
+    if (!raw) {
+      this.ambientEmitterData.delete(id);
+      return undefined;
+    }
+    const particleIds = Array.isArray(raw.particles)
+      ? raw.particles.filter((ref): ref is number => typeof ref === "number")
+      : [];
+    const particles = particleIds.map((ref) => this.getDataBlockData(ref));
+    const cached = this.ambientEmitterData.get(id);
+    if (
+      cached?.raw === raw &&
+      cached.particleIds.length === particleIds.length &&
+      particleIds.every((ref, index) => ref === cached.particleIds[index]) &&
+      particles.every((particle, index) => particle === cached.particles[index])
+    ) {
+      return cached.resolved;
+    }
+    const resolved =
+      resolveEmitterData(raw, (ref) => this.getDataBlockData(ref)) ?? undefined;
+    this.ambientEmitterData.set(id, { raw, particleIds, particles, resolved });
+    return resolved;
+  }
 
   private groundRetentionSec(dataBlockId: number): number {
     const cached = this.groundLifetimeData.get(dataBlockId);
@@ -721,6 +864,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         | "clientAnimation"
         | "imageSlots"
         | "sceneData"
+        | "particleEmitter"
       >
     >();
     const shared = new Map<
@@ -741,6 +885,9 @@ export abstract class StreamEngine implements StreamingPlayback {
         clientAnimation,
         imageSlots,
         sceneData,
+        // Derived from particleEmitterDataBlockId on restore, so checkpoints
+        // need neither a redundant copy nor stale resolved datablock values.
+        particleEmitter: _particleEmitter,
         ...mutable
       } = entity;
       entities.set(id, mutable);
@@ -804,6 +951,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       ),
       groundEffects: this.groundEffectHistory.save(),
       debris: this.debrisHistory.save(),
+      lightning: this.lightningHistory.save(),
     };
   }
 
@@ -821,7 +969,13 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (!ids.has(id)) ids.set(id, allocateEntityId());
     for (const entity of checkpoint.endedEntities ?? [])
       if (!ids.has(entity.id)) ids.set(entity.id, allocateEntityId());
+    this.lightningHistory.restore(
+      checkpoint.lightning,
+      (id) => ids.get(id) ?? id,
+    );
     Object.assign(this, state);
+    this._worldGeneration++;
+    this.ambientEmitterData.clear();
     this.conn.restore(conn);
     this.endedEntities =
       checkpoint.endedEntities?.map((entity) => ({
@@ -845,6 +999,25 @@ export abstract class StreamEngine implements StreamingPlayback {
         ...checkpoint.shared.get(oldId),
         id: ids.get(oldId)!,
       };
+      entity.pendingWeather = entity.pendingWeather?.map((update) =>
+        "strike" in update
+          ? {
+              strike: {
+                ...update.strike,
+                stormId:
+                  ids.get(update.strike.stormId) ?? update.strike.stormId,
+                targetId: update.strike.targetId
+                  ? (ids.get(update.strike.targetId) ?? update.strike.targetId)
+                  : undefined,
+              },
+            }
+          : update,
+      );
+      if (entity.particleEmitterDataBlockId != null) {
+        entity.particleEmitter = this.resolveAmbientEmitterData(
+          entity.particleEmitterDataBlockId,
+        );
+      }
       this.entities.set(entity.id, entity);
       const player = checkpoint.players.get(oldId);
       if (player) this.ensurePlayerPrediction(entity)?.restoreState(player);
@@ -898,6 +1071,7 @@ export abstract class StreamEngine implements StreamingPlayback {
    *  Does NOT reset the ID counter — IDs must never be reused to avoid
    *  stale entity collisions in the render store after seeks. */
   protected clearAllEntities(): void {
+    this._worldGeneration++;
     this.conn.flagDroppedAtSec = {};
     this.endedEntities = null;
     // A reset invalidates every ghost, so the world is incomplete again
@@ -905,7 +1079,9 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.ghostAlwaysDoneSec = null;
     this.groundEffectHistory.clear();
     this.debrisHistory.clear();
+    this.lightningHistory.clear();
     this.groundLifetimeData.clear();
+    this.ambientEmitterData.clear();
     this.entities.clear();
     this.imageAnimations.clear();
     this.entityIdByGhostIndex.clear();
@@ -1095,6 +1271,58 @@ export abstract class StreamEngine implements StreamingPlayback {
     const data = event.parsedData;
     if (!data) return;
     const type = data.type as string | undefined;
+
+    // Retail LightningStrikeEvent::process (0x00626ed0) resolves the source
+    // storm and optional target ghosts. No strike is invented from its rate
+    // during playback: these events are the authoritative strike moments.
+    if (type === "LightningStrikeEvent") {
+      if (
+        typeof data.sourceGhost !== "number" ||
+        typeof data.startX !== "number" ||
+        typeof data.startY !== "number" ||
+        !Number.isFinite(data.startX) ||
+        !Number.isFinite(data.startY)
+      )
+        return;
+      const stormId = this.entityIdByGhostIndex.get(data.sourceGhost);
+      const storm = stormId ? this.entities.get(stormId) : undefined;
+      if (!stormId || !storm || storm.className !== "Lightning") return;
+      this.refreshWeather(storm);
+      const targetId =
+        typeof data.targetGhost === "number"
+          ? this.entityIdByGhostIndex.get(data.targetGhost)
+          : undefined;
+      const target = targetId ? this.entities.get(targetId) : undefined;
+      const targetShape = target?.shapeHint ?? target?.dataBlock;
+      const targetTransform: LightningTargetTransform | undefined =
+        target?.position && targetShape
+          ? {
+              shapeName: targetShape,
+              position: [...target.position],
+              rotation: [...target.rotation],
+              scale: target.scale ? [...target.scale] : undefined,
+            }
+          : undefined;
+      const strike: Omit<LightningStrike, "id" | "config"> = {
+        time: this.getTimeSec(),
+        stormId,
+        start: [
+          Math.max(0, Math.min(1, data.startX)),
+          Math.max(0, Math.min(1, data.startY)),
+        ],
+        targetId,
+        targetPosition: targetTransform
+          ? getShapeCenter(targetShape, targetTransform)
+          : target?.position
+            ? [...target.position]
+            : undefined,
+        targetTransform,
+      };
+      if (storm.lightning)
+        this.lightningHistory.add({ ...strike, config: storm.lightning });
+      else (storm.pendingWeather ??= []).push({ strike });
+      return;
+    }
 
     // GravityEvent: setGravity() on the server, and the current value on
     // connect. Everything that falls uses it.
@@ -1303,12 +1531,18 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   // ── Ghost processing ──
 
-  protected processGhostUpdate(ghost: {
-    index: number;
-    type: "create" | "update" | "delete";
-    classId?: number;
-    parsedData?: ParsedData;
-  }): void {
+  protected processGhostUpdate(
+    ghost: {
+      index: number;
+      type: "create" | "update" | "delete";
+      classId?: number;
+      parsedData?: ParsedData;
+    },
+    weatherSeed?: {
+      precipitation?: PrecipitationState;
+      skyWeather?: SkyWeather;
+    },
+  ): void {
     const ghostIndex = ghost.index;
     const prevEntityId = this.entityIdByGhostIndex.get(ghostIndex);
     const prevEntity = prevEntityId
@@ -1393,7 +1627,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.className = className;
     entity.type = toEntityType(className);
     this.entityIdByGhostIndex.set(ghostIndex, entityId);
-    this.applyGhostData(entity, ghost.parsedData);
+    this.applyGhostData(entity, ghost.parsedData, weatherSeed?.precipitation);
     if (ghost.type === "create" || ghost.parsedData?.targetId != null) {
       const flagPlayerTarget =
         entity.type === "Player" &&
@@ -1412,20 +1646,29 @@ export abstract class StreamEngine implements StreamingPlayback {
       this.getTimeSec(),
     );
     // Build full scene data on creates; sparse updates would overwrite the
-    // asset/placement with defaults. Merge alarm changes separately below.
+    // asset/placement with defaults. Apply class-specific sparse changes below.
     if (ghost.type === "create" && ghost.parsedData) {
       const sceneObj = ghostToSceneObject(
         className,
         ghostIndex,
         ghost.parsedData as ParsedData,
+        this.getTimeSec(),
       );
       if (sceneObj) {
         if (sceneObj.className === "InteriorInstance") {
           sceneObj.alarmChangedAtSec = this.getTimeSec();
           sceneObj.lightingStartTimeSec = this.getTimeSec();
+        } else if (sceneObj.className === "Sky" && weatherSeed?.skyWeather) {
+          sceneObj.weather = weatherSeed.skyWeather;
         }
         entity.sceneData = sceneObj;
       }
+    } else if (entity.sceneData?.className === "Sky" && ghost.parsedData) {
+      entity.sceneData = updateSkyFromGhost(
+        entity.sceneData,
+        ghost.parsedData,
+        this.getTimeSec(),
+      );
     } else if (
       entity.sceneData?.className === "InteriorInstance" &&
       typeof ghost.parsedData?.alarmState === "boolean"
@@ -1539,6 +1782,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     // consuming the debrief and next mission. This is a viewer pause policy.
     if (this.matchEnded) return;
     this.debrisHistory.prune(this.getTimeSec());
+    this.lightningHistory.prune(this.getTimeSec());
     this.advanceProjectiles();
     this.advanceItems();
     this.advanceControlVehicle();
@@ -1710,6 +1954,7 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected applyGhostData(
     entity: MutableEntity,
     rawData: ParsedData | undefined,
+    precipitationSeed?: PrecipitationState,
   ): void {
     if (!rawData) return;
     const data = rawData;
@@ -2085,6 +2330,16 @@ export abstract class StreamEngine implements StreamingPlayback {
               : undefined;
     if (position) {
       entity.position = [position.x, position.y, position.z];
+    } else {
+      // ParticleEmissionDummy carries a row-major MatrixF rather than the
+      // AffineTransform used by most positioned ghosts.
+      const elements = (data.transform as MatrixF | undefined)?.elements;
+      if (Array.isArray(elements)) {
+        const translation = { x: elements[3], y: elements[7], z: elements[11] };
+        if (isValidPosition(translation)) {
+          entity.position = [translation.x, translation.y, translation.z];
+        }
+      }
     }
 
     // Scale, Torque xyz → Three.js axis order like getScale() for mission
@@ -2624,6 +2879,40 @@ export abstract class StreamEngine implements StreamingPlayback {
     // WayPoint ghost fields
     if (entity.className === "WayPoint") {
       if (typeof data.name === "string") entity.label = data.name;
+    }
+
+    // Persistent map emitters carry their emitter datablock separately from
+    // the GameBase datablock, which only controls the emission clock.
+    if (entity.className === "ParticleEmissionDummy") {
+      if (dataBlockId != null) {
+        const multiple = this.getDataBlockData(dataBlockId)?.timeMultiple;
+        entity.timeMultiple =
+          typeof multiple === "number" && Number.isFinite(multiple)
+            ? multiple
+            : 1;
+      }
+      if (typeof data.emitterDatablockId === "number") {
+        entity.particleEmitterDataBlockId = data.emitterDatablockId;
+        entity.particleEmitter = this.resolveAmbientEmitterData(
+          data.emitterDatablockId,
+        );
+      }
+      // The dummy's scalar mVelocity is not networked; native clients use
+      // their constructor default even if the server's mission value differs.
+      entity.emissionVelocity ??= 1;
+      entity.timeMultiple ??= 1;
+    }
+
+    if (
+      entity.className === "Precipitation" ||
+      entity.className === "Lightning"
+    ) {
+      (entity.pendingWeather ??= []).push({
+        time: this.getTimeSec(),
+        fields: data,
+        precipitationSeed,
+      });
+      this.refreshWeather(entity);
     }
 
     // AudioEmitter ghost fields
@@ -3839,6 +4128,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (this.endedEntities) return this.endedEntities;
     const entities: StreamEntity[] = [];
     for (const entity of this.entities.values()) {
+      this.refreshWeather(entity);
       const renderFlags = entity.targetRenderFlags;
       const snapshot: EveryField<StreamEntity> = {
         id: entity.id,
@@ -3904,6 +4194,11 @@ export abstract class StreamEngine implements StreamingPlayback {
         playerDelta: entity.playerDelta,
         scale: entity.scale,
         velocity: entity.velocity,
+        particleEmitter: entity.particleEmitter,
+        precipitation: entity.precipitation,
+        lightning: entity.lightning,
+        emissionVelocity: entity.emissionVelocity,
+        timeMultiple: entity.timeMultiple,
         health: entity.health,
         energy: entity.energy,
         actionSlot: entity.actionSlot,

@@ -13,6 +13,9 @@ import type {
   SpriteEntity,
   FlareEntity,
   AudioEmitterEntity,
+  ParticleEmissionDummyEntity,
+  PrecipitationEntity,
+  LightningEntity,
   CameraEntity,
   WayPointEntity,
   NoneEntity,
@@ -57,6 +60,15 @@ export function updateGameEntityFromStream(
 
   // Type-specific fields.
   switch (renderEntity.renderType) {
+    case "Sky":
+      if (
+        stream.sceneData?.className === "Sky" &&
+        renderEntity.skyData !== stream.sceneData
+      ) {
+        renderEntity.skyData = stream.sceneData;
+        structural = true;
+      }
+      break;
     case "InteriorInstance":
       if (
         stream.sceneData?.className === "InteriorInstance" &&
@@ -83,6 +95,17 @@ export function updateGameEntityFromStream(
       e.jetting = stream.jetting;
       e.thrustDirection = stream.thrustDirection;
       e.projectileAgeMS = stream.projectileAgeMS;
+      break;
+    case "ParticleEmissionDummy":
+      e.particleEmitter = stream.particleEmitter;
+      e.emissionVelocity = stream.emissionVelocity ?? 1;
+      e.timeMultiple = stream.timeMultiple ?? 1;
+      break;
+    case "Precipitation":
+      e.precipitation = stream.precipitation;
+      break;
+    case "Lightning":
+      e.lightning = stream.lightning;
       break;
     case "Beam":
       // Sniper beam swing updates move the endpoint on the live ghost.
@@ -361,6 +384,41 @@ export function streamEntityToGameEntity(
         audioMaxLoopGap: entity.audioMaxLoopGap,
       } satisfies AudioEmitterEntity;
 
+    case "ParticleEmissionDummy":
+      return {
+        ...positionedBase(entity, spawnTime),
+        renderType: "ParticleEmissionDummy",
+        particleEmitter: entity.particleEmitter,
+        emissionVelocity: entity.emissionVelocity ?? 1,
+        timeMultiple: entity.timeMultiple ?? 1,
+      } satisfies ParticleEmissionDummyEntity;
+
+    case "Precipitation":
+      if (entity.precipitation)
+        return {
+          ...positionedBase(entity, spawnTime),
+          renderType: "Precipitation",
+          precipitation: entity.precipitation,
+        } satisfies PrecipitationEntity;
+      return {
+        id: entity.id,
+        className: "Precipitation",
+        renderType: "None",
+      } satisfies NoneEntity;
+
+    case "Lightning":
+      if (entity.lightning)
+        return {
+          ...positionedBase(entity, spawnTime),
+          renderType: "Lightning",
+          lightning: entity.lightning,
+        } satisfies LightningEntity;
+      return {
+        id: entity.id,
+        className: "Lightning",
+        renderType: "None",
+      } satisfies NoneEntity;
+
     case "WayPoint":
       return {
         ...positionedBase(entity, spawnTime),
@@ -371,14 +429,9 @@ export function streamEntityToGameEntity(
     // Non-rendered objects: editor-only markers, AI objectives, vehicle blockers.
     // MissionMarker::onAdd only calls addToScene when gEditingMission is true.
     // AIObjective and VehicleBlocker are server-side logic objects with no visuals.
-    // Lightning and Precipitation are weather: the engine draws bolts and
-    // drops, never a shape, and their ghost scale is the storm's volume
-    // (512 × 512 × 300 on Stonehenge), which a placeholder must not inherit.
     case "AIObjective":
-    case "Lightning":
     case "MissionMarker":
     case "PhysicalZone":
-    case "Precipitation":
     case "SpawnSphere":
     case "VehicleBlocker":
       return {

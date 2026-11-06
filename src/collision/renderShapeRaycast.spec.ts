@@ -5,16 +5,71 @@ import { createDTSCollisionTestShape } from "../dts/dtsTestFixtures";
 import { RenderShapeRaycast } from "./renderShapeRaycast";
 import {
   clearWorldColliders,
+  registerForceFieldCollider,
   registerInteriorCollider,
 } from "./worldCollision";
+import { Box3, Matrix4 } from "three";
+import { setWaterInfo } from "./waterLevel";
 
-afterEach(clearWorldColliders);
+afterEach(() => {
+  clearWorldColliders();
+  setWaterInfo(null);
+});
 
 function shape() {
   const data = createDTSCollisionTestShape();
   data.bounds = { min: [-10, -10, -10], max: [10, 10, 10] };
   return buildDTS(data).scene;
 }
+
+it("lightning accepts only the nearest exposed shape, including TSStatic occlusion of dynamic targets", () => {
+  const rays = new RenderShapeRaycast(),
+    target = shape(),
+    tree = shape();
+  rays.register("target", target, "Vehicle");
+  const start: [number, number, number] = [0, 0, 15],
+    end: [number, number, number] = [0, 0, -15];
+  expect(rays.lightningTargetExposed(start, end, "target")).toBe(true);
+  tree.position.y = 6;
+  const stop = rays.register("tree", tree, "TSStatic");
+  expect(rays.lightningTargetExposed(start, end, "target")).toBe(false);
+  stop();
+  expect(rays.lightningTargetExposed(start, end, "target")).toBe(true);
+});
+
+it("lightning target exposure includes roofs, force fields, and water", () => {
+  const rays = new RenderShapeRaycast(),
+    target = shape();
+  rays.register("target", target, "Turret");
+  const start: [number, number, number] = [0, 0, 15],
+    end: [number, number, number] = [0, 0, -15];
+  const wall = new Mesh(new BoxGeometry(4, 1, 4));
+  wall.position.y = 6;
+  wall.updateMatrixWorld();
+  registerInteriorCollider("roof", [wall]);
+  expect(rays.lightningTargetExposed(start, end, "target")).toBe(false);
+  clearWorldColliders();
+  registerForceFieldCollider(
+    "field",
+    new Matrix4().makeTranslation(0, 6, 0),
+    new Box3(new Vector3(-2, -0.5, -2), new Vector3(2, 0.5, 2)),
+    true,
+  );
+  expect(rays.lightningTargetExposed(start, end, "target")).toBe(false);
+  clearWorldColliders();
+  setWaterInfo({
+    surfaceZ: 6,
+    waveMagnitude: 0,
+    liquidType: 0,
+    minX: 0,
+    minY: 0,
+    sizeX: 2048,
+    sizeY: 2048,
+  });
+  expect(rays.lightningTargetExposed(start, end, "target")).toBe(false);
+  setWaterInfo(null);
+  expect(rays.lightningTargetExposed(start, end, "target")).toBe(true);
+});
 
 it("contacts LOS hulls, not the larger visual mesh, and follows parent motion", () => {
   const rays = new RenderShapeRaycast(),

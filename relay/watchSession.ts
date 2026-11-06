@@ -1020,6 +1020,7 @@ export class WatchSession {
     // state is dead and watchers are deliberately left on their
     // end-of-match view until the reconnect re-hydrates them.
     if (this.rotating) return;
+    const at = Date.now();
     this.syncConnectSequence(data);
     let parsed;
     try {
@@ -1087,6 +1088,7 @@ export class WatchSession {
               args,
             });
           },
+          at / 1000,
         );
         sampleRecordedState?.();
         this.ghostState.applyPacket(parsed);
@@ -1131,7 +1133,7 @@ export class WatchSession {
       // the replica. Copy — `data` is a view over the dgram pool buffer.
       this.enqueueDelayed({
         kind: "packet",
-        at: Date.now(),
+        at,
         data: data.slice(),
       });
     }
@@ -1384,9 +1386,12 @@ export class WatchSession {
             r.packetCount++;
             // The replica has no protocol responders, but needs mission phases
             // in wire order so they cannot erase later metadata in this packet.
-            r.watchState.applyPacket(parsed, undefined, (name, args) => {
-              r.watchState.applyMissionStart(name, args);
-            });
+            r.watchState.applyPacket(
+              parsed,
+              undefined,
+              (name, args) => r.watchState.applyMissionStart(name, args),
+              item.at / 1000,
+            );
             r.ghostState.applyPacket(parsed);
           }
         } catch (err) {

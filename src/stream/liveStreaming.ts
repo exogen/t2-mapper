@@ -12,6 +12,7 @@ import type {
   GhostingMessageEventData,
 } from "t2-demo-parser";
 import { createLogger } from "../logger";
+import { shiftSkyWeather } from "../scene/skyWeather";
 import { randomId } from "../randomId";
 import {
   resolveShapeName,
@@ -333,8 +334,29 @@ export class LiveStreamAdapter extends StreamEngine {
 
     // Ghosts flow through the normal create path: applyGhostData with
     // full merged parsedData, sceneData captured via ghostToSceneObject.
+    const precipitation =
+      payload.precipitationStates && new Map(payload.precipitationStates);
+    const skyWeather =
+      payload.skyWeatherStates && new Map(payload.skyWeatherStates);
+    const now = this.getTimeSec();
     for (const ghost of payload.initialGhosts) {
-      this.processGhostUpdate(ghost);
+      const rain = precipitation?.get(ghost.index);
+      const sky = skyWeather?.get(ghost.index);
+      this.processGhostUpdate(
+        ghost,
+        rain || sky
+          ? {
+              precipitation: rain && {
+                ...rain,
+                storm: rain.storm && {
+                  ...rain.storm,
+                  startTime: now + rain.storm.startTime,
+                },
+              },
+              skyWeather: sky && shiftSkyWeather(sky, now),
+            }
+          : undefined,
+      );
     }
 
     // Control object: the relay's server-side observer camera. The relay

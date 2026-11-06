@@ -5,6 +5,7 @@
 
 import type { TorqueObject } from "../torqueScript";
 import { parseColor3, parseColor4 } from "../colorUtils";
+import type { SkyWeather } from "./skyWeather";
 import { LIQUID_TYPES } from "../collision/waterLevel";
 import type {
   SceneTerrainBlock,
@@ -39,6 +40,16 @@ function propInt(obj: TorqueObject, name: string): number | undefined {
   if (v == null) return undefined;
   const n = parseInt(v, 10);
   return Number.isFinite(n) ? n : undefined;
+}
+
+function propBool(obj: TorqueObject, name: string, fallback: boolean): boolean {
+  const value = prop(obj, name);
+  if (value == null) return fallback;
+  const text = String(value).trim().toLowerCase();
+  if (text === "true") return true;
+  if (text === "false") return false;
+  const number = Number(text);
+  return Number.isFinite(number) ? number !== 0 : fallback;
 }
 
 function parseVec3(
@@ -199,7 +210,9 @@ export function skyFromMis(obj: TorqueObject): SceneSky {
     useSkyTextures: (propInt(obj, "useSkyTextures") ?? 1) !== 0,
     fogVolumes,
     cloudLayers,
-    windVelocity: parseVec3(prop(obj, "windVelocity")),
+    windVelocity: parseVec3(prop(obj, "windVelocity"), { x: 1, y: 0, z: 0 }),
+    windEffectPrecipitation: propBool(obj, "windEffectPrecipitation", false),
+    weather: obj._skyweather as SkyWeather | undefined,
   };
 }
 
@@ -254,6 +267,7 @@ export function waterBlockFromMis(obj: TorqueObject): SceneWaterBlock {
     surfaceOpacity: propFloat(obj, "surfaceOpacity") ?? 0.75,
     waveMagnitude: propFloat(obj, "waveMagnitude") ?? 1.0,
     envMapIntensity: propFloat(obj, "envMapIntensity") ?? 1.0,
+    removeWetEdges: propBool(obj, "removeWetEdges", true),
     liquidType:
       LIQUID_TYPES[(prop(obj, "liquidType") ?? "").toLowerCase()] ?? 0,
   };

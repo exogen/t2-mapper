@@ -10,6 +10,9 @@ import {
 } from "./classHierarchy";
 
 describe("TYPE_MASKS", () => {
+  it("seeds the native GeneratorObjectType used by lightning damageable queries", () => {
+    expect(TYPE_MASKS.GeneratorObjectType).toBe(1 << 30);
+  });
   it("assigns a distinct bit to every mask", () => {
     const values = Object.values(TYPE_MASKS);
     let combined = 0;
@@ -21,6 +24,28 @@ describe("TYPE_MASKS", () => {
 });
 
 describe("ENGINE_CLASSES", () => {
+  it("gives native weather GameBase ancestry without inventing onAdd callbacks", () => {
+    for (const name of ["Precipitation", "Lightning"]) {
+      expect(getEngineParent(name)).toBe("GameBase");
+      expect(getEngineParent(`${name}Data`)).toBe("GameBaseData");
+      expect(
+        getClassTypeMask(name) & TYPE_MASKS.GameBaseObjectType,
+      ).toBeTruthy();
+      expect(getOnAddStyle(name, true)).toBe("none");
+    }
+  });
+  it("gives particle emission dummies GameBase ancestry without adding callbacks", () => {
+    expect(getEngineParent("ParticleEmissionDummy")).toBe("GameBase");
+    expect(getEngineParent("ParticleEmissionDummyData")).toBe("GameBaseData");
+    expect(
+      getClassTypeMask("ParticleEmissionDummy") & TYPE_MASKS.GameBaseObjectType,
+    ).toBeTruthy();
+    expect(
+      getClassTypeMask("ParticleEmissionDummy") &
+        TYPE_MASKS.ShapeBaseObjectType,
+    ).toBeFalsy();
+    expect(getOnAddStyle("ParticleEmissionDummy", true)).toBe("none");
+  });
   it("chains every parent to a defined class", () => {
     for (const [name, info] of ENGINE_CLASSES) {
       if (info.parent !== null) {

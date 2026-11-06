@@ -24,6 +24,7 @@ import type {
   Color3,
   Color4,
 } from "./types";
+import { updateSkyRenderWind, updateSkyWeather } from "./skyWeather";
 import { createLogger } from "../logger";
 
 const log = createLogger("ghostToScene");
@@ -131,7 +132,11 @@ export function tsStaticFromGhost(
   };
 }
 
-export function skyFromGhost(ghostIndex: number, data: SkyGhostData): SceneSky {
+export function skyFromGhost(
+  ghostIndex: number,
+  data: SkyGhostData,
+  now = 0,
+): SceneSky {
   const fogVolumes = data.fogVolumes
     ? data.fogVolumes.map((v) => ({
         visibleDistance: v.visibleDistance ?? 0,
@@ -161,7 +166,35 @@ export function skyFromGhost(ghostIndex: number, data: SkyGhostData): SceneSky {
     fogVolumes,
     cloudLayers,
     windVelocity: data.windVelocity ?? DEFAULT_VEC3,
+    windEffectPrecipitation: data.windEffectPrecipitation ?? false,
+    weather: updateSkyWeather(undefined, data, now, fogVolumes.length),
   };
+}
+
+export function updateSkyFromGhost(
+  sky: SceneSky,
+  data: SkyGhostData,
+  now: number,
+): SceneSky {
+  const {
+    visibleDistance = sky.visibleDistance,
+    fogDistance = sky.fogDistance,
+    windVelocity = sky.windVelocity,
+  } = data;
+  const weather = updateSkyRenderWind(
+    updateSkyWeather(sky.weather, data, now, sky.fogVolumes.length),
+    sky.windVelocity,
+    windVelocity,
+    data.visibleDistance != null || data.fogDistance != null,
+  );
+  return weather === sky.weather &&
+    visibleDistance === sky.visibleDistance &&
+    fogDistance === sky.fogDistance &&
+    windVelocity.x === sky.windVelocity.x &&
+    windVelocity.y === sky.windVelocity.y &&
+    windVelocity.z === sky.windVelocity.z
+    ? sky
+    : { ...sky, weather, visibleDistance, fogDistance, windVelocity };
 }
 
 export function sunFromGhost(ghostIndex: number, data: SunGhostData): SceneSun {
@@ -202,6 +235,7 @@ export function waterBlockFromGhost(
     surfaceOpacity: data.surfaceOpacity ?? 0.75,
     waveMagnitude: data.waveMagnitude ?? 1.0,
     envMapIntensity: data.envMapIntensity ?? 1.0,
+    removeWetEdges: data.removeWetEdges ?? true,
     liquidType: data.liquidType ?? 0,
   };
 }
@@ -211,6 +245,7 @@ export function ghostToSceneObject(
   className: string,
   ghostIndex: number,
   data: ParsedData,
+  now = 0,
 ): SceneObject | null {
   switch (className) {
     case "TerrainBlock": {
@@ -240,7 +275,7 @@ export function ghostToSceneObject(
     case "TSStatic":
       return tsStaticFromGhost(ghostIndex, data as TSStaticGhostData);
     case "Sky": {
-      const result = skyFromGhost(ghostIndex, data as SkyGhostData);
+      const result = skyFromGhost(ghostIndex, data as SkyGhostData, now);
       log.debug(
         "Sky #%d: materialList=%s fogColor=(%s, %s, %s) visibleDist=%d fogDist=%d useSkyTextures=%s",
         ghostIndex,

@@ -1,5 +1,19 @@
 import { randomUUID } from "node:crypto";
-import type { PacketData, ParsedData, SensorGroupColor } from "t2-demo-parser";
+import {
+  createDefaultRegistry,
+  type GhostAlwaysObjectEventData,
+  type GhostUpdate,
+  type PacketData,
+  type ParsedData,
+  type PrecipitationGhostData,
+  type SensorGroupColor,
+  type SkyGhostData,
+} from "t2-demo-parser";
+import { skyFromGhost, updateSkyFromGhost } from "../src/scene/ghostToScene.js";
+import { shiftSkyWeather } from "../src/scene/skyWeather.js";
+import type { SceneSky } from "../src/scene/types.js";
+import { resolvePrecipitationState } from "../src/weather/data.js";
+import type { PrecipitationState } from "../src/weather/types.js";
 import { ConnectionState } from "./connectionState.js";
 import { isServerMessageCommand } from "./serverMessageDecode.js";
 import type { ServerMessageRosterEntry as RosterEntry } from "./serverMessageState.js";
@@ -16,6 +30,14 @@ export interface WatchStateOptions {
   identityScope?: string;
 }
 
+const registry = createDefaultRegistry();
+const precipitationClassId = registry.getGhostClassId("Precipitation")!;
+const skyClassId = registry.getGhostClassId("Sky")!;
+
+type WeatherGhost =
+  | { kind: "precipitation"; state: PrecipitationState }
+  | { kind: "sky"; state: SceneSky };
+
 type WatchStateSeed = Pick<
   WatchCatchupPayload,
   | "taggedStrings"
@@ -29,6 +51,7 @@ type WatchStateSeed = Pick<
   | "missionSequence"
   | "worldGravity"
   | "ghostingComplete"
+  | "initialGhosts"
   | "hudState"
 >;
 
@@ -45,6 +68,9 @@ type WatchStateSeed = Pick<
 
 export class WatchStateAccumulator {
   private readonly state: ConnectionState;
+  private readonly now: () => number;
+  private weatherGhosts = new Map<number, WeatherGhost>();
+  private weatherTime = 0;
   /** Datablock class names from SimDataBlockEvents (for CRC + payload). */
   readonly dataBlockClassNames = new Map<number, string>();
 
@@ -84,8 +110,9 @@ export class WatchStateAccumulator {
     initialRoster?: ReadonlyMap<number, RosterEntry>,
     options: WatchStateOptions = {},
   ) {
+    this.now = options.now ?? (() => Date.now() / 1000);
     this.state = new ConnectionState({
-      now: options.now ?? (() => Date.now() / 1000),
+      now: this.now,
       identityScope: options.identityScope ?? randomUUID(),
     });
     if (initialRoster)
@@ -109,6 +136,9 @@ export class WatchStateAccumulator {
     this.missionSequence = seed.missionSequence ?? null;
     this.worldGravity = seed.worldGravity;
     this.ghostingComplete = seed.ghostingComplete ?? false;
+    this.weatherGhosts.clear();
+    this.weatherTime = this.now();
+    for (const ghost of seed.initialGhosts) this.applyWeatherGhost(ghost);
     for (const [id, block] of seed.dataBlocks)
       this.dataBlockClassNames.set(id, block.className);
   }
@@ -122,6 +152,8 @@ export class WatchStateAccumulator {
       missionSequence: this.missionSequence,
       worldGravity: this.worldGravity,
       ghostingComplete: this.ghostingComplete,
+      weatherGhosts: this.weatherGhosts,
+      weatherTime: this.weatherTime,
       controlObjectGhostIndex: this.controlObjectGhostIndex,
       controlObjectData: this.controlObjectData,
       selfClientId: this.selfClientId,
@@ -224,7 +256,9 @@ export class WatchStateAccumulator {
     parsed: PacketData,
     onRosterChange?: () => void,
     onRemoteCommand?: (name: string, args: string[]) => void,
+    sourceTime = this.now(),
   ): void {
+    this.weatherTime = sourceTime;
     if (parsed.gameState.controlObjectGhostIndex !== undefined) {
       this.controlObjectGhostIndex = parsed.gameState.controlObjectGhostIndex;
     }
@@ -244,10 +278,21 @@ export class WatchStateAccumulator {
           this.ghostingComplete = true; // GhostAlwaysDone
         } else if (data.message === 2) {
           this.ghostingComplete = false; // EndGhosting
+          this.weatherGhosts.clear();
           // A snapshot between teardown and the next control update must not
           // seed the previous world's camera or replay inputs against its body.
           this.clearControlObject();
         }
+      } else if (data.type === "GhostAlwaysObjectEvent") {
+        const { ghostIndex, classId, objectData } =
+          data as GhostAlwaysObjectEventData;
+        if (classId != null && objectData)
+          this.applyWeatherGhost({
+            index: ghostIndex,
+            type: "create",
+            classId,
+            parsedData: objectData,
+          });
       } else if (data.type === "SimDataBlockEvent") {
         const objectId = data.objectId as number | undefined;
         const className = data.dataBlockClassName as string | undefined;
@@ -275,6 +320,43 @@ export class WatchStateAccumulator {
           args.map((arg) => this.resolveNetString(arg)),
         );
       }
+    }
+    for (const ghost of parsed.ghosts) this.applyWeatherGhost(ghost);
+  }
+
+  private applyWeatherGhost({
+    index,
+    type,
+    classId,
+    parsedData,
+  }: Pick<GhostUpdate, "index" | "type" | "classId" | "parsedData">): void {
+    if (type !== "update") this.weatherGhosts.delete(index);
+    if (!parsedData || type === "delete") return;
+    const previous = this.weatherGhosts.get(index);
+    if (
+      previous?.kind === "precipitation" ||
+      (type === "create" && classId === precipitationClassId)
+    ) {
+      this.weatherGhosts.set(index, {
+        kind: "precipitation",
+        state: resolvePrecipitationState(
+          parsedData as PrecipitationGhostData,
+          this.weatherTime,
+          previous?.kind === "precipitation" ? previous.state : undefined,
+        ),
+      });
+    } else if (
+      previous?.kind === "sky" ||
+      (type === "create" && classId === skyClassId)
+    ) {
+      const data = parsedData as SkyGhostData;
+      this.weatherGhosts.set(index, {
+        kind: "sky",
+        state:
+          previous?.kind === "sky"
+            ? updateSkyFromGhost(previous.state, data, this.weatherTime)
+            : skyFromGhost(index, data, this.weatherTime),
+      });
     }
   }
 
@@ -309,6 +391,32 @@ export class WatchStateAccumulator {
   }
 
   // ── Snapshot exports ──
+
+  getWeatherStates(
+    snapshotTime = this.weatherTime,
+  ): Pick<WatchCatchupPayload, "precipitationStates" | "skyWeatherStates"> {
+    const states: Pick<
+      WatchCatchupPayload,
+      "precipitationStates" | "skyWeatherStates"
+    > = {};
+    for (const [index, ghost] of this.weatherGhosts) {
+      if (ghost.kind === "precipitation") {
+        const state = resolvePrecipitationState({}, snapshotTime, ghost.state);
+        if (state.storm)
+          state.storm = {
+            ...state.storm,
+            startTime: state.storm.startTime - snapshotTime,
+          };
+        (states.precipitationStates ??= []).push([index, state]);
+      } else if (ghost.state.weather) {
+        (states.skyWeatherStates ??= []).push([
+          index,
+          shiftSkyWeather(ghost.state.weather, -snapshotTime),
+        ]);
+      }
+    }
+    return states;
+  }
 
   getTaggedStrings(): Array<[number, string]> {
     return this.state.taggedStringEntries();

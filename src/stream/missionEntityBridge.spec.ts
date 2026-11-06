@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { Quaternion, Vector3 } from "three";
 import { createRuntime } from "../torqueScript/runtime";
 import { registerEngineStubs } from "../torqueScript/engineMethods";
 import { transpile } from "../torqueScript";
@@ -8,7 +10,10 @@ import {
   resolveTeamForObject,
 } from "./missionEntityBridge";
 import { DEFAULT_FLAG_SKINS } from "../stringUtils";
-import type { ShapeEntity } from "../state/gameEntityTypes";
+import type {
+  ShapeEntity,
+  ParticleEmissionDummyEntity,
+} from "../state/gameEntityTypes";
 
 const mockLogger = vi.hoisted(() => ({
   warn: vi.fn(),
@@ -39,6 +44,154 @@ function makeRuntime() {
   };
   return { runtime, exec };
 }
+
+describe("map-placed particle emitters", () => {
+  it("harvests What on Earth's ten emitters with script units and map transforms", () => {
+    const { runtime, exec } = makeRuntime();
+    const asset = (path: string) =>
+      readFileSync(
+        new URL(
+          `../../docs/base/@vl2/z_mappacks/z_DMP2-V0.6.vl2/${path}`,
+          import.meta.url,
+        ),
+        "utf8",
+      );
+    exec(
+      `datablock ParticleEmissionDummyData(defaultEmissionDummy) { timeMultiple = 1; };`,
+    );
+    exec(asset("scripts/zWOEGame.cs"));
+    exec(asset("missions/woe.mis"));
+    const emitters = walkMissionTree(
+      runtime.getObjectByName("MissionGroup")!,
+      runtime,
+    ).filter(
+      (e): e is ParticleEmissionDummyEntity =>
+        e.renderType === "ParticleEmissionDummy",
+    );
+    expect(emitters).toHaveLength(10);
+    expect(
+      emitters.map((e) => e.particleEmitter?.particles.textureName),
+    ).toEqual([
+      "energyHaze",
+      "energyHaze",
+      "energyHaze",
+      "energyHaze",
+      "energyHaze",
+      "energyHaze",
+      "special/underwaterSpark",
+      "precipitation/snowflake002",
+      "precipitation/snowflake002",
+      "precipitation/snowflake002",
+    ]);
+    expect(emitters[0]).toMatchObject({
+      position: [-411.576, 143.05, -387.521],
+      scale: [1, 1, 1],
+      emissionVelocity: 1,
+      timeMultiple: 1,
+      particleEmitter: {
+        ejectionVelocity: 5,
+        ejectionOffset: 80,
+        particles: { lifetimeMS: 3500, gravityCoefficient: -2.5 },
+      },
+    });
+    const rain = emitters[6];
+    const direction = new Vector3(0, 1, 0).applyQuaternion(
+      new Quaternion(...rain.rotation!),
+    );
+    expect(direction.y).toBeCloseTo(-1, 4);
+    expect(rain.particleEmitter).toMatchObject({
+      ejectionPeriodMS: 1,
+      ejectionVelocity: 350,
+      orientParticles: true,
+    });
+    runtime.destroy();
+  });
+
+  it("resolves object datablock references and preserves zero scalar settings", () => {
+    const { runtime, exec } = makeRuntime();
+    exec(`
+      datablock ParticleData(Smoke) { textureName = "smoke"; };
+      datablock ParticleEmitterData(SmokeEmitter) { particles = Smoke; };
+      datablock ParticleEmissionDummyData(Stopped) { timeMultiple = 0; };
+      new ParticleEmissionDummy(Dummy) { datablock = Stopped; emitter = SmokeEmitter; velocity = 0; };
+      new ParticleEmissionDummy(Unresolved) { emitter = "missing"; };
+    `);
+    const entity = buildGameEntityFromMission(
+      runtime.getObjectByName("Dummy")!,
+      runtime,
+    );
+    expect(entity).toMatchObject({
+      renderType: "ParticleEmissionDummy",
+      emissionVelocity: 0,
+      timeMultiple: 0,
+      particleEmitter: { particles: { textureName: "smoke" } },
+    });
+    expect(
+      buildGameEntityFromMission(
+        runtime.getObjectByName("Unresolved")!,
+        runtime,
+      ),
+    ).toMatchObject({
+      renderType: "ParticleEmissionDummy",
+      particleEmitter: undefined,
+      emissionVelocity: 1,
+      timeMultiple: 1,
+    });
+    runtime.destroy();
+  });
+
+  it("resolves scripted datablock ids for the dummy, emitter and particle", () => {
+    const { runtime, exec } = makeRuntime();
+    exec(`
+      datablock ParticleData(Smoke) { textureName = "smoke"; };
+      datablock ParticleEmitterData(SmokeEmitter) { particles = "Smoke"; };
+      datablock ParticleEmissionDummyData(HalfTime) { timeMultiple = 0.5; };
+      SmokeEmitter.particles = Smoke.getId();
+      new ParticleEmissionDummy(Dummy) {
+        datablock = HalfTime.getId();
+        emitter = SmokeEmitter.getId();
+      };
+    `);
+    expect(
+      buildGameEntityFromMission(runtime.getObjectByName("Dummy")!, runtime),
+    ).toMatchObject({
+      renderType: "ParticleEmissionDummy",
+      timeMultiple: 0.5,
+      particleEmitter: { particles: { textureName: "smoke" } },
+    });
+    runtime.destroy();
+  });
+});
+
+describe("mission datablock references", () => {
+  it("keeps resolved names in shape and camera entities for id and object references", () => {
+    const { runtime, exec } = makeRuntime();
+    exec(`
+      datablock ItemData(Flag) { shapeFile = "flag.dts"; };
+      datablock CameraData(Observer) {};
+      new Item(NumericFlag) { datablock = Flag.getId(); team = 2; };
+      new Camera(HandleCamera) {};
+    `);
+    const camera = runtime.getObjectByName("HandleCamera")!;
+    camera.datablock = runtime.state.datablocks.get("Observer");
+    expect(
+      buildGameEntityFromMission(
+        runtime.getObjectByName("NumericFlag")!,
+        runtime,
+      ),
+    ).toMatchObject({
+      renderType: "Shape",
+      dataBlock: "Flag",
+      shapeName: "flag.dts",
+      skinName: DEFAULT_FLAG_SKINS[2],
+    });
+    expect(buildGameEntityFromMission(camera, runtime)).toMatchObject({
+      renderType: "Camera",
+      cameraDataBlock: "Observer",
+    });
+    runtime.destroy();
+  });
+});
 
 describe("mission-type visibility fidelity", () => {
   it("keeps interiors with mismatched missionTypesList visible", () => {

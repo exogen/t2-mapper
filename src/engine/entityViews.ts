@@ -11,6 +11,9 @@ import { markTransformChanged } from "../transformChanges";
 import type { MountPoints } from "./shapeMounts";
 import type { GameEngine } from "./gameEngine";
 
+export type EntityViewDisposalReason =
+  "removed" | "replaced" | "hidden" | "shutdown";
+
 /** One entity's three.js objects, owned by the engine. */
 export interface EntityView {
   /** Added to the entity root; named by entity id for the pose pass. */
@@ -24,7 +27,8 @@ export interface EntityView {
   /** Where objects mounted on this entity attach (players in seats,
    *  turrets on vehicles), once its model has loaded. */
   readonly mounts?: MountPoints;
-  dispose(): void;
+  /** Only a removed world object may leave transient effects behind. */
+  dispose(reason?: EntityViewDisposalReason): void;
 }
 
 /**
@@ -134,8 +138,17 @@ export class EntityViewRegistry {
     // must not have its state cleared by its predecessor.
     for (const [id, entry] of this.views) {
       const parentId = placement.get(id);
-      if (parentId === undefined || parentId !== entry.parentId)
-        this.remove(id);
+      if (parentId === undefined || parentId !== entry.parentId) {
+        const next = byId.get(id);
+        this.remove(
+          id,
+          !next
+            ? "removed"
+            : next.hidden || next.debugHidden
+              ? "hidden"
+              : "replaced",
+        );
+      }
     }
 
     // Parents before the objects mounted on them.
@@ -151,7 +164,7 @@ export class EntityViewRegistry {
         parent = this.views.get(parentId);
         if (!parent?.view.mounts) {
           // The parent draws nothing to mount on (hidden, or no shape).
-          this.remove(entity.id);
+          this.remove(entity.id, "hidden");
           return;
         }
       }
@@ -163,7 +176,7 @@ export class EntityViewRegistry {
           return;
         }
       }
-      if (current) this.remove(entity.id);
+      if (current) this.remove(entity.id, "replaced");
       const factory = this.factories[entity.renderType] as EntityViewFactory;
       const view = factory(entity, engine, parent != null);
       const entry: ViewEntry = {
@@ -191,17 +204,17 @@ export class EntityViewRegistry {
     return this.views.get(id)?.view;
   }
 
-  private remove(id: string): void {
+  private remove(id: string, reason: EntityViewDisposalReason): void {
     const current = this.views.get(id);
     if (!current) return;
     this.views.delete(id);
     if (current.detach) current.detach();
     else this.root.remove(current.view.root);
-    current.view.dispose();
+    current.view.dispose(reason);
   }
 
   dispose(): void {
-    for (const id of [...this.views.keys()]) this.remove(id);
+    for (const id of [...this.views.keys()]) this.remove(id, "shutdown");
   }
 }
 

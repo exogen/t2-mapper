@@ -188,7 +188,10 @@ describe("checkpoint sidecar loading", () => {
   });
   it.each([
     11,
-    DEMO_CHECKPOINT_VERSION - 1,
+    15, // Before ambient emitter references and MatrixF positions were kept.
+    16, // Before weather configuration, storm transitions and lightning history.
+    17, // May contain incorrect weather radii and irrecoverable strike rates.
+    18, // May restore an outdated fade or static Sky state after a seek.
     DEMO_CHECKPOINT_VERSION + 1,
     DEMO_CHECKPOINT_VERSION - 0.5,
     String(DEMO_CHECKPOINT_VERSION),

@@ -22,6 +22,8 @@ import {
 } from "../shapeMaterial";
 import { glslColorSpace } from "../shaderUtils";
 import { computeSkyFogBands, skyFogAlphaGlsl } from "../skyFogBands";
+import { engineStore } from "../state/engineStore";
+import { streamClock } from "../state/streamPlaybackStore";
 import { commandCircuitStore } from "../state/commandCircuitStore";
 import type { SkyEntity } from "../state/gameEntityTypes";
 import {
@@ -34,7 +36,11 @@ import { startCloudLayers } from "./cloudLayers";
 import { loadSharedDetailMapList } from "./detailMapList";
 import { createDynamicFog } from "./dynamicFog";
 import type { EntityView } from "./entityViews";
-import { fogStateFromScene, type FogState } from "./fogState";
+import {
+  fogStateFromScene,
+  updateFogPercentages,
+  type FogState,
+} from "./fogState";
 import { FramePriority } from "./framePriority";
 import { combineCleanups, reaction } from "./storeReaction";
 import type { GameEngine } from "./gameEngine";
@@ -421,8 +427,24 @@ function startSolidColorSky(
   );
 }
 
-function sameSkyData(a: SceneSky, b: SceneSky): boolean {
-  return a === b || JSON.stringify(a) === JSON.stringify(b);
+function sameSkyAssets(a: SceneSky, b: SceneSky): boolean {
+  return (
+    a === b ||
+    (a.materialList === b.materialList &&
+      a.useSkyTextures === b.useSkyTextures &&
+      JSON.stringify(a.skySolidColor) === JSON.stringify(b.skySolidColor) &&
+      JSON.stringify(a.fogColor) === JSON.stringify(b.fogColor) &&
+      JSON.stringify(a.fogVolumes) === JSON.stringify(b.fogVolumes) &&
+      JSON.stringify(a.cloudLayers) === JSON.stringify(b.cloudLayers))
+  );
+}
+
+function skySourceTime(): number {
+  const { playback, runtime } = engineStore.getState();
+  if (playback.recording) return streamClock.worldTime;
+  return runtime.runtime
+    ? (Date.now() - runtime.runtime.state.startTime) / 1000
+    : 0;
 }
 
 /**
@@ -435,7 +457,7 @@ export function createSkyView(
   entity: SkyEntity,
   engine: GameEngine,
 ): EntityView {
-  const { skyData } = entity;
+  let { skyData } = entity;
   log.debug(
     "Rendering: materialList=%s, useSkyTextures=%s",
     skyData.materialList,
@@ -454,6 +476,39 @@ export function createSkyView(
 
   // Parse full fog state from typed scene sky
   const fogState = fogStateFromScene(skyData);
+  updateFogPercentages(fogState, skyData, skySourceTime());
+  // Register before scene fog and sky content sample the volume densities.
+  const updateWeather = engine.scheduler.add(FramePriority.PostCamera, () => {
+    const weather = skyData.weather;
+    if (!weather) return;
+    const now = skySourceTime();
+    if (weather.fog || weather.realFog)
+      updateFogPercentages(fogState, skyData, now);
+    if (
+      !settingsStore.getState().renderOnDemand ||
+      commandCircuitStore.getState().active
+    )
+      return;
+
+    const { playback, runtime } = engineStore.getState();
+    const clockRunning = playback.recording
+      ? playback.status === "playing" && !streamClock.worldPaused
+      : !!runtime.runtime;
+    if (!clockRunning) return;
+    const cloud = weather.cloudStorm;
+    const movingClouds =
+      cloud &&
+      weather.cloudsOn !== false &&
+      now < cloud.startTime + cloud.duration;
+    const movingFog =
+      skyFog &&
+      ((weather.realFog && weather.fogOn && skyData.fogVolumes.length > 1) ||
+        weather.fog?.some(
+          (band) =>
+            band.from !== band.to && now < band.startTime + band.duration,
+        ));
+    if (movingClouds || movingFog) engine.invalidate();
+  });
 
   log.debug(
     "fogState: fogColor=(%s, %s, %s) visibleDistance=%d fogDistance=%d enabled=%s volumes=%d",
@@ -485,16 +540,32 @@ export function createSkyView(
         ? startSkyBox(engine, root, materialList, currentFog)
         : startSolidColorSky(engine, root, linearSkySolidColor, currentFog),
       // Cloud layers render independently of skybox textures
-      startCloudLayers(engine, root, skyData, currentFog),
+      startCloudLayers(
+        engine,
+        root,
+        skyData,
+        currentFog,
+        () => skyData,
+        skySourceTime,
+      ),
       () => engine.invalidate(),
     );
 
   return {
     root,
-    // Identical sky data (a rebuilt identity) keeps what's drawn.
-    update: (next) =>
-      next.renderType === "Sky" && sameSkyData(next.skyData, skyData),
+    update(next) {
+      if (next.renderType !== "Sky" || !sameSkyAssets(next.skyData, skyData))
+        return false;
+      if (next.skyData !== skyData) {
+        skyData = next.skyData;
+        Object.assign(fogState, fogStateFromScene(skyData));
+        updateFogPercentages(fogState, skyData, skySourceTime());
+        engine.invalidate();
+      }
+      return true;
+    },
     dispose: combineCleanups(
+      updateWeather,
       () => fog?.dispose(),
       reaction(skyModeStore, selectSceneFog, (enabled) => {
         fog?.setEnabled(enabled);

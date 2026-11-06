@@ -115,6 +115,24 @@ export class DIFCollision {
     return (node & 0x4000) !== 0;
   }
 
+  /** Retail Interior::getZoneForPoint (0x00510050). Uses local Three axes;
+   * zero is exterior, positive values are authored air zones, -1 is solid
+   * or the special invalid-zone leaf. Room air is distinct from solid. */
+  zoneForPoint(point: Vector3): number {
+    if (!this.interior.bspNodes.length) return 0;
+    let node = 0;
+    while (!(node & 0x8000)) {
+      const branch = this.interior.bspNodes[node];
+      let distance =
+        this.planes[branch.planeIndex & 0x7fff].distanceToPoint(point);
+      if (branch.planeIndex & 0x8000) distance = -distance;
+      node = distance >= 0 ? branch.frontIndex : branch.backIndex;
+    }
+    if (node & 0x4000) return -1;
+    const zone = node & 0x3fff;
+    return zone === 0x0fff ? -1 : zone;
+  }
+
   /** Writes a reusable result. A solid start hits at t=0, including zero-length rays. */
   castRay(start: Vector3, end: Vector3, out: DIFRayHit): boolean {
     if (!this.interior.bspNodes.length) return false;

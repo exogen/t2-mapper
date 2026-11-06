@@ -13,6 +13,12 @@ import type {
   LightAnchor,
 } from "../stream/types";
 import type { WheelState } from "../stream/vehicleWheels";
+import type { EmitterDataResolved } from "../particles/types";
+import type {
+  LightningConfig,
+  LightningRequest,
+  PrecipitationConfig,
+} from "../weather/types";
 import type {
   SceneTerrainBlock,
   SceneInteriorInstance,
@@ -46,6 +52,9 @@ export type RenderType =
   | "Sprite"
   | "Flare"
   | "AudioEmitter"
+  | "ParticleEmissionDummy"
+  | "Precipitation"
+  | "Lightning"
   | "Camera"
   | "WayPoint"
   | "None";
@@ -311,6 +320,27 @@ export interface AudioEmitterEntity extends PositionedBase {
   audioVolume?: number;
 }
 
+/** A persistent, map-placed particle emitter rather than a DTS shape. */
+export interface ParticleEmissionDummyEntity extends PositionedBase {
+  renderType: "ParticleEmissionDummy";
+  particleEmitter?: EmitterDataResolved;
+  /** Scalar velocity along the emitter's local +Z axis, in Torque space. */
+  emissionVelocity?: number;
+  /** Multiplies the time passed to particle emission. */
+  timeMultiple?: number;
+}
+
+export interface PrecipitationEntity extends PositionedBase {
+  renderType: "Precipitation";
+  precipitation: PrecipitationConfig;
+}
+
+export interface LightningEntity extends PositionedBase {
+  renderType: "Lightning";
+  lightning: LightningConfig;
+  lightningRequests?: LightningRequest[];
+}
+
 export interface CameraEntity extends PositionedBase {
   renderType: "Camera";
   cameraDataBlock?: string;
@@ -347,6 +377,9 @@ export type GameEntity =
   | SpriteEntity
   | FlareEntity
   | AudioEmitterEntity
+  | ParticleEmissionDummyEntity
+  | PrecipitationEntity
+  | LightningEntity
   | CameraEntity
   | WayPointEntity
   | NoneEntity;

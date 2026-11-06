@@ -82,12 +82,14 @@ describe("skyFromGhost", () => {
         { texture: "cloud1.png", heightPercent: 0.35, speed: 0.001 },
       ],
       windVelocity: { x: 1, y: 0, z: 0 },
+      windEffectPrecipitation: true,
     });
     expect(result.fogVolumes).toHaveLength(1);
     expect(result.fogVolumes[0].visibleDistance).toBe(500);
     expect(result.cloudLayers).toHaveLength(1);
     expect(result.cloudLayers[0].texture).toBe("cloud1.png");
     expect(result.visibleDistance).toBe(2000);
+    expect(result.windEffectPrecipitation).toBe(true);
   });
 
   it("defaults to empty arrays for missing volumes/layers", () => {
@@ -135,9 +137,11 @@ describe("waterBlockFromGhost", () => {
       surfaceName: "water.png",
       envMapName: "envmap.png",
       scale: { x: 512, y: 512, z: 10 },
+      removeWetEdges: false,
     });
     expect(result.surfaceName).toBe("water.png");
     expect(result.envMapName).toBe("envmap.png");
+    expect(result.removeWetEdges).toBe(false);
   });
 });
 

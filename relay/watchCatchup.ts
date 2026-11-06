@@ -17,9 +17,17 @@ export function buildCatchupPayload(options: {
   watchState: WatchStateAccumulator;
   epoch: number;
   serverAddress: string;
+  /** Replay seeks can advance the source clock without a new packet. */
+  sourceTime?: number;
 }): WatchCatchupPayload {
-  const { packetParser, ghostState, watchState, epoch, serverAddress } =
-    options;
+  const {
+    packetParser,
+    ghostState,
+    watchState,
+    epoch,
+    serverAddress,
+    sourceTime,
+  } = options;
   const dbMap =
     packetParser.getDataBlockDataMap() ?? new Map<number, ParsedData>();
   return {
@@ -39,6 +47,7 @@ export function buildCatchupPayload(options: {
     connectionState: packetParser.getConnectionProtocolState(),
     nextRecvEventSeq: packetParser.getNextRecvEventSeq(),
     initialGhosts: ghostState.toInitialGhosts(),
+    ...watchState.getWeatherStates(sourceTime),
     controlObjectGhostIndex: watchState.controlObjectGhostIndex,
     controlObjectData: watchState.controlObjectData,
     missionName: watchState.missionName,

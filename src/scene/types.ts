@@ -1,3 +1,5 @@
+import type { SkyWeather } from "./skyWeather";
+
 /** 3D vector in Torque coordinate space (X-right, Y-forward, Z-up). */
 export interface Vec3 {
   x: number;
@@ -97,6 +99,9 @@ export interface SceneSky {
   fogVolumes: SceneSkyFogVolume[];
   cloudLayers: SceneSkyCloudLayer[];
   windVelocity: Vec3;
+  /** Whether sky wind contributes to native precipitation drift. */
+  windEffectPrecipitation?: boolean;
+  weather?: SkyWeather;
 }
 
 export interface SceneSun {
@@ -126,6 +131,8 @@ export interface SceneWaterBlock {
   surfaceOpacity: number;
   waveMagnitude: number;
   envMapIntensity: number;
+  /** False expands the native liquid overlap bounds beyond the fluid tile. */
+  removeWetEdges?: boolean;
   /** WaterBlock::EWaterType — 0-3 water, 4-6 lava, 7 quicksand. */
   liquidType: number;
 }

@@ -81,9 +81,6 @@ export function createDynamicFog(
     fogShaderInstalled = true;
   }
 
-  // Pack fog volume data once (it doesn't change during runtime)
-  const fogVolumeData = packFogVolumeData(fogState.fogVolumes);
-
   const applyEnabled = () => {
     if (!fog) return;
     if (enabled) {
@@ -110,7 +107,11 @@ export function createDynamicFog(
       scene.fog = fog;
 
       // Initial update of global fog uniforms
-      updateGlobalFogUniforms(cameraHeight, fogVolumeData);
+      updateGlobalFogUniforms(
+        cameraHeight,
+        packFogVolumeData(fogState.fogVolumes),
+        enabled,
+      );
       applyEnabled();
 
       return () => {
@@ -121,9 +122,7 @@ export function createDynamicFog(
         setPerspectiveFar(perspective, DEFAULT_CAMERA_FAR);
       };
     }),
-    // Update fog parameters each frame based on camera height. The packed
-    // volume data is copied when the fog starts; per frame only the
-    // scalars change.
+    // Storm fog changes the per-volume factor as well as the camera height.
     engine.scheduler.add(FramePriority.PostCamera, ({ camera }) => {
       if (!fog) return;
 
@@ -132,6 +131,10 @@ export function createDynamicFog(
       globalFogUniforms.fogEnabled.value = enabled;
 
       if (enabled) {
+        packFogVolumeData(
+          fogState.fogVolumes,
+          globalFogUniforms.fogVolumeData.value,
+        );
         // Update Three.js basic fog
         const [near, far] = calculateFogParameters(fogState);
         // When fogDistanceScale > 1 (camera tour), stretch haze range so

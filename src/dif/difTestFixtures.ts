@@ -10,6 +10,8 @@ export function createDIFTestBuffer(
     surfacePairs?: number;
     /** Closed box with an invisible bottom and a six-plane BSP/hull. */
     collision?: boolean;
+    /** One room joined to the exterior by a four-point portal. */
+    portals?: boolean;
     vehicleCollision?: "empty" | "box";
     resourceObjects?: boolean;
   } = {},
@@ -42,7 +44,7 @@ export function createDIFTestBuffer(
     (c) => c.charCodeAt(0),
   );
   const details = options.details ?? 1;
-  const collision = options.collision ?? false;
+  const collision = (options.collision || options.portals) ?? false;
   const surfaceCount = collision ? 5 : (options.surfacePairs ?? 1) * 2;
   const collisionRefs = [0, 0x80000000, 1, 2, 3, 4];
   u32(44);
@@ -79,7 +81,7 @@ export function createDIFTestBuffer(
       for (let i = 0; i < 6; i++) {
         u16(i);
         u16(0x8000);
-        u16(i === 5 ? 0xc000 : i + 1);
+        u16(i === 5 ? (options.portals ? 0x8001 : 0xc000) : i + 1);
       }
     u32(collision ? 1 : 0);
     if (collision) {
@@ -101,11 +103,40 @@ export function createDIFTestBuffer(
       ? [0, 1, 2, 3, 4, 6, 7, 5, 0, 4, 1, 5, 2, 3, 6, 7, 0, 2, 4, 6, 1, 5, 3, 7]
       : [0, 1, 2, 3, 1, 0, 3, 2]
     ).forEach(u32);
-    u32(0); // winding indices
-    u32(0);
-    u32(0);
-    u32(0);
-    u32(0); // zones, surfaces, portals, portal data
+    u32(options.portals ? 1 : 0);
+    offsets.windingIndices = bytes.length;
+    if (options.portals) {
+      u32(0);
+      u32(4);
+    }
+    u32(options.portals ? 2 : 0);
+    offsets.zones = bytes.length;
+    if (options.portals)
+      for (let zone = 0; zone < 2; zone++) {
+        u16(zone);
+        u16(1);
+        u32(0);
+        u16(1);
+        u16(0);
+      }
+    u32(options.portals ? 1 : 0);
+    offsets.zoneSurfaces = bytes.length;
+    if (options.portals) u16(0);
+    u32(options.portals ? 2 : 0);
+    offsets.zonePortals = bytes.length;
+    if (options.portals) {
+      u16(0);
+      u16(0);
+    }
+    u32(options.portals ? 1 : 0);
+    offsets.portals = bytes.length;
+    if (options.portals) {
+      u16(0);
+      u16(1);
+      u32(0);
+      u16(0);
+      u16(1);
+    }
     u32(surfaceCount);
     for (let surface = 0; surface < surfaceCount; surface++) {
       offsets.surface = bytes.length;

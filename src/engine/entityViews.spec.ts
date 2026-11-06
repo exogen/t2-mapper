@@ -70,6 +70,24 @@ it("ignores hidden entities and render types it doesn't handle", () => {
   expect(registry.root.children).toHaveLength(0);
 });
 
+it("distinguishes object removal from hiding, replacement and shutdown", () => {
+  const reasons: (string | undefined)[] = [];
+  const registry = new EntityViewRegistry({
+    Sky: () => ({
+      root: new Group(),
+      dispose: (reason) => reasons.push(reason),
+    }),
+  });
+  registry.sync([sky("a")], engine);
+  registry.sync([{ ...sky("a"), debugHidden: true }], engine);
+  registry.sync([sky("a")], engine);
+  registry.sync([sky("a")], engine);
+  registry.sync([], engine);
+  registry.sync([sky("a")], engine);
+  registry.dispose();
+  expect(reasons).toEqual(["hidden", "replaced", "removed", "shutdown"]);
+});
+
 describe("mounted objects", () => {
   function shape(id: string, fields: Partial<GameEntity> = {}): GameEntity {
     return { id, renderType: "Shape", ...fields } as GameEntity;

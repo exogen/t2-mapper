@@ -8,6 +8,11 @@ import { EntityViewRegistry } from "./entityViews";
 import { createCameraView, createWayPointView } from "./markerViews";
 import { createForceFieldView } from "./forceFieldView";
 import { createAudioEmitterView } from "./audioEmitterView";
+import { createParticleEmissionDummyView } from "./particleEmissionDummyView";
+import { AmbientParticles } from "./ambientParticles";
+import { createPrecipitationView } from "./precipitationView";
+import { createLightningView } from "./lightningView";
+import { LightningEffects } from "./lightningEffects";
 import { createInteriorView } from "./interiorView";
 import { createTerrainView } from "./terrainView";
 import { createWaterView } from "./waterView";
@@ -62,6 +67,9 @@ export class GameEngine {
     WayPoint: createWayPointView,
     ForceFieldBare: createForceFieldView,
     AudioEmitter: createAudioEmitterView,
+    ParticleEmissionDummy: createParticleEmissionDummyView,
+    Precipitation: createPrecipitationView,
+    Lightning: createLightningView,
     InteriorInstance: createInteriorView,
     TerrainBlock: createTerrainView,
     WaterBlock: createWaterView,
@@ -84,10 +92,15 @@ export class GameEngine {
   private beforeRenderHooks: readonly RenderHook[] = [];
   private afterRenderHooks: readonly RenderHook[] = [];
 
+  readonly ambientParticles: AmbientParticles;
+  readonly lightningEffects: LightningEffects;
+
   readonly features: EngineFeatures;
 
   constructor(features: EngineFeatures = { jiggle: false }) {
     this.features = features;
+    this.ambientParticles = new AmbientParticles(this);
+    this.lightningEffects = new LightningEffects(this);
     this.scheduler.add(FramePriority.Tick, (frame) =>
       this.ticks.advance(frame.delta),
     );

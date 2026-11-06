@@ -227,6 +227,7 @@ export class DemoReplaySource {
       missionName: initial.missionName ?? null,
       worldGravity: values.gravity,
       ghostingComplete: initial.initialGhosts.length > 0,
+      initialGhosts: initial.initialGhosts,
       hudState: {
         ...hud,
         playerRoster: Array.from(values.playerRoster, ([clientId, entry]) => ({
@@ -483,6 +484,7 @@ export class DemoReplaySource {
       watchState: this.watch,
       epoch,
       serverAddress: `replay:${sessionId}`,
+      sourceTime: this.currentTick * TICK_SEC,
     });
     // SendPacket markers stay source-local. A passive browser must accept ACKs
     // for packets it did not send while retaining this exact receive window.

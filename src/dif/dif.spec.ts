@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import fs from "node:fs";
 import { parseDIF } from "./dif";
 import { createDIFTestBuffer } from "./difTestFixtures";
 
@@ -62,5 +63,94 @@ describe("Tribes 2 DIF reader", () => {
     expect(() =>
       parseDIF(createDIFTestBuffer({ axisEncoding: 6 }).buffer),
     ).toThrow(/axis encoding/);
+  });
+
+  it("retains authored zones, portal fan ranges and both sides of the portal graph", () => {
+    const interior = parseDIF(createDIFTestBuffer({ portals: true }).buffer)
+      .interiors[0];
+    expect(interior.windingIndices).toEqual([
+      { windingStart: 0, windingCount: 4 },
+    ]);
+    expect(interior.zones).toEqual([
+      {
+        portalStart: 0,
+        portalCount: 1,
+        surfaceStart: 0,
+        surfaceCount: 1,
+        flags: 0,
+      },
+      {
+        portalStart: 1,
+        portalCount: 1,
+        surfaceStart: 0,
+        surfaceCount: 1,
+        flags: 0,
+      },
+    ]);
+    expect(interior.zoneSurfaces).toEqual([0]);
+    expect(interior.zonePortals).toEqual([0, 0]);
+    expect(interior.portals).toEqual([
+      {
+        planeIndex: 0,
+        triFanCount: 1,
+        triFanStart: 0,
+        zoneFront: 0,
+        zoneBack: 1,
+      },
+    ]);
+  });
+
+  it.each([
+    ["windingIndices", 4, 4, 100],
+    ["zones", 0, 2, 100],
+    ["zones", 4, 4, 100],
+    ["zoneSurfaces", 0, 2, 100],
+    ["zonePortals", 0, 2, 100],
+    ["portals", 0, 2, 100],
+    ["portals", 4, 4, 100],
+    ["portals", 8, 2, 100],
+    ["portals", 10, 2, 100],
+    ["bspNodes", 34, 2, 0x8003],
+  ] as const)(
+    "rejects invalid %s portal/zone references",
+    (section, relative, width, value) => {
+      const { buffer, offsets } = createDIFTestBuffer({ portals: true });
+      const view = new DataView(buffer);
+      if (width === 2) view.setUint16(offsets[section] + relative, value, true);
+      else view.setUint32(offsets[section] + relative, value, true);
+      expect(() => parseDIF(buffer)).toThrow(/invalid .*index|invalid range/);
+    },
+  );
+
+  it("accepts stock room portals and unused unassigned portal slots", () => {
+    const bytes = fs.readFileSync(
+      "docs/base/@vl2/interiors.vl2/interiors/sbunk2.dif",
+    );
+    const file = parseDIF(
+      bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    );
+    const interior = file.interiors[0];
+    expect(interior.zones.length).toBeGreaterThan(1);
+    expect(interior.zonePortals.length).toBeGreaterThan(0);
+    expect(
+      file.interiors.some((detail) =>
+        detail.portals.some((portal, index) => {
+          if (portal.zoneFront !== 0xffff && portal.zoneBack !== 0xffff)
+            return false;
+          expect(detail.zonePortals).not.toContain(index);
+          return true;
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a zone graph that references an unassigned or unrelated portal", () => {
+    for (const front of [1, 0xffff]) {
+      const { buffer, offsets } = createDIFTestBuffer({ portals: true });
+      new DataView(buffer).setUint16(offsets.portals + 8, front, true);
+      expect(() => parseDIF(buffer)).toThrow(
+        /unrelated portal|unassigned portal/,
+      );
+    }
   });
 });

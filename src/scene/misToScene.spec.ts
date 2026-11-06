@@ -139,6 +139,19 @@ describe("interiorFromMis", () => {
 });
 
 describe("skyFromMis", () => {
+  it("preserves the precipitation wind flag in numeric and boolean form", () => {
+    expect(skyFromMis(makeObj("Sky", {})).windEffectPrecipitation).toBe(false);
+    for (const value of ["1", "true"])
+      expect(
+        skyFromMis(makeObj("Sky", { windEffectPrecipitation: value }))
+          .windEffectPrecipitation,
+      ).toBe(true);
+    for (const value of ["0", "false"])
+      expect(
+        skyFromMis(makeObj("Sky", { windEffectPrecipitation: value }))
+          .windEffectPrecipitation,
+      ).toBe(false);
+  });
   it("parses fog volumes", () => {
     const obj = makeObj("Sky", {
       materialList: "sky_ice.dml",

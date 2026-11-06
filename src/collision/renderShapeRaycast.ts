@@ -7,6 +7,7 @@ import {
   type DTSCollisionMesh,
 } from "../dts/dtsCollision";
 import { castWorldRay, type Vec3 } from "./worldCollision";
+import { castWaterRay } from "./waterLevel";
 
 interface ShapeEntry {
   shape: DTSShape;
@@ -72,6 +73,21 @@ export class RenderShapeRaycast {
   getShape(id: string): DTSShape | undefined {
     const entry = this.shapes.get(id);
     return entry?.active() ? entry.shape : undefined;
+  }
+
+  /** Lightning::strikeRandomPoint (0x628590) casts against every container
+   * type and accepts a candidate only when it is the first object hit. The
+   * native client/server both use ShapeBase LOS hulls, not visual meshes. */
+  lightningTargetExposed(start: Vec3, end: Vec3, targetId: string): boolean {
+    if (!this.shapes.get(targetId)?.active()) return false;
+    const from = new Vector3(start[1], start[2], start[0]);
+    const to = new Vector3(end[1], end[2], end[0]);
+    const best = this.castShapes(from, to, "TSStatic");
+    if (this.hitId !== targetId) return false;
+    const world = castWorldRay(start, end);
+    if (world && world.t < best) return false;
+    const water = castWaterRay(start, end);
+    return !water || water.t >= best;
   }
 
   /** RepairProjectile::advanceTime accepts only the nearest container hit when

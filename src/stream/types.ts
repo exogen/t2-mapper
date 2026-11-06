@@ -11,6 +11,8 @@ import type { ServerLoadInfo } from "../../relay/types";
 import type { DTSImageOffset } from "../dts/dtsMount";
 import type { ImageAnimationState } from "./imageAnimation";
 import type { WheelState } from "./vehicleWheels";
+import type { EmitterDataResolved } from "../particles/types";
+import type { LightningConfig, PrecipitationConfig } from "../weather/types";
 
 export type { ServerLoadInfo };
 
@@ -440,6 +442,12 @@ export interface StreamEntity {
   audioMaxDistance?: number;
   audioMinLoopGap?: number;
   audioMaxLoopGap?: number;
+  /** ParticleEmissionDummy's canonical emitter and scalar emission settings. */
+  particleEmitter?: EmitterDataResolved;
+  precipitation?: PrecipitationConfig;
+  lightning?: LightningConfig;
+  emissionVelocity?: number;
+  timeMultiple?: number;
   clientAnimation?: ClientAnimationState;
   /** WheeledVehicle per-wheel state, from ghost data. */
   wheels?: WheelState[];
@@ -690,6 +698,8 @@ export interface PreloadAsset {
 }
 
 export interface StreamingPlayback {
+  /** Entity lifetimes were replaced by a mission reset or checkpoint restore. */
+  readonly worldGeneration?: number;
   /** Authoritative hydration replaced the timeline; rebase render clocks/snapshots. */
   readonly playbackRevision?: number;
   /** Camera and follow controls are entirely local to this spectator. */
@@ -697,6 +707,7 @@ export interface StreamingPlayback {
   /** Simulation position after checkpoint restore, before the last step's ticks. */
   readonly lastStepStartTimeSec?: number;
   readonly debrisHistory?: import("./debrisHistory").DebrisHistory;
+  readonly lightningHistory?: import("./lightningHistory").LightningHistory;
   readonly groundEffectHistory?: import("./groundEffectHistory").GroundEffectHistory;
   /** Retained seek checkpoints, in recorded ticks. Absent on live streams. */
   readonly checkpointTicks?: readonly number[];

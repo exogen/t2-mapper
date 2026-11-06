@@ -48,6 +48,7 @@ export const TYPE_MASKS: Record<string, number> = {
   MoveableObjectType: BIT(26),
   DamagableItemObjectType: BIT(27),
   TurretObjectType: BIT(28),
+  GeneratorObjectType: BIT(30),
 };
 
 const M = TYPE_MASKS;
@@ -125,11 +126,11 @@ export const ENGINE_CLASSES = new CaseInsensitiveMap<EngineClassInfo>([
   ["WaterBlock", cls("SceneObject", M.WaterObjectType)],
   ["Sky", cls("SceneObject", M.EnvironmentObjectType)],
   ["Sun", cls("SceneObject", M.EnvironmentObjectType)],
-  ["Lightning", cls("SceneObject", M.EnvironmentObjectType)],
-  ["Precipitation", cls("SceneObject", M.EnvironmentObjectType)],
+  ["Lightning", cls("GameBase", M.StaticObjectType | M.EnvironmentObjectType)],
+  ["Precipitation", cls("GameBase", M.ProjectileObjectType)],
   ["AudioEmitter", cls("SceneObject", M.EnvironmentObjectType)],
   ["fxSunLight", cls("SceneObject", M.EnvironmentObjectType)],
-  ["ParticleEmissionDummy", cls("SceneObject", M.EnvironmentObjectType)],
+  ["ParticleEmissionDummy", cls("GameBase", M.EnvironmentObjectType)],
   ["MissionArea", cls("SimObject")],
   ["Path", cls("SimGroup", 0, "none", "group")],
   ["Marker", cls("SceneObject")],
@@ -158,6 +159,9 @@ export const ENGINE_CLASSES = new CaseInsensitiveMap<EngineClassInfo>([
   ["EffectProfile", cls("SimDataBlock")],
   ["ParticleData", cls("SimDataBlock")],
   ["ParticleEmitterData", cls("GameBaseData")],
+  ["ParticleEmissionDummyData", cls("GameBaseData")],
+  ["PrecipitationData", cls("GameBaseData")],
+  ["LightningData", cls("GameBaseData")],
   ["ExplosionData", cls("GameBaseData")],
   ["DebrisData", cls("GameBaseData")],
   ["ProjectileData", cls("GameBaseData")],

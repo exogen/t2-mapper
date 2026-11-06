@@ -69,6 +69,8 @@ export function startEngineSystems(engine: GameEngine): () => void {
     // First: everything else reads the cameras.
     installCameraRig(engine),
     installEntityViews(engine),
+    engine.ambientParticles.install(),
+    engine.lightningEffects.install(),
     installProjectiles(engine),
     installWorldLabels(engine),
     installSceneLighting(engine),

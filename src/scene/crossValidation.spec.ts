@@ -142,6 +142,7 @@ describe("misToScene ↔ ghostToScene cross-validation", () => {
         SkySolidColor: "0.1 0.2 0.3",
         useSkyTextures: "1",
         windVelocity: "1 0 0",
+        windEffectPrecipitation: "1",
       }),
     );
 
@@ -155,6 +156,7 @@ describe("misToScene ↔ ghostToScene cross-validation", () => {
       fogVolumes: [],
       cloudLayers: [],
       windVelocity: { x: 1, y: 0, z: 0 },
+      windEffectPrecipitation: true,
     });
 
     expect(misResult.materialList).toBe(ghostResult.materialList);
@@ -164,5 +166,8 @@ describe("misToScene ↔ ghostToScene cross-validation", () => {
     expect(misResult.skySolidColor).toEqual(ghostResult.skySolidColor);
     expect(misResult.useSkyTextures).toBe(ghostResult.useSkyTextures);
     expect(misResult.windVelocity).toEqual(ghostResult.windVelocity);
+    expect(misResult.windEffectPrecipitation).toBe(
+      ghostResult.windEffectPrecipitation,
+    );
   });
 });

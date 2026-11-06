@@ -16,6 +16,7 @@ import {
 } from "three";
 import { textureToUrl } from "../loaders";
 import { createLogger } from "../logger";
+import { skyCloudStormFrame } from "../scene/skyWeather";
 import type { SceneSky } from "../scene/types";
 import { computeSkyFogBands, skyFogAlphaGlsl } from "../skyFogBands";
 import { worldDeltaSec } from "../state/engineStore";
@@ -286,6 +287,10 @@ const cloudVertexShader = `
   attribute float alpha;
 
   uniform vec2 uvOffset;
+  uniform vec2 stormCenter;
+  uniform float stormRadius;
+  uniform float stormFade;
+  uniform bool stormActive;
 
   varying vec2 vUv;
   varying float vAlpha;
@@ -295,6 +300,14 @@ const cloudVertexShader = `
     // Apply UV offset for scrolling
     vUv = uv + uvOffset;
     vAlpha = alpha;
+    if (stormActive) {
+      vec3 stormPoint = position / stormRadius;
+      stormPoint.xz -= stormCenter;
+      float radialAlpha = max(0.0, 1.0 - length(stormPoint));
+      vAlpha *= stormFade < 0.0
+        ? max(radialAlpha, -stormFade)
+        : min(1.0, radialAlpha + stormFade);
+    }
     // The cloud group is camera-centered, so the local position is the
     // eye ray — used to evaluate the sky fog bands per fragment.
     vEyeRay = position;
@@ -425,18 +438,16 @@ function cloudLayerConfigs(
  * Our cloud geometry has UV U along world X, UV V along world Z.
  * Rotate 90 degrees clockwise to match Torque's coordinate system.
  */
-function cloudWindDirection(scene: SceneSky): Vector2 {
-  const { x, y } = scene.windVelocity;
-  if (x !== 0 || y !== 0) {
-    // Rotate 90 degrees clockwise: (x, y) -> (y, -x)
-    return new Vector2(y, -x).normalize();
-  }
-  return new Vector2(1, 0);
+function cloudWindDirection(scene: SceneSky, direction: Vector2): Vector2 {
+  const { x, y } = scene.weather?.renderWind ?? scene.windVelocity;
+  // Rotate 90 degrees clockwise: (x, y) -> (y, -x).
+  return direction.set(y, -x).normalize();
 }
 
 interface CloudLayer {
   mesh: Mesh<BufferGeometry, ShaderMaterial>;
   speed: number;
+  index: number;
   /**
    * The scroll offset, wrapped to [0, 1).
    */
@@ -465,6 +476,10 @@ function createCloudLayer(
     uniforms: {
       cloudTexture: { value: texture },
       uvOffset: { value: new Vector2(0, 0) },
+      stormCenter: { value: new Vector2(0, 0) },
+      stormRadius: { value: radius },
+      stormFade: { value: 0 },
+      stormActive: { value: false },
       debugMode: { value: selectDebugMode(settingsStore.getState()) ? 1 : 0 },
       layerIndex: { value: layerIndex },
       // Shared objects — live-updated by the cloud layers each frame.
@@ -491,7 +506,12 @@ function createCloudLayer(
   // depth, so clouds drawn after them blend over bolts, particles and
   // explosion shapes, which then all but vanish against the sky.
   mesh.renderOrder = CLOUD_RENDER_ORDER + layerIndex;
-  return { mesh, speed: config.speed, offset: new Vector2(0, 0) };
+  return {
+    mesh,
+    index: layerIndex,
+    speed: config.speed,
+    offset: new Vector2(0, 0),
+  };
 }
 
 /**
@@ -506,6 +526,8 @@ export function startCloudLayers(
   parent: Object3D,
   scene: SceneSky,
   currentFog: () => FogState | undefined,
+  currentSky: () => SceneSky,
+  currentTime: () => number,
 ): () => void {
   const materialList = scene.materialList || undefined;
 
@@ -514,7 +536,7 @@ export function startCloudLayers(
     scene.visibleDistance > 0 ? scene.visibleDistance : 500;
   const radius = visibleDistance * 0.95;
 
-  const windDirection = cloudWindDirection(scene);
+  const windDirection = new Vector2();
 
   // Fog band uniforms shared by all layers; the bands are overwritten
   // each frame below, so the initial values are placeholders.
@@ -533,6 +555,7 @@ export function startCloudLayers(
   // Follows the camera; added once the .dml lists any cloud layers.
   const group = new Group();
   const layers: CloudLayer[] = [];
+  let cloudCount = 0;
   let active = true;
 
   if (materialList) {
@@ -541,6 +564,7 @@ export function startCloudLayers(
         if (!active) return;
         const configs = cloudLayerConfigs(detailMapList, scene);
         if (configs.length === 0) return;
+        cloudCount = configs.length;
         parent.add(group);
         configs.forEach((config, layerIndex) => {
           const url = textureToUrl(config.texture);
@@ -595,6 +619,37 @@ export function startCloudLayers(
       // glTranslatef(camPos.x, camPos.y, camPos.z) — clouds are translated
       // to camera position in all 3 dimensions.
       group.position.copy(camera.position);
+      const sky = currentSky();
+      const currentDistance =
+        sky.visibleDistance > 0 ? sky.visibleDistance : 500;
+      group.scale.setScalar(currentDistance / visibleDistance);
+      group.visible = sky.weather?.cloudsOn !== false;
+      cloudWindDirection(sky, windDirection);
+      const storm = sky.weather?.cloudStorm;
+      const time = storm ? currentTime() : 0;
+      const { x: windX, y: windY } =
+        sky.weather?.renderWind ?? sky.windVelocity;
+      const windAxis = Math.max(Math.abs(windX), Math.abs(windY));
+      for (const { mesh, index, speed } of layers) {
+        const frame =
+          storm && skyCloudStormFrame(storm, index, cloudCount, time);
+        mesh.visible = frame ? frame.visible : true;
+        mesh.material.uniforms.stormActive.value = !!frame;
+        if (storm && frame?.visible) {
+          // The storm center is in world axes, independently of UV scrolling.
+          // Retail starts on the opposite Y side when Y is the dominant axis.
+          const sign =
+            (speed < 0 ? -1 : 1) *
+            (storm.state === 1 ? 1 : -1) *
+            (Math.abs(windX) < Math.abs(windY) ? -1 : 1);
+          const distance = frame.center * sign;
+          mesh.material.uniforms.stormCenter.value.set(
+            windAxis && speed ? (windX * distance) / windAxis : distance,
+            windAxis && speed ? (-windY * distance) / windAxis : 0,
+          );
+          mesh.material.uniforms.stormFade.value = frame.fade;
+        }
+      }
       const fogState = currentFog();
       bandUniforms.cloudFogEnabled.value = !!fogState;
       if (fogState) {

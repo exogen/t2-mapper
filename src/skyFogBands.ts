@@ -42,6 +42,7 @@ const MIN_BAND_HEIGHT = 60;
 let memoVis = NaN;
 let memoVolumes: readonly SkyFogVolumeLike[] | null = null;
 let memoCamHeight = NaN;
+let memoPercentage = NaN;
 let memoResult: SkyFogBands | null = null;
 
 /**
@@ -54,11 +55,15 @@ export function computeSkyFogBands(
   fogVolumes: readonly SkyFogVolumeLike[],
   cameraHeight: number,
 ): SkyFogBands {
+  // Storms animate the first active band's density in place.
+  const percentage =
+    fogVolumes.find((volume) => volume.visibleDistance > 0)?.percentage ?? 1;
   if (
     memoResult !== null &&
     visibleDistance === memoVis &&
     fogVolumes === memoVolumes &&
-    cameraHeight === memoCamHeight
+    cameraHeight === memoCamHeight &&
+    percentage === memoPercentage
   ) {
     return memoResult;
   }
@@ -66,6 +71,7 @@ export function computeSkyFogBands(
   memoVis = visibleDistance;
   memoVolumes = fogVolumes;
   memoCamHeight = cameraHeight;
+  memoPercentage = percentage;
   memoResult = result;
   return result;
 }

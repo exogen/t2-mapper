@@ -29,9 +29,13 @@ import {
   netString,
   serverMessagePacket,
   serverPacket,
+  writeF32,
   type ServerEvent,
 } from "./serverPacketFixtures.js";
 import { WatchStateAccumulator } from "./watchState.js";
+import type { RelayClient } from "../src/stream/relayClient.js";
+import { ReplayStreamAdapter } from "../src/stream/replayStreaming.js";
+import { precipitationPercentage } from "../src/weather/data.js";
 
 function block(type: number, data: Uint8Array = new Uint8Array()): Uint8Array {
   const header = Buffer.alloc(2);
@@ -161,6 +165,65 @@ describe("DemoReplaySource", () => {
       controlObjectGhostIndex: 0,
       controlObjectData: { rotX: 0.25 },
     });
+  });
+
+  it("retains a partially elapsed precipitation fade through replay checkpoints and browser seek hydration", async () => {
+    const rainGhost: ServerEvent = {
+      seq: 0,
+      className: "GhostAlwaysObjectEvent",
+      write(bs) {
+        bs.writeInt(7, 10);
+        bs.writeFlag(true);
+        bs.writeInt(
+          createLiveParser().registry.getGhostClassId("Precipitation")!,
+          7,
+        );
+        bs.writeFlag(true); // GameBase datablock
+        bs.writeInt(1025, 11);
+        bs.writeFlag(false); // GameBase target
+        bs.writeFlag(true); // Precipitation InitMask
+        writeF32(bs, 0.25);
+        bs.writeU32(0); // colors
+        for (const value of [0.25, 1.25, 4]) writeF32(bs, value);
+        bs.writeU32(100); // maxDrops
+        bs.writeU32(80); // maxRadius
+        bs.writeFlag(true); // storm already in progress
+        for (const value of [1024, 0.75, 128]) writeF32(bs, value);
+        for (let i = 0; i < 3; i++) bs.writeFlag(false); // sparse masks
+      },
+    };
+    const source = await DemoReplaySource.load(
+      demo([
+        block(BlockTypePacket, serverPacket(1, { events: [rainGhost] })),
+        ...Array.from({ length: 2048 }, () => block(BlockTypeMove, ZERO_MOVE)),
+        block(BlockTypePacket, serverPacket(2, { events: [endGhosting(1)] })),
+        block(BlockTypeMove, ZERO_MOVE),
+      ]),
+    );
+    await source.seek(2048);
+    const expected = payload(source).precipitationStates;
+    expect(expected?.[0][0]).toBe(7);
+    expect(expected?.[0][1].percentage).toBeCloseTo(0.625);
+    expect(expected?.[0][1].storm?.startTime).toBeCloseTo(-65.536);
+
+    await source.seek(2049);
+    expect(payload(source).precipitationStates).toBeUndefined();
+    await source.seek(2048);
+    const restored = payload(source);
+    expect(restored.precipitationStates).toEqual(expected);
+
+    // The effect-only fixture leaves the referenced datablock out of the wire.
+    restored.dataBlocks.push([
+      1025,
+      { className: "PrecipitationData", data: { type: 0 } },
+    ]);
+    const browser = new ReplayStreamAdapter({} as RelayClient);
+    browser.hydrate(restored);
+    const snapshot = browser.getSnapshot();
+    const rain = snapshot.entities[0].precipitation!;
+    expect(snapshot.timeSec).toBeCloseTo(65.536);
+    expect(rain.storm!.startTime).toBeCloseTo(0);
+    expect(precipitationPercentage(rain, snapshot.timeSec)).toBeCloseTo(0.625);
   });
   it("refuses compressed expansion beyond its byte budget before replaying blocks", async () => {
     const bytes = demo(

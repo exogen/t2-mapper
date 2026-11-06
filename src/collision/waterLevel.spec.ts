@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { Box3, Vector3 } from "three";
+import { waterBlockFromMis } from "../scene/misToScene";
+import { torqueToThree } from "../scene/coordinates";
+import { waterInfoFor } from "../world/placement";
 import {
   isPointSubmerged,
   isWaterType,
@@ -7,6 +11,7 @@ import {
   setWaterTime,
   waterLevelAt,
   submergedWaterAt,
+  waterSurfaceForBounds,
   clearWaterBodies,
 } from "./waterLevel";
 
@@ -25,6 +30,55 @@ const damnation = {
   sizeX: 352,
   sizeY: 288,
 };
+
+describe("ShapeBase liquid coverage", () => {
+  function box(min: [number, number, number], max: [number, number, number]) {
+    return new Box3(
+      new Vector3(...torqueToThree(min)),
+      new Vector3(...torqueToThree(max)),
+    );
+  }
+
+  function registerBlock(removeWetEdges: boolean) {
+    setWaterInfo(
+      waterInfoFor(
+        waterBlockFromMis({
+          _class: "waterblock",
+          _className: "WaterBlock",
+          _id: 1,
+          position: "128 -168 40",
+          scale: "352 288 50",
+          waveMagnitude: "8",
+          removewetedges: removeWetEdges ? "1" : "0",
+        }),
+      ),
+    );
+  }
+
+  it("tests partial shoreline immersion against the still block volume", () => {
+    registerBlock(true);
+    expect(submergedWaterAt(127, -145, 91)).toBeNull();
+    expect(waterSurfaceForBounds(box([126, -150, 89], [128, -140, 93]))).toBe(
+      90,
+    );
+    expect(
+      waterSurfaceForBounds(box([128, -150, 90], [130, -140, 93])),
+    ).toBeUndefined();
+    expect(
+      waterSurfaceForBounds(box([128, -150, 30], [130, -140, 39])),
+    ).toBeUndefined();
+    expect(
+      waterSurfaceForBounds(box([2176, -150, 89], [2178, -140, 93])),
+    ).toBeUndefined();
+  });
+
+  it("uses the expanded native WaterBlock world box when wet edges are disabled", () => {
+    registerBlock(false);
+    expect(waterSurfaceForBounds(box([600, -150, 89], [601, -140, 93]))).toBe(
+      90,
+    );
+  });
+});
 
 describe("isPointSubmerged", () => {
   it("tests against the surface height, not the block bottom", () => {

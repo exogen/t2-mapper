@@ -12,6 +12,8 @@ import {
   type Vec3,
 } from "./vecMath";
 import { getMountTransforms, type MountTransformTable } from "../manifest";
+import { registerSkyMethods } from "./skyMethods";
+import { registerWeatherMethods } from "./weatherMethods";
 
 const log = createLogger("engineMethods");
 
@@ -39,6 +41,8 @@ export function registerEngineStubs(
   runtime: TorqueRuntime,
   options: EngineStubOptions = {},
 ): void {
+  registerWeatherMethods(runtime);
+  registerSkyMethods(runtime);
   const reg = runtime.$.registerMethod.bind(runtime.$);
   const regFn = runtime.$.registerFunction.bind(runtime.$);
   const mountTransforms = options.mountTransforms ?? getMountTransforms();

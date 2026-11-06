@@ -96,8 +96,9 @@ export function packFogVolumeData(
     maxHeight: number;
     percentage: number;
   }>,
+  data = new Float32Array(MAX_FOG_VOLUMES * FLOATS_PER_VOLUME),
 ): Float32Array {
-  const data = new Float32Array(MAX_FOG_VOLUMES * FLOATS_PER_VOLUME);
+  data.fill(0);
 
   for (let i = 0; i < MAX_FOG_VOLUMES; i++) {
     const offset = i * FLOATS_PER_VOLUME;

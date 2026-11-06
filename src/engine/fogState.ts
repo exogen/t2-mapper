@@ -10,6 +10,7 @@
  * get fog uniforms from globalFogUniforms (updated by Sky).
  */
 import { Color } from "three";
+import { skyFogPercentage } from "../scene/skyWeather";
 import type { SceneSky } from "../scene/types";
 
 /**
@@ -19,6 +20,7 @@ import type { SceneSky } from "../scene/types";
  * All fog uses the global fogColor regardless of fogVolumeColor values in mission files.
  */
 export interface FogVolume {
+  sourceIndex: number;
   /** Distance at which objects are fully obscured within this volume */
   visibleDistance: number;
   /** Bottom height boundary of the fog volume */
@@ -53,9 +55,10 @@ export function fogStateFromScene(sky: SceneSky): FogState {
   const fogColor = new Color().setRGB(r, g, b).convertSRGBToLinear();
 
   const fogVolumes: FogVolume[] = [];
-  for (const vol of sky.fogVolumes) {
+  for (const [sourceIndex, vol] of sky.fogVolumes.entries()) {
     if (vol.visibleDistance <= 0 || vol.maxHeight <= vol.minHeight) continue;
     fogVolumes.push({
+      sourceIndex,
       visibleDistance: vol.visibleDistance,
       minHeight: vol.minHeight,
       maxHeight: vol.maxHeight,
@@ -82,4 +85,19 @@ export function fogStateFromScene(sky: SceneSky): FogState {
     fogLine,
     enabled,
   };
+}
+
+export function updateFogPercentages(
+  fog: FogState,
+  sky: SceneSky,
+  time: number,
+): void {
+  for (const volume of fog.fogVolumes) {
+    volume.percentage = skyFogPercentage(
+      sky.weather,
+      volume.sourceIndex,
+      sky.fogVolumes.length,
+      time,
+    );
+  }
 }

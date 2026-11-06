@@ -30,6 +30,34 @@ export function getShapeBounds(
   return boundsByShape.get(shapeKey(shapeName));
 }
 
+/** Native object-box centre transformed at a captured pose. Position is
+ * Torque space; rotation and scale use the stream's Three.js axes. */
+export function getShapeCenter(
+  shapeName: string | undefined,
+  transform: {
+    position: [number, number, number];
+    rotation?: [number, number, number, number];
+    scale?: [number, number, number];
+  },
+): [number, number, number] | undefined {
+  const bounds = getShapeBounds(shapeName);
+  if (!bounds) return undefined;
+  const scale = transform.scale ?? [1, 1, 1];
+  // Swizzle the native box to Three axes before applying its stream pose.
+  const x = (bounds.min[1] + bounds.max[1]) * 0.5 * scale[0];
+  const y = (bounds.min[2] + bounds.max[2]) * 0.5 * scale[1];
+  const z = (bounds.min[0] + bounds.max[0]) * 0.5 * scale[2];
+  const [qx, qy, qz, qw] = transform.rotation ?? [0, 0, 0, 1];
+  const tx = 2 * (qy * z - qz * y);
+  const ty = 2 * (qz * x - qx * z);
+  const tz = 2 * (qx * y - qy * x);
+  return [
+    transform.position[0] + z + qw * tz + qx * ty - qy * tx,
+    transform.position[1] + x + qw * tx + qy * tz - qz * ty,
+    transform.position[2] + y + qw * ty + qz * tx - qx * tz,
+  ];
+}
+
 /** Test-only: forget every registered shape. */
 export function clearShapeBounds(): void {
   boundsByShape.clear();

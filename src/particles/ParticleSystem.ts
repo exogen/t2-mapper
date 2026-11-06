@@ -464,6 +464,20 @@ export class EmitterInstance {
     }
   }
 
+  /**
+   * Skip omitted history before warming an empty emitter. Particle age and
+   * the emission clock are separate: a dummy's timeMultiple scales only the
+   * latter. Preserve phiReferenceVel's phase and regular-period carry; random
+   * period variance in the omitted history is intentionally not reconstructed.
+   * Call only before emitting the retained warmup window.
+   */
+  advanceEmpty(dtMS: number, emissionMS: number): void {
+    this.update(dtMS);
+    this.internalClock += Math.max(0, Math.round(emissionMS));
+    const period = Math.max(1, this.data.ejectionPeriodMS);
+    this.nextParticleTime = (period - (this.internalClock % period)) % period;
+  }
+
   /** No more emission and no live particles (deleteWhenEmpty + lifetime). */
   isDead(): boolean {
     return (

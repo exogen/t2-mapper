@@ -266,9 +266,6 @@ function createShockwave(
     group.add(bottomMesh);
   }
 
-  // Clamp denormalized velocity values (parser bug workaround).
-  const initVelocity = Math.abs(swData.velocity) > 1e-10 ? swData.velocity : 0;
-
   return {
     entityId,
     mesh,
@@ -280,7 +277,7 @@ function createShockwave(
     lifetimeMS: swData.lifetimeMS,
     data: swData,
     radius: 0,
-    velocity: initVelocity,
+    velocity: swData.velocity,
   };
 }
 

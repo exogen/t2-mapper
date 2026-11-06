@@ -136,14 +136,31 @@ export function waterInfoFor(scene: SceneWaterBlock): WaterInfo {
   const pos = scene.transform.position;
   const snap = (v: number) =>
     Math.max(0, Math.min(2040, Math.round((v + TERRAIN_OFFSET) / 8))) * 8;
+  const surfaceZ = pos.z + scene.scale.z;
+  // WaterBlock::onAdd (005b45f0) expands the object box horizontally for
+  // bodies without wet edges. ShapeBase coverage uses this scaled world box.
+  const min = scene.removeWetEdges === false ? -10000 : 0;
+  const max = scene.removeWetEdges === false ? 10000 : 1;
   return {
-    surfaceZ: pos.z + scene.scale.z,
+    surfaceZ,
     waveMagnitude: scene.waveMagnitude,
     liquidType: scene.liquidType,
     minX: snap(pos.x),
     minY: snap(pos.y),
     sizeX: scene.scale.x,
     sizeY: scene.scale.y,
+    worldBounds: new Box3(
+      new Vector3(
+        pos.y + min * scene.scale.y,
+        pos.z,
+        pos.x + min * scene.scale.x,
+      ),
+      new Vector3(
+        pos.y + max * scene.scale.y,
+        surfaceZ,
+        pos.x + max * scene.scale.x,
+      ),
+    ),
   };
 }
 

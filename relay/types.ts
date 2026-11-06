@@ -5,6 +5,8 @@ import type {
   ReplayCatchupState,
 } from "./replayTypes.js";
 import type { ServerMessageRosterEntry } from "./serverMessageState.js";
+import type { SkyWeather } from "../src/scene/skyWeather.js";
+import type { PrecipitationState } from "../src/weather/types.js";
 import type {
   ConnectionProtocolState,
   GhostUpdate,
@@ -183,6 +185,10 @@ export interface WatchCatchupPayload {
   nextRecvEventSeq: number;
   /** Full merged state per ghost, shaped like demo initialGhosts. */
   initialGhosts: GhostUpdate[];
+  /** Reduced precipitation masks. Storm start times are relative to this snapshot. */
+  precipitationStates?: Array<[ghostIndex: number, state: PrecipitationState]>;
+  /** Reduced Sky masks, with cloud and fog times relative to this snapshot. */
+  skyWeatherStates?: Array<[ghostIndex: number, state: SkyWeather]>;
   controlObjectGhostIndex: number;
   controlObjectData?: ParsedData;
   missionName: string | null;

@@ -111,4 +111,13 @@ describe("computeSkyFogBands", () => {
     expect(half.h0).toBeCloseTo(full.h0 * 0.5, 3);
     expect(half.h1).toBeCloseTo(full.h1 * 0.5, 3);
   });
+  it("recomputes the bands when a stationary camera sees animated density", () => {
+    const volume = { ...DBS_VOLUME };
+    const volumes = [volume];
+    const full = computeSkyFogBands(475, volumes, 60);
+    volume.percentage = 0.5;
+    const half = computeSkyFogBands(475, volumes, 60);
+    expect(half.h0).toBeCloseTo(full.h0 * 0.5, 3);
+    expect(computeSkyFogBands(475, volumes, 60)).toBe(half);
+  });
 });

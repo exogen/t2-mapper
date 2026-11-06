@@ -54,6 +54,22 @@ export interface DIFSurface {
   mapSize: [number, number];
 }
 
+export interface DIFZone {
+  portalStart: number;
+  portalCount: number;
+  surfaceStart: number;
+  surfaceCount: number;
+  flags: number;
+}
+
+export interface DIFPortal {
+  planeIndex: number;
+  triFanCount: number;
+  triFanStart: number;
+  zoneFront: number;
+  zoneBack: number;
+}
+
 export interface DIFInterior {
   detailLevel: number;
   minPixels: number;
@@ -66,6 +82,11 @@ export interface DIFInterior {
   texGen: [Plane, Plane][];
   materialNames: string[];
   windings: number[];
+  windingIndices: { windingStart: number; windingCount: number }[];
+  zones: DIFZone[];
+  zoneSurfaces: number[];
+  zonePortals: number[];
+  portals: DIFPortal[];
   surfaces: DIFSurface[];
   normalLightMapIndices: Uint8Array;
   alarmLightMapIndices: Uint8Array;
@@ -331,11 +352,26 @@ function readInterior(r: DIFReader): DIFInterior {
     r.index(index, points.length, "point");
     return index;
   });
-  r.skipArray("winding indices", 8);
-  r.skipArray("zones", 12);
-  r.skipArray("zone surfaces", 2);
-  r.skipArray("zone portals", 2);
-  r.skipArray("portals", 12);
+  const windingIndices = r.array("winding indices", 8, () => ({
+    windingStart: r.u32(),
+    windingCount: r.u32(),
+  }));
+  const zones = r.array<DIFZone>("zones", 12, () => ({
+    portalStart: r.u16(),
+    portalCount: r.u16(),
+    surfaceStart: r.u32(),
+    surfaceCount: r.u16(),
+    flags: r.u16(),
+  }));
+  const zoneSurfaces = r.array("zone surfaces", 2, () => r.u16());
+  const zonePortals = r.array("zone portals", 2, () => r.u16());
+  const portals = r.array<DIFPortal>("portals", 12, () => ({
+    planeIndex: r.u16(),
+    triFanCount: r.u16(),
+    triFanStart: r.u32(),
+    zoneFront: r.u16(),
+    zoneBack: r.u16(),
+  }));
   const surfaces = r.array<DIFSurface>("surfaces", 38, () => {
     const windingStart = r.u32();
     const windingCount = r.u8();
@@ -478,12 +514,49 @@ function readInterior(r: DIFReader): DIFInterior {
     range(surface.windingStart, surface.windingCount, windings.length);
     r.index(surface.planeIndex & 0x7fff, planes.length, "null surface plane");
   }
+  for (const fan of windingIndices)
+    range(fan.windingStart, fan.windingCount, windings.length);
+  for (const zone of zones) {
+    range(zone.portalStart, zone.portalCount, zonePortals.length);
+    range(zone.surfaceStart, zone.surfaceCount, zoneSurfaces.length);
+  }
+  for (const index of zoneSurfaces)
+    r.index(index, surfaces.length, "zone surface");
+  for (const index of zonePortals)
+    r.index(index, portals.length, "zone portal");
+  for (const portal of portals) {
+    r.index(portal.planeIndex & 0x7fff, planes.length, "portal plane");
+    range(portal.triFanStart, portal.triFanCount, windingIndices.length);
+    // Unused authored portals can have an unassigned side (0xffff).
+    if (portal.zoneFront !== 0xffff)
+      r.index(portal.zoneFront, zones.length, "portal front zone");
+    if (portal.zoneBack !== 0xffff)
+      r.index(portal.zoneBack, zones.length, "portal back zone");
+  }
+  for (const [index, zone] of zones.entries())
+    for (
+      let i = zone.portalStart;
+      i < zone.portalStart + zone.portalCount;
+      i++
+    ) {
+      const portal = portals[zonePortals[i]];
+      if (portal.zoneFront !== index && portal.zoneBack !== index)
+        r.fail("zone references an unrelated portal");
+      if (portal.zoneFront === 0xffff || portal.zoneBack === 0xffff)
+        r.fail("zone references an unassigned portal");
+    }
   for (const node of bspNodes) {
     r.index(node.planeIndex & 0x7fff, planes.length, "BSP plane");
     for (const child of [node.frontIndex, node.backIndex]) {
       if (!(child & 0x8000)) r.index(child, bspNodes.length, "BSP node");
       else if (child & 0x4000)
         r.index(child & 0x3fff, solidLeaves.length, "solid leaf");
+      else {
+        const zone = child & 0x3fff;
+        // Exterior zero is valid even in minimal, unzoned test resources.
+        if (zone !== 0 && zone !== 0x0fff)
+          r.index(zone, zones.length, "BSP empty leaf zone");
+      }
     }
   }
   // Reject cycles once at load time, keeping hot BSP queries unguarded.
@@ -529,6 +602,11 @@ function readInterior(r: DIFReader): DIFInterior {
     texGen,
     materialNames,
     windings,
+    windingIndices,
+    zones,
+    zoneSurfaces,
+    zonePortals,
+    portals,
     surfaces,
     normalLightMapIndices,
     alarmLightMapIndices,

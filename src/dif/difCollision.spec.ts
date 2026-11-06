@@ -104,6 +104,31 @@ describe("native DIF collision", () => {
     expect(collision.containsPoint(v(1, 3, -1))).toBe(false);
   });
 
+  it("distinguishes exterior air, room air, solid and invalid zones in native local coordinates", () => {
+    const room = createDIFModel(
+      createDIFTestBuffer({ portals: true }).buffer,
+    ).collision;
+    expect(room.zoneForPoint(v(1, 1, 2))).toBe(0);
+    expect(room.zoneForPoint(v(1, 1, -1))).toBe(1);
+    expect(room.containsPoint(v(1, 1, -1))).toBe(false);
+    expect(fixture().collision.zoneForPoint(v(1, 1, -1))).toBe(-1);
+    room.interior.bspNodes[5].backIndex = 0x8fff;
+    expect(room.zoneForPoint(v(1, 1, -1))).toBe(-1);
+    room.interior.bspNodes.length = 0;
+    expect(room.zoneForPoint(v(1, 1, -1))).toBe(0);
+  });
+
+  it("applies flipped BSP planes and classifies coplanar points on the front side", () => {
+    const room = createDIFModel(
+      createDIFTestBuffer({ portals: true }).buffer,
+    ).collision;
+    expect(room.zoneForPoint(v(1, 1, 0))).toBe(0);
+    room.interior.bspNodes[0].planeIndex |= 0x8000;
+    expect(room.zoneForPoint(v(1, 1, -1))).toBe(0);
+    expect(room.zoneForPoint(v(1, 1, 1))).toBe(1);
+    expect(room.zoneForPoint(v(1, 1, 0))).toBe(0);
+  });
+
   it("unfans strips before applying fanMask, while null fans stay intact", () => {
     const data = fixture().collision.interior;
     data.surfaces[0].fanMask = 0b1101;

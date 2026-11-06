@@ -4,6 +4,9 @@ import type {
   ShapeEntity,
   ForceFieldBareEntity,
   AudioEmitterEntity,
+  ParticleEmissionDummyEntity,
+  PrecipitationEntity,
+  LightningEntity,
   CameraEntity,
   WayPointEntity,
 } from "../state/gameEntityTypes";
@@ -13,6 +16,13 @@ import { getPosition, getProperty, getScale } from "../mission";
 import { misRotationToThreeQuat } from "../torqueScript/vecMath";
 import { DEFAULT_FLAG_SKINS } from "../stringUtils";
 import { parseColorTuple } from "../colorUtils";
+import { resolveMissionEmitterData } from "../particles/missionEmitterData";
+import { resolveDatablock } from "../torqueScript/datablocks";
+import {
+  resolveMissionLightning,
+  resolveMissionPrecipitation,
+} from "../weather/data";
+import type { LightningRequest } from "../weather/types";
 import {
   terrainFromMis,
   interiorFromMis,
@@ -22,13 +32,9 @@ import {
   waterBlockFromMis,
 } from "../scene/misToScene";
 
-/** Resolve a named datablock from the runtime. */
-function resolveDatablock(
-  runtime: TorqueRuntime,
-  name: string | undefined,
-): TorqueObject | undefined {
-  if (!name) return undefined;
-  return runtime.state.datablocks.get(name);
+function finiteNumber(value: unknown, fallback: number): number {
+  const number = value == null || value === "" ? NaN : Number(value);
+  return Number.isFinite(number) ? number : fallback;
 }
 
 /** Handles TorqueScript's various truthy representations. */
@@ -70,8 +76,11 @@ export function buildGameEntityFromMission(
   const scale = getScale(object);
   const rotStr = object.rotation ?? "1 0 0 0";
   const rotation = misRotationToThreeQuat(String(rotStr));
-  const datablockName = getProperty(object, "dataBlock") ?? "";
-  const datablock = resolveDatablock(runtime, datablockName);
+  const datablockReference = getProperty(object, "dataBlock");
+  const datablock = resolveDatablock(datablockReference, runtime);
+  const datablockName =
+    datablock?._name ??
+    (typeof datablockReference === "string" ? datablockReference : "");
   const missionTypesList = getProperty(object, "missionTypesList");
 
   // Script truth (ShapeBase::hide via setProp "hidden") wins; when the
@@ -149,6 +158,47 @@ export function buildGameEntityFromMission(
     // Force field
     case "ForceFieldBare":
       return buildForceFieldEntity(posBase, object, datablock, scale);
+
+    case "ParticleEmissionDummy": {
+      const emitter = resolveDatablock(getProperty(object, "emitter"), runtime);
+      return {
+        ...posBase,
+        renderType: "ParticleEmissionDummy",
+        particleEmitter: emitter
+          ? (resolveMissionEmitterData(emitter, runtime) ?? undefined)
+          : undefined,
+        emissionVelocity: finiteNumber(getProperty(object, "velocity"), 1),
+        timeMultiple: finiteNumber(getProperty(datablock, "timeMultiple"), 1),
+      } satisfies ParticleEmissionDummyEntity;
+    }
+
+    case "Precipitation": {
+      const precipitation = resolveMissionPrecipitation(
+        object,
+        runtime,
+        (Date.now() - runtime.state.startTime) / 1000,
+      );
+      return precipitation
+        ? ({
+            ...posBase,
+            renderType: "Precipitation",
+            precipitation,
+          } satisfies PrecipitationEntity)
+        : null;
+    }
+
+    case "Lightning": {
+      const lightning = resolveMissionLightning(object, runtime);
+      return lightning
+        ? ({
+            ...posBase,
+            renderType: "Lightning",
+            lightning,
+            lightningRequests: object._weatherstrikes as
+              LightningRequest[] | undefined,
+          } satisfies LightningEntity)
+        : null;
+    }
 
     // Audio
     case "AudioEmitter":
@@ -275,7 +325,7 @@ function buildShapeEntity(
   if (mounted && Object.keys(mounted).length > 0) {
     const slots: (ImageSlot | undefined)[] = [];
     for (const [slotStr, entry] of Object.entries(mounted)) {
-      const imageDb = resolveDatablock(runtime, entry.image);
+      const imageDb = resolveDatablock(entry.image, runtime);
       const imageShapeName = getProperty(imageDb, "shapeFile");
       if (!imageShapeName) continue;
       slots[Number(slotStr)] = {
@@ -292,7 +342,7 @@ function buildShapeEntity(
   } else if (className === "Turret") {
     const barrelName = getProperty(object, "initialBarrel");
     if (barrelName) {
-      const barrelDb = resolveDatablock(runtime, barrelName);
+      const barrelDb = resolveDatablock(barrelName, runtime);
       const turretShapeName = getProperty(barrelDb, "shapeFile");
       if (turretShapeName) {
         const mountPoint = Number(getProperty(barrelDb, "mountPoint")) || 0;

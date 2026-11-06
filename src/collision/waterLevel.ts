@@ -18,6 +18,7 @@
  * The state lives on the collision world rather than this module, so
  * two worlds in one process do not share it.
  */
+import type { Box3 } from "three";
 import { collisionState } from "./collisionContext";
 import type { Vec3 } from "./terrainCollision";
 
@@ -59,6 +60,8 @@ export interface WaterInfo {
   minY: number;
   sizeX: number;
   sizeY: number;
+  /** Native WaterBlock world AABB in Three axes, distinct from its fluid tile. */
+  worldBounds?: Box3;
 }
 
 // Held per collision world (see collision/collisionContext) so two
@@ -148,6 +151,20 @@ export function waterLevelAt(torqueX: number, torqueY: number): number | null {
     if (best == null || info.surfaceZ > best) best = info.surfaceZ;
   }
   return best;
+}
+
+/** ShapeBase's liquid coverage test (005ea3f0 / 005ea600). An object with
+ * any depth below the still surface and an overlapping world box is wet.
+ * The fluid's wave phase and repeated terrain tiles are for point queries. */
+export function waterSurfaceForBounds(box: Box3): number | undefined {
+  let surface: number | undefined;
+  for (const info of collisionState().water.values()) {
+    const bounds = info.worldBounds;
+    if (!bounds?.intersectsBox(box)) continue;
+    if (box.min.y === bounds.max.y && box.min.y < box.max.y) continue;
+    surface = Math.max(surface ?? -Infinity, info.surfaceZ);
+  }
+  return surface;
 }
 
 /**

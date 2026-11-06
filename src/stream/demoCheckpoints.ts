@@ -7,9 +7,14 @@ import { TICK_DURATION_MS } from "./streamHelpers";
 // changes, or when older sidecars would restore wrong state (v12 holds sensor
 // group 0 until the recorder spawns; 13 seeds it from the start block; 14
 // keeps connection state in one ConnectionState; 15 keeps each player's
-// action slot as its setActionThread calls, with the jump chain and ski hold).
-export const DEMO_CHECKPOINT_VERSION = 15;
-const MIN_SUPPORTED_CHECKPOINT_VERSION = 15;
+// action slot as its setActionThread calls, with the jump chain and ski hold;
+// 16 records ambient emitter references and their MatrixF positions so static
+// emitters survive a seek without requiring another ghost update; 17 retains
+// precipitation transitions, lightning storm configuration and strike history;
+// 18 corrects the wire types of precipitation radius and lightning rate;
+// 19 retains dynamic Sky state and fixes how precipitation fades are built).
+export const DEMO_CHECKPOINT_VERSION = 19;
+const MIN_SUPPORTED_CHECKPOINT_VERSION = 19;
 export const DEMO_CHECKPOINT_SUFFIX = ".checkpoints.json";
 /**
  * The generator's default spacing, and the spacing of sidecars written
