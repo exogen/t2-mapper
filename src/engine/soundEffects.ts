@@ -13,6 +13,7 @@ import {
   getEffectiveSoundRate,
   onAdjustAudioSpeedChange,
 } from "./audioPlaybackRate";
+import { PlaybackPositionalAudio } from "./spatialAudio";
 
 export { audioBufferCache, getCachedAudioBuffer } from "./audioBuffers";
 
@@ -173,7 +174,7 @@ export function createPositionalAudio(
   audioListener: AudioListener,
   attenuation?: { refDist: number; maxDist: number; volume: number },
 ): PositionalAudio {
-  const sound = new PositionalAudio(audioListener);
+  const sound = new PlaybackPositionalAudio(audioListener);
   sound.panner.panningModel = "equalpower";
   if (attenuation) {
     sound.setDistanceModel("inverse");
