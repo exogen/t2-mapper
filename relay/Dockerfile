@@ -7,7 +7,14 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+# Native npm modules use node-gyp during installation. Keep its toolchain
+# confined to this layer, then verify SQLite still loads after removing it.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 make g++ \
+  && npm ci --omit=dev \
+  && apt-get purge -y --auto-remove python3 make g++ \
+  && rm -rf /var/lib/apt/lists/* \
+  && node -e "const db = require('better-sqlite3')(':memory:'); console.log(db.prepare('SELECT sqlite_version() AS version').get()); db.close()"
 
 COPY relay/ relay/
 COPY scripts/backup-account-database.ts scripts/backup-account-database.ts
