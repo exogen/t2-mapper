@@ -1,4 +1,7 @@
 .Frame {
+  --footer-control-size: 36px;
+  --footer-padding-block: 8px;
+  --footer-padding-inline: 10px;
   display: grid;
   grid-template-columns: auto 1fr;
   grid-template-rows: auto 1fr auto;
@@ -47,16 +50,26 @@
 
 .Sidebar {
   position: relative;
+  display: flex;
+  flex-direction: column;
   grid-area: sidebar;
   width: 320px;
   height: 100%;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   background: rgb(25, 31, 31);
   color: #fff;
   border-right: 1px solid rgb(70, 85, 85);
   box-shadow: 0 0 3px 1px rgba(0, 0, 0, 0.4);
   z-index: 2;
+}
+
+.SidebarScroll {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .Content {
@@ -89,6 +102,14 @@
 
 .Backdrop {
   display: none;
+}
+
+@media (pointer: coarse) {
+  .Frame {
+    --footer-control-size: 40px;
+    --footer-padding-block: 6px;
+    --footer-padding-inline: 8px;
+  }
 }
 
 @media (max-width: 899px) {

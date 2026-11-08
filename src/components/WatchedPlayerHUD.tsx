@@ -53,7 +53,7 @@ function resolveFollowedName(
  * overlay, stacked with it.
  */
 export function WatchedPlayerHUD() {
-  const teamNames = useCaster((s) => s.settings?.teamNames);
+  const teamNames = useCaster((s) => s.teamNames);
   const orbitAvailable = usePlayerOrbitAvailable();
   const { followBehindPlayer, setFollowBehindPlayer } = useSettings();
   const toggleFollowBehindPlayer = () =>

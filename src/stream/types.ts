@@ -631,6 +631,12 @@ export interface StreamSnapshot {
    * would never satisfy such a guess.
    */
   ghostAlwaysDoneSec: number | null;
+  /**
+   * The displayed mission's MsgClientReady time, or 0 for a recording that
+   * begins inside a mission. Held through debrief and the next map's loading
+   * until the client drops in, independently of world/ghost readiness.
+   */
+  missionReadySec: number;
   exhausted: boolean;
   camera: StreamCamera | null;
   entities: StreamEntity[];

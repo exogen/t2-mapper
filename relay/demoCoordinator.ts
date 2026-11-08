@@ -12,6 +12,14 @@ import { DemoRecorder, type DemoRecorderOptions } from "./demoRecorder.js";
 import { salvagePartialDemo } from "./demoSalvage.js";
 import type { MissionControlState } from "./missionControls.js";
 import { parseMissionSequence } from "./shared.js";
+import {
+  readGamePresentation,
+  type GamePresentation,
+  type PublishedGame,
+} from "./gamePresentation.js";
+import { withGamePresentation, type DemoMetadata } from "./demoMetadata.js";
+
+import { atomicWrite } from "./atomicWrite.js";
 
 export type RecordingDecisionReason =
   "match-end" | "mission-change" | "inactivity-timeout" | "restored-decision";
@@ -24,6 +32,7 @@ interface PendingRecordingState {
   /** Wall-clock time this segment stopped recording; survives relay restarts. */
   inactiveSince?: number;
   decisionReason?: RecordingDecisionReason;
+  gamePresentation?: PublishedGame;
 }
 
 interface PendingRecording {
@@ -35,6 +44,7 @@ interface PendingRecording {
   released?: boolean;
   retired?: boolean;
   policyDirty?: boolean;
+  finalizing?: boolean;
 }
 
 function sameMission(
@@ -57,6 +67,11 @@ export interface DemoCoordinatorOptions {
   pendingTimeoutMs?: number;
   /** Receives each kept demo's final path (feeds the upload queue). */
   onFinalized?: (filePath: string) => void;
+  /** Edit an already-released sidecar using the uploader's serialized writes. */
+  onGamePresentationSaved?: (
+    filePath: string,
+    game: PublishedGame,
+  ) => Promise<void>;
 }
 
 export type SessionRecorderOptions = Pick<
@@ -70,6 +85,7 @@ export type SessionRecorderOptions = Pick<
   | "getRecorderClientId"
   | "getMatchStarted"
   | "getRecordContext"
+  | "getGamePresentation"
   | "onStateChange"
 >;
 
@@ -224,8 +240,8 @@ export class DemoCoordinator {
   /** Close a connection's file locally. Publication waits for the match decision. */
   finalize(recorder: DemoRecorder, reason: string): void {
     const entry = this.recorderEntries.get(recorder);
-    if (!entry || entry.recorder !== recorder) return;
-    this.recorderEntries.delete(recorder);
+    if (!entry || entry.recorder !== recorder || entry.finalizing) return;
+    entry.finalizing = true;
     const inactiveSince = Date.now();
     entry.state.inactiveSince = inactiveSince;
     const promise = (async () => {
@@ -258,6 +274,9 @@ export class DemoCoordinator {
       if (empty) {
         this.droppedCount++;
         this.pending.delete(entry.dir);
+        entry.released = true;
+        entry.state.keep = false;
+        entry.recorder = undefined;
         await fsp.rm(entry.dir, { recursive: true, force: true });
         log.info(
           { ...this.policyLogFields(entry), closeReason: reason },
@@ -286,6 +305,41 @@ export class DemoCoordinator {
     });
     this.inFlight.add(promise);
     void promise.finally(() => this.inFlight.delete(promise));
+  }
+
+  /** Journal live edits before broadcasting; reuse the actual sidecar after release. */
+  saveGamePresentation(
+    recorder: DemoRecorder,
+    game: PublishedGame,
+  ): Promise<void> {
+    const operation = this.releaseChain.then(async () => {
+      const entry = this.recorderEntries.get(recorder);
+      if (!entry) throw new Error("The game recording is no longer available");
+      if (entry.released) {
+        if (!entry.state.keep) return; // A deliberately discarded game has no demo.
+        const filename = recorder.filename;
+        if (!filename || !this.opts.onGamePresentationSaved)
+          throw new Error("The recorded game metadata is not available");
+        await this.opts.onGamePresentationSaved(
+          path.join(this.opts.dir, filename),
+          game,
+        );
+        return;
+      }
+      const state = { ...entry.state, gamePresentation: structuredClone(game) };
+      this.persist({ ...entry, state });
+      entry.state = state;
+      entry.policyDirty = false;
+    });
+    // Release and save share one chain so a journal edit cannot land after its
+    // presentation was merged but before the sidecar was moved out of pending.
+    this.releaseChain = operation.catch(() => {});
+    this.inFlight.add(operation);
+    void operation.then(
+      () => this.inFlight.delete(operation),
+      () => this.inFlight.delete(operation),
+    );
+    return operation;
   }
 
   /** Bind this connection to its mission and settle older missions after reconnect. */
@@ -365,6 +419,22 @@ export class DemoCoordinator {
     }
   }
 
+  /** Reconnects can recover labels only for the same observed mission. */
+  getSavedGamePresentation(
+    address: string,
+    mission: MissionControlState["mission"],
+  ): GamePresentation | undefined {
+    const entry = [...this.pending.values()]
+      .reverse()
+      .find(
+        (entry) =>
+          entry.state.address === address &&
+          sameMission(entry.state.mission, mission) &&
+          entry.state.gamePresentation !== undefined,
+      );
+    return entry && structuredClone(entry.state.gamePresentation!.presentation);
+  }
+
   /** The demo journal is written before async watch-state persistence. */
   takeRestoredPolicy(
     address: string,
@@ -408,8 +478,7 @@ export class DemoCoordinator {
   // Recorders already open files synchronously at connection setup.
   private persist(entry: PendingRecording): void {
     const file = path.join(entry.dir, "policy.json");
-    fs.writeFileSync(`${file}.tmp`, JSON.stringify(entry.state));
-    fs.renameSync(`${file}.tmp`, file);
+    atomicWrite(file, JSON.stringify(entry.state));
   }
 
   /** A disk failure must not interrupt packet processing or publish a partial decision. */
@@ -458,6 +527,24 @@ export class DemoCoordinator {
               !state.mission.every((part) => typeof part === "string")))
         ) {
           throw new Error("Invalid pending demo policy");
+        }
+        if (state.gamePresentation !== undefined) {
+          const game = state.gamePresentation;
+          const presentation = readGamePresentation(game?.presentation);
+          if (
+            !game ||
+            typeof game.id !== "string" ||
+            !game.id ||
+            !Number.isSafeInteger(game.revision) ||
+            game.revision < 0 ||
+            !presentation
+          )
+            throw new Error("Invalid pending game labels");
+          state.gamePresentation = {
+            id: game.id,
+            revision: game.revision,
+            presentation,
+          };
         }
         const files = await fsp.readdir(dir);
         // A crash before the handshake can leave only an unused journal.
@@ -679,6 +766,23 @@ export class DemoCoordinator {
           continue;
         const source = path.join(entry.dir, name);
         const destination = path.join(this.opts.dir, name);
+        if (name.endsWith(".rec") && entry.state.gamePresentation) {
+          const record = JSON.parse(
+            await fsp.readFile(`${source}.json`, "utf8"),
+          ) as DemoMetadata;
+          const saved = entry.state.gamePresentation;
+          // Recovery may rebuild the sidecar from a spool without a game ID.
+          const updated = {
+            ...record,
+            games: record.games.map((game, index) =>
+              (game.gameId === saved.id || (index === 0 && !game.gameId)) &&
+              (game.presentationRevision ?? 0) <= saved.revision
+                ? withGamePresentation(game, saved)
+                : game,
+            ),
+          };
+          atomicWrite(`${source}.json`, JSON.stringify(updated, null, 2));
+        }
         // The .rec becomes visible to the root upload sweep last.
         await fsp
           .rename(`${source}.json`, `${destination}.json`)

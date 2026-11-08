@@ -2,6 +2,7 @@ import { createStore } from "zustand/vanilla";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import type { ReplayClientMessage, ReplayState } from "../../relay/replayTypes";
 import { REPLAY_UPLOAD_TIMEOUT_MS } from "../../relay/replayTypes";
+import { readPublishedGame } from "../../relay/gamePresentation";
 import { RelayClient } from "../stream/relayClient";
 import { ReplayStreamAdapter } from "../stream/replayStreaming";
 import { STREAM_TICK_SEC } from "../stream/streamHelpers";
@@ -306,8 +307,9 @@ export const replayConnectionStore = createStore<ReplayConnectionState>(
             return;
           const adapter = get().adapter!;
           adapter.hydrate(payload);
-          if (adapter.missionName)
-            updateMissionIdentity(adapter.missionName, payload.missionSequence);
+          casterStore
+            .getState()
+            .setPublishedGame(readPublishedGame(payload.gamePresentation));
           // Entity lifetimes change, while a selected player identity survives
           // hydration within the same mission.
           streamPlaybackStore.setState({ followEntityId: null });
@@ -339,6 +341,17 @@ export const replayConnectionStore = createStore<ReplayConnectionState>(
         },
         onGamePacket(data) {
           if (current()) get().adapter?.feedPacket(data);
+        },
+        onReplayGamePresentation(message) {
+          if (
+            !current() ||
+            message.sessionId !== get().sessionId ||
+            message.epoch !== get().state?.epoch
+          )
+            return;
+          casterStore
+            .getState()
+            .setPublishedGame(readPublishedGame(message.game));
         },
         onReplayTick(message) {
           if (!current()) return;
@@ -420,7 +433,6 @@ export const replayConnectionStore = createStore<ReplayConnectionState>(
       adapter.onMissionChange = (missionName) => {
         if (current()) {
           gameEntityStore.getState().setMissionInfo({ missionName });
-          updateMissionIdentity(missionName, adapter.missionSequence);
         }
       };
       adapter.onMissionIdentity = (sequence, missionName) => {

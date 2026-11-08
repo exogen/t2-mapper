@@ -4,6 +4,7 @@ import type { DemoIndexEntry } from "../stream/demoIndex";
 import { missionDisplayName } from "./demoFormat";
 
 const searchKeys: KeyOption<DemoIndexEntry>[] = [
+  (demo) => demo.games.flatMap((game) => Object.values(game.teamNames ?? {})),
   // Both the internal name and the display name, so "DX_Ice" and
   // "Dangerous Crossing" each match.
   (demo) => demo.games.map((game) => game.mission),

@@ -21,6 +21,9 @@ import { buildCatchupPayload } from "./watchCatchup.js";
 import { WatchStateAccumulator } from "./watchState.js";
 import type { ReplayCatchupState } from "./replayTypes.js";
 import type { WatchCatchupPayload } from "./types.js";
+import { type DemoGame, publishedGameAt } from "./demoMetadata.js";
+import type { PublishedGame } from "./gamePresentation.js";
+import { isServerMessageCommand } from "./serverMessageDecode.js";
 
 const TICK_SEC = 0.032;
 const MAX_PITCH = Math.PI * 0.494;
@@ -40,6 +43,7 @@ export interface ReplaySourceLoadOptions {
   /** Limit the inflated block stream and initial block independently. */
   maxDecompressedBytes?: number;
   signal?: AbortSignal;
+  games?: readonly DemoGame[];
 }
 
 export type ReplaySourceEvent =
@@ -59,6 +63,7 @@ interface SourceCheckpoint {
   ghosts: GhostUpdate[];
   watch: ReturnType<WatchStateAccumulator["save"]>;
   moves: MoveCursor;
+  missionReadyTick: number;
 }
 
 /** A saved start-block move has packed axes; normal Move blocks already have floats. */
@@ -130,6 +135,10 @@ export class DemoReplaySource {
   private moves: MoveCursor;
   private readonly totalTicks: number;
   private seekQueue: Promise<void> = Promise.resolve();
+  private missionReadyTick = 0;
+  private readonly games: readonly DemoGame[];
+  private presentationReadyTick = -1;
+  private publishedGame: PublishedGame | null = null;
 
   static async load(
     bytes: Uint8Array,
@@ -197,11 +206,12 @@ export class DemoReplaySource {
     parser.finish();
     checkSize();
     signal?.throwIfAborted();
-    return new DemoReplaySource(parser);
+    return new DemoReplaySource(parser, options.games ?? []);
   }
 
-  private constructor(parser: DemoParser) {
+  private constructor(parser: DemoParser, games: readonly DemoGame[]) {
     this.parser = parser;
+    this.games = structuredClone(games);
     const initial = parser.initialBlock;
     checkHudSectionCounts(initial.demoValues);
     const values = parseDemoValues(initial.demoValues);
@@ -291,6 +301,19 @@ export class DemoReplaySource {
     return this.ended;
   }
 
+  /** Hold the ended game's labels while the next mission loads. */
+  get gamePresentation(): PublishedGame | null {
+    if (this.presentationReadyTick !== this.missionReadyTick) {
+      this.presentationReadyTick = this.missionReadyTick;
+      this.publishedGame = publishedGameAt(
+        this.games,
+        this.missionReadyTick * TICK_SEC * 1000,
+        (game) => `replay-game:${game.startMs}`,
+      );
+    }
+    return this.publishedGame;
+  }
+
   /**
    * Consume through exactly one Move block, preserving preceding packet order.
    * DemoParser already parses these bytes and processes SendPacket markers.
@@ -316,6 +339,12 @@ export class DemoReplaySource {
           const packet = block.parsed as PacketData;
           this.watch.applyPacket(packet, undefined, (name, args) => {
             this.watch.applyMissionStart(name, args);
+            if (
+              isServerMessageCommand(name) &&
+              args[0] === "MsgClientReady" &&
+              args.length >= 3
+            )
+              this.missionReadyTick = this.currentTick;
           });
           this.ghosts.applyPacket(packet);
           const ack = packet.gameState.lastMoveAck;
@@ -496,6 +525,8 @@ export class DemoReplaySource {
       status,
       ...structuredClone(this.moves),
     };
+    const game = this.gamePresentation;
+    if (game) payload.gamePresentation = structuredClone(game);
     return payload;
   }
 
@@ -519,6 +550,7 @@ export class DemoReplaySource {
       ghosts: this.ghosts.toInitialGhosts(),
       watch: this.watch.save(),
       moves: structuredClone(this.moves),
+      missionReadyTick: this.missionReadyTick,
     };
   }
 
@@ -528,6 +560,7 @@ export class DemoReplaySource {
     this.ended = checkpoint.complete;
     this.watch.restore(checkpoint.watch);
     this.moves = structuredClone(checkpoint.moves);
+    this.missionReadyTick = checkpoint.missionReadyTick;
     this.ghosts = new GhostStateAccumulator(this.watch.getTaggedStrings());
     this.ghosts.applyPacket({
       events: [],

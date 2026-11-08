@@ -31,7 +31,7 @@ export function useScoreboard() {
     return () => clearInterval(interval);
   }, [dataSource, isWatcher]);
 
-  const names = useCaster((s) => s.settings?.teamNames);
+  const names = useCaster((s) => s.teamNames);
   const grouped = useMemo(
     () =>
       groupScoreboard(

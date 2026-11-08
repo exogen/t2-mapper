@@ -11,7 +11,17 @@ kill_timeout = 15
 [env]
   RELAY_TRUST_FLY_PROXY = 'true'
   DEMO_DIR = '/data/demos'
+  DEMO_CHECKPOINT_INTERVAL_MINUTES = '6'
+  DEMO_CHECKPOINT_COUNT = '6'
   WATCH_STATE_PATH = '/data/watch-state.json'
+  AUTH_DATABASE_PATH = '/data/accounts/app.sqlite'
+  AUTH_BASE_URL = 'https://api.tribes2.online'
+  AUTH_TRUSTED_ORIGINS = 'https://tribes2.online'
+
+# SQLite has one authoritative volume. Do not use a blue/green or canary
+# deployment that creates a second independent account database.
+[deploy]
+  strategy = 'immediate'
 
 [build]
   dockerfile = 'relay/Dockerfile'

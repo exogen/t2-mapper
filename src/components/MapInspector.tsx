@@ -10,6 +10,7 @@ import {
 } from "react";
 import type { GameEngine } from "../engine/gameEngine";
 import { InspectorControls } from "./InspectorControls";
+import { AccountControls } from "./AccountControls";
 import { MissionSelect } from "./MissionSelect";
 import { DemoSelect } from "./DemoSelect";
 import { StreamingMissionInfo } from "./StreamingMissionInfo";
@@ -626,25 +627,28 @@ export function MapInspector() {
         {sidebarOpen ? <div className={styles.Backdrop} /> : null}
         <Activity mode={sidebarOpen ? "visible" : "hidden"}>
           <div className={styles.Sidebar} data-open={sidebarOpen}>
-            <InspectorControls
-              missionName={effectiveMissionName}
-              missionType={effectiveMissionType}
-              choosingMap={choosingMap}
-              engine={engine}
-              onOpenMapInfo={handleOpenMapInfo}
-              onOpenScoreScreen={
-                hasStreamData ? handleOpenScoreScreen : undefined
-              }
-              onOpenServerBrowser={
-                features.live ? handleOpenServerBrowser : undefined
-              }
-              onEnterDemoMode={handleEnterDemoMode}
-              onChooseMap={handleChooseMap}
-              onCancelChoosingMap={handleCancelChoosingMap}
-              onClose={() => {
-                setSidebarOpen(false);
-              }}
-            />
+            <div className={styles.SidebarScroll}>
+              <InspectorControls
+                missionName={effectiveMissionName}
+                missionType={effectiveMissionType}
+                choosingMap={choosingMap}
+                engine={engine}
+                onOpenMapInfo={handleOpenMapInfo}
+                onOpenScoreScreen={
+                  hasStreamData ? handleOpenScoreScreen : undefined
+                }
+                onOpenServerBrowser={
+                  features.live ? handleOpenServerBrowser : undefined
+                }
+                onEnterDemoMode={handleEnterDemoMode}
+                onChooseMap={handleChooseMap}
+                onCancelChoosingMap={handleCancelChoosingMap}
+                onClose={() => {
+                  setSidebarOpen(false);
+                }}
+              />
+            </div>
+            <AccountControls />
           </div>
         </Activity>
         <div className={styles.Content}>

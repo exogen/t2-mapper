@@ -10,6 +10,8 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 COPY relay/ relay/
+COPY scripts/backup-account-database.ts scripts/backup-account-database.ts
+COPY scripts/set-account-role.ts scripts/set-account-role.ts
 # Checkpoint workers replay through the same decoder and simulation as playback.
 COPY src/ src/
 

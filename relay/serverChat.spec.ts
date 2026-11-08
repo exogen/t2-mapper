@@ -64,6 +64,22 @@ vi.mock("./eventLoopMonitor", () => ({
     stop = harness.stopEventLoopMonitor;
   },
 }));
+// Transport/chat tests never initialize OAuth, open account databases, or run backups.
+vi.mock("./appAuth", () => ({
+  loadAppAuthConfig: () => null,
+  createAppAuth: () => {
+    throw new Error("Accounts are disabled in the relay transport harness");
+  },
+  handleDisabledAppAuth: () => false,
+}));
+vi.mock("./accountBackup", () => ({
+  loadAccountBackupConfig: () => null,
+  startAccountBackups: () => {
+    throw new Error(
+      "Account backups are disabled in the relay transport harness",
+    );
+  },
+}));
 vi.mock("./masterQuery", () => ({
   queryServerList: harness.queryServerList,
   queryServerInfo: vi.fn(),
@@ -296,6 +312,31 @@ describe("relay browser input", () => {
       message: "Unable to join the game stream. Please try again.",
     });
   });
+
+  it.each(["player", "watcher"] as const)(
+    "keeps a %s socket usable after an unsupported request",
+    async (role) => {
+      const browser = await connect(role, "false");
+      browser.send.mockClear();
+      await browser.request({
+        type: "futureOptionalFeature",
+        payload: { enabled: true },
+      } as unknown as ClientMessage);
+      await browser.request({
+        type: "wsPing",
+        ts: 12345,
+        futureOption: true,
+      } as ClientMessage);
+      const replies = browser.send.mock.calls.map(([frame]) =>
+        JSON.parse(frame),
+      );
+      expect(replies).toContainEqual({ type: "wsPong", ts: 12345 });
+      expect(
+        replies.every((reply) => ["error", "wsPong"].includes(reply.type)),
+      ).toBe(true);
+      expect(browser.readyState).toBe(browser.OPEN);
+    },
+  );
 
   it("answers a replay socket's ping exactly once", async () => {
     const browser = await connect("watcher", "false");

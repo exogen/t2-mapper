@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RelayEventHandler } from "../stream/relayClient";
 import type { ServerInfo } from "../../relay/types";
 import type { LiveStreamAdapter } from "../stream/liveStreaming";
+import { testCatchupPayload } from "../../relay/serverPacketFixtures";
 
 vi.mock("../logger", () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
@@ -117,6 +118,51 @@ describe("watch connection metadata", () => {
     expect(casterStore.getState().settings?.teamNames).toEqual({});
     state().leaveServer();
     expect(casterStore.getState().context).toBeNull();
+  });
+
+  it("applies saved labels after hydration and only accepts updates for the displayed game", () => {
+    const adapter = state().adapter!;
+    vi.mocked(adapter.hydrate).mockImplementation((payload) => {
+      adapter.onMissionIdentity!(
+        payload.missionSequence!,
+        payload.missionName!,
+      );
+    });
+    const game = {
+      id: "game-one",
+      revision: 1,
+      presentation: { title: "Final", teamNames: { 1: "Knights" } },
+    };
+    handlers().onCatchup!({
+      ...testCatchupPayload(),
+      missionName: "DelayedMap",
+      missionSequence: "4",
+      gamePresentation: game,
+    });
+    expect(casterStore.getState().publishedGame).toEqual(game);
+    casterStore.getState().renameTeam(1, "Storm");
+    const updated = {
+      ...game,
+      revision: 2,
+      presentation: { teamNames: { 1: "Dragons" } },
+    };
+    handlers().onGamePresentation!(updated);
+    expect(casterStore.getState().publishedGame).toEqual(updated);
+    expect(casterStore.getState().teamNames[1]).toBe("Storm");
+    casterStore.getState().renameTeam(1, "");
+    expect(casterStore.getState().teamNames[1]).toBe("Dragons");
+    handlers().onGamePresentation!(game);
+    handlers().onGamePresentation!({
+      ...updated,
+      id: "some-other-game",
+      revision: 3,
+    });
+    expect(casterStore.getState().publishedGame).toEqual(updated);
+
+    adapter.onMissionIdentity!("5", "NextMap");
+    expect(casterStore.getState().publishedGame).toBeNull();
+    handlers().onGamePresentation!({ ...updated, revision: 4 });
+    expect(casterStore.getState().publishedGame).toBeNull();
   });
 
   it("blocks outgoing chat until the relay enables it and resets it across reconnects", () => {

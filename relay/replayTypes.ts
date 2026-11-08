@@ -1,4 +1,5 @@
 import type { Move } from "t2-demo-parser";
+import type { PublishedGame } from "./gamePresentation.js";
 
 /** Session-only uploads never enter the published demo library. */
 export const REPLAY_UPLOAD_PATH = "/replay-upload";
@@ -60,6 +61,12 @@ export type ReplayClientMessage =
     };
 
 export type ReplayServerMessage =
+  | {
+      type: "replayGamePresentation";
+      sessionId: string;
+      epoch: number;
+      game: PublishedGame | null;
+    }
   | {
       type: "replayUploadProgress";
       uploadId: string;

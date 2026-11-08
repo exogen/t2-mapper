@@ -236,6 +236,31 @@ describe("demo loads during navigation", () => {
     },
   );
 
+  it("ignores published details after another playback replaces the installed recording", async () => {
+    const sidecar = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        if (String(url).endsWith(".rec.json")) return sidecar.promise;
+        if (String(url).endsWith(".checkpoints.json"))
+          return new Response(null, { status: 404 });
+        return response();
+      }),
+    );
+    mocks.parse.mockResolvedValue(recording("published"));
+    await loadDemoUrl("https://demos.example/game.rec");
+    mocks.current = { source: "live" } as StreamRecording;
+    sidecar.resolve(
+      new Response(
+        JSON.stringify({
+          games: [{ mission: "Katabatic", startMs: 0, title: "Old game" }],
+        }),
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(demoLoadStore.getState().publishedGames).toBeNull();
+  });
+
   it("keeps a discovered server when the timeline scan later fails", async () => {
     const scanned = deferred<never>();
     mocks.scan.mockReturnValueOnce(scanned.promise);
@@ -291,21 +316,278 @@ describe("demo loads during navigation", () => {
     } as unknown as StreamRecording;
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValueOnce(response())
-        .mockReturnValueOnce(sidecar.promise),
+      vi.fn(async (url) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith(".checkpoints.json")) return sidecar.promise;
+        if (path.endsWith(".rec.json"))
+          return new Response(null, { status: 404 });
+        return response();
+      }),
     );
     mocks.parse.mockResolvedValueOnce(demo);
     await loadDemoUrl("https://demos.example/demo.rec?token=example");
     expect(mocks.install).toHaveBeenCalledWith(demo, buffer);
-    expect(fetch).toHaveBeenLastCalledWith(
+    expect(fetch).toHaveBeenCalledWith(
       "https://demos.example/demo.rec.checkpoints.json?token=example",
       { signal: expect.any(AbortSignal) },
     );
     expect(importCheckpoints).not.toHaveBeenCalled();
     sidecar.resolve(new Response("checkpoint sidecar"));
     await vi.waitFor(() => expect(importCheckpoints).toHaveBeenCalledWith([]));
+  });
+
+  it("loads published game details without delaying playback and revalidates the sidecar", async () => {
+    const sidecar = deferred<Response>();
+    const games = [
+      {
+        mission: "Katabatic",
+        gameType: "CTF",
+        startMs: 0,
+        tournament: false,
+        gameId: "saved-game",
+        presentationRevision: 2,
+        title: "Final",
+        teamNames: { 1: "Knights", 2: "Dragons" },
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith(".checkpoints.json"))
+          return new Response(null, { status: 404 });
+        if (path.endsWith(".rec.json")) return sidecar.promise;
+        return response();
+      }),
+    );
+    mocks.parse.mockResolvedValue(recording("published"));
+    await loadDemoUrl("https://demos.example/game.rec?token=example");
+    expect(mocks.install).toHaveBeenCalledOnce();
+    expect(demoLoadStore.getState().publishedGames).toBeNull();
+    expect(fetch).toHaveBeenCalledWith(
+      "https://demos.example/game.rec.json?token=example",
+      { signal: expect.any(AbortSignal), cache: "no-cache" },
+    );
+    sidecar.resolve(new Response(JSON.stringify({ games })));
+    await vi.waitFor(() =>
+      expect(demoLoadStore.getState().publishedGames).toEqual(games),
+    );
+  });
+
+  it("loads saved game metadata before the recording response arrives, without an editor request", async () => {
+    const download = deferred<Response>();
+    const games = [
+      {
+        mission: "TWL_Harvester",
+        startMs: 0,
+        gameType: "Capture the Flag",
+        tournament: true,
+        title: "25th Anniversary: Quarterfinals",
+      },
+    ];
+    const sidecar = Response.json({ games });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith(".rec.json")) return sidecar;
+        if (path.endsWith(".checkpoints.json"))
+          return new Response(null, { status: 404 });
+        return download.promise;
+      }),
+    );
+    mocks.parse.mockResolvedValue(recording("published"));
+    const loading = loadDemoUrl(
+      "https://demos.example/tournament-server-2_20261108T0456_twl-harvester_e9e60a.rec",
+    );
+
+    await vi.waitFor(() => expect(sidecar.bodyUsed).toBe(true));
+    expect(mocks.parse).not.toHaveBeenCalled();
+    expect(mocks.install).not.toHaveBeenCalled();
+    expect(demoLoadStore.getState().publishedGames).toBeNull();
+
+    download.resolve(response());
+    await loading;
+    expect(demoLoadStore.getState().publishedGames).toEqual(games);
+  });
+
+  it("does not replace newer editor metadata with a delayed initial sidecar", async () => {
+    const sidecar = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        if (String(url).endsWith(".rec.json")) return sidecar.promise;
+        if (String(url).endsWith(".checkpoints.json"))
+          return new Response(null, { status: 404 });
+        return response();
+      }),
+    );
+    mocks.parse.mockResolvedValue(recording("published"));
+    await loadDemoUrl("https://demos.example/old.rec");
+    const games = [
+      {
+        mission: "Katabatic",
+        startMs: 0,
+        gameType: "CTF",
+        tournament: false,
+        gameId: "game",
+        presentationRevision: 2,
+        title: "Just saved",
+        teamNames: { 1: "Saved team" },
+      },
+    ];
+    demoLoadStore.setState({ publishedGames: games });
+    sidecar.resolve(
+      Response.json({
+        games: [{ ...games[0], presentationRevision: 1, title: "Old title" }],
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(demoLoadStore.getState().publishedGames).toBe(games);
+  });
+
+  it.each(["eject", "local file"])(
+    "clears pending metadata on %s before the recording response arrives",
+    async (action) => {
+      const download = deferred<Response>();
+      const games = [{ mission: "Katabatic", startMs: 0, title: "Old game" }];
+      const sidecar = Response.json({ games });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url) =>
+          String(url).endsWith(".rec.json") ? sidecar : download.promise,
+        ),
+      );
+      const loading = loadDemoUrl("https://demos.example/old.rec");
+      await vi.waitFor(() => expect(sidecar.bodyUsed).toBe(true));
+
+      if (action === "eject") unloadDemo();
+      else {
+        mocks.parse.mockResolvedValue(recording("local"));
+        await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+      }
+      download.resolve(response());
+      await loading;
+
+      expect(demoLoadStore.getState().requestedUrl).toBeNull();
+      expect(demoLoadStore.getState().publishedGames).toBeNull();
+      expect(demoLoadStore.getState().sourceUrl).toBeNull();
+    },
+  );
+
+  it("retains published details that arrive before parsing and clears them for local files", async () => {
+    const parsed = deferred<StreamRecording>();
+    const games = [
+      {
+        mission: "Katabatic",
+        gameType: "CTF",
+        startMs: 0,
+        tournament: false,
+        title: "Final",
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        if (String(url).endsWith(".rec.json"))
+          return new Response(JSON.stringify({ games }));
+        if (String(url).endsWith(".checkpoints.json"))
+          return new Response(null, { status: 404 });
+        return response();
+      }),
+    );
+    mocks.parse
+      .mockReturnValueOnce(parsed.promise)
+      .mockResolvedValue(recording("local"));
+    const pending = loadDemoUrl("https://demos.example/game.rec");
+    await vi.waitFor(() => expect(mocks.parse).toHaveBeenCalledOnce());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(demoLoadStore.getState().publishedGames).toBeNull();
+    parsed.resolve(recording("published"));
+    await pending;
+    expect(demoLoadStore.getState().publishedGames).toEqual(games);
+    await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+    expect(demoLoadStore.getState().publishedGames).toBeNull();
+  });
+
+  it.each(["eject", "next demo"])(
+    "ignores published details arriving after %s",
+    async (action) => {
+      const sidecar = deferred<Response>();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url) => {
+          if (String(url).endsWith(".rec.json")) return sidecar.promise;
+          if (String(url).endsWith(".checkpoints.json"))
+            return new Response(null, { status: 404 });
+          return response();
+        }),
+      );
+      mocks.parse.mockResolvedValue(recording("published"));
+      await loadDemoUrl("https://demos.example/game.rec");
+      if (action === "eject") unloadDemo();
+      else await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+      sidecar.resolve(
+        new Response(
+          JSON.stringify({
+            games: [{ mission: "Katabatic", startMs: 0, title: "Old game" }],
+          }),
+        ),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(demoLoadStore.getState().publishedGames).toBeNull();
+    },
+  );
+
+  it.each(["missing", "invalid JSON", "invalid format", "offline"])(
+    "keeps playback usable with %s published metadata",
+    async (failure) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url) => {
+          if (String(url).endsWith(".checkpoints.json"))
+            return new Response(null, { status: 404 });
+          if (String(url).endsWith(".rec.json")) {
+            if (failure === "offline") throw new Error("offline");
+            if (failure === "missing")
+              return new Response(null, { status: 404 });
+            return new Response(
+              failure === "invalid JSON"
+                ? "{"
+                : JSON.stringify({ games: [null, {}] }),
+            );
+          }
+          return response();
+        }),
+      );
+      mocks.parse.mockResolvedValue(recording("published"));
+      await loadDemoUrl("https://demos.example/game.rec");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(mocks.install).toHaveBeenCalledOnce();
+      expect(demoLoadStore.getState()).toMatchObject({
+        phase: "idle",
+        publishedGames: null,
+      });
+    },
+  );
+
+  it("recognizes an authoritative empty games list", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        if (String(url).endsWith(".rec.json"))
+          return Response.json({ games: [] });
+        if (String(url).endsWith(".checkpoints.json"))
+          return new Response(null, { status: 404 });
+        return response();
+      }),
+    );
+    mocks.parse.mockResolvedValue(recording("warmup"));
+    await loadDemoUrl("https://demos.example/warmup.rec");
+    await vi.waitFor(() =>
+      expect(demoLoadStore.getState().publishedGames).toEqual([]),
+    );
   });
 
   it("ignores seek checkpoints decoded after a recording is replaced", async () => {

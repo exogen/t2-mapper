@@ -2,6 +2,7 @@ import { createStore } from "zustand/vanilla";
 import type { ParseFault } from "t2-demo-parser";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { isChatCommand, normalizeAddress } from "../../relay/shared";
+import { readPublishedGame } from "../../relay/gamePresentation";
 import { createLogger } from "../logger";
 import { RelayClient } from "../stream/relayClient";
 import { LiveStreamAdapter } from "../stream/liveStreaming";
@@ -410,6 +411,21 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           if (get()._relay !== relay || get().watchStatus === "ended") return;
           set({ watcherCount: count });
         },
+        onGamePresentation(game) {
+          const state = get();
+          if (
+            state._relay !== relay ||
+            state.role !== "watcher" ||
+            state.watchStatus === "ended"
+          )
+            return;
+          const caster = casterStore.getState();
+          if (
+            caster.publishedGame?.id === game.id &&
+            game.revision >= caster.publishedGame.revision
+          )
+            caster.setPublishedGame(game);
+        },
         onCatchupProgress(receivedBytes, totalBytes) {
           if (get()._relay !== relay || !get()._adapter) return;
           set({
@@ -429,6 +445,10 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           // where the adapter had already been ready before the drop.
           set({ liveReady: false });
           a.hydrate(payload);
+          if (get().role === "watcher")
+            casterStore
+              .getState()
+              .setPublishedGame(readPublishedGame(payload.gamePresentation));
         },
         onError(message, requestType) {
           if (get()._relay !== relay) return;

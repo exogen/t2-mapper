@@ -3,14 +3,14 @@ import {
   PutObjectCommand,
   type S3Client,
 } from "@aws-sdk/client-s3";
-import type { DemoMetadata } from "../../relay/demoRecorder.js";
+import type { DemoMetadata } from "../../relay/demoMetadata.js";
 
-/** Merge onto the latest sidecar, preserving edits made while parsing the demo. */
-export async function repairDemoPlayerMetadata(
+/** Re-read and conditionally replace a sidecar so concurrent edits survive. */
+export async function updateDemoMetadata(
   client: S3Client,
   bucket: string,
   key: string,
-  repair: DemoMetadata,
+  update: (latest: DemoMetadata | undefined) => DemoMetadata,
   backup: (key: string, body: string) => Promise<void>,
 ): Promise<DemoMetadata> {
   for (let attempt = 0; ; attempt++) {
@@ -34,11 +34,7 @@ export async function repairDemoPlayerMetadata(
     } catch (error) {
       if (!(error instanceof Error) || error.name !== "NoSuchKey") throw error;
     }
-    const merged: DemoMetadata = {
-      ...(latest ?? repair),
-      players: repair.players,
-      playerCount: repair.playerCount,
-    };
+    const merged = update(latest);
     try {
       await client.send(
         new PutObjectCommand({

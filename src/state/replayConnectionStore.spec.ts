@@ -40,6 +40,7 @@ vi.mock("../stream/replayStreaming", () => ({
     missionName = "Katabatic";
     missionSequence: string | null = null;
     onParseFault?: () => void;
+    onMissionIdentity?: (sequence: string, name: string) => void;
     sourceTick = 0;
     relay: unknown;
     constructor(relay: unknown) {
@@ -54,6 +55,15 @@ vi.mock("../stream/replayStreaming", () => ({
       this.missionName = payload.missionName!;
       this.missionSequence = payload.missionSequence ?? null;
       this.sourceTick = payload.replay!.tick;
+      const displayed =
+        payload.displayedMission === undefined
+          ? { name: this.missionName, sequence: this.missionSequence }
+          : payload.displayedMission;
+      if (displayed)
+        this.onMissionIdentity?.(
+          displayed.sequence ?? displayed.name,
+          displayed.name,
+        );
     });
   },
 }));
@@ -802,6 +812,86 @@ describe("replay session connection", () => {
     handlers().onCatchup!(other);
     expect(casterStore.getState().context?.server).toBe("replay:other-room");
     expect(casterStore.getState().settings?.teamNames).toEqual({});
+  });
+
+  it("keeps debrief names when the next mission loads or a catch-up arrives", () => {
+    state().join("room");
+    handlers().onReplayState!(replay());
+    handlers().onCatchup!({ ...catchup(), missionSequence: "7" });
+    casterStore.getState().renameTeam(1, "Final score team");
+
+    state().adapter!.onMissionChange!("Raindance");
+    expect(casterStore.getState().settings?.teamNames).toEqual({
+      1: "Final score team",
+    });
+    handlers().onCatchup!({
+      ...catchup(),
+      missionName: "Raindance",
+      missionSequence: "8",
+      displayedMission: { name: "Katabatic", sequence: "7" },
+    });
+    expect(state().missionIdentity).toBe(JSON.stringify(["7", "katabatic"]));
+    expect(casterStore.getState().settings?.teamNames).toEqual({
+      1: "Final score team",
+    });
+
+    state().adapter!.onMissionIdentity!("8", "Raindance");
+    expect(casterStore.getState().settings?.teamNames).toEqual({});
+    handlers().onCatchup!({
+      ...catchup(),
+      missionSequence: "7",
+      displayedMission: { name: "Katabatic", sequence: "7" },
+    });
+    expect(casterStore.getState().settings?.teamNames).toEqual({
+      1: "Final score team",
+    });
+  });
+
+  it("loads saved game labels for shared replays while preserving explicit personal names", () => {
+    state().join("room");
+    handlers().onReplayState!(replay());
+    const game = {
+      id: "game-one",
+      revision: 2,
+      presentation: { title: "Final", teamNames: { 1: "Knights" } },
+    };
+    handlers().onCatchup!({
+      ...catchup(),
+      missionSequence: "7",
+      gamePresentation: game,
+    });
+    expect(casterStore.getState().publishedGame).toEqual(game);
+    expect(casterStore.getState().teamNames[1]).toBe("Knights");
+    casterStore.getState().renameTeam(1, "Storm");
+    const message = {
+      type: "replayGamePresentation" as const,
+      sessionId: "room",
+      epoch: 1,
+      game: {
+        ...game,
+        revision: 3,
+        presentation: { teamNames: { 1: "Dragons" } },
+      },
+    };
+    handlers().onReplayGamePresentation!(message);
+    expect(casterStore.getState().teamNames[1]).toBe("Storm");
+    casterStore.getState().renameTeam(1, "");
+    expect(casterStore.getState().teamNames[1]).toBe("Dragons");
+    handlers().onReplayGamePresentation!({
+      ...message,
+      sessionId: "old-room",
+      game: null,
+    });
+    handlers().onReplayGamePresentation!({ ...message, epoch: 0, game: null });
+    expect(casterStore.getState().teamNames[1]).toBe("Dragons");
+    handlers().onReplayGamePresentation!({ ...message, game: null });
+    expect(casterStore.getState().publishedGame).toBeNull();
+    handlers().onCatchup!({
+      ...catchup(),
+      missionSequence: "7",
+      gamePresentation: game,
+    });
+    expect(casterStore.getState().teamNames[1]).toBe("Knights");
   });
 
   it("does not suspend another source's caster settings when replay is inactive", () => {

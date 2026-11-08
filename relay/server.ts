@@ -23,6 +23,16 @@ import { createReplayDemoLoader } from "./replayDemoLoader.js";
 import { handleReplayUpload } from "./replayUpload.js";
 import { DemoCheckpointPublisher } from "./demoCheckpointPublisher.js";
 import { loadCredentials } from "./auth.js";
+import {
+  createAppAuth,
+  handleDisabledAppAuth,
+  loadAppAuthConfig,
+} from "./appAuth.js";
+import { openAccountDatabase } from "./accountDatabase.js";
+import {
+  loadAccountBackupConfig,
+  startAccountBackups,
+} from "./accountBackup.js";
 import { WatchSessionManager, normalizeAddress } from "./watchSession.js";
 import { WatchRequest } from "./watchRequest.js";
 import {
@@ -32,6 +42,7 @@ import {
 } from "./missionControls.js";
 import { DemoCoordinator } from "./demoCoordinator.js";
 import { DemoUploader, loadUploadConfig } from "./demoUpload.js";
+import { createGamePresentationUpdater } from "./gamePresentationService.js";
 import {
   Patroller,
   globToRegExp,
@@ -219,8 +230,41 @@ const WATCH_TOURNEY_SKIP_TYPES =
 
 const eventLoopMonitor = new EventLoopMonitor();
 
+// Web app accounts are separate from the shared TribesNext game identity.
+// No Discord credentials means accounts remain disabled and watching still works.
+const appAuthConfig = loadAppAuthConfig();
+const accountDatabase = appAuthConfig
+  ? openAccountDatabase(
+      process.env.AUTH_DATABASE_PATH || ".relay/accounts/app.sqlite",
+    )
+  : null;
+const accountBackupConfig = accountDatabase ? loadAccountBackupConfig() : null;
+const appAuth =
+  appAuthConfig && accountDatabase
+    ? await createAppAuth({
+        config: appAuthConfig,
+        database: accountDatabase,
+        onUpdateGamePresentation: (update) => updateGamePresentation(update),
+        onReadDemoPresentation: (filename) =>
+          demoUploader.readPublishedDemo(filename),
+      })
+    : null;
+const accountBackups =
+  accountDatabase && accountBackupConfig
+    ? startAccountBackups(accountDatabase, accountBackupConfig)
+    : null;
+if (accountDatabase && !accountBackups) {
+  relayLog.warn(
+    "Account database backups are not configured; configure a dedicated private backup bucket before production use",
+  );
+}
+
 /** HTTP health checks and demo downloads; WebSocket upgrades are separate. */
 const httpServer = http.createServer(async (req, res) => {
+  if (
+    appAuth ? await appAuth.handle(req, res) : handleDisabledAppAuth(req, res)
+  )
+    return;
   if (await handleReplayUpload(req, res, replaySessions)) return;
   if (await handleDemoDownload(req, res, TRUST_FLY_PROXY, demoSourceCache))
     return;
@@ -449,15 +493,19 @@ function createGameConnection(
   });
 }
 
-const demoUploader = new DemoUploader(demoUploadConfig, DEMO_DIR, {
-  // Sweeps only run after both are constructed.
-  isLive: (filePath) => demoCoordinator.isLivePath(filePath),
-  salvageMinLengthMs: DEMO_MIN_LENGTH_MS,
-  publishCheckpoints: demoCheckpointPublisher
-    ? (localFile, key) => demoCheckpointPublisher.publish(key, { localFile })
-    : undefined,
-});
-const demoCoordinator = new DemoCoordinator({
+const demoUploader: DemoUploader = new DemoUploader(
+  demoUploadConfig,
+  DEMO_DIR,
+  {
+    // Sweeps only run after both are constructed.
+    isLive: (filePath) => demoCoordinator.isLivePath(filePath),
+    salvageMinLengthMs: DEMO_MIN_LENGTH_MS,
+    publishCheckpoints: demoCheckpointPublisher
+      ? (localFile, key) => demoCheckpointPublisher.publish(key, { localFile })
+      : undefined,
+  },
+);
+const demoCoordinator: DemoCoordinator = new DemoCoordinator({
   enabled: DEMO_RECORD_ENABLED,
   dir: DEMO_DIR,
   minFreeBytes: DEMO_MIN_FREE_BYTES,
@@ -467,6 +515,8 @@ const demoCoordinator = new DemoCoordinator({
   pendingTimeoutMs: DEMO_PENDING_TIMEOUT_MS,
   recorderName: process.env.T2_ACCOUNT_NAME || "Observer",
   onFinalized: (filePath) => demoUploader.enqueue(filePath),
+  onGamePresentationSaved: (filePath, game) =>
+    demoUploader.saveGamePresentation(filePath, game),
 });
 if (DEMO_RECORD_ENABLED || demoUploader.enabled) {
   relayLog.info(
@@ -561,6 +611,12 @@ const watchSessions = new WatchSessionManager({
   tourneyDelayMs: WATCH_TOURNEY_DELAY_MS,
   tourneySkipTypes: WATCH_TOURNEY_SKIP_TYPES,
 });
+
+const updateGamePresentation = createGamePresentationUpdater(
+  watchSessions,
+  demoCoordinator,
+  demoUploader,
+);
 
 const patroller =
   DEMO_RECORD_ENABLED && DEMO_PATROL_ENABLED && DEMO_PATROL_SERVERS.length > 0
@@ -659,6 +715,7 @@ function drainSessions(timeoutMs: number): Promise<unknown> {
   // Preserve the pre-exit snapshot: teardown must not save an empty server list.
   shuttingDown = true;
   eventLoopMonitor.stop();
+  appAuth?.close();
   patroller?.stop();
   watchSessions.shutdown();
   replaySessions.shutdown();
@@ -666,6 +723,7 @@ function drainSessions(timeoutMs: number): Promise<unknown> {
     Promise.allSettled([
       demoCoordinator.shutdown(timeoutMs),
       watchStateWriteChain,
+      accountBackups?.stop(),
     ]),
     new Promise((resolve) => setTimeout(resolve, timeoutMs).unref()),
   ]);
@@ -688,6 +746,14 @@ for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
 }
 
 process.on("exit", (code) => {
+  try {
+    appAuth?.close();
+    if (accountDatabase?.open) accountDatabase.close();
+  } catch {
+    // An in-progress backup can outlive the bounded shutdown drain. FULL-sync
+    // WAL recovery still preserves committed data when the process exits.
+    logExit("account database close deferred to process teardown");
+  }
   logExit(`process exiting with code ${code}`);
 });
 

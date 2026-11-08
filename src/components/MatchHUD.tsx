@@ -324,7 +324,7 @@ function BroadcastMatchHUD({
   colorScheme: TeamColorScheme;
   competitionScores: boolean;
 } & MatchHUDActions) {
-  const customNames = useCaster((state) => state.settings?.teamNames);
+  const customNames = useCaster((state) => state.teamNames);
   // Carrier changes fit the reserved space; only these values affect sizing.
   const contentKey = JSON.stringify([
     competitionScores,

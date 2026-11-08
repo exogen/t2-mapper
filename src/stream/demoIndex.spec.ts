@@ -1,11 +1,26 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CAST_BASE_URL,
+  DEMOS_BASE_URL,
   commentaryFileName,
   commentarySidecarUrl,
   sidecarUrl,
   demoPlayerCount,
+  fetchDemoIndex,
 } from "./demoIndex";
+
+afterEach(() => vi.unstubAllGlobals());
+
+it("revalidates the demo index so saved metadata is not hidden by browser caches", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(Response.json([]));
+  vi.stubGlobal("fetch", fetchMock);
+
+  await expect(fetchDemoIndex()).resolves.toEqual([]);
+
+  expect(fetchMock).toHaveBeenCalledWith(`${DEMOS_BASE_URL}/index.json`, {
+    cache: "no-cache",
+  });
+});
 
 describe("demo player count", () => {
   it("uses the tag-less name count rather than counting aliases", () => {

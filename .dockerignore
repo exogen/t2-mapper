@@ -7,3 +7,7 @@
 !package-lock.json
 !relay
 !src
+!scripts/
+scripts/*
+!scripts/backup-account-database.ts
+!scripts/set-account-role.ts

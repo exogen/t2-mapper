@@ -87,7 +87,7 @@ function originalFlagTarget(entity: GameEntity): FlagTargetInfo | undefined {
 export function flagLabel(
   entity: GameEntity,
   kind: "original" | "contextual",
-  teamNames = casterStore.getState().settings?.teamNames,
+  teamNames = casterStore.getState().teamNames,
 ): string {
   const targetName =
     "playerName" in entity

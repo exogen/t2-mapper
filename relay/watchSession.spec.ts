@@ -293,6 +293,36 @@ describe("watch mission controls", () => {
     },
   );
 
+  it("restores saved labels from a matching recording journal after relay restart", () => {
+    const coordinator = policyCoordinator();
+    coordinator.getSavedGamePresentation = vi.fn(() => ({
+      title: "Restored final",
+      teamNames: { 1: "Knights" },
+    }));
+    const { manager, connections } = createManager({
+      demoCoordinator: coordinator,
+    });
+    const viewer = new FakeWebSocket();
+    manager.watch(viewer as unknown as WebSocket, "1.2.3.4:28000");
+    const session = manager.getSession("1.2.3.4:28000")!;
+    session["handleResponderEvent"](
+      remoteCommandEvent("MissionStartPhase1", "7", "Katabatic"),
+    );
+    connections[0].setStatus("connected");
+    expect(
+      JSON.parse(gunzipSync(Buffer.concat(viewer.binaryFrames())).toString())
+        .gamePresentation,
+    ).toMatchObject({
+      revision: 1,
+      presentation: { title: "Restored final", teamNames: { 1: "Knights" } },
+    });
+    expect(coordinator.getSavedGamePresentation).toHaveBeenCalledWith(
+      "1.2.3.4:28000",
+      ["7", "Katabatic"],
+    );
+    manager.shutdown();
+  });
+
   it("keeps an accepted vote when a roster refresh hides its GUID, while rejecting new votes without that GUID", () => {
     manager.shutdown();
     start({ adminVotePolicies: twoAdminPolicies });
@@ -2023,6 +2053,89 @@ describe("WatchSessionManager", () => {
     vi.useRealTimers();
   });
 
+  it("publishes game labels to current watchers and refreshed catch-ups without rejoining", () => {
+    const { manager, connections } = createManager();
+    const first = new FakeWebSocket();
+    const second = new FakeWebSocket();
+    manager.watch(first as unknown as WebSocket, "1.2.3.4:28000");
+    manager.watch(second as unknown as WebSocket, "1.2.3.4:28000");
+    connections[0].setStatus("connected");
+    const initial = JSON.parse(
+      gunzipSync(Buffer.concat(first.binaryFrames())).toString(),
+    ).gamePresentation;
+    expect(initial).toEqual({
+      id: expect.any(String),
+      revision: 0,
+      presentation: {},
+    });
+    expect(manager.getGame(initial.id)).toEqual(initial);
+    const saved = {
+      ...initial,
+      revision: 1,
+      presentation: {
+        title: "The final",
+        teamNames: { 1: "Knights", 2: "Dragons" },
+      },
+    };
+    expect(manager.updateGame(saved)).toBe(true);
+    for (const viewer of [first, second])
+      expect(viewer.jsonMessages().at(-1)).toEqual({
+        type: "gamePresentation",
+        address: "1.2.3.4:28000",
+        game: saved,
+      });
+    expect(connections).toHaveLength(1);
+    const later = new FakeWebSocket();
+    manager.watch(later as unknown as WebSocket, "1.2.3.4:28000");
+    expect(
+      JSON.parse(gunzipSync(Buffer.concat(later.binaryFrames())).toString())
+        .gamePresentation,
+    ).toEqual(saved);
+    expect(manager.updateGame(initial)).toBe(false);
+    expect(manager.updateGame({ ...saved, id: "unknown-game" })).toBe(false);
+    manager.shutdown();
+    expect(manager.getGame(initial.id)).toBeUndefined();
+  });
+
+  it.each([
+    ["7", "Katabatic", true],
+    ["8", "Katabatic", false],
+    ["7", "Raindance", false],
+  ] as const)(
+    "preserves labels across reconnect only for an unchanged mission (%s %s)",
+    (sequence, mission, preserved) => {
+      const { manager, connections } = createManager();
+      const viewer = new FakeWebSocket();
+      manager.watch(viewer as unknown as WebSocket, "1.2.3.4:28000");
+      const session = manager.getSession("1.2.3.4:28000")!;
+      session["handleResponderEvent"](
+        remoteCommandEvent("MissionStartPhase1", "7", "Katabatic"),
+      );
+      connections[0].setStatus("connected");
+      const first = JSON.parse(
+        gunzipSync(Buffer.concat(viewer.binaryFrames())).toString(),
+      ).gamePresentation;
+      const saved = {
+        ...first,
+        revision: 1,
+        presentation: { title: "Final", teamNames: { 1: "Knights" } },
+      };
+      manager.updateGame(saved);
+      viewer.sent = [];
+      session["reconnect"]("Re-syncing");
+      session["handleResponderEvent"](
+        remoteCommandEvent("MissionStartPhase1", sequence, mission),
+      );
+      connections.at(-1)!.setStatus("connected");
+      const next = JSON.parse(
+        gunzipSync(Buffer.concat(viewer.binaryFrames())).toString(),
+      ).gamePresentation;
+      expect(next.id).not.toBe(first.id);
+      expect(next.presentation).toEqual(preserved ? saved.presentation : {});
+      manager.shutdown();
+    },
+  );
+
   it("shares one game connection between two watchers", () => {
     const { manager, connections } = createManager();
     const ws1 = new FakeWebSocket();
@@ -2737,6 +2850,58 @@ describe("WatchSession delayed transitions", () => {
     connections.at(-1)!.setStatus("connected");
     session!.setTournamentMode(tournament);
   }
+
+  it("updates a delayed game's labels immediately without exposing the new live game's labels", () => {
+    const { manager, connections, session, ws } = start();
+    const oldGame = catchup(ws).gamePresentation;
+    recordedMission(session);
+    ws.sent = [];
+    cycle(connections, session, false);
+    const liveViewer = new FakeWebSocket();
+    manager.watch(liveViewer as unknown as WebSocket, address);
+    const newGame = catchup(liveViewer).gamePresentation;
+    expect(newGame.id).not.toBe(oldGame.id);
+    ws.sent = [];
+    liveViewer.sent = [];
+
+    const oldSaved = {
+      ...oldGame,
+      revision: 1,
+      presentation: { title: "Old final" },
+    };
+    expect(manager.updateGame(oldSaved)).toBe(true);
+    expect(ws.jsonMessages()).toEqual([
+      { type: "gamePresentation", address, game: oldSaved },
+    ]);
+    expect(liveViewer.jsonMessages()).toEqual([]);
+    const returning = new FakeWebSocket();
+    manager.watch(
+      returning as unknown as WebSocket,
+      address,
+      session.getChannelId(ws as unknown as WebSocket),
+    );
+    expect(catchup(returning).gamePresentation).toEqual(oldSaved);
+
+    const newSaved = {
+      ...newGame,
+      revision: 1,
+      presentation: { title: "New game" },
+    };
+    expect(manager.updateGame(newSaved)).toBe(true);
+    expect(
+      liveViewer
+        .jsonMessages()
+        .filter((message) => message.type === "gamePresentation"),
+    ).toEqual([{ type: "gamePresentation", address, game: newSaved }]);
+    expect(
+      ws
+        .jsonMessages()
+        .filter((message) => message.type === "gamePresentation"),
+    ).toHaveLength(1);
+    vi.advanceTimersByTime(delayMs);
+    expect(manager.getGame(oldGame.id)).toBeUndefined();
+    expect(manager.getGame(newGame.id)).toEqual(newSaved);
+  });
 
   it("keeps datablock caches current and separate across live, delayed and reconnected parsers", () => {
     const { connections, ws, session } = start();

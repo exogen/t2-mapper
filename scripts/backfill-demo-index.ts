@@ -12,16 +12,20 @@
  * Run with node --env-file-if-exists=.env.development.local --import=tsx/esm.
  * Existing sidecars are reused unless --force is given. --players-only
  * fills missing tag-less name counts without changing other metadata.
+ * Full analysis retains saved game identities/titles/team names, and stops
+ * rather than discarding details it cannot associate with an analyzed game.
  */
 import path from "node:path";
 import fs from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { listAllObjects, r2Client } from "./lib/r2";
-import type { DemoMetadata } from "../relay/demoRecorder.js";
+import type { DemoMetadata } from "../relay/demoMetadata.js";
+import { isPublishedDemoFilename } from "../relay/gamePresentation.js";
 import { updateDemoIndex } from "../relay/demoIndexStorage.js";
 import { analyzeDemo } from "./lib/analyzeDemo";
-import { repairDemoPlayerMetadata } from "./lib/repairDemoPlayerMetadata";
+import { updateDemoMetadata } from "./lib/updateDemoMetadata";
+import { preserveDemoGamePresentation } from "./lib/preserveDemoGamePresentation";
 
 const { values } = parseArgs({
   options: {
@@ -61,9 +65,11 @@ const force = values.force;
 const playersOnly = values["players-only"];
 if (values.filter && !playersOnly)
   throw new Error("--filter requires --players-only");
+const concurrency = Number(values.concurrency);
+if (!Number.isSafeInteger(concurrency) || concurrency < 1)
+  throw new Error("--concurrency must be a positive integer");
 if (values["backup-dir"])
   await fs.mkdir(values["backup-dir"], { recursive: true });
-const concurrency = Math.max(1, parseInt(values.concurrency!, 10) || 4);
 
 const { client, config } = r2Client();
 
@@ -93,22 +99,6 @@ async function getObjectBytes(key: string): Promise<Uint8Array> {
   return res.Body!.transformToByteArray();
 }
 
-async function putJson(
-  key: string,
-  body: string,
-  cacheControl: string,
-): Promise<void> {
-  await client.send(
-    new PutObjectCommand({
-      Bucket: config.bucket,
-      Key: key,
-      Body: body,
-      ContentType: "application/json; charset=utf-8",
-      CacheControl: cacheControl,
-    }),
-  );
-}
-
 async function runPool(
   items: string[],
   worker: (item: string) => Promise<void>,
@@ -125,15 +115,22 @@ async function runPool(
 
 console.log(`Listing s3://${config.bucket}/${config.prefix}...`);
 const objects = await listBucket();
+// Cached external recordings have a different provenance sidecar contract.
+// Only direct children of the published directory belong in this index.
+const isPublishedDemoKey = (key: string) =>
+  key.startsWith(config.prefix) &&
+  isPublishedDemoFilename(key.slice(config.prefix.length));
 const recKeys = [...objects.keys()]
   .filter(
     (k) =>
-      k.endsWith(".rec") &&
+      isPublishedDemoKey(k) &&
       (!values.filter || path.basename(k).includes(values.filter)),
   )
   .sort();
 const sidecarKeys = new Set(
-  [...objects.keys()].filter((k) => k.endsWith(".rec.json")),
+  [...objects.keys()].filter(
+    (k) => k.endsWith(".json") && isPublishedDemoKey(k.slice(0, -5)),
+  ),
 );
 console.log(
   `${recKeys.length} demos, ${sidecarKeys.size} existing sidecars` +
@@ -169,10 +166,6 @@ function reconcileCommentary(record: DemoMetadata, key: string): boolean {
   return true;
 }
 
-/** The flag changes after the demo is written, so records are cached
- *  with revalidation, not as immutable. */
-const RECORD_CACHE_CONTROL = "no-cache";
-
 await runPool(recKeys, async (key) => {
   const filename = path.basename(key);
   const sidecarKey = `${key}.json`;
@@ -190,14 +183,20 @@ await runPool(recKeys, async (key) => {
         Array.isArray(raw.games) &&
         (!playersOnly || raw.playerCount != null)
       ) {
+        let record = raw;
         // Reconcile the commentary fields against the bucket listing —
         // the sidecar fields that change after the demo is written.
         if (!playersOnly && reconcileCommentary(raw, key)) {
           if (!dryRun) {
-            await putJson(
+            record = await updateDemoMetadata(
+              client,
+              config.bucket,
               sidecarKey,
-              JSON.stringify(raw, null, 2),
-              RECORD_CACHE_CONTROL,
+              (latest) => ({
+                ...(latest ?? raw),
+                hasCommentary: raw.hasCommentary,
+              }),
+              backup,
             );
           }
           console.log(
@@ -205,7 +204,7 @@ await runPool(recKeys, async (key) => {
               `hasCommentary → ${raw.hasCommentary}`,
           );
         }
-        records.push(raw);
+        records.push(record);
         reused++;
         return;
       }
@@ -225,24 +224,23 @@ await runPool(recKeys, async (key) => {
             players: analyzedRecord.players,
             playerCount: analyzedRecord.playerCount,
           }
-        : analyzedRecord;
+        : preserveDemoGamePresentation(analyzedRecord, existing);
     if (!playersOnly) reconcileCommentary(record, key);
     if (!dryRun) {
-      if (playersOnly) {
-        record = await repairDemoPlayerMetadata(
-          client,
-          config.bucket,
-          sidecarKey,
-          record,
-          backup,
-        );
-      } else {
-        await putJson(
-          sidecarKey,
-          JSON.stringify(record, null, 2),
-          RECORD_CACHE_CONTROL,
-        );
-      }
+      record = await updateDemoMetadata(
+        client,
+        config.bucket,
+        sidecarKey,
+        (latest) =>
+          playersOnly
+            ? {
+                ...(latest ?? record),
+                players: record.players,
+                playerCount: record.playerCount,
+              }
+            : preserveDemoGamePresentation(record, latest),
+        backup,
+      );
     }
     records.push(record);
     analyzed++;
@@ -304,7 +302,15 @@ if (failed > 0) {
       const merged = new Map(
         (index ?? []).map((entry) => [entry.filename, entry]),
       );
-      for (const record of records) merged.set(record.filename, record);
+      for (const record of records)
+        merged.set(
+          record.filename,
+          preserveDemoGamePresentation(
+            record,
+            merged.get(record.filename),
+            "index",
+          ),
+        );
       return [...merged.values()].sort(
         (a, b) =>
           a.recordedAt.localeCompare(b.recordedAt) ||

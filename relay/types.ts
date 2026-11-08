@@ -1,4 +1,5 @@
 import type { FlagState } from "./flagState.js";
+import type { PublishedGame } from "./gamePresentation.js";
 import type {
   ReplayClientMessage,
   ReplayServerMessage,
@@ -71,6 +72,7 @@ export type ServerMessage =
       streamDelayReadyInMs?: number;
     }
   | { type: "watcherCount"; count: number }
+  | { type: "gamePresentation"; address: string; game: PublishedGame }
   /** The relay is shutting down for a restart/deploy — clients should
    *  auto-reattach with backoff rather than treat the session as ended. */
   | { type: "relayRestarting" }
@@ -173,6 +175,8 @@ export interface WatchTargetEntry {
  */
 export interface WatchCatchupPayload {
   replay?: ReplayCatchupState;
+  /** Relay-saved labels for the game at this viewer's playhead. */
+  gamePresentation?: PublishedGame;
   epoch: number;
   serverAddress: string;
 
@@ -194,6 +198,8 @@ export interface WatchCatchupPayload {
   missionName: string | null;
   /** Mission handshake sequence; absent on older relays. */
   missionSequence?: string | null;
+  /** The mission still on screen, including its debrief while the next loads. */
+  displayedMission?: { name: string; sequence: string | null } | null;
   /** Native setGravity() units; absent before GravityEvent or on older relays. */
   worldGravity?: number;
   /** Whether GhostAlwaysDone arrived for this mission. */

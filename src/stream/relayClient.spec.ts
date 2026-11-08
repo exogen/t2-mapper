@@ -146,6 +146,114 @@ describe("RelayClient catch-up ordering", () => {
     ws.receive({ type: "catchupEnd" });
   }
 
+  it("ignores unfamiliar relay messages and extra fields without interrupting playback", async () => {
+    const { ws, events, error, closed } = setup();
+    const futureMessage = {
+      type: "futureOptionalFeature",
+      payload: { enabled: true },
+    } as unknown as ServerMessage;
+    ws.receive(futureMessage);
+    snapshot(ws, 1);
+    ws.receive(futureMessage);
+    await decodes[0]();
+    await vi.waitFor(() => expect(events).toEqual(["hydrate:1"]));
+    ws.receive(futureMessage);
+    ws.receive({
+      type: "sessionStatus",
+      status: "live",
+      address: "test:28000",
+      watcherCount: 1,
+      futureOption: true,
+    } as ServerMessage);
+    ws.receive(new Uint8Array([91]));
+    expect(events).toEqual(["hydrate:1", "live", "packet:91"]);
+    expect(error).not.toHaveBeenCalled();
+    expect(closed).not.toHaveBeenCalled();
+    expect(ws.readyState).toBe(FakeWebSocket.OPEN);
+  });
+
+  it("orders replay labels after catch-up and filters another room or epoch", async () => {
+    const onReplayGamePresentation = vi.fn();
+    const { client, ws, events } = setup({ onReplayGamePresentation });
+    client.joinReplay("room");
+    ws.receive({
+      type: "replayState",
+      sessionId: "room",
+      demo: "test.rec",
+      tick: 0,
+      durationTicks: 10,
+      status: "paused",
+      epoch: 1,
+      revision: 1,
+      watcherCount: 1,
+      isOwner: false,
+    });
+    events.length = 0;
+    snapshot(ws, 1, "room");
+    const message = {
+      type: "replayGamePresentation" as const,
+      sessionId: "room",
+      epoch: 1,
+      game: { id: "game-one", revision: 1, presentation: { title: "Final" } },
+    };
+    ws.receive(message);
+    expect(onReplayGamePresentation).not.toHaveBeenCalled();
+    await decodes[0]();
+    await vi.waitFor(() =>
+      expect(onReplayGamePresentation).toHaveBeenCalledExactlyOnceWith(message),
+    );
+    ws.receive({ ...message, sessionId: "another-room" });
+    ws.receive({ ...message, epoch: 0 });
+    expect(onReplayGamePresentation).toHaveBeenCalledOnce();
+    ws.receive({ ...message, game: null });
+    expect(onReplayGamePresentation).toHaveBeenLastCalledWith({
+      ...message,
+      game: null,
+    });
+  });
+
+  it("orders game labels after catch-up and filters unrelated servers and abandoned decodes", async () => {
+    const game = {
+      id: "game-one",
+      revision: 1,
+      presentation: { title: "Final" },
+    };
+    const published = vi.fn();
+    const { client, ws, events } = setup({
+      onGamePresentation: (value) => {
+        published(value);
+        events.push(`labels:${value.id}`);
+      },
+    });
+    snapshot(ws, 1);
+    ws.receive({ type: "gamePresentation", address: "test:28000", game });
+    expect(published).not.toHaveBeenCalled();
+    await decodes[0]();
+    await vi.waitFor(() =>
+      expect(events).toEqual(["hydrate:1", "labels:game-one"]),
+    );
+    expect(published).toHaveBeenCalledWith(game);
+    ws.receive({ type: "gamePresentation", address: "other:28000", game });
+    expect(published).toHaveBeenCalledOnce();
+    ws.receive({
+      type: "gamePresentation",
+      address: "test:28000",
+      game: null,
+    } as unknown as ServerMessage);
+    ws.receive({
+      type: "gamePresentation",
+      address: "test:28000",
+      game: { ...game, presentation: { teamNames: [] } },
+    } as unknown as ServerMessage);
+    expect(published).toHaveBeenCalledOnce();
+
+    snapshot(ws, 2);
+    ws.receive({ type: "gamePresentation", address: "test:28000", game });
+    client.watchServer("other:28000");
+    await decodes[1]();
+    expect(published).toHaveBeenCalledOnce();
+  });
+
   it("subscribes to server upload bytes and filters stale/invalid progress", () => {
     const progress = vi.fn();
     const { client, ws } = setup({ onReplayUploadProgress: progress });

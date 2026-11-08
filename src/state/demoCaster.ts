@@ -1,27 +1,47 @@
 import type { StreamRecording } from "../stream/types";
 import { casterStore } from "./casterStore";
 import { randomId } from "../randomId";
+import { type DemoGame, publishedGameAt } from "../../relay/demoMetadata";
+import type { PublishedGame } from "../../relay/gamePresentation";
+
+const NO_GAMES: readonly DemoGame[] = [];
 
 const scopes = new WeakMap<
   StreamRecording,
-  { id: string; readyTime: number; server: string }
+  {
+    id: string;
+    missionReadySec: number;
+    server: string;
+    games: readonly DemoGame[];
+    publishedGame: PublishedGame | null;
+  }
 >();
 
-/** A demo's ghosting completion time distinguishes missions, including repeat maps. */
+/** A demo's client-ready time distinguishes missions, including repeat maps. */
 export function syncDemoCaster(
   recording: StreamRecording,
-  ghostAlwaysDoneSec: number | null,
+  missionReadySec: number,
   sourceUrl: string | null,
+  games: readonly DemoGame[] = NO_GAMES,
 ): void {
   if (recording.source !== "demo") return;
-  const readyTime = ghostAlwaysDoneSec ?? 0;
   let scope = scopes.get(recording);
-  if (!scope || scope.readyTime !== readyTime) {
+  if (
+    !scope ||
+    scope.missionReadySec !== missionReadySec ||
+    scope.games !== games
+  ) {
     const id = scope?.id ?? sourceUrl ?? randomId();
     scope = {
       id,
-      readyTime,
-      server: `demo:${JSON.stringify([id, readyTime])}`,
+      missionReadySec,
+      server: `demo:${JSON.stringify([id, missionReadySec])}`,
+      games,
+      publishedGame: publishedGameAt(
+        games,
+        missionReadySec * 1000,
+        (game) => `demo:${JSON.stringify([id, game.startMs])}`,
+      ),
     };
     scopes.set(recording, scope);
   }
@@ -29,4 +49,5 @@ export function syncDemoCaster(
   if (state.context?.server !== scope.server) {
     state.activate(scope.server, "demo", "");
   }
+  state.setPublishedGame(scope.publishedGame);
 }

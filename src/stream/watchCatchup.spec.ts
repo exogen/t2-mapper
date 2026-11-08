@@ -12,6 +12,7 @@ import { LiveStreamAdapter } from "./liveStreaming";
 import type { RelayClient } from "./relayClient";
 import type { ImageSlot, ThreadState } from "./types";
 import { latestAction, type ActionSlot } from "./actionSlot";
+import { TestLiveStream } from "./streamTestFixtures";
 import { WatchStateAccumulator } from "../../relay/watchState";
 import type { ConnectionState } from "../../relay/connectionState";
 import { PlayerResolver } from "../../relay/playerReference";
@@ -22,6 +23,7 @@ import {
   deserializeCatchupPayload,
 } from "../../relay/watchSerialize";
 import {
+  remoteCommandPacket,
   serverMessagePacket,
   testCatchupPayload,
 } from "../../relay/serverPacketFixtures";
@@ -182,6 +184,103 @@ describe("live wire protocol propagation", () => {
       "Katabatic",
     );
     expect(adapter.missionSequence).toBe("22");
+  });
+
+  it.each(["Katabatic", "Sanctuary"])(
+    "keeps the ended game's personalization until dropping into the next %s mission",
+    (nextMap) => {
+      const watchState = new WatchStateAccumulator();
+      watchState.applyMissionStart("MissionStartPhase1", ["21", "Katabatic"]);
+      const adapter = new TestLiveStream();
+      adapter.onMissionIdentity = vi.fn();
+      adapter.hydrate(testCatchupPayload({ watchState }));
+      const command = (funcName: string, ...args: string[]) =>
+        adapter.feedDecoded({
+          events: [
+            { parsedData: { type: "RemoteCommandEvent", funcName, args } },
+          ],
+        });
+
+      command("MissionEnd");
+      command("MissionStartPhase1", "22", nextMap);
+      adapter.feedDecoded({
+        events: [
+          { parsedData: { type: "GhostingMessageEvent", message: 2 } },
+          { parsedData: { type: "GhostingMessageEvent", message: 0 } },
+        ],
+      });
+      command("MissionStartPhase3", "22", nextMap);
+      expect(adapter.getSnapshot().matchEnded).toBe(true);
+      expect(adapter.onMissionIdentity).toHaveBeenCalledExactlyOnceWith(
+        "21",
+        "Katabatic",
+      );
+
+      command("ServerMessage", "MsgClientReady", "", "CTFGame");
+      expect(adapter.getSnapshot().matchEnded).toBe(false);
+      expect(adapter.onMissionIdentity).toHaveBeenCalledTimes(2);
+      expect(adapter.onMissionIdentity).toHaveBeenLastCalledWith("22", nextMap);
+    },
+  );
+
+  it("hydrates the displayed game during debrief even when the next map is already loading", () => {
+    const watchState = new WatchStateAccumulator();
+    watchState.applyMissionStart("MissionStartPhase1", ["21", "Katabatic"]);
+    const adapter = new LiveStreamAdapter(fakeRelay, { mode: "watch" });
+    adapter.onMissionIdentity = vi.fn();
+    adapter.hydrate(testCatchupPayload({ watchState }));
+
+    watchState.applyPacket(remoteCommandPacket("MissionEnd"));
+    watchState.applyMissionStart("MissionStartPhase1", ["22", "Sanctuary"]);
+    const payload = testCatchupPayload({ watchState });
+    expect(payload.missionSequence).toBe("22");
+    expect(payload.displayedMission).toEqual({
+      name: "Katabatic",
+      sequence: "21",
+    });
+    adapter.hydrate(payload);
+    expect(adapter.getSnapshot().matchEnded).toBe(true);
+    expect(adapter.onMissionIdentity).toHaveBeenLastCalledWith(
+      "21",
+      "Katabatic",
+    );
+
+    const lateJoiner = new LiveStreamAdapter(fakeRelay, { mode: "watch" });
+    lateJoiner.onMissionIdentity = vi.fn();
+    lateJoiner.hydrate(payload);
+    expect(lateJoiner.onMissionIdentity).toHaveBeenCalledExactlyOnceWith(
+      "21",
+      "Katabatic",
+    );
+
+    watchState.applyPacket(
+      serverMessagePacket(["MsgClientReady", "", "CTFGame"]),
+    );
+    lateJoiner.hydrate(testCatchupPayload({ watchState }));
+    expect(lateJoiner.onMissionIdentity).toHaveBeenLastCalledWith(
+      "22",
+      "Sanctuary",
+    );
+  });
+
+  it("keeps compatibility with catch-ups without displayed mission metadata", () => {
+    const watchState = new WatchStateAccumulator();
+    watchState.applyMissionStart("MissionStartPhase1", ["21", "Katabatic"]);
+    const payload = testCatchupPayload({ watchState });
+    delete payload.displayedMission;
+    const adapter = new LiveStreamAdapter(fakeRelay, { mode: "watch" });
+    adapter.onMissionIdentity = vi.fn();
+    adapter.hydrate(payload);
+    expect(adapter.onMissionIdentity).toHaveBeenLastCalledWith(
+      "21",
+      "Katabatic",
+    );
+    delete payload.missionSequence;
+    adapter.hydrate(payload);
+    expect(adapter.onMissionIdentity).toHaveBeenLastCalledWith(
+      "Katabatic",
+      "Katabatic",
+    );
   });
 
   it("hydrates the loading-screen text the relay saw before MissionStartPhase1", () => {

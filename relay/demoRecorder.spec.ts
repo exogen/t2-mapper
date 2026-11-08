@@ -28,6 +28,7 @@ import type { ServerInfo } from "./types.js";
 import type { DemoPlayerRoster } from "./demoPlayers.js";
 import { GameConnection } from "./gameConnection.js";
 import { demoLog } from "./logger.js";
+import type { PublishedGame } from "./gamePresentation";
 
 const CONNECT_SEQUENCE = 0x0badf00d;
 
@@ -91,6 +92,7 @@ describe("DemoRecorder", () => {
       recordContext?: () => { pinned: boolean; watchers: number };
       maxBytes?: number;
       serverInfo?: () => ServerInfo | undefined;
+      gamePresentation?: () => PublishedGame;
     } = {},
   ) {
     return new DemoRecorder({
@@ -110,6 +112,7 @@ describe("DemoRecorder", () => {
       getRecorderClientId: () => 1,
       getMatchStarted: overrides.matchStarted ?? (() => true),
       getRecordContext: overrides.recordContext,
+      getGamePresentation: overrides.gamePresentation,
       recorderName: "Observer",
       maxBytes: overrides.maxBytes ?? 512 * 1024 * 1024,
       minLengthMs: overrides.minLengthMs ?? 0,
@@ -117,6 +120,35 @@ describe("DemoRecorder", () => {
       now: () => time,
     });
   }
+
+  it("captures the finalizing game's saved labels before the next epoch changes", async () => {
+    let game: PublishedGame = {
+      id: "first-game",
+      revision: 2,
+      presentation: {
+        title: "Championship",
+        teamNames: { 1: "Storm", 2: "Knights" },
+      },
+    };
+    const recorder = createRecorder({ gamePresentation: () => game });
+    recorder.onPacket(buildPingPacket(1), false);
+    recorder.setMissionName("Katabatic", 41);
+    recorder.onMove();
+    const done = recorder.finalize("mission-cycle");
+    game.presentation.teamNames![1] = "Changed later";
+    game = { id: "next-game", revision: 0, presentation: {} };
+    const result = await done;
+    const metadata = JSON.parse(
+      await fsp.readFile(`${result!.path}.json`, "utf8"),
+    );
+    expect(metadata.games[0]).toMatchObject({
+      gameId: "first-game",
+      presentationRevision: 2,
+      title: "Championship",
+      teamNames: { 1: "Storm", 2: "Knights" },
+    });
+    expect(recorder.filename).toBe(path.basename(result!.path));
+  });
 
   it("buffers until setMissionName, then records a parseable demo", async () => {
     const info = vi.spyOn(demoLog, "info").mockImplementation(() => {});

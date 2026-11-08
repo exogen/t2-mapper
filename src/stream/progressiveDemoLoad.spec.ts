@@ -90,7 +90,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function installPrefix() {
+async function installPrefix(
+  metadata: Response | Promise<Response> = new Response(null, { status: 404 }),
+) {
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   const cancel = vi.fn();
   const body = new ReadableStream<Uint8Array>({
@@ -102,11 +104,13 @@ async function installPrefix() {
   });
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (url) =>
-      String(url).endsWith(".checkpoints.json")
-        ? new Response(null, { status: 404 })
-        : new Response(body),
-    ),
+    vi.fn(async (url) => {
+      const path = new URL(String(url), "http://localhost/").pathname;
+      if (path.endsWith(".checkpoints.json"))
+        return new Response(null, { status: 404 });
+      if (path.endsWith(".rec.json")) return metadata;
+      return new Response(body);
+    }),
   );
   const loading = loadDemoUrl("first.rec");
   await vi.waitFor(() =>
@@ -116,6 +120,41 @@ async function installPrefix() {
 }
 
 describe("installed progressive demos", () => {
+  it("keeps metadata requests independent from the growing demo stream", async () => {
+    let finishMetadata!: (response: Response) => void;
+    const metadata = new Promise<Response>((resolve) => {
+      finishMetadata = resolve;
+    });
+    const { loading, controller } = await installPrefix(metadata);
+    expect(state().playback.downloadComplete).toBe(false);
+    expect(demoLoadStore.getState().publishedGames).toBeNull();
+    expect(fetch).toHaveBeenCalledWith("http://localhost/first.rec.json", {
+      signal: expect.any(AbortSignal),
+      cache: "no-cache",
+    });
+
+    const games = [
+      {
+        mission: "Katabatic",
+        gameType: "CTF",
+        startMs: 0,
+        tournament: false,
+        title: "Final",
+        teamNames: { 1: "Knights" },
+      },
+    ];
+    finishMetadata(Response.json({ games }));
+    await vi.waitFor(() =>
+      expect(demoLoadStore.getState().publishedGames).toEqual(games),
+    );
+    controller.enqueue(new Uint8Array([4]));
+    await vi.waitFor(() => expect(mocks.push).toHaveBeenCalledOnce());
+    controller.close();
+    await loading;
+    expect(state().playback.downloadComplete).toBe(true);
+    expect(state().playback.recording).toBe(mocks.recording);
+  });
+
   it("publishes a growing fallback duration and the exact final fractional tail", async () => {
     mocks.headerDuration = 0;
     const { loading, controller } = await installPrefix();

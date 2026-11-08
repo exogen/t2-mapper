@@ -17,7 +17,7 @@ import {
   buildHeader,
   buildInitialBlock,
 } from "./demoWriter.js";
-import type { DemoMetadata } from "./demoRecorder.js";
+import type { DemoMetadata } from "./demoMetadata.js";
 
 const CONNECT_SEQUENCE = 0x0badf00d;
 

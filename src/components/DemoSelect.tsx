@@ -35,6 +35,7 @@ import { useAppNavigation } from "./useAppNavigation";
 import { normalizeMissionType } from "../mission";
 import {
   demoTitle,
+  demoGameDetails,
   formatDuration,
   formatRecordedTime,
   recordedDayLabel,
@@ -46,6 +47,7 @@ const isMac =
   /Mac|iPhone|iPad|iPod/.test(navigator.platform);
 
 function DemoItemContent({ demo }: { demo: DemoIndexEntry }) {
+  const details = demoGameDetails(demo);
   const gameTypes = [
     ...new Set(
       demo.games
@@ -85,6 +87,7 @@ function DemoItemContent({ demo }: { demo: DemoIndexEntry }) {
           />
         )}
       </span>
+      {details && <span className={styles.ItemMissionName}>{details}</span>}
       <span className={styles.ItemMissionName}>
         {demo.server} · {formatRecordedTime(demo.recordedAt)} ·{" "}
         <span title={demo.players.join(", ") || undefined}>

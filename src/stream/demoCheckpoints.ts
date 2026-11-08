@@ -12,9 +12,10 @@ import { TICK_DURATION_MS } from "./streamHelpers";
 // emitters survive a seek without requiring another ghost update; 17 retains
 // precipitation transitions, lightning storm configuration and strike history;
 // 18 corrects the wire types of precipitation radius and lightning rate;
-// 19 retains dynamic Sky state and fixes how precipitation fades are built).
-export const DEMO_CHECKPOINT_VERSION = 19;
-const MIN_SUPPORTED_CHECKPOINT_VERSION = 19;
+// 19 retains dynamic Sky state and fixes how precipitation fades are built;
+// 20 retains the displayed mission's identity through debrief and map loading).
+export const DEMO_CHECKPOINT_VERSION = 20;
+const MIN_SUPPORTED_CHECKPOINT_VERSION = 20;
 export const DEMO_CHECKPOINT_SUFFIX = ".checkpoints.json";
 /**
  * The generator's default spacing, and the spacing of sidecars written

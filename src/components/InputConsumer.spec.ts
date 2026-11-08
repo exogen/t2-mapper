@@ -51,20 +51,28 @@ const browser = vi.hoisted(() => {
   return api;
 });
 
+const preferences = vi.hoisted(() => ({
+  followBehindPlayer: false,
+  speedMultiplier: 1,
+  mouseSensitivity: 0.002,
+  invertScroll: false,
+  invertDrag: false,
+  touchMode: "moveLookStick" as "moveLookStick" | "dualStick",
+  invertJoystick: false,
+}));
+
 vi.mock("../state/settingsStore", () => ({
   MIN_SPEED_MULTIPLIER: 0.01,
   MAX_SPEED_MULTIPLIER: 1,
-  setPreference() {},
+  setPreference(
+    key: "speedMultiplier",
+    action: number | ((previous: number) => number),
+  ) {
+    preferences[key] =
+      typeof action === "function" ? action(preferences[key]) : action;
+  },
   settingsStore: {
-    getState: () => ({
-      followBehindPlayer: false,
-      speedMultiplier: 1,
-      mouseSensitivity: 0.002,
-      invertScroll: false,
-      invertDrag: false,
-      touchMode: "moveLookStick",
-      invertJoystick: false,
-    }),
+    getState: () => preferences,
     subscribe: () => () => {},
   },
 }));
@@ -79,17 +87,18 @@ import { combineCleanups } from "../engine/storeReaction";
 import { FREE_FLY_INPUT, MOVABLE_CAMERA_INPUT } from "./inputMap";
 import { inputControlsStore } from "./InputControls";
 import { liveConnectionStore } from "../state/liveConnectionStore";
+import { joystickState } from "../state/joystickState";
 
 // Systems left installed by a failed test would keep running (and
 // clearing input) in the next one.
 const unmounts: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const unmount of unmounts.splice(0)) await unmount();
-  browser.dispatch("keyup", {
-    code: "KeyW",
-    metaKey: false,
-    preventDefault() {},
-  });
+  for (const code of ["KeyW", "KeyS"]) {
+    browser.dispatch("keyup", { code, metaKey: false, preventDefault() {} });
+  }
+  joystickState.move.force = 0;
+  joystickState.look.force = 0;
 });
 afterAll(() => {
   for (const key of Object.keys(browser.globals)) {
@@ -110,14 +119,28 @@ interface SentMove {
 }
 
 /**
- * The real live input pipeline (producers → drain → ticks → pose) on an
- * engine driven frame by frame, against a fake player adapter.
+ * The real input pipeline (producers → drain → ticks → pose) on an engine
+ * driven frame by frame, optionally against a fake live player adapter.
  */
-async function mountLiveInput({ touch = false } = {}) {
+async function mountInput({
+  touch = false,
+  live = true,
+  speedMultiplier = 1,
+  touchMode = "moveLookStick" as typeof preferences.touchMode,
+  invertScroll = false,
+} = {}) {
   browser.touch = touch;
+  preferences.speedMultiplier = speedMultiplier;
+  preferences.touchMode = touchMode;
+  preferences.invertScroll = invertScroll;
+  const canvasListeners = new Map<string, (event: unknown) => void>();
   const canvas = {
-    addEventListener() {},
-    removeEventListener() {},
+    addEventListener(type: string, listener: (event: unknown) => void) {
+      canvasListeners.set(type, listener);
+    },
+    removeEventListener(type: string) {
+      canvasListeners.delete(type);
+    },
     style: {},
     requestPointerLock() {},
   };
@@ -142,10 +165,10 @@ async function mountLiveInput({ touch = false } = {}) {
     },
   };
   liveConnectionStore.setState({
-    adapter,
-    gameStatus: "connected",
-    liveReady: true,
-    role: "player",
+    adapter: live ? adapter : null,
+    gameStatus: live ? "connected" : null,
+    liveReady: live,
+    role: live ? "player" : null,
     mapName: "Test",
     sendMoves() {},
     sendCommand() {},
@@ -172,8 +195,17 @@ async function mountLiveInput({ touch = false } = {}) {
   return {
     sent,
     adapter,
+    camera,
     key(type: "keydown" | "keyup", code: string) {
       browser.dispatch(type, { code, metaKey: false, preventDefault() {} });
+    },
+    wheel(deltaY: number) {
+      canvasListeners.get("wheel")!({
+        deltaX: 0,
+        deltaY,
+        offsetX: 0,
+        offsetY: 0,
+      });
     },
     async step(seconds: number, { ack = true } = {}) {
       frame++;
@@ -202,7 +234,7 @@ async function mountLiveInput({ touch = false } = {}) {
 }
 
 it("moves on every tick of a slow frame while a key is held, and none once released", async () => {
-  const live = await mountLiveInput();
+  const live = await mountInput();
   live.key("keydown", "KeyW");
   await live.step(1 / 60);
   await live.step(0.32);
@@ -215,7 +247,7 @@ it("moves on every tick of a slow frame while a key is held, and none once relea
 });
 
 it("keeps interpolating through server packets that agree with the prediction", async () => {
-  const live = await mountLiveInput();
+  const live = await mountInput();
   live.key("keydown", "KeyW");
   await live.step(1 / 60, { ack: false });
   const xs: number[] = [];
@@ -244,7 +276,7 @@ it("keeps interpolating through server packets that agree with the prediction", 
 });
 
 it("reads touch drag-look before the keyboard handler clears the raw deltas", async () => {
-  const live = await mountLiveInput({ touch: true });
+  const live = await mountInput({ touch: true });
   for (let i = 0; i < 4; i++) {
     inputControlsStore.setState((prev) => ({
       ...prev,
@@ -257,3 +289,86 @@ it("reads touch drag-look before the keyboard handler clears the raw deltas", as
   }
   expect(live.sent.reduce((sum, move) => sum + move.yaw, 0)).not.toBe(0);
 });
+
+it.each([
+  [0.01, 12.5],
+  [0.15, 37.5],
+])(
+  "preserves the original local WASD speed at multiplier %s",
+  async (speedMultiplier, unitsPerSecond) => {
+    const local = await mountInput({ live: false, speedMultiplier });
+    local.key("keydown", "KeyW");
+    await local.step(0.25);
+    expect(local.camera.position.z).toBeCloseTo(-unitsPerSecond * 0.25);
+  },
+);
+
+it.each([
+  ["KeyW", 1],
+  ["KeyS", -1],
+] as const)(
+  "keeps all 100 slider positions moving through every server speed step with %s",
+  async (key, direction) => {
+    const live = await mountInput();
+    live.key("keydown", key);
+    await live.step(1 / 60);
+    const speeds: number[] = [];
+    for (let position = 1; position <= 100; position++) {
+      preferences.speedMultiplier = position / 100;
+      await live.step(0.032);
+      const moves = live.forwardMoves();
+      expect(moves).not.toHaveLength(0);
+      const speed = moves[0] * direction;
+      expect(speed).toBeGreaterThanOrEqual(speeds.at(-1) ?? 1 / 16);
+      speeds.push(speed);
+    }
+    expect(speeds[0]).toBe(1 / 16);
+    expect(speeds.at(-1)).toBe(1);
+    expect([...new Set(speeds)]).toEqual(
+      Array.from({ length: 16 }, (_, index) => (index + 1) / 16),
+    );
+  },
+);
+
+it.each([false, true])(
+  "moves the wheel one sidebar step at every position and clamps overshoot (inverted: %s)",
+  async (invertScroll) => {
+    const local = await mountInput({ live: false, invertScroll });
+    const scrollSign = invertScroll ? -1 : 1;
+    for (let position = 1; position <= 100; position++) {
+      preferences.speedMultiplier = position / 100;
+      local.wheel(-scrollSign);
+      expect(preferences.speedMultiplier).toBe(
+        Math.min(100, position + 1) / 100,
+      );
+      preferences.speedMultiplier = position / 100;
+      local.wheel(scrollSign);
+      expect(preferences.speedMultiplier).toBe(Math.max(1, position - 1) / 100);
+    }
+    preferences.speedMultiplier = 0.05;
+    local.wheel(1_000_000 * scrollSign);
+    expect(preferences.speedMultiplier).toBe(0.01);
+    preferences.speedMultiplier = 0.95;
+    local.wheel(-1_000_000 * scrollSign);
+    expect(preferences.speedMultiplier).toBe(1);
+  },
+);
+
+it.each([
+  ["dualStick", 11.6],
+  ["moveLookStick", 11],
+] as const)(
+  "preserves the original minimum local joystick speed in %s mode",
+  async (touchMode, unitsPerSecond) => {
+    const local = await mountInput({
+      live: false,
+      touch: true,
+      touchMode,
+      speedMultiplier: 0.01,
+    });
+    joystickState.move.angle = Math.PI / 2;
+    joystickState.move.force = 1;
+    await local.step(0.25);
+    expect(local.camera.position.length()).toBeCloseTo(unitsPerSecond * 0.25);
+  },
+);

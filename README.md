@@ -25,6 +25,7 @@ MapGenius renders Tribes 2 the way the game does, straight from the original gam
   `?demo=<filename>&t=60`, or `?demo=tribesforever:22945` for a TribesForever
   demo.
 - **Recording** – Watched servers are recorded and published as demos.
+- **Discord login** – Sign in with your Discord account.
 - **Heatmaps** (experimental) – Add `?features=stats`, load a demo, and pick a
   player in the **Stats** panel.
 

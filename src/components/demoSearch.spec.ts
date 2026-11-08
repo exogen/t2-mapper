@@ -26,6 +26,20 @@ function demo(overrides: Partial<DemoIndexEntry> = {}): DemoIndexEntry {
 }
 
 describe("demo search", () => {
+  it("searches saved team names alongside visible metadata, without using hidden titles", () => {
+    const match = demo({
+      games: [
+        {
+          ...demo().games[0],
+          title: "Grand Final",
+          teamNames: { 1: "Knights", 2: "Dragons" },
+        },
+      ],
+    });
+    expect(searchDemos([match, demo()], "dragons massive")).toEqual([match]);
+    expect(searchDemos([match], "knights exogen")).toEqual([match]);
+    expect(searchDemos([match], "grand final")).toEqual([]);
+  });
   it.each(["massive exogen", "exogen massive", "  MASSIVE \t Exogen  "])(
     "requires both the map and player to match: %s",
     (query) => {

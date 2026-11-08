@@ -2,8 +2,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, it, vi } from "vitest";
 import { formatRecordedTime, recordedDayLabel } from "./demoFormat";
 import { StreamingMissionInfo } from "./StreamingMissionInfo";
+
+vi.mock("./GameDetailsEditor", () => ({ GameDetailsButton: () => null }));
 import type { WatchEndReason } from "../../relay/types";
 import type { ReplayState } from "../../relay/replayTypes";
+import type { PublishedGame } from "../../relay/gamePresentation";
+import { demoDownloadUrl, type DemoIndexEntry } from "../stream/demoIndex";
 
 const state = vi.hoisted(() => ({
   dataSource: "demo",
@@ -11,9 +15,11 @@ const state = vi.hoisted(() => ({
   recordingDate: null as string | null,
   serverName: null as string | null,
   sourceUrl: null as string | null,
-  demoParam: null as string | null,
-  demos: [] as { filename: string; recordedAt: string }[],
+  demos: [] as DemoIndexEntry[],
+  publishedGames: null as DemoIndexEntry["games"] | null,
+  snapshot: { missionReadySec: 0 },
   replay: null as ReplayState | null,
+  publishedGame: null as PublishedGame | null,
   live: {
     role: "player",
     watcherCount: 0,
@@ -48,8 +54,12 @@ vi.mock("../state/replayConnectionStore", () => ({
 vi.mock("../state/demoLoadStore", () => ({
   useDemoLoad: (selector: (value: typeof state) => unknown) => selector(state),
 }));
+vi.mock("../state/casterStore", () => ({
+  useCaster: (selector: (value: typeof state) => unknown) => selector(state),
+}));
 vi.mock("../state/streamSnapshotStore", () => ({
-  useStreamSnapshot: () => null,
+  useStreamSnapshot: (selector: (snapshot: typeof state.snapshot) => unknown) =>
+    selector(state.snapshot),
 }));
 vi.mock("./usePlayback", () => ({ useRecording: () => ({}) }));
 vi.mock("./useAppNavigation", () => ({
@@ -57,9 +67,6 @@ vi.mock("./useAppNavigation", () => ({
 }));
 vi.mock("./useDemoIndex", () => ({
   useDemoIndex: () => ({ data: state.demos }),
-}));
-vi.mock("./useQueryParams", () => ({
-  useDemoQueryState: () => [state.demoParam],
 }));
 vi.mock("../manifest", () => ({ findMissionInfo: () => null }));
 
@@ -69,9 +76,11 @@ beforeEach(() => {
   state.recordingDate = null;
   state.serverName = null;
   state.sourceUrl = null;
-  state.demoParam = null;
   state.demos = [];
+  state.publishedGames = null;
+  state.snapshot = { missionReadySec: 0 };
   state.replay = null;
+  state.publishedGame = null;
   state.live.role = "player";
   state.live.watcherCount = 0;
   state.live.gameStatus = "disconnected";
@@ -81,6 +90,55 @@ beforeEach(() => {
 function render() {
   return renderToStaticMarkup(<StreamingMissionInfo />);
 }
+
+const game = {
+  mission: "Surreal",
+  gameType: "CTF",
+  startMs: 0,
+  tournament: false,
+};
+
+function indexedDemo(
+  filename: string,
+  games: DemoIndexEntry["games"] = [],
+): DemoIndexEntry {
+  return {
+    filename,
+    bytes: 0,
+    recordedAt: "2002-10-03T04:05:00.000Z",
+    server: "Match Server",
+    address: "example:28000",
+    games,
+    mod: "Classic",
+    recorder: "MapGenius",
+    durationMs: 0,
+    players: [],
+  };
+}
+
+it.each(["demo", "live", "replay"])(
+  "keeps saved titles out of the %s toolbar while retaining map and game type",
+  (mode) => {
+    state.dataSource = mode === "demo" ? "demo" : "live";
+    state.sourceUrl = demoDownloadUrl("match.rec");
+    state.demos = [
+      indexedDemo("match.rec", [{ ...game, title: "Indexed final" }]),
+    ];
+    state.publishedGames = [{ ...game, title: "Sidecar final" }];
+    state.publishedGame = {
+      id: "game",
+      revision: 1,
+      presentation: { title: "Stream final" },
+    };
+    if (mode === "replay") state.replay = replay();
+    const markup = render();
+    expect(markup).toContain("Surreal");
+    expect(markup).toContain("CTF");
+    expect(markup).not.toContain("Indexed final");
+    expect(markup).not.toContain("Sidecar final");
+    expect(markup).not.toContain("Stream final");
+  },
+);
 
 it("keeps the admin restriction visible in the disconnected toolbar", () => {
   state.dataSource = "live";
@@ -116,9 +174,8 @@ it("shows the server when the demo has no recorder or date", () => {
 
 it("shows the indexed recording date without header attribution", () => {
   const recordedAt = "2002-10-03T04:05:00.000Z";
-  state.sourceUrl = "https://demos.example/flyers.rec";
-  state.demoParam = "flyers.rec";
-  state.demos = [{ filename: "flyers.rec", recordedAt }];
+  state.sourceUrl = demoDownloadUrl("flyers.rec");
+  state.demos = [{ ...indexedDemo("flyers.rec"), recordedAt }];
   const markup = render();
   expect(markup).toContain(
     `${recordedDayLabel(recordedAt)} ${formatRecordedTime(recordedAt)}`,
@@ -190,11 +247,8 @@ it("formats relay replay dates using the recorder's UTC header", () => {
 it("omits the replay date when the recording has no date", () => {
   state.dataSource = "live";
   state.recordingDate = "Oct-2-2002 9:05PM";
-  state.sourceUrl = "https://demos.example/flyers.rec";
-  state.demoParam = "flyers.rec";
-  state.demos = [
-    { filename: "flyers.rec", recordedAt: "2002-10-03T04:05:00.000Z" },
-  ];
+  state.sourceUrl = demoDownloadUrl("flyers.rec");
+  state.demos = [indexedDemo("flyers.rec")];
   state.replay = replay();
   expect(render()).not.toContain("Recorded on");
 });

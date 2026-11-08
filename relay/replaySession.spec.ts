@@ -157,6 +157,87 @@ describe("replay sessions", () => {
   const uploadId = "01234567-89ab-4cde-8fab-0123456789ab";
   const nextUploadId = "01234567-89ab-4cde-8fab-0123456789ac";
 
+  it("passes published game metadata to the source and pushes label changes at replay boundaries", async () => {
+    const first = {
+      id: "first-game",
+      revision: 1,
+      presentation: { title: "First final", teamNames: { 1: "Knights" } },
+    };
+    const second = {
+      id: "second-game",
+      revision: 1,
+      presentation: { title: "Second final", teamNames: { 1: "Dragons" } },
+    };
+    class SavedSource extends Source {
+      get gamePresentation() {
+        return this.tick < 2 ? first : second;
+      }
+      override catchup(...args: Parameters<Source["catchup"]>) {
+        return {
+          ...super.catchup(...args),
+          gamePresentation: this.gamePresentation,
+        };
+      }
+    }
+    const source = new SavedSource();
+    const games = [
+      {
+        mission: "Katabatic",
+        gameType: "CTF",
+        startMs: 0,
+        tournament: false,
+        title: "First final",
+      },
+    ];
+    const createSource = vi.fn(async () => source);
+    const { manager } = setup({
+      loadDemo: async () => ({ bytes: new Uint8Array([1]), games }),
+      createSource,
+    });
+    const { owner, id } = await create(manager);
+    expect(createSource).toHaveBeenCalledWith(
+      new Uint8Array([1]),
+      expect.any(AbortSignal),
+      games,
+    );
+    const initial = JSON.parse(
+      gunzipSync(
+        Buffer.concat(
+          owner.frames.filter(
+            (frame): frame is Uint8Array => frame instanceof Uint8Array,
+          ),
+        ),
+      ).toString(),
+    );
+    expect(initial.gamePresentation).toEqual(first);
+    await action(manager, owner, "play");
+    await vi.advanceTimersByTimeAsync(64);
+    expect(
+      owner
+        .messages()
+        .filter((message) => message.type === "replayGamePresentation"),
+    ).toEqual([
+      {
+        type: "replayGamePresentation",
+        sessionId: id,
+        epoch: owner.state().epoch,
+        game: second,
+      },
+    ]);
+    const viewer = new Socket();
+    await manager.handle(viewer.ws, { type: "joinReplay", sessionId: id });
+    const joined = JSON.parse(
+      gunzipSync(
+        Buffer.concat(
+          viewer.frames.filter(
+            (frame): frame is Uint8Array => frame instanceof Uint8Array,
+          ),
+        ),
+      ).toString(),
+    );
+    expect(joined.gamePresentation).toEqual(second);
+  });
+
   it("replaces a browser's old room across sockets before applying the room limit", async () => {
     const { manager } = setup({ maxSessions: 1 });
     const old = await create(manager, CREATOR_ID);

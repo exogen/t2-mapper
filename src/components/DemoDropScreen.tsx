@@ -18,6 +18,7 @@ import { QuietErrorBoundary } from "./QuietErrorBoundary";
 import { normalizeMissionType } from "../mission";
 import {
   demoTitle,
+  demoGameDetails,
   formatDuration,
   formatRecordedTime,
   recordedDayLabel,
@@ -56,6 +57,7 @@ function FeaturedCard({
   onLoad: () => void;
 }) {
   const mission = demo.games[0]?.mission ?? "";
+  const details = demoGameDetails(demo);
   const gameTypes = [
     ...new Set(
       demo.games
@@ -118,6 +120,7 @@ function FeaturedCard({
             />
           )}
         </span>
+        {details && <span className={tileStyles.TileMeta}>{details}</span>}
         <span className={tileStyles.TileMeta}>
           {demo.server} · {recordedDayLabel(demo.recordedAt)} ·{" "}
           {formatRecordedTime(demo.recordedAt)}

@@ -2,6 +2,10 @@ import { createLogger } from "../logger";
 import { deserializeCatchupPayload } from "../../relay/watchSerialize";
 import { normalizeAddress } from "../../relay/shared";
 import {
+  readPublishedGame,
+  type PublishedGame,
+} from "../../relay/gamePresentation";
+import {
   MAX_CATCHUP_BUFFERED_BYTES,
   MAX_CATCHUP_BUFFERED_FRAMES,
   MAX_CATCHUP_COMPRESSED_BYTES,
@@ -25,8 +29,16 @@ import type {
 
 const log = createLogger("relayClient");
 type SessionStatusMessage = Extract<ServerMessage, { type: "sessionStatus" }>;
+type GamePresentationMessage = Extract<
+  ServerMessage,
+  { type: "gamePresentation" }
+>;
 type ReplayTickMessage = Extract<ReplayServerMessage, { type: "replayTick" }>;
 type ReplayInfoMessage = Extract<ReplayServerMessage, { type: "replayInfo" }>;
+type ReplayGamePresentationMessage = Extract<
+  ReplayServerMessage,
+  { type: "replayGamePresentation" }
+>;
 type ReplayUploadProgressMessage = Extract<
   ReplayServerMessage,
   { type: "replayUploadProgress" }
@@ -36,6 +48,7 @@ export type RelayEventHandler = {
   onReplayState?: (state: ReplayState) => void;
   onReplayTick?: (message: ReplayTickMessage) => void;
   onReplayInfo?: (message: ReplayInfoMessage) => void;
+  onReplayGamePresentation?: (message: ReplayGamePresentationMessage) => void;
   onReplayUploadProgress?: (message: ReplayUploadProgressMessage) => void;
   onReplayError?: (message: string, sessionId?: string) => void;
   onOpen?: () => void;
@@ -74,6 +87,7 @@ export type RelayEventHandler = {
     watcherCount: number,
   ) => void;
   onWatcherCount?: (count: number) => void;
+  onGamePresentation?: (game: PublishedGame) => void;
   /** The relay announced a restart/deploy — expect the socket to close;
    *  watchers should auto-reattach rather than treat the session as ended. */
   onRelayRestarting?: () => void;
@@ -148,7 +162,10 @@ export class RelayClient {
   private catchupChunkCount = 0;
   private catchupEpoch = 0;
   private bufferedFrames: Array<
-    Uint8Array | SessionStatusMessage | ReplayServerMessage
+    | Uint8Array
+    | SessionStatusMessage
+    | GamePresentationMessage
+    | ReplayServerMessage
   > = [];
   private bufferedBytes = 0;
   private catchupDecode: AbortController | null = null;
@@ -317,6 +334,21 @@ export class RelayClient {
           this.bufferFrame(message);
         else this.handlers.onReplayInfo?.(message);
         break;
+      case "replayGamePresentation":
+        if (
+          message.sessionId !== this.replaySessionId ||
+          message.epoch !== this.replayEpoch ||
+          this.catchupMode === "waiting"
+        )
+          break;
+        if (
+          this.catchupMode === "collecting" ||
+          this.catchupMode === "finalizing"
+        )
+          this.bufferFrame(message);
+        else if (message.game === null || readPublishedGame(message.game))
+          this.handlers.onReplayGamePresentation?.(message);
+        break;
       case "replayError":
         if (!message.sessionId || message.sessionId === this.replaySessionId)
           this.handlers.onReplayError?.(message.message, message.sessionId);
@@ -377,6 +409,20 @@ export class RelayClient {
       case "watcherCount":
         this.handlers.onWatcherCount?.(message.count);
         break;
+      case "gamePresentation": {
+        if (normalizeAddress(message.address) !== this.watchAddress) break;
+        if (this.catchupMode === "waiting") break;
+        if (
+          this.catchupMode === "collecting" ||
+          this.catchupMode === "finalizing"
+        ) {
+          this.bufferFrame(message);
+          break;
+        }
+        const game = readPublishedGame(message.game);
+        if (game) this.handlers.onGamePresentation?.(game);
+        break;
+      }
       case "relayRestarting":
         this.handlers.onRelayRestarting?.();
         break;
@@ -486,7 +532,11 @@ export class RelayClient {
   }
 
   private bufferFrame(
-    frame: Uint8Array | SessionStatusMessage | ReplayServerMessage,
+    frame:
+      | Uint8Array
+      | SessionStatusMessage
+      | GamePresentationMessage
+      | ReplayServerMessage,
   ): void {
     const bytes =
       frame instanceof Uint8Array

@@ -3,7 +3,7 @@ import {
   PutObjectCommand,
   type S3Client,
 } from "@aws-sdk/client-s3";
-import type { DemoMetadata } from "./demoRecorder.js";
+import type { DemoMetadata } from "./demoMetadata.js";
 
 /** Re-read and merge after conflicts with another relay, backfill, or editor.
  *  A missing index is null; returning undefined skips an unnecessary write. */

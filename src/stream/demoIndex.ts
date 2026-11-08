@@ -3,13 +3,11 @@
  * record per demo, written by the relay's uploader / backfill script)
  * with the `.rec` files alongside it under the same base.
  */
-import type { DemoMetadata } from "../../relay/demoRecorder";
+import { type DemoMetadata, readDemoGames } from "../../relay/demoMetadata";
+
 import type { CastCommentaryTrack } from "../director/castSidecar";
 
-/**
- * The index record shape is the relay's sidecar/index record (type-only
- * import — no relay runtime reaches the bundle).
- */
+/** Index entries use the same metadata contract as demo sidecars. */
 export type DemoIndexEntry = DemoMetadata;
 
 /** Legacy sidecars only have full names; new counts deduplicate tag-less names. */
@@ -28,6 +26,20 @@ export const DEMOS_BASE_URL = (process.env.DEMOS_BASE_URL || "").replace(
 
 export function demoDownloadUrl(filename: string): string {
   return `${DEMOS_BASE_URL}/${encodeURIComponent(filename)}`;
+}
+
+/** Escape legacy immutable JSON cache entries while keeping stable cache keys. */
+export function versionedDemoMetadataUrl(metadataUrl: string): string {
+  if (!DEMOS_BASE_URL) return metadataUrl;
+  const origin =
+    (globalThis as { location?: { href: string } }).location?.href ??
+    "http://localhost/";
+  const base = new URL(`${DEMOS_BASE_URL}/`, origin);
+  const url = new URL(metadataUrl, origin);
+  if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname))
+    return metadataUrl;
+  url.searchParams.set("metadata", "2");
+  return url.href;
 }
 
 /**
@@ -76,43 +88,24 @@ function demoFileName(sourceUrl: string): string {
   return sourceUrl.slice(sourceUrl.lastIndexOf("/") + 1);
 }
 
-/**
- * Tolerate records written by older relay versions: pre-`games` entries
- * carried top-level {mission, gameType} instead (such demos always
- * described a single started match).
- */
 function normalizeEntry(raw: unknown): DemoIndexEntry {
   const entry = raw as DemoIndexEntry & {
     mission?: string;
     gameType?: string;
   };
   const players = Array.isArray(entry.players) ? entry.players : [];
-  if (Array.isArray(entry.games)) {
-    // Coerce `tournament` for records written before it existed.
-    const games = entry.games.map((g) => ({
-      ...g,
-      tournament: g.tournament === true,
-    }));
-    return { ...entry, players, games };
-  }
   return {
     ...entry,
     players,
-    games: entry.mission
-      ? [
-          {
-            mission: entry.mission,
-            gameType: entry.gameType ?? "",
-            startMs: 0,
-            tournament: false,
-          },
-        ]
-      : [],
+    games: readDemoGames(entry),
   };
 }
 
 export async function fetchDemoIndex(): Promise<DemoIndexEntry[]> {
-  const response = await fetch(`${DEMOS_BASE_URL}/index.json`);
+  const response = await fetch(
+    versionedDemoMetadataUrl(`${DEMOS_BASE_URL}/index.json`),
+    { cache: "no-cache" },
+  );
   if (!response.ok) {
     throw new Error(`Demo index fetch failed: HTTP ${response.status}`);
   }

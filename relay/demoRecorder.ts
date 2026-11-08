@@ -28,6 +28,9 @@ import {
 import type { ServerInfo } from "./types.js";
 import { DemoPlayers, type DemoPlayerRoster } from "./demoPlayers.js";
 import { JoinGameOverFilter } from "./joinGameOver.js";
+import type { PublishedGame } from "./gamePresentation.js";
+import type { DemoMetadata } from "./demoMetadata.js";
+import { atomicWrite } from "./atomicWrite.js";
 
 /**
  * "buffering" holds the stream in memory until MissionStartPhase1, and
@@ -80,6 +83,8 @@ export interface DemoRecorderOptions {
    * the in-file $DemoValues, and again at finalize for the sidecar.
    */
   getServerIdentity: () => ServerIdentity;
+  /** Saved labels for this recording's game, independent of the next epoch. */
+  getGamePresentation?: () => PublishedGame;
   /** Current non-observer player count (sampled; the peak decides keep). */
   getActivePlayerCount: () => number;
   /**
@@ -106,68 +111,6 @@ export interface DemoRecorderOptions {
   onStateChange?: (state: RecorderState) => void;
   /** Clock override for tests. */
   now?: () => number;
-}
-
-/**
- * One match within a demo. Only missions whose match actually started
- * are listed — warmup-only tails (e.g. a recording ending moments into
- * the next rotation) are excluded.
- */
-export interface DemoGame {
-  mission: string;
-  /** Server mission counter; group with address + mission, not globally unique.
-   *  Absent when the recording never observed the mission handshake. */
-  missionSequence?: number;
-  gameType: string;
-  /**
-   * Offset into the demo on the move-tick clock.
-   */
-  startMs: number;
-  /** This mission ran in tournament mode. A demo can mix tournament and
-   *  non-tournament missions, so it's per-game, not per-demo. */
-  tournament: boolean;
-}
-
-/**
- * Sidecar record written next to each kept `.rec` — also the exact
- * per-demo record shape in the R2 `index.json` aggregation.
- */
-export interface DemoMetadata {
-  filename: string;
-  bytes: number;
-  recordedAt: string;
-  server: string;
-  address: string;
-  /**
-   * In demo order. A demo is one connection, so `server`/`address` are
-   * constant, but multi-mission demos (imports; future in-place cycle
-   * recording) list each started match here.
-   */
-  games: DemoGame[];
-  mod: string;
-  recorder: string;
-  durationMs: number;
-  /**
-   * Unique names observed at any point, observers included. A player can
-   * have several aliases; this is the search list, not the player count.
-   */
-  players: string[];
-  /** Unique tag-less names seen, excluding the recorder. Missing on legacy
-   *  or salvaged records whose roster has not been analyzed yet. */
-  playerCount?: number;
-  /**
-   * Why this recording was kept — the trigger (patrol pin / watchers)
-   * plus the keep-gate facts (peak players, match started). For debugging
-   * why a demo exists at all.
-   */
-  reason?: string;
-  /**
-   * A `.commentary.m4a` (or legacy `.mp3`) sidecar exists for this demo. Maintained by
-   * the CastGenius repo's upload script and reconciled by
-   * backfill-demo-index from the bucket listing; drives the demo
-   * browser's indicator.
-   */
-  hasCommentary?: boolean;
 }
 
 /** Lowercase slug: special chars stripped, word runs joined with dashes. */
@@ -288,6 +231,11 @@ export class DemoRecorder {
    */
   get partialPath(): string | null {
     return this.writer?.partialPath ?? null;
+  }
+
+  /** Stable after opening, including when the coordinator moves the file. */
+  get filename(): string | null {
+    return this.writer ? path.basename(this.writer.finalPath) : null;
   }
 
   private setState(state: RecorderState): void {
@@ -645,6 +593,8 @@ export class DemoRecorder {
     // its next epoch (clearing the mission-scoped gameType) or receive
     // the next mission's LoadInfo while the awaits below are in flight.
     const identity = this.opts.getServerIdentity();
+    const presentation = this.opts.getGamePresentation?.();
+    const savedGame = presentation && structuredClone(presentation);
     // Final sample — the keep gates below run on up-to-date state even
     // if no packet arrived since the last change. Capped files must retain
     // the roster/keep gates at their recorded cutoff, not the later live state.
@@ -704,7 +654,7 @@ export class DemoRecorder {
       this.setState("aborted");
       return null;
     }
-    await this.writeSidecar(writer.finalPath, durationMs, identity);
+    await this.writeSidecar(writer.finalPath, durationMs, identity, savedGame);
     this.setState("done");
     log.info(
       {
@@ -732,6 +682,7 @@ export class DemoRecorder {
     // values may be fallbacks (no MsgMissionDropInfo within the buffering
     // caps) or seeds.
     identity: ServerIdentity,
+    savedGame?: PublishedGame,
   ): Promise<void> {
     const meta = this.meta;
     if (!meta) return;
@@ -752,6 +703,11 @@ export class DemoRecorder {
             gameType: identity.gameType ?? "",
             startMs: 0,
             tournament: identity.tournament ?? false,
+            ...(savedGame && {
+              gameId: savedGame.id,
+              presentationRevision: savedGame.revision,
+              ...savedGame.presentation,
+            }),
           },
         ],
         mod: meta.mod,
@@ -760,7 +716,7 @@ export class DemoRecorder {
         reason: this.describeKeepReason(),
         ...this.players.metadata(),
       };
-      await fsp.writeFile(`${finalPath}.json`, JSON.stringify(record, null, 2));
+      atomicWrite(`${finalPath}.json`, JSON.stringify(record, null, 2));
     } catch (err) {
       log.warn(
         { err, address: this.opts.address, file: finalPath },

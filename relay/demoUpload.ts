@@ -11,7 +11,9 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import {
+  GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
   S3Client,
@@ -19,7 +21,24 @@ import {
 import { Upload } from "@aws-sdk/lib-storage";
 import { DEMO_CHECKPOINT_SUFFIX } from "../src/stream/demoCheckpoints";
 import { demoLog as log } from "./logger.js";
-import type { DemoMetadata } from "./demoRecorder.js";
+import { type DemoMetadata, withGamePresentation } from "./demoMetadata.js";
+import {
+  GamePresentationError,
+  isPublishedDemoFilename,
+  readGamePresentation,
+  readGamePresentationUpdate,
+  readPublishedGame,
+  type DemoGameTarget,
+  type GamePresentation,
+  type PublishedGame,
+} from "./gamePresentation.js";
+import {
+  publishedDemoRecord,
+  sameDemoGame,
+  targetDemoGame,
+} from "./publishedDemoPresentation.js";
+
+import { atomicWrite } from "./atomicWrite.js";
 import { updateDemoIndex } from "./demoIndexStorage.js";
 import { UPLOAD_PART_BYTES, fileEtags, unquoteEtag } from "./objectEtag.js";
 import {
@@ -37,6 +56,16 @@ const FAILED_PREFIX = "failed/";
  *  draining during a dev --watch restart), which DemoFileWriter
  *  sync-flushes every few seconds. */
 const STALE_PARTIAL_MS = 5 * 60_000;
+/** Synced metadata is only a local cache; R2 remains editable without an age limit. */
+export const PUBLISHED_DEMO_SIDECAR_CACHE_MS = 24 * 60 * 60_000;
+
+interface PublishedDemoEdit {
+  version: 1;
+  expectedETag: string | null;
+  target: DemoGameTarget;
+  game: PublishedGame;
+  record: DemoMetadata;
+}
 
 export interface DemoUploaderOptions {
   /** Whether a `.partial` belongs to a recorder still in progress. */
@@ -103,6 +132,14 @@ export class DemoUploader {
   private isLive: (filePath: string) => boolean;
   private salvageMinLengthMs: number;
   private publishCheckpoints?: DemoUploaderOptions["publishCheckpoints"];
+  private operationQueues: Record<"local" | "remote", Promise<unknown>> = {
+    local: Promise.resolve(),
+    remote: Promise.resolve(),
+  };
+  private presentationFiles = new Set<string>();
+  private publishedPresentations = new Map<string, string>();
+  private metadataOperations = new Map<string, Promise<unknown>>();
+  private pendingEdits = new Set<string>();
 
   constructor(
     config: DemoUploadConfig | null,
@@ -166,17 +203,21 @@ export class DemoUploader {
         const basename = path.basename(filePath);
         this.current = basename;
         try {
-          const key = await this.uploadOne(filePath);
-          await fsp.unlink(filePath);
-          // The sidecar is only unlinked after demo + sidecar + index
-          // all landed; the sweep clears any crash-window orphan.
-          await fsp.unlink(`${filePath}.json`).catch(() => {});
-          await fsp
-            .unlink(`${filePath}${DEMO_CHECKPOINT_SUFFIX}`)
-            .catch(() => {});
-          await fsp
-            .unlink(`${filePath}${DEMO_CHECKPOINT_SUFFIX}.tmp`)
-            .catch(() => {});
+          const key = await this.serialize("remote", async () => {
+            const key = await this.uploadOne(filePath);
+            await fsp.unlink(filePath);
+            // Edited metadata stays as the durable source for later saves/retries.
+            const metadata = await this.readSidecar(`${filePath}.json`);
+            if (!metadata?.games?.some((game) => game.gameId))
+              await fsp.unlink(`${filePath}.json`).catch(() => {});
+            await fsp
+              .unlink(`${filePath}${DEMO_CHECKPOINT_SUFFIX}`)
+              .catch(() => {});
+            await fsp
+              .unlink(`${filePath}${DEMO_CHECKPOINT_SUFFIX}.tmp`)
+              .catch(() => {});
+            return key;
+          });
           this.uploadedCount++;
           this.lastUploaded = { key, at: new Date().toISOString() };
           log.info({ file: basename, key }, "Demo uploaded");
@@ -201,8 +242,395 @@ export class DemoUploader {
           this.queued.delete(filePath);
         }
       }
+      await this.retryGamePresentations();
     } finally {
       this.pumping = false;
+      // A save can keep the tail flush busy while another demo is enqueued.
+      if (this.queue.length > 0) void this.pump();
+    }
+  }
+
+  /** Local commits stay responsive while the separate remote queue uploads demos. */
+  private serialize<T>(
+    queue: "local" | "remote",
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const result = this.operationQueues[queue].then(operation);
+    this.operationQueues[queue] = result.catch(() => {});
+    return result;
+  }
+
+  /** Metadata for different demos need not wait for another demo's large upload. */
+  private serializeMetadata<T>(
+    filePath: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const key = path.resolve(filePath);
+    const previous = this.metadataOperations.get(key) ?? Promise.resolve();
+    const result = previous.catch(() => {}).then(operation);
+    this.metadataOperations.set(key, result);
+    const clear = () => {
+      if (this.metadataOperations.get(key) === result)
+        this.metadataOperations.delete(key);
+    };
+    void result.then(clear, clear);
+    return result;
+  }
+
+  /** Read canonical published metadata, independently of live sessions or local caches. */
+  async readPublishedDemo(filename: string): Promise<DemoMetadata> {
+    if (!this.client)
+      throw new GamePresentationError(
+        503,
+        "Published demo storage is unavailable",
+      );
+    if (!isPublishedDemoFilename(filename))
+      throw new GamePresentationError(404, "Published demo not found");
+    const remote = await this.readRemoteSidecar(filename);
+    return publishedDemoRecord(
+      remote?.record ?? (await this.readIndexedDemo(filename)),
+      filename,
+    );
+  }
+
+  /** Historical edits keep their original comparison through retries and crashes. */
+  async savePublishedGamePresentation(
+    target: DemoGameTarget,
+    expectedRevision: number,
+    presentation: GamePresentation,
+  ): Promise<PublishedGame> {
+    if (!this.client)
+      throw new GamePresentationError(
+        503,
+        "Published demo storage is unavailable",
+      );
+    if (!isPublishedDemoFilename(target.filename))
+      throw new GamePresentationError(404, "Published demo not found");
+    const filePath = path.join(this.dir, target.filename);
+    try {
+      return await this.serializeMetadata(filePath, async () => {
+        // Never replace an unresolved conditional intent with a new request.
+        await this.recoverPublishedEdit(filePath);
+        const remote = await this.readRemoteSidecar(target.filename);
+        const record = publishedDemoRecord(
+          remote?.record ?? (await this.readIndexedDemo(target.filename)),
+          target.filename,
+          true,
+        );
+        const previous = targetDemoGame(record, target);
+        if (
+          (previous.presentationRevision ?? 0) !== expectedRevision ||
+          !Number.isSafeInteger(expectedRevision) ||
+          expectedRevision < 0 ||
+          expectedRevision === Number.MAX_SAFE_INTEGER
+        )
+          throw new GamePresentationError(
+            409,
+            "Game details changed. Close and reopen the editor.",
+          );
+        const local = await this.readSidecar(`${filePath}.json`);
+        const pending = (Array.isArray(local?.games) ? local.games : []).find(
+          (game) =>
+            (previous.gameId && game.gameId === previous.gameId) ||
+            (!game.gameId && sameDemoGame(game, previous)),
+        );
+        if (pending && (pending.presentationRevision ?? 0) > expectedRevision)
+          throw new GamePresentationError(
+            409,
+            "Saved game details are still being published. Please try again shortly.",
+          );
+        const game: PublishedGame = {
+          id: previous.gameId ?? randomUUID(),
+          revision: expectedRevision + 1,
+          presentation,
+        };
+        const edit: PublishedDemoEdit = {
+          version: 1,
+          expectedETag: remote?.etag ?? null,
+          target,
+          game,
+          record: {
+            ...record,
+            games: record.games.map((entry, index) =>
+              index === target.gameIndex
+                ? withGamePresentation(entry, game)
+                : entry,
+            ),
+          },
+        };
+        await this.serialize("local", async () => {
+          await fsp.mkdir(this.dir, { recursive: true });
+          atomicWrite(`${filePath}.json.edit`, JSON.stringify(edit));
+          this.pendingEdits.add(filePath);
+        });
+        return this.commitPublishedEdit(filePath, edit, false);
+      });
+    } finally {
+      if (this.pendingEdits.has(filePath)) void this.retryGamePresentations();
+    }
+  }
+
+  private async recoverPublishedEdit(
+    filePath: string,
+    requireIndex = true,
+  ): Promise<PublishedGame | null> {
+    let raw: string;
+    try {
+      raw = await fsp.readFile(`${filePath}.json.edit`, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        this.pendingEdits.delete(filePath);
+        return null;
+      }
+      throw error;
+    }
+    const value = JSON.parse(raw) as Partial<PublishedDemoEdit>;
+    const game = readPublishedGame(value.game);
+    const update =
+      game &&
+      readGamePresentationUpdate({
+        demo: value.target,
+        expectedRevision: game.revision - 1,
+        presentation: game.presentation,
+      });
+    const filename = path.basename(filePath);
+    if (
+      value.version !== 1 ||
+      !game ||
+      !update ||
+      !("demo" in update) ||
+      update.demo.filename !== filename ||
+      (value.expectedETag !== null &&
+        (typeof value.expectedETag !== "string" ||
+          !value.expectedETag ||
+          value.expectedETag.length > 1024 ||
+          /[\r\n]/.test(value.expectedETag)))
+    )
+      throw new Error(`Invalid pending demo metadata edit: ${filename}`);
+    const record = publishedDemoRecord(value.record, filename, true);
+    const selected = targetDemoGame(record, {
+      ...update.demo,
+      gameId: game.id,
+    });
+    if (
+      selected.presentationRevision !== game.revision ||
+      JSON.stringify(
+        readGamePresentation({
+          title: selected.title,
+          teamNames: selected.teamNames,
+        }),
+      ) !== JSON.stringify(game.presentation)
+    )
+      throw new Error(`Invalid pending demo metadata edit: ${filename}`);
+    this.pendingEdits.add(filePath);
+    return this.commitPublishedEdit(
+      filePath,
+      {
+        version: 1,
+        expectedETag: value.expectedETag,
+        target: update.demo,
+        game,
+        record,
+      },
+      requireIndex,
+    );
+  }
+
+  /** A comparison failure can only be retried as the exact original comparison. */
+  private async commitPublishedEdit(
+    filePath: string,
+    edit: PublishedDemoEdit,
+    requireIndex: boolean,
+  ): Promise<PublishedGame> {
+    let accepted = edit.record;
+    try {
+      if (edit.expectedETag === null)
+        await this.readIndexedDemo(edit.target.filename);
+      await this.client!.send(
+        new PutObjectCommand({
+          Bucket: this.config!.bucket,
+          Key: `${this.config!.prefix}${edit.target.filename}.json`,
+          Body: JSON.stringify(edit.record, null, 2),
+          ContentType: "application/json; charset=utf-8",
+          CacheControl: "no-cache",
+          ...(edit.expectedETag === null
+            ? { IfNoneMatch: "*" }
+            : { IfMatch: edit.expectedETag }),
+        }),
+      );
+    } catch (error) {
+      if (!(error instanceof Error) || error.name !== "PreconditionFailed")
+        throw error;
+      const remote = await this.readRemoteSidecar(edit.target.filename);
+      const matchesById = remote?.record.games?.filter(
+        (game) => game.gameId === edit.game.id,
+      );
+      const committed = matchesById?.length === 1 ? matchesById[0] : undefined;
+      const matches =
+        committed?.presentationRevision === edit.game.revision &&
+        JSON.stringify(
+          readGamePresentation({
+            title: committed.title,
+            teamNames: committed.teamNames,
+          }),
+        ) === JSON.stringify(edit.game.presentation);
+      if (!remote || !matches) {
+        // Even if this unlink fails, the surviving intent keeps its old ETag;
+        // a restart cannot turn a rejected save into an unconditional overwrite.
+        await this.serialize("local", async () => {
+          await fsp
+            .unlink(`${filePath}.json.edit`)
+            .catch((error: NodeJS.ErrnoException) => {
+              if (error.code !== "ENOENT") throw error;
+            });
+          this.pendingEdits.delete(filePath);
+        });
+        throw new GamePresentationError(
+          409,
+          "Game details changed. Close and reopen the editor.",
+        );
+      }
+      accepted = publishedDemoRecord(remote.record, edit.target.filename, true);
+    }
+    // Only an accepted (or proved-already-accepted) snapshot enters ordinary retry.
+    await this.serialize("local", async () => {
+      await this.writeLocalSidecar(filePath, accepted);
+      this.presentationFiles.add(filePath);
+    });
+    try {
+      if (!(await this.updateIndex(accepted, true, new Set([edit.game.id])))) {
+        if (requireIndex)
+          throw new GamePresentationError(
+            404,
+            "The published demo is no longer in the index",
+          );
+        return edit.game;
+      }
+      await this.serialize("local", async () => {
+        const recording = await fsp.stat(filePath).then(
+          () => true,
+          (error: NodeJS.ErrnoException) => {
+            if (error.code === "ENOENT") return false;
+            throw error;
+          },
+        );
+        if (!recording) {
+          // History is authoritative in R2. Remove the cache before its intent,
+          // so a crash cannot replay unselected games from a full old snapshot.
+          await fsp
+            .unlink(`${filePath}.json`)
+            .catch((error: NodeJS.ErrnoException) => {
+              if (error.code !== "ENOENT") throw error;
+            });
+          this.presentationFiles.delete(filePath);
+          this.publishedPresentations.delete(filePath);
+        } else
+          this.publishedPresentations.set(
+            filePath,
+            this.presentationSignature(accepted),
+          );
+        await fsp
+          .unlink(`${filePath}.json.edit`)
+          .catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== "ENOENT") throw error;
+          });
+        this.pendingEdits.delete(filePath);
+      });
+    } catch (error) {
+      if (requireIndex) throw error;
+      log.error(
+        { error, filename: edit.target.filename },
+        "Saved demo index update remains queued for retry",
+      );
+    }
+    return edit.game;
+  }
+
+  /** Commit an edit to the actual sidecar before acknowledging the live update. */
+  async saveGamePresentation(
+    filePath: string,
+    game: PublishedGame,
+  ): Promise<void> {
+    await this.serializeMetadata(filePath, async () => {
+      await this.recoverPublishedEdit(filePath);
+      let record = await this.readSidecar(`${filePath}.json`);
+      if (!record && this.client)
+        record = await this.readRemoteSidecar(path.basename(filePath)).then(
+          (result) => result?.record ?? null,
+        );
+      const previous =
+        record &&
+        this.publishedGames(record).find((entry) => entry.id === game.id);
+      if (!record || !previous)
+        throw new Error("The recorded game metadata is not available");
+      if (
+        previous.revision > game.revision ||
+        (previous.revision === game.revision &&
+          JSON.stringify(previous.presentation) !==
+            JSON.stringify(game.presentation))
+      )
+        throw new Error("The saved game labels changed; reload and try again");
+      const updated = this.overlayPresentations(record, [game]);
+      await this.serialize("local", async () => {
+        await this.writeLocalSidecar(filePath, updated);
+        this.presentationFiles.add(filePath);
+      });
+    });
+    void this.retryGamePresentations();
+  }
+
+  /** Edited local sidecars double as the retry queue across process restarts. */
+  async publishGamePresentations(): Promise<void> {
+    if (!this.client) return;
+    let failure: unknown;
+    for (const filePath of this.pendingEdits) {
+      try {
+        await this.serializeMetadata(filePath, () =>
+          this.recoverPublishedEdit(filePath),
+        );
+      } catch (error) {
+        failure ??= error;
+      }
+    }
+    for (const filePath of this.presentationFiles) {
+      if (this.pendingEdits.has(filePath)) continue;
+      try {
+        await this.serializeMetadata(filePath, async () => {
+          const local = await this.readSidecar(`${filePath}.json`);
+          if (
+            !local ||
+            this.publishedPresentations.get(filePath) ===
+              this.presentationSignature(local)
+          )
+            return;
+          // Only finalized uploads may be edited. A missing remote record stays missing.
+          const remote = await this.writeSidecar(
+            path.basename(filePath),
+            local,
+            false,
+          );
+          if (!remote) return;
+          if (await this.updateIndex(remote, true))
+            this.publishedPresentations.set(
+              filePath,
+              this.presentationSignature(local),
+            );
+        });
+      } catch (error) {
+        failure ??= error;
+      }
+    }
+    if (failure) throw failure;
+  }
+
+  private async retryGamePresentations(): Promise<void> {
+    try {
+      await this.publishGamePresentations();
+    } catch (err) {
+      log.error(
+        { err },
+        "Saved game metadata publication failed — kept for retry",
+      );
     }
   }
 
@@ -235,18 +663,240 @@ export class DemoUploader {
     await this.uploadDemoFile(filePath, key);
     await this.publishCheckpoints?.(filePath, key);
     if (record) {
-      await this.client!.send(
-        new PutObjectCommand({
-          Bucket: config.bucket,
-          Key: `${key}.json`,
-          Body: JSON.stringify(record, null, 2),
-          ContentType: "application/json; charset=utf-8",
-          CacheControl: "public, max-age=31536000, immutable",
-        }),
-      );
-      await this.updateIndex(record);
+      await this.serializeMetadata(filePath, async () => {
+        // A first upload may have reached its sidecar but not its index entry.
+        // Recover its edit before the normal append below, keeping the intent
+        // durable until that append succeeds.
+        await this.recoverPublishedEdit(filePath, false);
+        const latest = (await this.readSidecar(`${filePath}.json`)) ?? record;
+        const published = (await this.writeSidecar(basename, latest, true))!;
+        await this.updateIndex(published);
+        if (latest.games?.some((game) => game.gameId)) {
+          this.publishedPresentations.set(
+            filePath,
+            this.presentationSignature(latest),
+          );
+          this.presentationFiles.add(filePath);
+        }
+      });
     }
     return key;
+  }
+
+  private publishedGames(record: DemoMetadata): PublishedGame[] {
+    return (record.games ?? []).flatMap((game) => {
+      const saved =
+        game.gameId &&
+        readPublishedGame({
+          id: game.gameId,
+          revision: game.presentationRevision ?? 0,
+          presentation: {
+            ...(game.title !== undefined && { title: game.title }),
+            ...(game.teamNames !== undefined && { teamNames: game.teamNames }),
+          },
+        });
+      return saved ? [saved] : [];
+    });
+  }
+
+  private presentationSignature(record: DemoMetadata): string {
+    return JSON.stringify(this.publishedGames(record));
+  }
+
+  private overlayPresentations(
+    record: DemoMetadata,
+    snapshots: readonly PublishedGame[],
+    source?: DemoMetadata,
+  ): DemoMetadata {
+    if (!snapshots.length) return record;
+    if (!record.games && !source) return record;
+    const base = record.games
+      ? record
+      : publishedDemoRecord(record, record.filename);
+    const games = new Map(snapshots.map((game) => [game.id, game]));
+    return {
+      ...base,
+      games: base.games.map((game) => {
+        const legacyMatches =
+          !game.gameId &&
+          source?.games.filter(
+            (candidate) =>
+              candidate.gameId &&
+              games.has(candidate.gameId) &&
+              sameDemoGame(candidate, game),
+          );
+        const id =
+          game.gameId ||
+          (legacyMatches &&
+            legacyMatches.length === 1 &&
+            legacyMatches[0].gameId);
+        const saved = id && games.get(id);
+        return saved && saved.revision >= (game.presentationRevision ?? 0)
+          ? withGamePresentation(game, saved)
+          : game;
+      }),
+    };
+  }
+
+  private async writeLocalSidecar(
+    filePath: string,
+    record: DemoMetadata,
+  ): Promise<void> {
+    const target = `${filePath}.json`;
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    atomicWrite(target, JSON.stringify(record, null, 2));
+  }
+
+  private async readRemoteSidecar(
+    filename: string,
+  ): Promise<{ record: DemoMetadata; etag: string } | null> {
+    try {
+      const object = await this.client!.send(
+        new GetObjectCommand({
+          Bucket: this.config!.bucket,
+          Key: `${this.config!.prefix}${filename}.json`,
+        }),
+      );
+      const value: unknown = JSON.parse(await object.Body!.transformToString());
+      if (
+        !value ||
+        typeof value !== "object" ||
+        (value as DemoMetadata).filename !== filename ||
+        ((value as DemoMetadata).games !== undefined &&
+          !Array.isArray((value as DemoMetadata).games)) ||
+        !object.ETag
+      )
+        throw new Error(`Invalid demo metadata or missing ETag: ${filename}`);
+      return { record: value as DemoMetadata, etag: object.ETag };
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        (err.name === "NoSuchKey" || err.name === "NotFound")
+      )
+        return null;
+      throw err;
+    }
+  }
+
+  /** Pre-sidecar demos must already be indexed and have their original recording. */
+  private async readIndexedDemo(filename: string): Promise<DemoMetadata> {
+    let records: unknown;
+    try {
+      const index = await this.client!.send(
+        new GetObjectCommand({
+          Bucket: this.config!.bucket,
+          Key: `${this.config!.prefix}index.json`,
+        }),
+      );
+      records = JSON.parse(await index.Body!.transformToString());
+      if (!Array.isArray(records))
+        throw new Error("Invalid published demo index");
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.name === "NoSuchKey" || error.name === "NotFound")
+      )
+        throw new GamePresentationError(404, "Published demo not found");
+      throw error;
+    }
+    const matches = (records as DemoMetadata[]).filter(
+      (record) => record?.filename === filename,
+    );
+    if (matches.length !== 1)
+      throw new GamePresentationError(404, "Published demo not found");
+    try {
+      await this.client!.send(
+        new HeadObjectCommand({
+          Bucket: this.config!.bucket,
+          Key: `${this.config!.prefix}${filename}`,
+        }),
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.name === "NoSuchKey" || error.name === "NotFound")
+      )
+        throw new GamePresentationError(404, "Published demo not found");
+      throw error;
+    }
+    return publishedDemoRecord(matches[0], filename);
+  }
+
+  /** Conditional replacement keeps concurrent repairs and unrelated fields. */
+  private async writeSidecar(
+    filename: string,
+    desired: DemoMetadata,
+    allowCreate: boolean,
+  ): Promise<DemoMetadata | null> {
+    const key = `${this.config!.prefix}${filename}.json`;
+    for (let attempt = 0; ; attempt++) {
+      const remote = await this.readRemoteSidecar(filename);
+      const current = remote?.record;
+      if (!current && !allowCreate) return null;
+      const snapshots = this.publishedGames(desired);
+      // A backfill may finish after the recording upload but before its first
+      // sidecar. Adopt only untouched legacy games; authored identities/labels
+      // must never be replaced by a stale recording's local metadata.
+      const adoptionSource = {
+        ...desired,
+        games: (desired.games ?? []).filter((candidate) =>
+          current?.games?.some(
+            (game) =>
+              game.gameId === undefined &&
+              game.title === undefined &&
+              game.teamNames === undefined &&
+              (game.presentationRevision === undefined ||
+                game.presentationRevision === 0) &&
+              sameDemoGame(game, candidate),
+          ),
+        ),
+      };
+      let updated = current
+        ? this.overlayPresentations(current, snapshots, adoptionSource)
+        : desired;
+      if (
+        current &&
+        snapshots.some(
+          (saved) =>
+            updated.games?.filter((game) => game.gameId === saved.id).length !==
+            1,
+        )
+      )
+        throw new Error(
+          "The recorded game identity changed; metadata was not overwritten",
+        );
+      // Analysis cannot recover the recorder's original retention reason.
+      if (
+        current &&
+        desired.reason !== undefined &&
+        snapshots.some(
+          (saved) => !current.games?.some((game) => game.gameId === saved.id),
+        )
+      )
+        updated = { ...updated, reason: desired.reason };
+      if (current && JSON.stringify(updated) === JSON.stringify(current))
+        return updated;
+      try {
+        await this.client!.send(
+          new PutObjectCommand({
+            Bucket: this.config!.bucket,
+            Key: key,
+            Body: JSON.stringify(updated, null, 2),
+            ContentType: "application/json; charset=utf-8",
+            CacheControl: "no-cache",
+            ...(remote ? { IfMatch: remote.etag } : { IfNoneMatch: "*" }),
+          }),
+        );
+        return updated;
+      } catch (err) {
+        if (
+          attempt >= 4 ||
+          !(err instanceof Error) ||
+          err.name !== "PreconditionFailed"
+        )
+          throw err;
+      }
+    }
   }
 
   /**
@@ -306,19 +956,85 @@ export class DemoUploader {
    * Any unexpected read/parse error throws (kept + retried) rather than
    * risk clobbering the index with a truncated read.
    */
-  private async updateIndex(record: DemoMetadata): Promise<void> {
+  private async updateIndex(
+    record: DemoMetadata,
+    existingOnly = false,
+    gameIds?: ReadonlySet<string>,
+  ): Promise<boolean> {
     const config = this.config!;
     const key = `${config.prefix}index.json`;
+    let found = false;
+    const snapshots = this.publishedGames(record).filter(
+      (game) => !gameIds || gameIds.has(game.id),
+    );
     const count = await updateDemoIndex(
       this.client!,
       config.bucket,
       key,
-      (entries) =>
-        entries?.some((entry) => entry.filename === record.filename)
+      (entries) => {
+        const existing = entries?.find(
+          (entry) => entry.filename === record.filename,
+        );
+        found = !!existing || !existingOnly;
+        if (!existing)
+          return existingOnly ? undefined : [...(entries ?? []), record];
+        const updated = this.overlayPresentations(existing, snapshots, record);
+        if (
+          existingOnly &&
+          snapshots.some(
+            (saved) => !updated.games?.some((game) => game.gameId === saved.id),
+          )
+        )
+          throw new Error(
+            "The indexed game's identity changed; metadata was not overwritten",
+          );
+        return JSON.stringify(updated) === JSON.stringify(existing)
           ? undefined
-          : [...(entries ?? []), record],
+          : entries!.map((entry) => (entry === existing ? updated : entry));
+      },
     );
     log.debug({ entries: count }, "Demo index updated");
+    return found;
+  }
+
+  /** Expire only confirmed cache copies; unsynced saves survive indefinitely. */
+  private prunePublishedSidecars(): Promise<void> {
+    return this.serialize("local", async () => {
+      for (const filePath of this.presentationFiles) {
+        if (this.pendingEdits.has(filePath)) continue;
+        const local = await this.readSidecar(`${filePath}.json`);
+        if (
+          !local ||
+          this.publishedPresentations.get(filePath) !==
+            this.presentationSignature(local)
+        )
+          continue;
+        try {
+          const stat = await fsp.stat(`${filePath}.json`);
+          if (Date.now() - stat.mtimeMs < PUBLISHED_DEMO_SIDECAR_CACHE_MS)
+            continue;
+          if (
+            await fsp.stat(filePath).then(
+              () => true,
+              (error: NodeJS.ErrnoException) => {
+                if (error.code === "ENOENT") return false;
+                throw error;
+              },
+            )
+          )
+            continue;
+          await fsp.unlink(`${filePath}.json`);
+          this.presentationFiles.delete(filePath);
+          this.publishedPresentations.delete(filePath);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+            log.warn(
+              { error, filePath },
+              "Synced demo metadata cache could not be removed",
+            );
+        }
+      }
+    });
   }
 
   private async uploadDemoFile(filePath: string, key: string): Promise<void> {
@@ -358,6 +1074,7 @@ export class DemoUploader {
 
   /** Boot + retry sweep over the demo dir. */
   async sweep(): Promise<void> {
+    await this.retryGamePresentations();
     let entries: string[];
     try {
       entries = await fsp.readdir(this.dir);
@@ -367,7 +1084,9 @@ export class DemoUploader {
     let requeued = 0;
     for (const name of entries) {
       const filePath = path.join(this.dir, name);
-      if (name.endsWith(PARTIAL_SUFFIX)) {
+      if (name.endsWith(".rec.json.edit")) {
+        this.pendingEdits.add(filePath.slice(0, -".json.edit".length));
+      } else if (name.endsWith(PARTIAL_SUFFIX)) {
         // Live spools are .partial too: never touch one a recorder in
         // this process owns (salvaging an open file would race its
         // writes). For the rest, only a cold mtime marks a crashed
@@ -389,6 +1108,13 @@ export class DemoUploader {
         name.endsWith(`.rec${DEMO_CHECKPOINT_SUFFIX}`) ||
         name.endsWith(`.rec${DEMO_CHECKPOINT_SUFFIX}.tmp`)
       ) {
+        if (name.endsWith(".rec.json")) {
+          const record = await this.readSidecar(filePath);
+          if (record?.games?.some((game) => game.gameId)) {
+            this.presentationFiles.add(filePath.slice(0, -5));
+            continue;
+          }
+        }
         // A sidecar without its .rec is a crash-window orphan (the demo
         // uploaded and unlinked, then the process died before this
         // unlink). The mtime guard covers the finalize race where the
@@ -415,5 +1141,7 @@ export class DemoUploader {
     if (requeued > 0 && this.enabled) {
       log.info({ count: requeued }, "Sweep queued demos awaiting upload");
     }
+    await this.retryGamePresentations();
+    await this.prunePublishedSidecars();
   }
 }

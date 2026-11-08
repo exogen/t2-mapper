@@ -1,6 +1,6 @@
 import { setImmediate } from "node:timers/promises";
 import { BlockTypeMove, BlockTypePacket, DemoParser } from "t2-demo-parser";
-import type { DemoGame, DemoMetadata } from "../../relay/demoRecorder.js";
+import type { DemoGame, DemoMetadata } from "../../relay/demoMetadata.js";
 import { DemoPlayers } from "../../relay/demoPlayers.js";
 import { WatchStateAccumulator } from "../../relay/watchState.js";
 import { parseMissionSequence } from "../../relay/shared.js";

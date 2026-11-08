@@ -47,6 +47,7 @@ import type {
   RecordingDecisionReason,
 } from "./demoCoordinator.js";
 import type { DemoRecorder } from "./demoRecorder.js";
+import type { PublishedGame } from "./gamePresentation.js";
 import { relayLog } from "./logger.js";
 import type {
   ConnectionStatus,
@@ -226,6 +227,28 @@ export class WatchSessionManager {
     return this.sessions.get(normalizeAddress(address));
   }
 
+  /** Opaque IDs only address games still retained by a live watch session. */
+  getGame(id: string): PublishedGame | undefined {
+    return this.getGameTarget(id)?.game;
+  }
+
+  getGameTarget(
+    id: string,
+  ): { game: PublishedGame; recorder: DemoRecorder | null } | undefined {
+    for (const session of this.sessions.values()) {
+      const target = session.getGameTarget(id);
+      if (target) return target;
+    }
+    return undefined;
+  }
+
+  updateGame(game: PublishedGame): boolean {
+    for (const session of this.sessions.values()) {
+      if (session.updateGame(game)) return true;
+    }
+    return false;
+  }
+
   private getOrCreateSession(address: string): WatchSession {
     const key = normalizeAddress(address);
     let session = this.sessions.get(key);
@@ -364,6 +387,13 @@ interface CatchupSource {
   packetCount: number;
 }
 
+interface WatchGame {
+  current: PublishedGame;
+  recorder: DemoRecorder | null;
+  mission?: readonly [sequence: string, name: string];
+  previous?: WatchGame;
+}
+
 /**
  * One shared game-server connection plus its parsed world state and
  * watcher fan-out. Live and delayed channels share this connection;
@@ -388,6 +418,9 @@ export class WatchSession {
   private pending = new Set<WebSocket>();
   private channels = new Map<WebSocket, WatchChannel>();
   private readonly channelPrefix = randomUUID();
+  /** A holder survives recorder finalization while a delayed viewer edits it. */
+  private games = new Map<number, WatchGame>();
+  private viewerEpochs = new Map<WebSocket, number>();
   private epoch = 0;
   private packetCount = 0;
   private connectSynced = false;
@@ -482,6 +515,73 @@ export class WatchSession {
     return this.watchers.size + this.pending.size;
   }
 
+  getGameTarget(
+    id: string,
+  ): { game: PublishedGame; recorder: DemoRecorder | null } | undefined {
+    for (const holder of this.games.values()) {
+      if (holder.current.id === id)
+        return { game: holder.current, recorder: holder.recorder };
+    }
+    return undefined;
+  }
+
+  updateGame(game: PublishedGame): boolean {
+    for (const [epoch, holder] of this.games) {
+      if (holder.current.id !== game.id) continue;
+      if (game.revision < holder.current.revision) return false;
+      holder.current = game;
+      this.cachedPayload = null;
+      for (const [ws, viewedEpoch] of this.viewerEpochs) {
+        if (viewedEpoch === epoch && this.channels.has(ws))
+          sendJson(ws, { type: "gamePresentation", address: this.key, game });
+      }
+      return true;
+    }
+    return false;
+  }
+
+  private pruneGames(): void {
+    const retained = new Set([
+      this.epoch,
+      this.replica?.epoch,
+      ...this.viewerEpochs.values(),
+    ]);
+    for (const item of this.delayQueue) {
+      if (item.kind === "epoch") retained.add(item.epoch);
+    }
+    for (const epoch of this.games.keys()) {
+      if (!retained.has(epoch)) this.games.delete(epoch);
+    }
+  }
+
+  private identifyGame(sequence: string, name: string): void {
+    const holder = this.games.get(this.epoch);
+    if (!holder || holder.mission || !sequence || !name) return;
+    holder.mission = [sequence, name];
+    const previous = holder.previous;
+    delete holder.previous;
+    if (previous?.mission?.[0] === sequence && previous.mission[1] === name) {
+      // Re-syncing the connection makes another recording, but it needn't
+      // discard the labels of a mission that the server says is unchanged.
+      this.updateGame({
+        ...holder.current,
+        revision: previous.current.revision,
+        presentation: structuredClone(previous.current.presentation),
+      });
+    } else {
+      const saved = this.options.demoCoordinator?.getSavedGamePresentation?.(
+        this.key,
+        [sequence, name],
+      );
+      if (saved)
+        this.updateGame({
+          ...holder.current,
+          revision: 1,
+          presentation: saved,
+        });
+    }
+  }
+
   getChannelId(ws: WebSocket): string | undefined {
     const channel = this.channels.get(ws);
     return channel
@@ -574,7 +674,19 @@ export class WatchSession {
       this.rotateTimer = null;
     }
     this.rotating = false;
+    const previousGame = this.games.get(this.epoch);
     this.epoch++;
+    const game: WatchGame = {
+      current: {
+        id: randomUUID(),
+        revision: 0,
+        presentation: {},
+      },
+      recorder: null,
+      previous: previousGame?.mission ? previousGame : previousGame?.previous,
+    };
+    this.games.set(this.epoch, game);
+    this.pruneGames();
     this.connectSynced = false;
     this.packetCount = 0;
     this.cachedPayload = null;
@@ -621,6 +733,7 @@ export class WatchSession {
     const recorder =
       this.options.demoCoordinator?.createRecorder({
         address: this.key,
+        getGamePresentation: () => game.current,
         getConnectSequence: () => conn.connectSequence,
         getServerInfo: () => this.options.getCachedServer(this.key),
         getServerIdentity: () => {
@@ -658,6 +771,7 @@ export class WatchSession {
         },
       }) ?? null;
     this.recorder = recorder;
+    game.recorder = recorder;
 
     conn.on("status", (status: ConnectionStatus, message?: string) => {
       if (this.connection !== conn) return;
@@ -777,6 +891,8 @@ export class WatchSession {
     const removed = this.watchers.delete(ws) || this.pending.delete(ws);
     if (!removed) return;
     this.channels.delete(ws);
+    this.viewerEpochs.delete(ws);
+    this.pruneGames();
     this.broadcastWatcherCount();
     if (this.watcherCount === 0 && !this.pinned) {
       this.startIdleTimer();
@@ -990,6 +1106,8 @@ export class WatchSession {
     this.watchers.clear();
     this.pending.clear();
     this.channels.clear();
+    this.viewerEpochs.clear();
+    this.games.clear();
     const conn = this.connection;
     this.connection = null;
     if (conn && conn.status !== "disconnected") {
@@ -1706,6 +1824,8 @@ export class WatchSession {
       this.watchers.clear();
       this.pending.clear();
       this.channels.clear();
+      this.viewerEpochs.clear();
+      this.pruneGames();
     }
     if (settingsChanged) {
       if (this.controls.restricted) this.cancelIdleTimer();
@@ -2036,6 +2156,7 @@ export class WatchSession {
         conn.missionStartedWithoutAuth();
         const seq = resolvedArgs[0] ?? "";
         const newMissionName = resolvedArgs[1] ?? null;
+        if (newMissionName) this.identifyGame(seq, newMissionName);
         const previousMissionName = this.watchState.missionName;
         if (
           this.watchState.applyMissionStart(funcName, resolvedArgs) &&
@@ -2055,6 +2176,7 @@ export class WatchSession {
         conn.sendCommand("MissionStartPhase2Done", resolvedArgs[0] ?? "");
       } else if (funcName === "MissionStartPhase3") {
         const seq = resolvedArgs[0] ?? "";
+        this.identifyGame(seq, resolvedArgs[1] ?? "");
         this.watchState.applyMissionStart(funcName, resolvedArgs);
         conn.sendCommand("setClientFav", "");
         conn.sendCommand("MissionStartPhase3Done", seq);
@@ -2246,6 +2368,8 @@ export class WatchSession {
 
     this.pending.delete(ws);
     this.watchers.add(ws);
+    this.viewerEpochs.set(ws, source.epoch);
+    this.pruneGames();
     sendJson(ws, this.sessionStatus(ws, "live"));
     relayLog.info(
       {
@@ -2279,6 +2403,7 @@ export class WatchSession {
       epoch: source.epoch,
       serverAddress: this.key,
     });
+    payload.gamePresentation = this.games.get(source.epoch)?.current;
 
     let dataBlockCache = this.dataBlockCaches.get(source.packetParser);
     if (!dataBlockCache) {

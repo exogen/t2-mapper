@@ -22,7 +22,7 @@ import {
   DEMO_TICK_MS,
   buildHeader,
 } from "./demoWriter.js";
-import type { DemoMetadata } from "./demoRecorder.js";
+import type { DemoMetadata } from "./demoMetadata.js";
 
 const inflateRaw = promisify(zlib.inflateRaw);
 const deflateRaw = promisify(zlib.deflateRaw);

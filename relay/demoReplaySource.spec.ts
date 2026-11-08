@@ -93,6 +93,86 @@ const endGhosting = (seq: number): ServerEvent => ({
 });
 
 describe("DemoReplaySource", () => {
+  it("retains saved names through debrief and next-map loading across checkpoint seeks", async () => {
+    const games = [
+      {
+        mission: "Katabatic",
+        gameType: "CTF",
+        startMs: 0,
+        tournament: false,
+        gameId: "first-game",
+        title: "First final",
+        teamNames: { 1: "Knights" },
+      },
+      {
+        mission: "Raindance",
+        gameType: "CTF",
+        startMs: 32,
+        tournament: false,
+        gameId: "second-game",
+        title: "Second final",
+        teamNames: { 1: "Dragons" },
+      },
+    ];
+    const source = await DemoReplaySource.load(
+      demo([
+        block(
+          BlockTypePacket,
+          serverPacket(1, {
+            events: [netString(0, 1, "MissionEnd"), command(1, 1)],
+          }),
+        ),
+        block(BlockTypeMove, ZERO_MOVE),
+        block(
+          BlockTypePacket,
+          serverPacket(2, {
+            events: [
+              endGhosting(2),
+              netString(3, 2, "MissionStartPhase1"),
+              command(4, 2, "2", "Raindance"),
+            ],
+          }),
+        ),
+        ...Array.from({ length: 2001 }, () => block(BlockTypeMove, ZERO_MOVE)),
+        block(
+          BlockTypePacket,
+          serverPacket(3, {
+            events: [
+              netString(5, 3, "ServerMessage"),
+              command(6, 3, "MsgClientReady", "", "CTFGame"),
+            ],
+          }),
+        ),
+        block(BlockTypeMove, ZERO_MOVE),
+      ]),
+      { games },
+    );
+    await source.seek(2002);
+    expect(payload(source)).toMatchObject({
+      gamePresentation: {
+        id: "first-game",
+        presentation: { title: "First final", teamNames: { 1: "Knights" } },
+      },
+      hudState: { matchEnded: true },
+    });
+    await source.seek(2003);
+    expect(payload(source)).toMatchObject({
+      gamePresentation: {
+        id: "second-game",
+        presentation: { title: "Second final" },
+      },
+      hudState: { matchEnded: false },
+    });
+    await source.seek(2002);
+    expect(payload(source).gamePresentation?.id).toBe("first-game");
+    payload(source).gamePresentation!.presentation.teamNames![1] =
+      "Changed by caller";
+    expect(payload(source).gamePresentation!.presentation.teamNames![1]).toBe(
+      "Knights",
+    );
+    await source.seek(0);
+    expect(payload(source).gamePresentation?.id).toBe("first-game");
+  });
   it("cancels scene preparation between slices and restores the original source position", async () => {
     const source = await DemoReplaySource.load(
       demo(Array.from({ length: 30 }, () => block(BlockTypeMove, ZERO_MOVE))),

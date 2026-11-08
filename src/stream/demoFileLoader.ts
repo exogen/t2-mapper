@@ -26,13 +26,16 @@ import {
 } from "./demoSources";
 import type { SourceDemoMetadata } from "../../relay/demoSourceMetadata";
 import { DEMO_CHECKPOINT_SUFFIX, readDemoCheckpoints } from "./demoCheckpoints";
+import { readDemoGames } from "../../relay/demoMetadata";
+import { versionedDemoMetadataUrl, type DemoIndexEntry } from "./demoIndex";
 
 interface LoadedDemoSource {
   url: string;
   reference: string | null;
   sidecarSourceUrl: string | null;
   metadata: SourceDemoMetadata | null;
-  installed: boolean;
+  recording: StreamRecording | null;
+  publishedGames: DemoIndexEntry["games"] | null;
   checkpoints?: Promise<string | null>;
 }
 
@@ -42,6 +45,13 @@ let parseToken = 0;
 let scanAbort: AbortController | null = null;
 let loadAbort: AbortController | null = null;
 let cancelDownload: ((preserveRecording: boolean) => void) | null = null;
+
+function isInstalledSource(source: LoadedDemoSource): boolean {
+  return (
+    source.recording !== null &&
+    engineStore.getState().playback.recording === source.recording
+  );
+}
 
 function cancelLoad(preserveRecording = true): number {
   ++parseToken;
@@ -74,6 +84,7 @@ export function unloadDemo(): void {
     sourceReference: null,
     sourceFileName: null,
     sourceMetadata: null,
+    publishedGames: null,
     sidecarSourceUrl: null,
     downloadedSec: null,
   });
@@ -93,7 +104,10 @@ export async function loadDemoFile(
   // load starts while we're reading, that newer one wins — not whichever
   // happens to finish last.
   const token = cancelLoad();
-  demoLoadStore.setState({ requestedUrl: null, requestedDemo: null });
+  demoLoadStore.setState({
+    requestedUrl: null,
+    requestedDemo: null,
+  });
   demoLoadStore.getState().begin("parsing");
   try {
     const buffer = await file.arrayBuffer();
@@ -138,7 +152,10 @@ async function loadRemoteDemo(
   const token = cancelLoad();
   const abort = new AbortController();
   loadAbort = abort;
-  demoLoadStore.setState({ requestedUrl: null, requestedDemo: reference });
+  demoLoadStore.setState({
+    requestedUrl: null,
+    requestedDemo: reference,
+  });
   demoLoadStore.getState().begin("downloading");
   let source: DemoSource;
   try {
@@ -154,11 +171,6 @@ async function loadRemoteDemo(
   demoLoadStore.setState({ requestedUrl: url });
   let response: Response | undefined;
   try {
-    response = await source.load(abort.signal);
-    if (parseToken !== token) return;
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
     const loadedSource: LoadedDemoSource = {
       url,
       reference: reference?.includes(":")
@@ -167,8 +179,65 @@ async function loadRemoteDemo(
         : reference,
       sidecarSourceUrl: source.sidecarSourceUrl,
       metadata: null,
-      installed: false,
+      recording: null,
+      publishedGames: null,
     };
+    // Fetch metadata alongside the recording so it can be ready at installation.
+    if (source.sidecarSourceUrl) {
+      const metadataUrl = new URL(
+        source.sidecarSourceUrl,
+        typeof location === "undefined" ? "http://localhost/" : location.href,
+      );
+      metadataUrl.pathname += ".json";
+      void Promise.resolve()
+        .then(() =>
+          fetch(versionedDemoMetadataUrl(metadataUrl.href), {
+            signal: abort.signal,
+            cache: "no-cache",
+          }),
+        )
+        .then(async (response) => {
+          if (!response.ok) {
+            await response.body?.cancel();
+            return;
+          }
+          const metadata: unknown = await response.json();
+          const games = readDemoGames(metadata);
+          if (
+            !games.length &&
+            !(
+              metadata &&
+              typeof metadata === "object" &&
+              "games" in metadata &&
+              Array.isArray(metadata.games) &&
+              metadata.games.length === 0
+            )
+          )
+            return;
+          if (parseToken !== token || abort.signal.aborted) return;
+          const installed = isInstalledSource(loadedSource);
+          // An editor can fetch or save newer metadata while this initial
+          // public request is in flight. Keep the newer installed snapshot.
+          if (
+            loadedSource.recording &&
+            (!installed ||
+              demoLoadStore.getState().publishedGames !==
+                loadedSource.publishedGames)
+          )
+            return;
+          loadedSource.publishedGames = games;
+          if (installed) demoLoadStore.setState({ publishedGames: games });
+        })
+        .catch((err) => {
+          if (parseToken === token && !abort.signal.aborted)
+            log.warn("Couldn't load saved game details: %o", err);
+        });
+    }
+    response = await source.load(abort.signal);
+    if (parseToken !== token) return;
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
     const checkpointSourceUrl =
       source.checkpointSourceUrl?.(response) ?? source.sidecarSourceUrl;
     if (checkpointSourceUrl) {
@@ -200,7 +269,7 @@ async function loadRemoteDemo(
         .loadMetadata(response, abort.signal)
         .then((metadata) => {
           loadedSource.metadata = metadata;
-          if (parseToken === token && loadedSource.installed) {
+          if (parseToken === token && isInstalledSource(loadedSource)) {
             demoLoadStore.setState({ sourceMetadata: metadata });
           }
         })
@@ -218,7 +287,7 @@ async function loadRemoteDemo(
     }
     const totalBytes = Number(response.headers.get("content-length")) || 0;
     await streamDemoResponse(response.body, loadedSource, token, totalBytes);
-    if (!loadedSource.installed) abort.abort();
+    if (!loadedSource.recording) abort.abort();
   } catch (err) {
     abort.abort();
     if (parseToken !== token) return;
@@ -484,7 +553,7 @@ function installRecording(
   liveState.leaveServer();
   liveState.disconnectRelay();
   engineStore.getState().setRecording(recording, demoBuffer);
-  if (source) source.installed = true;
+  if (source) source.recording = recording;
   demoLoadStore
     .getState()
     .setSourceUrl(
@@ -493,6 +562,7 @@ function installRecording(
       source?.metadata ?? null,
       source?.reference ?? null,
       fileName,
+      source?.publishedGames ?? null,
     );
   // Which commentary tracks this demo has, from its record sidecar.
   void commentaryTracksStore.getState().load(source?.sidecarSourceUrl ?? null);

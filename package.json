@@ -8,6 +8,8 @@
   "type": "module",
   "packageManager": "npm@11.7.0",
   "scripts": {
+    "accounts:backup": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/backup-account-database.ts",
+    "accounts:set-role": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/set-account-role.ts",
     "demos:checkpoints": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/generate-demo-checkpoints.ts",
     "demos:backfill-checkpoints": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/backfill-demo-checkpoints.ts",
     "demos:backup": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/backup-demo-bucket.ts",
@@ -43,6 +45,9 @@
     "@radix-ui/react-accordion": "^1.3.1",
     "@radix-ui/react-slider": "^1.6.1",
     "@tanstack/react-query": "^5.105.0",
+    "better-auth": "1.7.18",
+    "better-call": "1.4.5",
+    "better-sqlite3": "13.0.3",
     "ignore": "^7.0.14",
     "lodash.orderby": "^4.18.0",
     "match-sorter": "^8.3.0",
@@ -69,6 +74,7 @@
     "@inquirer/prompts": "^8.7.2",
     "@rolldown/plugin-babel": "^0.2.4",
     "@types/babel__core": "^7.20.5",
+    "@types/better-sqlite3": "9.6.0",
     "@types/express": "^5.0.6",
     "@types/lodash.orderby": "^4.6.9",
     "@types/node": "^24.12.0",
@@ -100,6 +106,7 @@
     "vitest": "^4.1.10"
   },
   "allowScripts": {
+    "better-sqlite3@13.0.3": true,
     "puppeteer@24.40.0": true,
     "esbuild@0.28.1": true,
     "fsevents@2.3.3": true

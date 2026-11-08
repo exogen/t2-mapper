@@ -4,6 +4,15 @@ import { resolveRemoteDemo } from "./demoSources.js";
 import { DEMO_TRANSFER_TIMEOUT_MS } from "./demoImportQueue.js";
 import { SOURCE_DEMO_PROTOCOL_VERSION } from "./demoSourceMetadata.js";
 import { MAX_SOURCE_DEMO_BYTES } from "./demoSourceValidation.js";
+import { readDemoGames, type DemoGame } from "./demoMetadata.js";
+
+const MAX_METADATA_BYTES = 128 * 1024;
+const METADATA_TIMEOUT_MS = 2_000;
+
+export interface ReplayDemoDownload {
+  bytes: Uint8Array;
+  games: DemoGame[];
+}
 
 export interface ReplayDemoLoaderOptions {
   baseUrl?: string;
@@ -51,6 +60,80 @@ async function abortable<T>(
   }
 }
 
+async function responseBytes(
+  response: Response,
+  maxBytes: number,
+  signal: AbortSignal,
+): Promise<Uint8Array> {
+  const length = response.headers.get("content-length");
+  if (length && /^\d+$/.test(length) && Number(length) > maxBytes) {
+    await response.body?.cancel();
+    throw new Error("Demo is too large for a replay session");
+  }
+  if (!response.body) throw new Error("The demo source returned no data");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      signal.throwIfAborted();
+      const { value, done } = await abortable(reader.read(), signal);
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes)
+        throw new Error("Demo is too large for a replay session");
+      chunks.push(value);
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+/** Optional labels only come from a sibling of a validated published filename. */
+async function publishedGames(
+  url: string,
+  fetchDemo: typeof fetch,
+  signal: AbortSignal,
+): Promise<DemoGame[]> {
+  const metadataSignal = AbortSignal.any([
+    signal,
+    AbortSignal.timeout(METADATA_TIMEOUT_MS),
+  ]);
+  try {
+    const response = await abortable(
+      fetchDemo(`${url}.json`, {
+        signal: metadataSignal,
+        redirect: "error",
+        cache: "no-store",
+        headers: { "Accept-Encoding": "identity" },
+      }),
+      metadataSignal,
+    );
+    if (!response.ok) {
+      await response.body?.cancel();
+      return [];
+    }
+    const bytes = await responseBytes(
+      response,
+      MAX_METADATA_BYTES,
+      metadataSignal,
+    );
+    return readDemoGames(JSON.parse(new TextDecoder().decode(bytes)));
+  } catch {
+    return [];
+  }
+}
+
 /** Bounded download from the configured bucket or an allowlisted external source. */
 export function createReplayDemoLoader(options: ReplayDemoLoaderOptions = {}) {
   const base = new URL(
@@ -73,7 +156,7 @@ export function createReplayDemoLoader(options: ReplayDemoLoaderOptions = {}) {
   return async (
     reference: string,
     signal: AbortSignal,
-  ): Promise<Uint8Array> => {
+  ): Promise<ReplayDemoDownload> => {
     validateReplayDemoReference(reference);
     const downloadSignal = AbortSignal.any([
       signal,
@@ -95,11 +178,16 @@ export function createReplayDemoLoader(options: ReplayDemoLoaderOptions = {}) {
       // escape the configured directory after URL resolution.
       url = new URL(encodeURIComponent(reference), base).href;
     }
-    const response = await fetchDemo(url, {
+    const responseTask = fetchDemo(url, {
       signal: downloadSignal,
       redirect: "error",
       headers: { "Accept-Encoding": "identity" },
     });
+    const games =
+      separator < 0
+        ? publishedGames(url, fetchDemo, downloadSignal)
+        : Promise.resolve([]);
+    const response = await responseTask;
     if (!response.ok) {
       await response.body?.cancel();
       throw new Error(
@@ -108,37 +196,7 @@ export function createReplayDemoLoader(options: ReplayDemoLoaderOptions = {}) {
           : "Couldn't download the demo",
       );
     }
-    const length = response.headers.get("content-length");
-    if (length && /^\d+$/.test(length) && Number(length) > maxBytes) {
-      await response.body?.cancel();
-      throw new Error("Demo is too large for a replay session");
-    }
-    if (!response.body) throw new Error("The demo source returned no data");
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    try {
-      for (;;) {
-        downloadSignal.throwIfAborted();
-        const { value, done } = await abortable(reader.read(), downloadSignal);
-        if (done) break;
-        size += value.byteLength;
-        if (size > maxBytes)
-          throw new Error("Demo is too large for a replay session");
-        chunks.push(value);
-      }
-    } catch (error) {
-      await reader.cancel().catch(() => {});
-      throw error;
-    } finally {
-      reader.releaseLock();
-    }
-    const bytes = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
+    const bytes = await responseBytes(response, maxBytes, downloadSignal);
     let header;
     try {
       header = DemoParser.peekHeader(bytes).header;
@@ -150,6 +208,8 @@ export function createReplayDemoLoader(options: ReplayDemoLoaderOptions = {}) {
       header.protocolVersion !== SOURCE_DEMO_PROTOCOL_VERSION
     )
       throw new Error("Only supported Tribes 2 demos can be replayed");
-    return bytes;
+    const metadata = await games;
+    signal.throwIfAborted();
+    return { bytes, games: metadata };
   };
 }

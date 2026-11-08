@@ -1,0 +1,163 @@
+.Root {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  /* The mobile sidebar sizes to its contents; long Discord names must not widen it. */
+  min-width: 0;
+  max-width: 100vw;
+  max-width: 100dvw;
+  /* Long error messages stay usable without covering all of the settings. */
+  max-height: 50%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  gap: 8px;
+  padding: var(--footer-padding-block, 8px) var(--footer-padding-inline, 10px);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.Profile {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+  min-height: var(--footer-control-size, 36px);
+}
+
+.Avatar {
+  flex: 0 0 32px;
+  border-radius: 50%;
+}
+
+.Identity {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+}
+
+.Name,
+.Handle {
+  line-height: 16px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.Name {
+  font-weight: 600;
+}
+
+.Handle {
+  font-size: 12px;
+  opacity: 0.65;
+}
+
+.Role {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  color: #e2c17b;
+  font-size: 16px;
+}
+
+.DiscordButton {
+  composes: DialogButton from "./GameDialog.module.css";
+  --dialog-button-background: linear-gradient(
+    to bottom,
+    rgba(108, 119, 255, 0.8),
+    rgba(88, 101, 242, 0.8) 33%,
+    rgba(75, 86, 206, 0.8) 67%,
+    rgba(53, 65, 153, 0.8)
+  );
+  --dialog-button-border: rgba(76, 87, 182, 0.8);
+  --dialog-button-border-top: rgba(140, 151, 255, 0.8);
+  --dialog-button-inset: rgba(67, 78, 190, 0.5);
+  --dialog-button-text: #e0e3ff;
+  --dialog-button-hover-text: #fff;
+  --dialog-button-hover-border: rgba(99, 111, 221, 0.9);
+  --dialog-button-hover-border-top: rgba(165, 175, 255, 0.9);
+  --dialog-button-hover-glow: rgba(88, 101, 242, 0.5);
+}
+
+.Root .DiscordButton {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  box-sizing: border-box;
+  height: var(--footer-control-size, 36px);
+  min-height: var(--footer-control-size, 36px);
+  margin: 0;
+  padding: 4px 16px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.DiscordButton svg {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  color: #fff;
+}
+
+.DiscordButton:focus-visible {
+  outline: 2px solid #e0e3ff;
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  .Root {
+    padding: var(--footer-padding-block, 6px) var(--footer-padding-inline, 8px);
+  }
+
+  .Profile {
+    min-height: var(--footer-control-size, 40px);
+  }
+
+  .Root .DiscordButton {
+    height: var(--footer-control-size, 40px);
+    min-height: var(--footer-control-size, 40px);
+  }
+}
+
+.SignOut {
+  composes: SmallButton from "./Button.module.css";
+  flex: 0 0 auto;
+  align-self: center;
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #b8bbbb;
+  white-space: nowrap;
+}
+
+@media (hover: hover) {
+  .SignOut:not(:disabled):hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.28);
+    color: #e0e2e2;
+  }
+}
+
+.SignOut:not(:disabled):active {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.SignOut:focus-visible {
+  outline: 2px solid #c9cccc;
+  outline-offset: 2px;
+}
+
+.Error {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #ffd4c9;
+}

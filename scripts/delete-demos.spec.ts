@@ -4,7 +4,7 @@ import {
   GetObjectCommand,
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
-import type { DemoMetadata } from "../relay/demoRecorder";
+import type { DemoMetadata } from "../relay/demoMetadata";
 
 const mocks = vi.hoisted(() => ({
   client: vi.fn(),

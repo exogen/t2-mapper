@@ -234,7 +234,8 @@ export function restorePreferences(
   copy("highQualityFog");
   if (saved.speedMultiplier != null)
     restored.speedMultiplier = clamp(
-      saved.speedMultiplier,
+      // Keep saved speeds on the same whole-percentage grid as the controls.
+      Math.round(saved.speedMultiplier * 100) / 100,
       MIN_SPEED_MULTIPLIER,
       MAX_SPEED_MULTIPLIER,
     );

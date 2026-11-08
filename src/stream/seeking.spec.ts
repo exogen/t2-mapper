@@ -13,6 +13,7 @@ import { applyStreamEntityPose } from "./interpolateEntity";
 import { wheelRotationAt, wheelSteeringPosition } from "./vehicleWheels";
 import { PlaybackClock } from "./PlaybackClock";
 import { STREAM_TICK_SEC } from "./streamHelpers";
+import { GhostMessage } from "./entityClassification";
 import {
   streamEntityToGameEntity,
   updateGameEntityFromStream,
@@ -356,6 +357,48 @@ it("seeks into and out of the debrief without restarting world animation", () =>
   const resumed = stream.stepToTime((DEMO_CHECKPOINT_TICKS + 40) * 0.032);
   expect(resumed.matchEnded).toBe(false);
   expect(resumed.matchEndedAtSec).toBeNull();
+});
+
+it("keeps the displayed mission through map loading and restores it across checkpoint seeks", () => {
+  const ghosting = (message: number) =>
+    packetBlock({
+      events: [
+        { classId: 0, parsedData: { type: "GhostingMessageEvent", message } },
+      ],
+    });
+  const blocks = [
+    ...Array.from({ length: 10 }, move),
+    command("ServerMessage", "MsgClientReady", "", "CTFGame"),
+    ...Array.from({ length: 10 }, move),
+    command("MissionEnd", "1"),
+    ghosting(GhostMessage.EndGhosting),
+    ...Array.from({ length: 10 }, move),
+    command("MissionStartPhase1", "2", "Katabatic"),
+    ghosting(GhostMessage.GhostAlwaysDone),
+    ...Array.from({ length: DEMO_CHECKPOINT_TICKS }, move),
+    command("ServerMessage", "MsgClientReady", "", "CTFGame"),
+    ...Array.from({ length: 20 }, move),
+    // Same-map restarts can drop the client without another ghosting cycle.
+    command("ServerMessage", "MsgClientReady", "", "CTFGame"),
+    ...Array.from({ length: 20 }, move),
+  ];
+  const stream = demo(blocks);
+  const cases = [
+    [15, 10, false],
+    [DEMO_CHECKPOINT_TICKS + 25, 10, true],
+    [DEMO_CHECKPOINT_TICKS + 40, DEMO_CHECKPOINT_TICKS + 30, false],
+    [DEMO_CHECKPOINT_TICKS + 55, DEMO_CHECKPOINT_TICKS + 50, false],
+    [DEMO_CHECKPOINT_TICKS + 25, 10, true],
+    [15, 10, false],
+    [0, 0, false],
+    [DEMO_CHECKPOINT_TICKS + 40, DEMO_CHECKPOINT_TICKS + 30, false],
+  ] as const;
+  for (const [tick, readyTick, ended] of cases) {
+    const snapshot = stream.stepToTime(tick * STREAM_TICK_SEC);
+    expect(snapshot.missionReadySec).toBe(readyTick * STREAM_TICK_SEC);
+    expect(snapshot.matchEnded).toBe(ended);
+  }
+  expect(stream.checkpointTicks).toContain(DEMO_CHECKPOINT_TICKS);
 });
 
 it("keeps welcome debrief messages out of the frozen state during playback and checkpoint seeks", () => {

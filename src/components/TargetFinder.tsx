@@ -116,7 +116,7 @@ function TargetFinderDialog({ onClose }: { onClose: () => void }) {
   }, []);
   const [query, setQuery] = useState("");
   // Mounted only while searching; closed launchers do no entity-list work.
-  const names = useCaster((s) => s.settings?.teamNames);
+  const names = useCaster((s) => s.teamNames);
   const targets = useStreamSnapshot(
     () => getFollowTargets(names),
     targetsEqual,

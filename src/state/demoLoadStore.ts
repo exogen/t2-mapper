@@ -1,6 +1,7 @@
 import { createStore } from "zustand/vanilla";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import type { SourceDemoMetadata } from "../../relay/demoSourceMetadata";
+import type { DemoIndexEntry } from "../stream/demoIndex";
 
 export type DemoLoadPhase = "idle" | "downloading" | "parsing" | "error";
 
@@ -29,6 +30,8 @@ export interface DemoLoadState {
   /** Original filename of the installed local demo, independent of a pending load. */
   sourceFileName: string | null;
   sourceMetadata: SourceDemoMetadata | null;
+  /** Published per-game labels; null until metadata is available. */
+  publishedGames: DemoIndexEntry["games"] | null;
   /** Published sidecars for the loaded demo; null for external/local demos. */
   sidecarSourceUrl: string | null;
   /** URL-param load intent, including an in-flight or failed download. */
@@ -52,6 +55,7 @@ export interface DemoLoadState {
     sourceMetadata: SourceDemoMetadata | null,
     sourceReference?: string | null,
     sourceFileName?: string | null,
+    publishedGames?: DemoIndexEntry["games"] | null,
   ): void;
   reset(): void;
 }
@@ -64,6 +68,7 @@ export const demoLoadStore = createStore<DemoLoadState>((set) => ({
   sourceReference: null,
   sourceFileName: null,
   sourceMetadata: null,
+  publishedGames: null,
   sidecarSourceUrl: null,
   requestedDemo: null,
   requestedUrl: null,
@@ -86,6 +91,7 @@ export const demoLoadStore = createStore<DemoLoadState>((set) => ({
     sourceMetadata,
     sourceReference = null,
     sourceFileName = null,
+    publishedGames = null,
   ) {
     set({
       sourceUrl,
@@ -93,6 +99,7 @@ export const demoLoadStore = createStore<DemoLoadState>((set) => ({
       sourceFileName,
       sidecarSourceUrl,
       sourceMetadata,
+      publishedGames,
     });
   },
   reset() {

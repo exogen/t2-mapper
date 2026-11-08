@@ -60,6 +60,7 @@ export class LiveStreamAdapter extends StreamEngine {
   onReady?: () => void;
   /** Called when the server starts a new mission (map cycle). */
   onMissionChange?: (missionName: string) => void;
+  /** Displayed mission identity; defer the next one until its debrief ends. */
   onMissionIdentity?: (sequence: string, missionName: string) => void;
   /**
    * The parser could not fully read a packet, so its ghost tracker and
@@ -386,9 +387,19 @@ export class LiveStreamAdapter extends StreamEngine {
     this.hydratedEpoch = payload.epoch;
     if (payload.missionName) {
       this.onMissionChange?.(payload.missionName);
-      if (this.missionSequence)
-        this.onMissionIdentity?.(this.missionSequence, payload.missionName);
     }
+    const displayedMission =
+      payload.displayedMission === undefined
+        ? payload.missionName && {
+            name: payload.missionName,
+            sequence: this.missionSequence,
+          }
+        : payload.displayedMission;
+    if (displayedMission)
+      this.onMissionIdentity?.(
+        displayedMission.sequence ?? displayedMission.name,
+        displayedMission.name,
+      );
     if (!hud.missionDisplayName) {
       // Should repopulate via MsgMissionDropInfo shortly (e.g. attach
       // landed mid mission-change); logged to trace occurrences where
@@ -418,6 +429,19 @@ export class LiveStreamAdapter extends StreamEngine {
 
   /** A source-specific cursor may observe control corrections without parsing twice. */
   protected onPacketApplied(_packet: PacketData): void {}
+
+  protected override handleServerMessage(args: string[]): void {
+    const wasEnded = this.matchEnded;
+    super.handleServerMessage(args);
+    // Loading the next mission can begin while the previous score screen is
+    // still visible. MsgClientReady is the boundary that ends that debrief.
+    if (wasEnded && !this.matchEnded) this.publishMissionIdentity();
+  }
+
+  private publishMissionIdentity(): void {
+    if (this.missionName && this.missionSequence && !this.matchEnded)
+      this.onMissionIdentity?.(this.missionSequence, this.missionName);
+  }
 
   protected invalidateSnapshot(): void {
     this._snapshot = null;
@@ -491,7 +515,7 @@ export class LiveStreamAdapter extends StreamEngine {
         this.isPiloting = false;
         this.onMissionChange?.(newMissionName);
       }
-      if (newMissionName && seq) this.onMissionIdentity?.(seq, newMissionName);
+      this.publishMissionIdentity();
       this.sendToRelay.command("MissionStartPhase1Done", [seq]);
     } else if (funcName === "MissionStartPhase2") {
       const seq = resolvedArgs[0] ?? "";
@@ -509,7 +533,7 @@ export class LiveStreamAdapter extends StreamEngine {
       if (currentMission) {
         this.missionName = currentMission;
         this.missionSequence = seq || null;
-        if (seq) this.onMissionIdentity?.(seq, currentMission);
+        this.publishMissionIdentity();
       }
       // Send an empty favorites list then acknowledge phase 3.
       this.sendToRelay.command("setClientFav", [""]);

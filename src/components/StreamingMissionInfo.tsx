@@ -24,13 +24,17 @@ import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { WifiSignalIcon } from "./WifiSignalIcon";
 import { IoCalendarNumberOutline } from "react-icons/io5";
 import { isRelayRecording, parseDemoHeaderDate } from "../stream/demoDate";
-import { formatRecordedTime, recordedDayLabel } from "./demoFormat";
+import {
+  findIndexedDemo,
+  formatRecordedTime,
+  recordedDayLabel,
+} from "./demoFormat";
 import { useDemoIndex } from "./useDemoIndex";
-import { useDemoQueryState } from "./useQueryParams";
 import { BiSolidEject } from "react-icons/bi";
 import { FaArrowDown } from "react-icons/fa";
 import { formatDelay, formatPing } from "../stringUtils";
 import { lookupMissionType } from "../mission";
+import { GameDetailsButton } from "./GameDetailsEditor";
 import styles from "./StreamingMissionInfo.module.css";
 
 export function StreamingMissionInfo({
@@ -63,12 +67,11 @@ export function StreamingMissionInfo({
   // Indexed demos use their known instant. Local demos and shared replays
   // use the recording header: the relay writes UTC; a retail client writes
   // its local time with no zone, so that one is shown as written.
-  const [demoParam] = useDemoQueryState();
   const { data: demos } = useDemoIndex();
-  const indexedAt =
-    !replay && demoSourceUrl && demoParam
-      ? demos?.find((d) => d.filename === demoParam)?.recordedAt
-      : undefined;
+  const indexedDemo = !replay
+    ? findIndexedDemo(demos, demoSourceUrl)
+    : undefined;
+  const indexedAt = indexedDemo?.recordedAt;
   const recordedIso =
     indexedAt ??
     (dateString && isRelayRecording(dateRecorderName)
@@ -165,6 +168,7 @@ export function StreamingMissionInfo({
               )}
             </>
           ) : null}
+          <GameDetailsButton />
         </div>
         {serverName ||
         hasRecorder ||

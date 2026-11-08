@@ -150,6 +150,11 @@ export default defineConfig(({ mode }) => {
   const publicEnv: Record<string, string> = {
     LOG_LEVEL: allEnv.LOG_LEVEL || "info",
     RELAY_URL: allEnv.RELAY_URL || "wss://t2-relay.fly.dev",
+    AUTH_API_URL:
+      allEnv.AUTH_API_URL ||
+      (mode === "development"
+        ? "http://localhost:8765"
+        : "https://api.tribes2.online"),
     // Public base URL serving the demo bucket (index.json + .rec files).
     // Empty disables the indexed-demo browser in demo mode.
     DEMOS_BASE_URL:
@@ -190,6 +195,8 @@ export default defineConfig(({ mode }) => {
           ".env",
           ".env.*",
           "*.{crt,pem,key,p12,pfx,cer,der}",
+          "*.{db,sqlite,sqlite3}",
+          "*.{db,sqlite,sqlite3}-{wal,shm,journal}",
           ".npmrc",
           ".yarnrc.yml",
           "**/.git/**",

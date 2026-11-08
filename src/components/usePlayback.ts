@@ -8,7 +8,7 @@ import {
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { streamClock } from "../state/streamPlaybackStore";
 
-export const SPEED_OPTIONS = [0.25, 0.5, 1, 1.5, 2, 3, 4, 8];
+export const SPEED_OPTIONS = [0.1, 0.25, 0.5, 1, 1.5, 2, 3, 4, 8];
 
 export function useRecording(): StreamRecording | null {
   return useEngineSelector((state) => state.playback.recording);

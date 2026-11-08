@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
-import type { DemoMetadata } from "../relay/demoRecorder";
+import type { DemoMetadata } from "../relay/demoMetadata";
 
 const mocks = vi.hoisted(() => ({
   r2Client: vi.fn(),
@@ -43,8 +43,11 @@ const repaired = {
 const added = { ...original, filename: "new.rec" };
 const late = { ...original, filename: "late.rec" };
 let index: DemoMetadata[];
+let sidecar: DemoMetadata;
 let version: number;
+let sidecarVersion: number;
 let beforeIndexPut: (() => void) | undefined;
+let beforeSidecarPut: (() => void) | undefined;
 
 beforeEach(() => {
   vi.resetModules();
@@ -54,8 +57,11 @@ beforeEach(() => {
   process.argv = ["node", "backfill-demo-index.ts", "--force"];
   process.exitCode = undefined;
   index = [original, added];
+  sidecar = original;
   version = 1;
+  sidecarVersion = 1;
   beforeIndexPut = undefined;
+  beforeSidecarPut = undefined;
   mocks.r2Client.mockReturnValue({
     client: { send: mocks.send },
     config: { bucket: "bucket", prefix: "demos/" },
@@ -69,10 +75,10 @@ beforeEach(() => {
   mocks.send.mockImplementation(async (command) => {
     if (command instanceof GetObjectCommand) {
       const body = JSON.stringify(
-        command.input.Key === "demos/index.json" ? index : original,
+        command.input.Key === "demos/index.json" ? index : sidecar,
       );
       return {
-        ETag: `"${version}"`,
+        ETag: `"${command.input.Key === "demos/index.json" ? version : sidecarVersion}"`,
         Body: {
           transformToString: async () => body,
           transformToByteArray: async () => Buffer.from(body),
@@ -92,6 +98,22 @@ beforeEach(() => {
       index = JSON.parse(command.input.Body as string);
       version++;
     }
+    if (
+      command instanceof PutObjectCommand &&
+      command.input.Key === "demos/old.rec.json"
+    ) {
+      beforeSidecarPut?.();
+      beforeSidecarPut = undefined;
+      if (
+        command.input.IfMatch &&
+        command.input.IfMatch !== `"${sidecarVersion}"`
+      )
+        throw Object.assign(new Error("conflict"), {
+          name: "PreconditionFailed",
+        });
+      sidecar = JSON.parse(command.input.Body as string);
+      sidecarVersion++;
+    }
     return {};
   });
 });
@@ -101,6 +123,75 @@ afterEach(() => {
   process.exitCode = originalExitCode;
   vi.restoreAllMocks();
 });
+
+it.each([undefined, 1, 2, 8])(
+  "bounds concurrent metadata analyses (--concurrency=%s) and processes each demo once",
+  async (concurrency) => {
+    process.argv.push("--dry-run");
+    if (concurrency !== undefined)
+      process.argv.push(`--concurrency=${concurrency}`);
+    const filenames = ["a.rec", "b.rec", "c.rec", "d.rec", "e.rec"];
+    mocks.list.mockResolvedValue(
+      filenames.map((filename) => ({ key: `demos/${filename}`, size: 1 })),
+    );
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let active = 0;
+    let peak = 0;
+    mocks.analyze.mockImplementation(async (_bytes, filename) => {
+      active++;
+      peak = Math.max(peak, active);
+      await gate;
+      active--;
+      return { ...repaired, filename };
+    });
+    const run = import("./backfill-demo-index");
+    const workers = Math.min(concurrency ?? 4, filenames.length);
+    try {
+      await vi.waitFor(() => {
+        expect(mocks.analyze).toHaveBeenCalledTimes(workers);
+      });
+      expect(active).toBe(workers);
+    } finally {
+      release();
+      await run;
+    }
+    expect(peak).toBe(workers);
+    expect(active).toBe(0);
+    expect(
+      mocks.analyze.mock.calls.map(([, filename]) => filename).sort(),
+    ).toEqual(filenames);
+    expect(process.exitCode).toBeUndefined();
+    expect(
+      mocks.send.mock.calls.some(
+        ([command]) => command instanceof PutObjectCommand,
+      ),
+    ).toBe(false);
+  },
+);
+
+it.each([
+  "",
+  "0",
+  "-1",
+  "1.5",
+  "invalid",
+  "2workers",
+  "Infinity",
+  "9007199254740992",
+])(
+  "rejects invalid metadata concurrency %s before accessing R2",
+  async (concurrency) => {
+    process.argv.push(`--concurrency=${concurrency}`);
+    await expect(import("./backfill-demo-index")).rejects.toThrow(
+      "--concurrency must be a positive integer",
+    );
+    expect(mocks.r2Client).not.toHaveBeenCalled();
+    expect(mocks.analyze).not.toHaveBeenCalled();
+  },
+);
 
 it.each([false, true])(
   "preserves uploads made during a full backfill (write conflict=%s)",
@@ -137,6 +228,41 @@ it("writes nothing in dry-run mode", async () => {
   ).toBe(false);
 });
 
+it("leaves nested source recordings and their provenance sidecars out of the published catalog", async () => {
+  const provenance = {
+    format: "t2-mapper-source-demo",
+    source: "example",
+    id: "cached",
+  };
+  const nestedRecord = "demos/sources/example/cached.rec";
+  const nestedSidecar = `${nestedRecord}.json`;
+  mocks.list.mockResolvedValue([
+    { key: "demos/old.rec", size: 1 },
+    { key: "demos/old.rec.json", size: 1 },
+    { key: nestedRecord, size: 1 },
+    { key: nestedSidecar, size: JSON.stringify(provenance).length },
+    { key: "other/outside.rec", size: 1 },
+  ]);
+
+  await import("./backfill-demo-index");
+
+  expect(process.exitCode).toBeUndefined();
+  expect(mocks.analyze).toHaveBeenCalledExactlyOnceWith(
+    expect.any(Uint8Array),
+    "old.rec",
+  );
+  const touchedKeys = mocks.send.mock.calls.map(
+    ([command]) => command.input.Key,
+  );
+  expect(touchedKeys).not.toContain(nestedRecord);
+  expect(touchedKeys).not.toContain(nestedSidecar);
+  expect(touchedKeys).not.toContain("other/outside.rec");
+  expect(index.map((record) => record.filename).sort()).toEqual([
+    "new.rec",
+    "old.rec",
+  ]);
+});
+
 it("preserves non-player metadata in players-only mode", async () => {
   process.argv.push("--players-only");
   index = [{ ...original, hasCommentary: true }, added];
@@ -162,4 +288,141 @@ it("leaves the index alone when a demo fails to analyze", async () => {
     ),
   ).toBe(false);
   expect(process.exitCode).toBe(1);
+});
+
+const savedGame = {
+  ...repaired.games[0],
+  gameId: "game",
+  presentationRevision: 2,
+  title: "Final",
+  teamNames: { 1: "Storm", 2: "Dragons" },
+};
+
+it("preserves saved game details during a forced full analysis", async () => {
+  sidecar = { ...original, games: [savedGame] };
+  index = [sidecar, added];
+  await import("./backfill-demo-index");
+  expect(sidecar.games).toEqual([savedGame]);
+  expect(
+    index.find((entry) => entry.filename === original.filename)?.games,
+  ).toEqual([savedGame]);
+});
+
+it("leaves saved details untouched if analysis cannot identify their game", async () => {
+  sidecar = { ...original, games: [savedGame] };
+  index = [sidecar, added];
+  mocks.analyze.mockResolvedValue({ ...repaired, games: [] });
+  await import("./backfill-demo-index");
+  expect(sidecar.games).toEqual([savedGame]);
+  expect(index[0].games).toEqual([savedGame]);
+  expect(
+    mocks.send.mock.calls.some(
+      ([command]) => command instanceof PutObjectCommand,
+    ),
+  ).toBe(false);
+  expect(process.exitCode).toBe(1);
+});
+
+it.each(["rename", "clear"])(
+  "preserves a concurrent saved-detail %s through sidecar write retries",
+  async (change) => {
+    sidecar = { ...original, games: [savedGame] };
+    index = [sidecar, added];
+    const updatedGame =
+      change === "clear"
+        ? { ...repaired.games[0], gameId: "game", presentationRevision: 3 }
+        : { ...savedGame, presentationRevision: 3, title: "New final" };
+    beforeSidecarPut = () => {
+      sidecar = { ...sidecar, games: [updatedGame] };
+      sidecarVersion++;
+    };
+    await import("./backfill-demo-index");
+    expect(sidecar.games).toEqual([updatedGame]);
+    expect(
+      index.find((entry) => entry.filename === original.filename)?.games,
+    ).toEqual([updatedGame]);
+    const writes = mocks.send.mock.calls.flatMap(([command]) =>
+      command instanceof PutObjectCommand &&
+      command.input.Key === "demos/old.rec.json"
+        ? [command.input]
+        : [],
+    );
+    expect(writes.map((input) => input.IfMatch)).toEqual(['"1"', '"2"']);
+  },
+);
+
+it("preserves a newer index presentation when its conditional update retries", async () => {
+  sidecar = { ...original, games: [savedGame] };
+  index = [sidecar, added];
+  const newer = {
+    ...savedGame,
+    presentationRevision: 4,
+    title: "Newest final",
+  };
+  beforeIndexPut = () => {
+    index = [{ ...sidecar, games: [newer] }, added];
+    version++;
+  };
+  await import("./backfill-demo-index");
+  expect(
+    index.find((entry) => entry.filename === original.filename)?.games,
+  ).toEqual([newer]);
+});
+
+it("repairs equal-revision index labels from the canonical sidecar", async () => {
+  sidecar = {
+    ...original,
+    reason: "pinned by operator",
+    games: [savedGame],
+  };
+  index = [
+    {
+      ...sidecar,
+      reason: "stale indexed reason",
+      games: [
+        {
+          ...savedGame,
+          title: "Stale indexed title",
+          teamNames: { 1: "Old team" },
+        },
+      ],
+    },
+    added,
+  ];
+
+  await import("./backfill-demo-index");
+
+  expect(sidecar).toMatchObject({
+    reason: "pinned by operator",
+    games: [savedGame],
+  });
+  expect(index.find((entry) => entry.filename === original.filename)).toEqual(
+    sidecar,
+  );
+});
+
+it("does not overwrite a concurrent saved edit while reconciling commentary", async () => {
+  process.argv = ["node", "backfill-demo-index.ts"];
+  sidecar = { ...original, games: [savedGame] };
+  index = [sidecar, added];
+  mocks.list.mockResolvedValue([
+    { key: "demos/old.rec", size: 1 },
+    { key: "demos/old.rec.json", size: 1 },
+    { key: "demos/old.rec.commentary.m4a", size: 1 },
+  ]);
+  const newer = {
+    ...savedGame,
+    presentationRevision: 3,
+    title: "Edited during reconciliation",
+  };
+  beforeSidecarPut = () => {
+    sidecar = { ...sidecar, games: [newer] };
+    sidecarVersion++;
+  };
+  await import("./backfill-demo-index");
+  expect(mocks.analyze).not.toHaveBeenCalled();
+  expect(sidecar).toMatchObject({ games: [newer], hasCommentary: true });
+  expect(
+    index.find((entry) => entry.filename === original.filename),
+  ).toMatchObject({ games: [newer], hasCommentary: true });
 });

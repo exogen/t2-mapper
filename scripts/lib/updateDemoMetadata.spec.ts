@@ -4,8 +4,8 @@ import {
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
-import type { DemoMetadata } from "../../relay/demoRecorder.js";
-import { repairDemoPlayerMetadata } from "./repairDemoPlayerMetadata";
+import type { DemoMetadata } from "../../relay/demoMetadata.js";
+import { updateDemoMetadata } from "./updateDemoMetadata";
 
 const key = "demos/test.rec.json";
 const original: DemoMetadata = {
@@ -22,6 +22,11 @@ const original: DemoMetadata = {
   playerCount: 2,
 };
 const repair = { ...original, playerCount: 1 };
+const mergePlayers = (latest: DemoMetadata | undefined): DemoMetadata => ({
+  ...(latest ?? repair),
+  players: repair.players,
+  playerCount: repair.playerCount,
+});
 function errorNamed(name: string) {
   return Object.assign(new Error(name), { name });
 }
@@ -48,22 +53,34 @@ function setup() {
   return { client, send, backup, current, puts };
 }
 
-describe("player metadata sidecar repair", () => {
+describe("conditional demo metadata updates", () => {
   it("merges onto edits made while the demo was being parsed", async () => {
     const { client, send, backup, current, puts } = setup();
     const latest = {
       ...original,
       hasCommentary: true,
       reason: "new description",
+      games: [
+        {
+          mission: "Katabatic",
+          gameType: "CTF",
+          startMs: 0,
+          tournament: false,
+          gameId: "game",
+          presentationRevision: 3,
+          title: "Final",
+          teamNames: { 1: "Storm", 2: "Dragons" },
+        },
+      ],
     };
     send
       .mockResolvedValueOnce(current(latest, '"v2"'))
       .mockResolvedValueOnce({});
-    const result = await repairDemoPlayerMetadata(
+    const result = await updateDemoMetadata(
       client,
       "bucket",
       key,
-      repair,
+      mergePlayers,
       backup,
     );
     expect(result).toEqual({ ...latest, playerCount: 1 });
@@ -83,11 +100,11 @@ describe("player metadata sidecar repair", () => {
       .mockRejectedValueOnce(errorNamed("PreconditionFailed"))
       .mockResolvedValueOnce(current(latest, '"v2"'))
       .mockResolvedValueOnce({});
-    const result = await repairDemoPlayerMetadata(
+    const result = await updateDemoMetadata(
       client,
       "bucket",
       key,
-      repair,
+      mergePlayers,
       backup,
     );
     expect(result).toEqual({ ...latest, playerCount: 1 });
@@ -102,11 +119,11 @@ describe("player metadata sidecar repair", () => {
       .mockRejectedValueOnce(errorNamed("PreconditionFailed"))
       .mockResolvedValueOnce(current(latest, '"created"'))
       .mockResolvedValueOnce({});
-    const result = await repairDemoPlayerMetadata(
+    const result = await updateDemoMetadata(
       client,
       "bucket",
       key,
-      repair,
+      mergePlayers,
       backup,
     );
     expect(puts()[0].IfNoneMatch).toBe("*");
@@ -119,7 +136,7 @@ describe("player metadata sidecar repair", () => {
       .mockRejectedValueOnce(errorNamed("NoSuchKey"))
       .mockResolvedValueOnce({});
     await expect(
-      repairDemoPlayerMetadata(client, "bucket", key, repair, backup),
+      updateDemoMetadata(client, "bucket", key, mergePlayers, backup),
     ).resolves.toEqual(repair);
     expect(puts()[0].IfNoneMatch).toBe("*");
   });
@@ -128,7 +145,7 @@ describe("player metadata sidecar repair", () => {
     const { client, send, backup, puts } = setup();
     send.mockRejectedValueOnce(errorNamed("AccessDenied"));
     await expect(
-      repairDemoPlayerMetadata(client, "bucket", key, repair, backup),
+      updateDemoMetadata(client, "bucket", key, mergePlayers, backup),
     ).rejects.toThrow("AccessDenied");
     expect(puts()).toEqual([]);
   });
@@ -139,7 +156,7 @@ describe("player metadata sidecar repair", () => {
       Body: { transformToString: async () => JSON.stringify(original) },
     });
     await expect(
-      repairDemoPlayerMetadata(client, "bucket", key, repair, backup),
+      updateDemoMetadata(client, "bucket", key, mergePlayers, backup),
     ).rejects.toThrow("Invalid demo sidecar");
     expect(puts()).toEqual([]);
   });
@@ -151,7 +168,7 @@ describe("player metadata sidecar repair", () => {
       throw errorNamed("PreconditionFailed");
     });
     await expect(
-      repairDemoPlayerMetadata(client, "bucket", key, repair, backup),
+      updateDemoMetadata(client, "bucket", key, mergePlayers, backup),
     ).rejects.toThrow("PreconditionFailed");
     expect(puts()).toHaveLength(5);
   });

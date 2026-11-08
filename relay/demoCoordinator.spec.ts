@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DemoCoordinator } from "./demoCoordinator";
 import type { MissionControlState } from "./missionControls";
 import { demoLog } from "./logger";
+import type { PublishedGame } from "./gamePresentation";
 
 describe("demo retention at match end", () => {
   let dir: string;
@@ -24,7 +25,12 @@ describe("demo retention at match end", () => {
     ...(complete && { recordingDecision: recording }),
   });
 
-  function createCoordinator() {
+  function createCoordinator(
+    onGamePresentationSaved?: (
+      filePath: string,
+      game: PublishedGame,
+    ) => Promise<void>,
+  ) {
     return new DemoCoordinator({
       enabled: true,
       dir,
@@ -34,6 +40,7 @@ describe("demo retention at match end", () => {
       minPlayers: 0,
       recorderName: "MapGenius",
       onFinalized: (file) => published.push(file),
+      onGamePresentationSaved,
     });
   }
 
@@ -88,7 +95,10 @@ describe("demo retention at match end", () => {
     await coordinator.restorePending();
   }
 
-  function recorder(matchStarted = false) {
+  function recorder(
+    matchStarted = false,
+    getGamePresentation?: () => PublishedGame,
+  ) {
     return coordinator.createRecorder({
       address,
       getConnectSequence: () => 1,
@@ -98,8 +108,119 @@ describe("demo retention at match end", () => {
       getPlayerRoster: () => new Map(),
       getRecorderClientId: () => null,
       getMatchStarted: () => matchStarted,
+      getGamePresentation,
     })!;
   }
+
+  const initialGame: PublishedGame = {
+    id: "game",
+    revision: 0,
+    presentation: {},
+  };
+  const savedGame: PublishedGame = {
+    id: "game",
+    revision: 1,
+    presentation: { title: "Final", teamNames: { 1: "Storm", 2: "Knights" } },
+  };
+
+  it("journals a save racing finalization and restores it into the released sidecar after restart", async () => {
+    const active = recorder(true, () => initialGame);
+    coordinator.observeMission(active, address, controls(true));
+    active.onPacket(new Uint8Array([1, 2, 3]), true);
+    active.setMissionName("Katabatic", 1);
+    coordinator.finalize(active, "disconnected");
+    await coordinator.saveGamePresentation(active, savedGame);
+    await vi.waitFor(() => expect(coordinator.getStats().finalizing).toBe(0));
+    const folder = path.dirname(active.partialPath!);
+    expect(
+      JSON.parse(await fs.readFile(path.join(folder, "policy.json"), "utf8"))
+        .gamePresentation,
+    ).toEqual(savedGame);
+    const labels = coordinator.getSavedGamePresentation(address, mission)!;
+    expect(labels).toEqual(savedGame.presentation);
+    labels.title = "Changed by caller";
+    expect(coordinator.getSavedGamePresentation(address, mission)).toEqual(
+      savedGame.presentation,
+    );
+    expect(
+      coordinator.getSavedGamePresentation("another:28000", mission),
+    ).toBeUndefined();
+    expect(
+      coordinator.getSavedGamePresentation(address, ["2", "Katabatic"]),
+    ).toBeUndefined();
+    await restart();
+    coordinator.takeRestoredPolicy(address, mission);
+    expect(coordinator.getSavedGamePresentation(address, mission)).toEqual(
+      savedGame.presentation,
+    );
+    coordinator.updateMission(address, controls(true, true));
+    await coordinator.sweepPending();
+    expect(published).toHaveLength(1);
+    const record = JSON.parse(
+      await fs.readFile(`${published[0]}.json`, "utf8"),
+    );
+    expect(record.games[0]).toMatchObject({
+      gameId: "game",
+      presentationRevision: 1,
+      ...savedGame.presentation,
+    });
+  });
+
+  it("routes a save racing release to the moved sidecar after release completes", async () => {
+    const save = vi.fn(async () => {});
+    coordinator = createCoordinator(save);
+    const active = recorder(true, () => initialGame);
+    coordinator.observeMission(active, address, controls(true));
+    active.onPacket(new Uint8Array([1, 2, 3]), true);
+    active.setMissionName("Katabatic", 1);
+    coordinator.finalize(active, "disconnected");
+    await vi.waitFor(() => expect(coordinator.getStats().finalizing).toBe(0));
+    let unblock!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      unblock = resolve;
+    });
+    const started = vi.fn();
+    const rename = fs.rename.bind(fs);
+    vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
+      if (
+        String(from).endsWith(".rec.json") &&
+        String(from).includes(`${path.sep}pending${path.sep}`)
+      ) {
+        started();
+        await gate;
+      }
+      await rename(from, to);
+    });
+    coordinator.updateMission(address, controls(true, true));
+    await vi.waitFor(() => expect(started).toHaveBeenCalledOnce());
+    const saving = coordinator.saveGamePresentation(active, savedGame);
+    unblock();
+    await saving;
+    expect(save).toHaveBeenCalledExactlyOnceWith(
+      path.join(dir, active.filename!),
+      savedGame,
+    );
+  });
+
+  it("does not acknowledge a failed journal write and allows retry", async () => {
+    const active = recorder();
+    const root = path.join(dir, "pending");
+    const [name] = await fs.readdir(root);
+    const journal = path.join(root, name, "policy.json");
+    vi.spyOn(fsSync, "renameSync").mockImplementationOnce(() => {
+      throw new Error("disk full");
+    });
+    await expect(
+      coordinator.saveGamePresentation(active, savedGame),
+    ).rejects.toThrow("disk full");
+    expect(
+      JSON.parse(await fs.readFile(journal, "utf8")).gamePresentation,
+    ).toBeUndefined();
+    await coordinator.saveGamePresentation(active, savedGame);
+    expect(
+      JSON.parse(await fs.readFile(journal, "utf8")).gamePresentation,
+    ).toEqual(savedGame);
+  });
 
   it.each([true, false])(
     "settles an inactive mission after one hour across repeated restarts: keep=%s",

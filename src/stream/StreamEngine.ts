@@ -512,6 +512,8 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected entityGeneration = 0;
   /** See StreamSnapshot.ghostAlwaysDoneSec. */
   protected ghostAlwaysDoneSec: number | null = null;
+  /** See StreamSnapshot.missionReadySec. */
+  protected missionReadySec = 0;
 
   // ── Tick / time ──
   protected tickCount = 0;
@@ -899,6 +901,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         entities,
         entityIdByGhostIndex: this.entityIdByGhostIndex,
         ghostAlwaysDoneSec: this.ghostAlwaysDoneSec,
+        missionReadySec: this.missionReadySec,
         tickCount: this.tickCount,
         pendingPlayerMoves: this.pendingPlayerMoves,
         nextPlayerMoveId: this.nextPlayerMoveId,
@@ -1093,6 +1096,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     this._hudCache = null;
     this.conn.reset();
     this.clearAllEntities();
+    this.missionReadySec = 0;
     this.tickCount = 0;
     this.pendingPlayerMoves = [];
     this.nextPlayerMoveId = 0;
@@ -3897,6 +3901,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
     if (effects.serverName) this.updateServerDisplayName(effects.serverName);
     if (effects.missionDropReady) {
+      this.missionReadySec = this.getTimeSec();
       this.onTeamScoresChanged();
       this.endedEntities = null;
     }
@@ -4091,6 +4096,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       timeSec,
       gravity: this.gravity,
       ghostAlwaysDoneSec: this.ghostAlwaysDoneSec,
+      missionReadySec: this.missionReadySec,
       exhausted,
       camera: this.camera,
       entities,

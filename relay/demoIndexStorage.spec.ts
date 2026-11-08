@@ -4,7 +4,7 @@ import {
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
-import type { DemoMetadata } from "./demoRecorder";
+import type { DemoMetadata } from "./demoMetadata";
 import { updateDemoIndex } from "./demoIndexStorage";
 
 const key = "demos/index.json";

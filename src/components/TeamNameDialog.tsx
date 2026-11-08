@@ -1,16 +1,22 @@
 import { Dialog, DialogHeading } from "@ariakit/react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { LuUsers } from "react-icons/lu";
-import { shallow } from "zustand/shallow";
+import { useQueryClient } from "@tanstack/react-query";
 import { casterStore, displayTeamName, useCaster } from "../state/casterStore";
 import { useDataSource } from "../state/gameEntityStore";
 import { useIsWatchSpectator } from "./useIsWatchSpectator";
-import { useStreamSnapshot } from "../state/streamSnapshotStore";
-import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import type { TeamScore } from "../stream/types";
+import { sameEditableGame, type EditableGame } from "../state/editableGame";
+import { publishTeamNames } from "../state/gamePresentationApi";
 import { inputControlsStore } from "./InputControls";
-import styles from "./TeamNameDialog.module.css";
+import {
+  DataSaveButton,
+  GameDataSelector,
+  TeamNameFields,
+} from "./GameDataFields";
+import { useEditableGame, useGamePresentationEditor } from "./useEditableGame";
+import styles from "./GameDataFields.module.css";
+import dialogStyles from "./TeamNameDialog.module.css";
 
 export function EditableTeamName({
   teamId,
@@ -20,11 +26,12 @@ export function EditableTeamName({
   teams: readonly Pick<TeamScore, "teamId" | "name">[];
 }) {
   const customNames = useCaster((s) => s.settings?.teamNames);
+  const names = useCaster((s) => s.teamNames);
   const context = useCaster((s) => s.context);
   const dataSource = useDataSource();
   const watching = useIsWatchSpectator({ requireReady: true });
   const name =
-    customNames?.[teamId] ||
+    names[teamId] ||
     displayTeamName(teamId, teams.find((team) => team.teamId === teamId)?.name);
   if (
     !context ||
@@ -64,7 +71,7 @@ function TeamNameButton({
     <>
       <button
         type="button"
-        className={styles.TeamNameButton}
+        className={dialogStyles.TeamNameButton}
         title="Rename teams"
         aria-label={`Rename team ${teamId}: ${name}`}
         aria-haspopup="dialog"
@@ -95,27 +102,7 @@ function TeamNameButton({
   );
 }
 
-function TeamPlayerCount({ teamId }: { teamId: number }) {
-  const names = useStreamSnapshot(
-    (snapshot) =>
-      snapshot?.playerRoster
-        .filter((player) => player.teamId === teamId)
-        .map((player) => player.name) ?? [],
-    shallow,
-  );
-  return (
-    <span
-      className={styles.PlayerCount}
-      title={names.join(", ")}
-      aria-label={`${names.length} ${names.length === 1 ? "player" : "players"}`}
-    >
-      <LuUsers className={styles.PlayersIcon} aria-hidden />
-      {names.length}
-    </span>
-  );
-}
-
-function TeamNamesDialog({
+export function TeamNamesDialog({
   focusTeamId,
   teams,
   customNames,
@@ -130,11 +117,28 @@ function TeamNamesDialog({
 }) {
   const [initialNames] = useState(customNames);
   const [drafts, setDrafts] = useState(customNames);
-  const idPrefix = useId();
+  const [saveToDemo, setSaveToDemo] = useState(false);
+  const [saveTarget, setSaveTarget] = useState<EditableGame | null>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const game = useEditableGame();
+  const canShare = game !== null;
+  const editor = useGamePresentationEditor(
+    saveToDemo && canShare ? saveTarget : null,
+  );
+  const sameTarget = saveTarget && sameEditableGame(game, saveTarget);
+  const savedNames = useCaster((s) => s.publishedGame?.presentation.teamNames);
   useEffect(() => {
     inputControlsStore.setState({ keys: new Set() });
     if (document.pointerLockElement) document.exitPointerLock();
   }, []);
+  useEffect(() => {
+    if (!canShare) {
+      setSaveToDemo(false);
+      setSaveTarget(null);
+    }
+  }, [canShare]);
 
   return createPortal(
     <div className={styles.Overlay}>
@@ -151,90 +155,88 @@ function TeamNamesDialog({
         <DialogHeading className={styles.Title}>Team names</DialogHeading>
         <form
           className={styles.Form}
-          onSubmit={(event) => {
+          onSubmit={async (event) => {
             event.preventDefault();
+            if (pending) return;
             const changes: Record<number, string> = {};
             for (const { teamId } of teams) {
               const draft = drafts[teamId] ?? "";
               if (draft !== (initialNames[teamId] ?? ""))
                 changes[teamId] = draft;
             }
-            onSave(changes);
+            if (!saveToDemo) {
+              onSave(changes);
+              return;
+            }
+            if (!editor.details || !sameTarget) return;
+            setPending(true);
+            setError(null);
+            try {
+              await publishTeamNames(editor.details, drafts);
+              void queryClient.invalidateQueries({ queryKey: ["demoIndex"] });
+              onSave(changes);
+            } catch (error) {
+              setError(
+                error instanceof Error
+                  ? error.message
+                  : "Could not save team names. Please try again.",
+              );
+            } finally {
+              setPending(false);
+            }
           }}
         >
-          <div className={styles.Teams}>
-            {[...teams]
-              .sort((a, b) => a.teamId - b.teamId)
-              .map(({ teamId, name }, index) => {
-                const serverName =
-                  name || DEFAULT_TEAM_NAMES[teamId] || `Team ${teamId}`;
-                const inputId = `${idPrefix}-team-${teamId}`;
-                const defaultNameId = `${inputId}-default`;
-                return (
-                  <div key={teamId} className={styles.Team}>
-                    <div className={styles.TeamHeader}>
-                      <div className={styles.TeamLabel}>
-                        <label className={styles.Label} htmlFor={inputId}>
-                          Team {teamId}
-                        </label>
-                        <TeamPlayerCount teamId={teamId} />
-                      </div>
-                      <div className={styles.DefaultControls}>
-                        <span id={defaultNameId} className={styles.DefaultName}>
-                          Default: {serverName}
-                        </span>
-                        <button
-                          type="button"
-                          className={styles.Reset}
-                          aria-label={`Reset team ${teamId} to server name`}
-                          disabled={!drafts[teamId]}
-                          onClick={() => {
-                            setDrafts((previous) => ({
-                              ...previous,
-                              [teamId]: "",
-                            }));
-                            (
-                              document.getElementById(
-                                inputId,
-                              ) as HTMLInputElement
-                            )?.focus();
-                          }}
-                        >
-                          Reset
-                        </button>
-                      </div>
-                    </div>
-                    <input
-                      autoFocus={
-                        focusTeamId == null
-                          ? index === 0
-                          : teamId === focusTeamId
-                      }
-                      id={inputId}
-                      aria-describedby={defaultNameId}
-                      className={styles.Input}
-                      value={drafts[teamId] ?? ""}
-                      placeholder={serverName}
-                      maxLength={64}
-                      onChange={(event) =>
-                        setDrafts((previous) => ({
-                          ...previous,
-                          [teamId]: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                );
-              })}
-          </div>
+          <TeamNameFields
+            teams={teams}
+            names={drafts}
+            savedNames={savedNames}
+            focusTeamId={focusTeamId}
+            disabled={pending}
+            onChange={(teamId, name) =>
+              setDrafts((previous) => ({ ...previous, [teamId]: name }))
+            }
+          />
+          {saveToDemo && (editor.games?.length ?? 0) > 1 && (
+            <div className={dialogStyles.SharedOptions}>
+              <GameDataSelector
+                games={editor.games}
+                selectedIndex={editor.selectedIndex}
+                onSelect={editor.selectGame}
+                disabled={pending || !sameTarget}
+              />
+            </div>
+          )}
+          {(error || (saveToDemo && editor.error)) && (
+            <p className={styles.Error} role="alert">
+              {error || editor.error}
+            </p>
+          )}
           <div className={styles.Buttons}>
-            <span className={styles.Hint}>Resets at end of the mission.</span>
+            {game && (
+              <label className={dialogStyles.SaveToDemo}>
+                <input
+                  type="checkbox"
+                  checked={saveToDemo}
+                  disabled={pending}
+                  onChange={(event) => {
+                    setSaveToDemo(event.target.checked);
+                    setSaveTarget(event.target.checked ? game : null);
+                    setError(null);
+                  }}
+                />
+                Save to demo data
+              </label>
+            )}
             <button type="button" className={styles.Cancel} onClick={onClose}>
               Cancel
             </button>
-            <button type="submit" className={styles.Save}>
-              Save
-            </button>
+            <DataSaveButton
+              loading={saveToDemo && editor.loading}
+              saving={pending}
+              disabled={
+                pending || (saveToDemo && (!editor.details || !sameTarget))
+              }
+            />
           </div>
         </form>
       </Dialog>

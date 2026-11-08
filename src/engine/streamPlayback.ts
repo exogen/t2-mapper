@@ -657,8 +657,9 @@ export class StreamPlaybackSession {
         if (!clock.seekProgress) {
           syncDemoCaster(
             this.recording,
-            renderCurrent.ghostAlwaysDoneSec,
+            renderCurrent.missionReadySec,
             demoLoadStore.getState().sourceUrl,
+            demoLoadStore.getState().publishedGames ?? undefined,
           );
         }
 

@@ -49,6 +49,7 @@ type WatchStateSeed = Pick<
   | "controlObjectData"
   | "missionName"
   | "missionSequence"
+  | "displayedMission"
   | "worldGravity"
   | "ghostingComplete"
   | "initialGhosts"
@@ -76,6 +77,7 @@ export class WatchStateAccumulator {
 
   missionName: string | null = null;
   missionSequence: string | null = null;
+  displayedMission: WatchCatchupPayload["displayedMission"] = null;
   /** Latest GravityEvent in native setGravity() units; unknown until received. */
   worldGravity: number | undefined;
   ghostingComplete = false;
@@ -134,6 +136,10 @@ export class WatchStateAccumulator {
     this.controlObjectData = structuredClone(seed.controlObjectData);
     this.missionName = seed.missionName;
     this.missionSequence = seed.missionSequence ?? null;
+    this.displayedMission =
+      seed.displayedMission === undefined
+        ? this.currentMissionIdentity()
+        : structuredClone(seed.displayedMission);
     this.worldGravity = seed.worldGravity;
     this.ghostingComplete = seed.ghostingComplete ?? false;
     this.weatherGhosts.clear();
@@ -150,6 +156,7 @@ export class WatchStateAccumulator {
       dataBlockClassNames: this.dataBlockClassNames,
       missionName: this.missionName,
       missionSequence: this.missionSequence,
+      displayedMission: this.displayedMission,
       worldGravity: this.worldGravity,
       ghostingComplete: this.ghostingComplete,
       weatherGhosts: this.weatherGhosts,
@@ -243,8 +250,16 @@ export class WatchStateAccumulator {
       return false;
     this.missionName = name;
     this.missionSequence = sequence;
+    if (!this.state.matchEnded)
+      this.displayedMission = this.currentMissionIdentity();
     if (funcName === "MissionStartPhase1") this.beginMissionChange();
     return true;
+  }
+
+  private currentMissionIdentity() {
+    return this.missionName
+      ? { name: this.missionName, sequence: this.missionSequence }
+      : null;
   }
 
   resolveNetString(s: string): string {
@@ -375,7 +390,10 @@ export class WatchStateAccumulator {
       if (effects.serverName) this.state.serverDisplayName = effects.serverName;
       // First message of the mission-drop burst — the tournament banner,
       // if any, follows in the same burst.
-      if (effects.missionDropReady) this.sawMissionDropReady = true;
+      if (effects.missionDropReady) {
+        this.sawMissionDropReady = true;
+        this.displayedMission = this.currentMissionIdentity();
+      }
       return;
     }
 

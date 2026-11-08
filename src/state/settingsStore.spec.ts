@@ -105,6 +105,19 @@ it("ignores invalid saved values", () => {
   expect(state.clickToCycle).toBe(true);
 });
 
+it.each([
+  [0.305239898989899, 0.31],
+  [0.37373737373737376, 0.37],
+  [0.001, 0.01],
+  [0.15, 0.15],
+])(
+  "restores saved fly speed %s to the controls' percentage step %s",
+  (saved, expected) => {
+    stubSaved({ speedMultiplier: saved });
+    expect(createSettingsStore().getState().speedMultiplier).toBe(expected);
+  },
+);
+
 it("leaves the sidebar closed until the touch check restores it", () => {
   stubSaved({ sidebarOpen: true });
   expect(createSettingsStore().getState().sidebarOpen).toBe(false);

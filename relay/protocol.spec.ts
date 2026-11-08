@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BitStream } from "t2-demo-parser";
+import { BitStreamWriter } from "./BitStreamWriter.js";
+import { NEUTRAL_MOVE } from "./moveList.js";
 import {
   ConnectionProtocol,
   PING_RETRY_COUNT,
@@ -7,7 +9,40 @@ import {
   PingTimeout,
   buildClientGamePacket,
   buildGhostingMessageEvent,
+  writeMove,
 } from "./protocol.js";
+
+describe("writeMove movement axes", () => {
+  it.each(["x", "y", "z"] as const)(
+    "preserves every representable %s movement step on the wire",
+    (axis) => {
+      for (let step = -16; step <= 16; step++) {
+        const move = {
+          ...NEUTRAL_MOVE,
+          [axis]: step / 16,
+          trigger: [false, true, false, false, false, false],
+        };
+        const writer = new BitStreamWriter(16);
+        writeMove(writer, move);
+        const reader = new BitStream(writer.getBuffer());
+        expect([
+          reader.readFlag(),
+          reader.readFlag(),
+          reader.readFlag(),
+        ]).toEqual([false, false, false]);
+        expect({
+          x: (reader.readInt(6) - 16) / 16,
+          y: (reader.readInt(6) - 16) / 16,
+          z: (reader.readInt(6) - 16) / 16,
+        }).toEqual({ x: move.x, y: move.y, z: move.z });
+        expect(reader.readFlag()).toBe(move.freeLook);
+        expect(Array.from({ length: 6 }, () => reader.readFlag())).toEqual(
+          move.trigger,
+        );
+      }
+    },
+  );
+});
 
 /** Read back the guaranteed-event section of a client game packet. */
 function readGuaranteedEventSeqs(packet: Uint8Array): number[] {

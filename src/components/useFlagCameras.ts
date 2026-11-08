@@ -4,7 +4,7 @@ import { getFollowableFlags } from "../state/watchFollow";
 
 /** Subscribe to flag labels and affiliations without rerendering for movement. */
 export function useFlagCameras() {
-  const names = useCaster((s) => s.settings?.teamNames);
+  const names = useCaster((s) => s.teamNames);
   return useStreamSnapshot(
     () =>
       getFollowableFlags(names).map(({ slot, teamId, label }) => ({

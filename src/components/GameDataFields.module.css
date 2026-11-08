@@ -1,0 +1,187 @@
+.Overlay {
+  composes: Overlay from "./GameDialog.module.css";
+  pointer-events: auto;
+}
+
+.Dialog {
+  composes: Dialog from "./WatchErrorDialog.module.css";
+}
+
+.Overlay .Dialog {
+  display: flex;
+  flex-direction: column;
+  padding-top: 16px;
+  padding-bottom: 20px;
+}
+
+.Title {
+  composes: Title from "./WatchErrorDialog.module.css";
+}
+
+.Form {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.Teams {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px;
+}
+
+.Team + .Team {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(65, 131, 139, 0.4);
+}
+
+.TeamHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.Label {
+  font-weight: 600;
+}
+
+.TeamLabel {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.PlayerCount {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  opacity: 0.6;
+  cursor: help;
+}
+
+.PlayersIcon {
+  font-size: 14px;
+}
+
+.DefaultControls {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
+}
+
+.DefaultName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+  opacity: 0.6;
+}
+
+.Input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(65, 131, 139, 0.6);
+  border-radius: 4px;
+  outline: none;
+  background: rgba(0, 50, 60, 0.8);
+  color: #b0d5c9;
+  font: inherit;
+}
+
+.Input:focus {
+  outline: 1px solid #7dffff;
+}
+
+.Input::placeholder {
+  color: rgba(176, 213, 201, 0.55);
+}
+
+.Reset {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(125, 255, 255, 0.08);
+  color: #b0d5c9;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.Reset:hover:not(:disabled) {
+  background: rgba(125, 255, 255, 0.16);
+  color: #7dffff;
+}
+
+.Reset:focus-visible {
+  outline: 1px solid #7dffff;
+}
+
+.Reset:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.Buttons {
+  composes: Buttons from "./WatchErrorDialog.module.css";
+}
+
+.Dialog .Buttons {
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+.Field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.Field input {
+  font-weight: 400;
+}
+.Error {
+  margin: 12px 0 0;
+  color: #ffb0a0;
+  font-size: 13px;
+}
+
+.Save {
+  composes: PrimaryButton from "./WatchErrorDialog.module.css";
+}
+
+.SaveControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.SaveSpinner {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.Cancel {
+  composes: Secondary from "./GameDialog.module.css";
+}

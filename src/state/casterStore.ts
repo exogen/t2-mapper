@@ -1,4 +1,5 @@
 import type { PlayerReference } from "../../relay/playerReference";
+import type { PublishedGame } from "../../relay/gamePresentation";
 import { readPlayerReference } from "./playerReferenceStorage";
 import { createStore } from "zustand/vanilla";
 import { useStore } from "zustand";
@@ -39,57 +40,96 @@ interface MissionContext {
   mission: string;
 }
 
-interface StoredSettings extends MissionSettings, MissionContext {
-  version: 3;
-}
+type StoredMissionSettings = MissionSettings & MissionContext;
 
 interface CasterState {
   context: MissionContext | null;
   settings: MissionSettings | null;
+  publishedGame: PublishedGame | null;
+  /** Effective labels; personal entries always override relay-saved entries. */
+  teamNames: Record<number, string>;
   fov: number | null;
   /** Transient feedback for saves and recalls; a fresh object retriggers the flash. */
   lastCameraAction: { slot: QuickCamSlot } | null;
   activate(server: string, sequence: string, map: string): void;
   suspend(): void;
+  setPublishedGame(game: PublishedGame | null): void;
   renameTeam(teamId: number, name: string): void;
   renameTeams(names: Record<number, string>): void;
   saveCamera(slot: QuickCamSlot, camera: SavedCamera | null): boolean;
 }
 
 export const CASTER_STORAGE_KEY = "t2-caster";
+const MAX_RECENT_MISSIONS = 5;
 
-function read(): StoredSettings | null {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function readEntry(
+  value: unknown,
+  version: number,
+): StoredMissionSettings | null {
+  if (
+    !isRecord(value) ||
+    typeof value.server !== "string" ||
+    typeof value.mission !== "string" ||
+    !isRecord(value.teamNames) ||
+    !isRecord(value.quickCams)
+  )
+    return null;
+  return {
+    server: value.server,
+    mission: value.mission,
+    teamNames: Object.fromEntries(
+      Object.entries(value.teamNames).flatMap(([teamId, name]) =>
+        /^(0|[1-9]\d*)$/.test(teamId) &&
+        Number.isSafeInteger(Number(teamId)) &&
+        typeof name === "string" &&
+        name.trim()
+          ? [[teamId, name.trim()]]
+          : [],
+      ),
+    ),
+    quickCams: Object.fromEntries(
+      Object.entries(value.quickCams).flatMap(([slot, cameraValue]) => {
+        if (!QUICK_CAM_SLOTS.some((key) => String(key) === slot)) return [];
+        const camera = readCamera(cameraValue, version);
+        return camera ? [[slot, camera]] : [];
+      }),
+    ),
+  };
+}
+
+function read(): StoredMissionSettings[] {
   try {
-    const value = JSON.parse(
+    const value: unknown = JSON.parse(
       sessionStorage.getItem(CASTER_STORAGE_KEY) ?? "null",
     );
-    if (
-      (value?.version !== 1 && value?.version !== 2 && value?.version !== 3) ||
-      typeof value.server !== "string" ||
-      typeof value.mission !== "string" ||
-      !value.teamNames ||
-      typeof value.teamNames !== "object" ||
-      !Object.values(value.teamNames).every(
-        (name) => typeof name === "string",
-      ) ||
-      !value.quickCams ||
-      typeof value.quickCams !== "object"
-    )
-      return null;
-    return {
-      version: 3,
-      server: value.server,
-      mission: value.mission,
-      teamNames: value.teamNames,
-      quickCams: Object.fromEntries(
-        Object.entries(value.quickCams).flatMap(([slot, cameraValue]) => {
-          const camera = readCamera(cameraValue, value.version);
-          return camera ? [[slot, camera]] : [];
-        }),
-      ),
-    };
+    if (!isRecord(value)) return [];
+    if (value.version === 4 && Array.isArray(value.entries)) {
+      const entries: StoredMissionSettings[] = [];
+      for (const candidate of value.entries) {
+        const entry = readEntry(candidate, 4);
+        if (
+          entry &&
+          !entries.some(
+            (other) =>
+              other.server === entry.server && other.mission === entry.mission,
+          )
+        )
+          entries.push(entry);
+        if (entries.length === MAX_RECENT_MISSIONS) break;
+      }
+      return entries;
+    }
+    if (value.version === 1 || value.version === 2 || value.version === 3) {
+      const entry = readEntry(value, value.version);
+      return entry ? [entry] : [];
+    }
+    return [];
   } catch {
-    return null;
+    return [];
   }
 }
 
@@ -180,19 +220,35 @@ function readCamera(value: unknown, version: number): SavedCamera | null {
   return null;
 }
 
-function write(context: MissionContext, settings: MissionSettings) {
+function customized(settings: MissionSettings): boolean {
+  return !!(
+    Object.keys(settings.teamNames).length ||
+    Object.keys(settings.quickCams).length
+  );
+}
+
+function write(
+  context: MissionContext,
+  settings: MissionSettings,
+  visited = false,
+) {
   try {
-    if (
-      Object.keys(settings.teamNames).length ||
-      Object.keys(settings.quickCams).length
-    ) {
-      sessionStorage.setItem(
-        CASTER_STORAGE_KEY,
-        JSON.stringify({ version: 3, ...context, ...settings }),
-      );
-    } else {
+    const others = read().filter(
+      (entry) =>
+        entry.server !== context.server || entry.mission !== context.mission,
+    );
+    const entries = (
+      customized(settings) || visited
+        ? [{ ...context, ...settings }, ...others]
+        : others
+    ).slice(0, MAX_RECENT_MISSIONS);
+    if (!entries.some(customized)) {
       sessionStorage.removeItem(CASTER_STORAGE_KEY);
+      return;
     }
+    const encoded = JSON.stringify({ version: 4, entries });
+    if (sessionStorage.getItem(CASTER_STORAGE_KEY) !== encoded)
+      sessionStorage.setItem(CASTER_STORAGE_KEY, encoded);
   } catch {
     /* Keep controls usable when browser storage is unavailable. */
   }
@@ -230,6 +286,12 @@ export const casterStore = createStore<CasterState>((set, get) => {
     write(context, next);
     set({
       settings: next,
+      ...(next.teamNames !== settings.teamNames && {
+        teamNames: {
+          ...get().publishedGame?.presentation.teamNames,
+          ...next.teamNames,
+        },
+      }),
       ...(savedSlot != null && { lastCameraAction: { slot: savedSlot } }),
     });
     return true;
@@ -237,6 +299,8 @@ export const casterStore = createStore<CasterState>((set, get) => {
   return {
     context: null,
     settings: null,
+    publishedGame: null,
+    teamNames: {},
     fov: null,
     lastCameraAction: null,
     activate(server, sequence, map) {
@@ -256,15 +320,19 @@ export const casterStore = createStore<CasterState>((set, get) => {
       }
       if (streamPlaybackStore.getState().followPlayer)
         streamPlaybackStore.setState({ followPlayer: null });
-      const stored = read();
-      const matches = stored?.server === server && stored.mission === mission;
-      const settings: MissionSettings = matches
+      const recent = read();
+      const stored = recent.find(
+        (entry) => entry.server === server && entry.mission === mission,
+      );
+      const settings: MissionSettings = stored
         ? { teamNames: stored.teamNames, quickCams: stored.quickCams }
         : { teamNames: {}, quickCams: {} };
-      if (!matches) write(context, settings);
+      if (stored !== recent[0]) write(context, settings, true);
       set({
         context,
         settings,
+        publishedGame: null,
+        teamNames: settings.teamNames,
         fov: null,
         lastCameraAction: null,
       });
@@ -287,8 +355,27 @@ export const casterStore = createStore<CasterState>((set, get) => {
       set({
         context: null,
         settings: null,
+        publishedGame: null,
+        teamNames: {},
         fov: null,
         lastCameraAction: null,
+      });
+    },
+    setPublishedGame(game) {
+      const state = get();
+      if (
+        state.publishedGame === game ||
+        (game &&
+          state.publishedGame?.id === game.id &&
+          state.publishedGame.revision >= game.revision)
+      )
+        return;
+      set({
+        publishedGame: game,
+        teamNames: {
+          ...game?.presentation.teamNames,
+          ...state.settings?.teamNames,
+        },
       });
     },
     renameTeam(teamId, name) {
@@ -329,7 +416,7 @@ export function displayTeamName(
   serverName?: string | null,
 ): string {
   return (
-    casterStore.getState().settings?.teamNames[teamId] ||
+    casterStore.getState().teamNames[teamId] ||
     serverName ||
     DEFAULT_TEAM_NAMES[teamId] ||
     `Team ${teamId}`

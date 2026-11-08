@@ -4,6 +4,8 @@ import { useCommentaryTracks } from "../state/commentaryTracksStore";
 import { useEffect, useState, useRef, memo } from "react";
 import { FaRotateRight } from "react-icons/fa6";
 import {
+  MAX_SPEED_MULTIPLIER,
+  MIN_SPEED_MULTIPLIER,
   RENDER_SCALE_OPTIONS,
   useControls,
   useDebug,
@@ -595,12 +597,12 @@ export const InspectorControls = memo(function InspectorControls({
                     <input
                       id="speedInput"
                       type="range"
-                      min={1}
-                      max={100}
+                      min={MIN_SPEED_MULTIPLIER * 100}
+                      max={MAX_SPEED_MULTIPLIER * 100}
                       step={1}
                       value={Math.round(speedMultiplier * 100)}
                       onChange={(event) =>
-                        setSpeedMultiplier(parseFloat(event.target.value) / 100)
+                        setSpeedMultiplier(Number(event.target.value) / 100)
                       }
                     />
                   </div>

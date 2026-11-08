@@ -41,9 +41,11 @@ const ORBIT_ZOOM_SENSITIVITY = 0.002;
 /** Hardcoded drag sensitivity for non-locked drag (not affected by user setting). */
 const DRAG_SENSITIVITY = 0.002;
 
+/** Keep keyboard movement on the server Move's 16 nonzero axis levels. */
 function quantizeSpeed(speedMultiplier: number): number {
   const t =
-    (speedMultiplier - MIN_SPEED_MULTIPLIER) / (1 - MIN_SPEED_MULTIPLIER);
+    (speedMultiplier - MIN_SPEED_MULTIPLIER) /
+    (MAX_SPEED_MULTIPLIER - MIN_SPEED_MULTIPLIER);
   const steps = Math.round(t * 15);
   return (steps + 1) / 16;
 }
@@ -165,10 +167,10 @@ export function installKeyboardMouseInput(engine: GameEngine): () => void {
         ) * direction;
 
       setPreference("speedMultiplier", (prev) => {
-        const newSpeed = Math.round(prev * 100) + speedDelta;
+        const newSpeed = (Math.round(prev * 100) + speedDelta) / 100;
         return Math.max(
           MIN_SPEED_MULTIPLIER,
-          Math.min(MAX_SPEED_MULTIPLIER, newSpeed / 100),
+          Math.min(MAX_SPEED_MULTIPLIER, newSpeed),
         );
       });
     }),

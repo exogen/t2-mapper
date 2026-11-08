@@ -1,5 +1,5 @@
 import { findMissionInfo } from "../manifest";
-import type { DemoIndexEntry } from "../stream/demoIndex";
+import { demoDownloadUrl, type DemoIndexEntry } from "../stream/demoIndex";
 
 /**
  * Coarse length like "56m" or "1h 15m" — deliberately not clock-shaped,
@@ -43,11 +43,35 @@ export function missionDisplayName(mission: string): string {
   return findMissionInfo(mission)?.displayName || mission;
 }
 
-export function demoTitle(demo: DemoIndexEntry): string {
+/** Resolve index metadata only for the currently installed demo source. */
+export function findIndexedDemo(
+  demos: readonly DemoIndexEntry[] | undefined,
+  sourceUrl: string | null,
+): DemoIndexEntry | undefined {
+  return sourceUrl
+    ? demos?.find((demo) => demoDownloadUrl(demo.filename) === sourceUrl)
+    : undefined;
+}
+
+export function demoTitle(demo: Pick<DemoIndexEntry, "games">): string {
   return (
     demo.games.map((game) => missionDisplayName(game.mission)).join(" → ") ||
     "Warmup only"
   );
+}
+
+/** Shared team labels for each game; the primary demo label supplies map names. */
+export function demoGameDetails(demo: DemoIndexEntry): string {
+  return demo.games
+    .map((game) => {
+      const names = Object.entries(game.teamNames ?? {})
+        .filter(([id]) => Number(id) > 0)
+        .sort(([a], [b]) => Number(a) - Number(b))
+        .map(([, name]) => name);
+      return names.join(" vs ");
+    })
+    .filter(Boolean)
+    .join(" → ");
 }
 
 /**

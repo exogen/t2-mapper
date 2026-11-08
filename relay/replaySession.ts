@@ -11,7 +11,10 @@ import { DemoReplaySource } from "./demoReplaySource.js";
 import {
   createReplayDemoLoader,
   validateReplayDemoReference,
+  type ReplayDemoDownload,
 } from "./replayDemoLoader.js";
+import type { DemoGame } from "./demoMetadata.js";
+import type { PublishedGame } from "./gamePresentation.js";
 import type {
   ReplayClientMessage,
   ReplayState,
@@ -40,6 +43,7 @@ export interface ReplaySource {
   readonly complete: boolean;
   readonly recorderName?: string | null;
   readonly recordingDate?: string | null;
+  readonly gamePresentation?: PublishedGame | null;
   advanceOneTick(): Array<
     | { kind: "packet"; data: Uint8Array }
     | { kind: "info"; firstPerson: boolean }
@@ -55,10 +59,14 @@ export interface ReplaySource {
 }
 
 export interface ReplaySessionManagerOptions {
-  loadDemo?: (reference: string, signal: AbortSignal) => Promise<Uint8Array>;
+  loadDemo?: (
+    reference: string,
+    signal: AbortSignal,
+  ) => Promise<Uint8Array | ReplayDemoDownload>;
   createSource?: (
     bytes: Uint8Array,
     signal: AbortSignal,
+    games?: readonly DemoGame[],
   ) => Promise<ReplaySource>;
   now?: () => number;
   maxSessions?: number;
@@ -163,7 +171,8 @@ export class ReplaySessionManager {
       loadDemo: options.loadDemo ?? createReplayDemoLoader(),
       createSource:
         options.createSource ??
-        ((bytes, signal) => DemoReplaySource.load(bytes, { signal })),
+        ((bytes, signal, games) =>
+          DemoReplaySource.load(bytes, { signal, games })),
       now: options.now ?? (() => performance.now()),
       maxSessions: options.maxSessions ?? 4,
       maxParticipants: options.maxParticipants ?? 64,
@@ -346,9 +355,15 @@ export class ReplaySessionManager {
     const { session, ownerToken } = this.reserve(demo, creatorHash, ws);
     this.sendState(session, ws, ownerToken);
     try {
-      const bytes = await this.options.loadDemo(demo, session.abort.signal);
+      const loaded = await this.options.loadDemo(demo, session.abort.signal);
       if (!this.isCurrent(session)) return;
-      await this.initialize(session, bytes, tick, session.abort.signal);
+      await this.initialize(
+        session,
+        loaded instanceof Uint8Array ? loaded : loaded.bytes,
+        tick,
+        session.abort.signal,
+        loaded instanceof Uint8Array ? undefined : loaded.games,
+      );
     } catch (error) {
       if (!this.isCurrent(session)) return;
       this.failSession(session, error);
@@ -544,9 +559,10 @@ export class ReplaySessionManager {
     bytes: Uint8Array,
     tick: number | undefined,
     signal: AbortSignal,
+    games?: readonly DemoGame[],
   ): Promise<void> {
     signal.throwIfAborted();
-    const source = await this.options.createSource(bytes, signal);
+    const source = await this.options.createSource(bytes, signal, games);
     signal.throwIfAborted();
     if (!this.isCurrent(session)) return;
     session.source = source;
@@ -774,6 +790,7 @@ export class ReplaySessionManager {
         count++
       ) {
         const before = session.source.tick;
+        const previousGame = session.source.gamePresentation;
         const events = session.source.advanceOneTick();
         for (const event of events) {
           for (const ws of [...session.participants.keys()]) {
@@ -799,6 +816,15 @@ export class ReplaySessionManager {
             }
           }
         }
+        if (session.source.gamePresentation !== previousGame)
+          for (const ws of [...session.participants.keys()])
+            if (this.canSend(session, ws))
+              this.send(ws, {
+                type: "replayGamePresentation",
+                sessionId: session.id,
+                epoch: session.epoch,
+                game: session.source.gamePresentation ?? null,
+              });
         if (session.source.tick === before && !session.source.complete)
           throw new Error("Replay source did not advance");
       }

@@ -36,7 +36,7 @@ import {
   PutObjectCommand,
   type HeadObjectCommandOutput,
 } from "@aws-sdk/client-s3";
-import type { DemoMetadata } from "../relay/demoRecorder.js";
+import type { DemoMetadata } from "../relay/demoMetadata.js";
 import { updateDemoIndex } from "../relay/demoIndexStorage.js";
 import { DEMO_TICK_MS } from "../relay/demoWriter.js";
 import { fileEtags, unquoteEtag } from "../relay/objectEtag.js";
@@ -1063,7 +1063,7 @@ function patchRecord(
 }
 
 /**
- * Update a demo's sidecar like its index entry, keeping its headers;
+ * Update a demo's sidecar like its index entry, keeping other headers;
  * false when the demo has none.
  */
 async function patchSidecar(
@@ -1099,7 +1099,7 @@ async function patchSidecar(
       Key: key,
       Body: JSON.stringify(patched, null, 2),
       ContentType: response.ContentType,
-      CacheControl: response.CacheControl,
+      CacheControl: "no-cache",
       Metadata: response.Metadata,
       IfMatch: response.ETag,
     }),
