@@ -22,7 +22,8 @@
   overflow: hidden;
 }
 
-.MissionLine {
+.MissionLine,
+.MissionIdentity {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -141,6 +142,42 @@
 .MissionType {
   composes: ItemType from "./MissionSelect.module.css";
   pointer-events: none;
+}
+
+.GameTitle {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--game-title-color);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+@media (min-width: 600px) {
+  .MissionIdentity + .GameTitle {
+    margin-inline-start: 4px;
+  }
+}
+
+@media (max-width: 599px) {
+  .MissionInfo {
+    gap: 2px;
+    margin-block: 3px;
+  }
+
+  .MissionLine {
+    width: 100%;
+    flex-wrap: wrap;
+    row-gap: 3px;
+  }
+
+  .GameTitle {
+    order: -1;
+    flex: 0 1 100%;
+    font-size: 11px;
+  }
 }
 
 .MissionTypeDisplayName {

@@ -6,6 +6,7 @@ import { DemoDropScreen } from "./DemoDropScreen";
 const fixture = vi.hoisted(() => ({
   load: { phase: "downloading", progress: null, error: null },
   demos: [] as DemoIndexEntry[],
+  account: { status: "ready", user: null as { role: string } | null },
 }));
 
 vi.mock("../state/demoLoadStore", () => ({
@@ -16,6 +17,11 @@ vi.mock("./useDemoIndex", () => ({
   useDemoIndexSuspense: () => ({ data: fixture.demos }),
 }));
 vi.mock("./useAppNavigation", () => ({ useAppNavigation: () => ({}) }));
+vi.mock("../state/appAccountStore", () => ({
+  useAppAccount: (select: (state: typeof fixture.account) => unknown) =>
+    select(fixture.account),
+}));
+vi.mock("./GameDetailsEditor", () => ({ GameDetailsDialog: () => null }));
 vi.mock("../manifest", () => ({ findMissionInfo: () => null }));
 vi.mock("./PreviewTileArt", () => ({ PreviewTileArt: () => null }));
 vi.mock("./missionPreview", () => ({
@@ -49,6 +55,7 @@ const demo: DemoIndexEntry = {
 beforeEach(() => {
   fixture.load = { phase: "downloading", progress: null, error: null };
   fixture.demos = [demo];
+  fixture.account = { status: "ready", user: null };
 });
 
 const render = () => renderToStaticMarkup(<DemoDropScreen />);
@@ -69,14 +76,59 @@ it("keeps loading markup unchanged when indexed titles become available", () => 
   expect(render()).toBe(known);
 });
 
-it("shows map names and saved teams on featured cards without game titles", () => {
+it("shows the saved title and teams above mission info on featured cards", () => {
   fixture.load.phase = "idle";
   const markup = render();
   expect(markup).toContain("Featured recent demos");
   expect(markup).toContain("TWL_Harvester");
   expect(markup).toContain("CTF");
-  expect(markup).toContain("Knights vs Dragons");
+  expect(markup.replace(/<[^>]*>/g, "")).toContain("Knights vs Dragons");
   expect(markup).toContain("Tournament Server 2");
-  expect(markup).toContain("12 players");
-  expect(markup).not.toContain("Indexed quarterfinals");
+  expect(markup).toContain('aria-label="Players"');
+  expect(markup).not.toContain("12 players");
+  expect(markup).toContain("Indexed quarterfinals");
+  expect(markup.indexOf("Indexed quarterfinals")).toBeLessThan(
+    markup.indexOf("Knights"),
+  );
+  expect(markup.indexOf("Dragons")).toBeLessThan(
+    markup.indexOf("TWL_Harvester"),
+  );
 });
+
+it("omits default team names without hiding the mission info", () => {
+  fixture.load.phase = "idle";
+  fixture.demos = [
+    {
+      ...demo,
+      games: [{ ...demo.games[0], teamNames: { 1: "Storm", 2: "Inferno" } }],
+    },
+  ];
+  const markup = render();
+  expect(markup).not.toContain("Storm");
+  expect(markup).not.toContain("Inferno");
+  expect(markup).toContain("TWL_Harvester");
+});
+
+it("offers admins an edit button outside the demo playback link", () => {
+  fixture.load.phase = "idle";
+  fixture.account.user = { role: "admin" };
+  const markup = render();
+  expect(markup).toContain(
+    'aria-label="Edit demo data: Indexed quarterfinals"',
+  );
+  expect(markup).toContain('aria-haspopup="dialog"');
+  const link = markup.match(/<a\b[^>]*>[\s\S]*?<\/a>/)?.[0];
+  expect(link).toContain("?demo=match.rec");
+  expect(link).not.toContain("<button");
+});
+
+it.each(["guest", "user", "unverified admin"])(
+  "hides demo editing for a %s",
+  (kind) => {
+    fixture.load.phase = "idle";
+    fixture.account.user =
+      kind === "guest" ? null : { role: kind === "user" ? "user" : "admin" };
+    if (kind === "unverified admin") fixture.account.status = "error";
+    expect(render()).not.toContain('aria-label="Edit demo data:');
+  },
+);

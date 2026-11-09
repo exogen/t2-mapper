@@ -85,6 +85,7 @@ beforeEach(() => {
   state.live.watcherCount = 0;
   state.live.gameStatus = "disconnected";
   state.live.watchEndReason = undefined;
+  state.live.ping = null;
 });
 
 function render() {
@@ -117,7 +118,7 @@ function indexedDemo(
 }
 
 it.each(["demo", "live", "replay"])(
-  "keeps saved titles out of the %s toolbar while retaining map and game type",
+  "shows the current saved title after the map and game type in the %s toolbar",
   (mode) => {
     state.dataSource = mode === "demo" ? "demo" : "live";
     state.sourceUrl = demoDownloadUrl("match.rec");
@@ -128,15 +129,36 @@ it.each(["demo", "live", "replay"])(
     state.publishedGame = {
       id: "game",
       revision: 1,
-      presentation: { title: "Stream final" },
+      presentation: {
+        title: mode === "demo" ? "Sidecar final" : "Stream final",
+      },
     };
     if (mode === "replay") state.replay = replay();
     const markup = render();
     expect(markup).toContain("Surreal");
     expect(markup).toContain("CTF");
     expect(markup).not.toContain("Indexed final");
-    expect(markup).not.toContain("Sidecar final");
-    expect(markup).not.toContain("Stream final");
+    const title = mode === "demo" ? "Sidecar final" : "Stream final";
+    expect(markup).toContain(title);
+    expect(markup.indexOf("Surreal")).toBeLessThan(markup.indexOf(title));
+    expect(markup.indexOf("CTF")).toBeLessThan(markup.indexOf(title));
+  },
+);
+
+it.each(["cleared", "unavailable"])(
+  "does not revive an indexed title when the current title is %s",
+  (kind) => {
+    state.sourceUrl = demoDownloadUrl("match.rec");
+    state.demos = [
+      indexedDemo("match.rec", [{ ...game, title: "Stale indexed title" }]),
+    ];
+    state.publishedGames = [game];
+    state.publishedGame =
+      kind === "cleared" ? { id: "game", revision: 2, presentation: {} } : null;
+    const markup = render();
+    expect(markup).toContain("Surreal");
+    expect(markup).toContain("CTF");
+    expect(markup).not.toContain("Stale indexed title");
   },
 );
 
@@ -171,6 +193,38 @@ it("shows the server when the demo has no recorder or date", () => {
   expect(markup).not.toContain("Recorded by");
   expect(markup).not.toContain("Recorded on");
 });
+
+it.each(["live", "demo", "replay"])(
+  "uses connection-quality server icons only for live servers (%s)",
+  (mode) => {
+    state.dataSource = mode === "demo" ? "demo" : "live";
+    state.serverName = "Match Server";
+    state.live.gameStatus = "connected";
+    state.live.ping = 42;
+    if (mode === "replay") state.replay = replay({ status: "playing" });
+
+    const markup = render();
+    const serverIcon = markup
+      .match(/<svg\b[^>]*>[\s\S]*?<\/svg>/g)
+      ?.find(
+        (icon) =>
+          icon.includes("<title>Server</title>") ||
+          icon.includes("<title>Connected"),
+      );
+    expect(markup).toContain("Match Server");
+    expect(serverIcon).toBeDefined();
+    if (mode === "live") {
+      expect(serverIcon).toContain('data-bar="3"');
+      expect(serverIcon).toContain('data-quality="good"');
+      expect(serverIcon).toContain("<title>Connected – 42 ms</title>");
+    } else {
+      expect(serverIcon).toContain("<title>Server</title>");
+      expect(serverIcon).not.toContain("data-bar=");
+      expect(serverIcon).not.toContain("data-quality=");
+      expect(serverIcon).not.toContain("Connected");
+    }
+  },
+);
 
 it("shows the indexed recording date without header attribution", () => {
   const recordedAt = "2002-10-03T04:05:00.000Z";

@@ -64,7 +64,6 @@ export function refreshAccount({ onlyIfStale = false } = {}): Promise<void> {
   // unmount admin dialogs or reset their unsaved fields.
   appAccountStore.setState((state) => ({
     status: state.status === "ready" ? "ready" : "loading",
-    error: null,
   }));
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), AUTH_REQUEST_TIMEOUT_MS);

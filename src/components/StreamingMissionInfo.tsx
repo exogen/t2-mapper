@@ -18,9 +18,10 @@ import {
   LuUser,
   LuUsers,
 } from "react-icons/lu";
-import { PiCassetteTapeFill } from "react-icons/pi";
+import { PiCassetteTapeFill, PiGlobe } from "react-icons/pi";
 import { useDemoLoad } from "../state/demoLoadStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
+import { useCaster } from "../state/casterStore";
 import { WifiSignalIcon } from "./WifiSignalIcon";
 import { IoCalendarNumberOutline } from "react-icons/io5";
 import { isRelayRecording, parseDemoHeaderDate } from "../stream/demoDate";
@@ -46,6 +47,9 @@ export function StreamingMissionInfo({
   const missionDisplayName = useMissionDisplayName();
   const missionType = useMissionType();
   const missionTypeDisplayName = useMissionTypeDisplayName();
+  const gameTitle = useCaster(
+    (state) => state.publishedGame?.presentation.title,
+  );
   // The display name (server-sent or demo $DemoValues) is known before
   // the gameClassName-derived short code and distinguishes mod types
   // (LCTF vs CTF). Prefer its known short code, then the derived code,
@@ -63,6 +67,8 @@ export function StreamingMissionInfo({
   const dateString = replay ? replay.recordingDate : recordingDate;
   const dateRecorderName = replay ? (replay.recorderName ?? null) : playerName;
   const isLive = dataSource === "live";
+  const isLiveServer = isLive && !replay;
+  const ServerIcon = isLiveServer ? WifiSignalIcon : PiGlobe;
   const demoSourceUrl = useDemoLoad((s) => s.sourceUrl);
   // Indexed demos use their known instant. Local demos and shared replays
   // use the recording header: the relay writes UTC; a retail client writes
@@ -153,21 +159,23 @@ export function StreamingMissionInfo({
           {/* Some servers (mods) never report a game type — still show the
               mission name and just omit the type chip. */}
           {missionDisplayName ? (
-            <>
+            <span className={styles.MissionIdentity}>
               <span className={styles.MissionName}>{missionDisplayName}</span>
               {missionTypeLabel && (
-                <>
-                  {" "}
-                  <span
-                    className={styles.MissionType}
-                    data-mission-type={missionTypeLabel}
-                  >
-                    {missionTypeLabel}
-                  </span>
-                </>
+                <span
+                  className={styles.MissionType}
+                  data-mission-type={missionTypeLabel}
+                >
+                  {missionTypeLabel}
+                </span>
               )}
-            </>
+            </span>
           ) : null}
+          {gameTitle && (
+            <span className={styles.GameTitle} title={gameTitle}>
+              {gameTitle}
+            </span>
+          )}
           <GameDetailsButton />
         </div>
         {serverName ||
@@ -187,15 +195,15 @@ export function StreamingMissionInfo({
             ) : null}
             {serverName ? (
               <>
-                <WifiSignalIcon
+                <ServerIcon
                   className={
                     hasRecorder
                       ? `${styles.ServerIcon} ${styles.MetaGap}`
                       : styles.ServerIcon
                   }
-                  data-quality={pingQuality}
+                  data-quality={isLiveServer ? pingQuality : undefined}
                   title={
-                    isLiveConnected && ping != null
+                    isLiveServer && isLiveConnected && ping != null
                       ? `Connected – ${formatPing(ping)}`
                       : "Server"
                   }

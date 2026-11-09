@@ -96,6 +96,28 @@
   padding: 4px 16px;
   line-height: 20px;
   text-align: center;
+  white-space: nowrap;
+}
+
+.Root button {
+  transition:
+    opacity 150ms,
+    background-color 150ms,
+    border-color 150ms,
+    color 150ms,
+    box-shadow 150ms;
+}
+
+/* Account actions use color and shadow feedback without moving the label. */
+.Root .DiscordButton:not(:disabled):active,
+.Root .SecondaryButton:not(:disabled):active {
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .Root button {
+    transition: none;
+  }
 }
 
 .DiscordButton svg {
@@ -125,7 +147,7 @@
   }
 }
 
-.SignOut {
+.SecondaryButton {
   composes: SmallButton from "./Button.module.css";
   flex: 0 0 auto;
   align-self: center;
@@ -136,30 +158,39 @@
 }
 
 @media (hover: hover) {
-  .SignOut:not(:disabled):hover {
+  .SecondaryButton:not(:disabled):hover {
     background: rgba(255, 255, 255, 0.08);
     border-color: rgba(255, 255, 255, 0.28);
     color: #e0e2e2;
   }
 }
 
-.SignOut:not(:disabled):active {
+.SecondaryButton:not(:disabled):active {
   background: rgba(255, 255, 255, 0.06);
 }
 
-.SignOut:focus-visible {
+.SecondaryButton:focus-visible {
   outline: 2px solid #c9cccc;
   outline-offset: 2px;
 }
 
 .Error {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 8px;
   margin: 0;
   font-size: 12px;
   line-height: 1.4;
   color: #ffd4c9;
+}
+
+.ErrorContent {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 8px;
+  overflow-wrap: anywhere;
 }
 
 .Error a {

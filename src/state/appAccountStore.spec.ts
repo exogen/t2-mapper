@@ -148,7 +148,7 @@ it("does not let an older timed-out request clear or overwrite a newer sign-in v
 });
 
 it.each(["idle", "error"] as const)(
-  "shows loading while resolving an account from %s",
+  "shows loading without removing the previous error while resolving an account from %s",
   async (status) => {
     account.appAccountStore.setState({
       status,
@@ -167,13 +167,14 @@ it.each(["idle", "error"] as const)(
     expect(account.appAccountStore.getState()).toMatchObject({
       status: "loading",
       user: null,
-      error: null,
+      error: status === "error" ? "Previous request failed" : null,
     });
     resolveRefresh(Response.json({ enabled: true, user: admin }));
     await request;
     expect(account.appAccountStore.getState()).toMatchObject({
       status: "ready",
       user: admin,
+      error: null,
     });
   },
 );

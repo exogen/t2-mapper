@@ -10,6 +10,8 @@ import {
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { publishGamePresentation } from "../state/gamePresentationApi";
 import { sameEditableGame, type EditableGame } from "../state/editableGame";
+import { useAppAccount } from "../state/appAccountStore";
+import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import { inputControlsStore } from "./InputControls";
 import {
   DataSaveButton,
@@ -53,13 +55,19 @@ export function GameDetailsButton() {
 export function GameDetailsDialog({
   game,
   teams,
+  standalone = false,
   onClose,
 }: {
   game: EditableGame;
   teams: readonly NamedTeam[];
+  /** Edit a published recording without requiring it to be loaded. */
+  standalone?: boolean;
   onClose: () => void;
 }) {
   const current = useEditableGame();
+  const admin = useAppAccount(
+    (state) => state.status === "ready" && state.user?.role === "admin",
+  );
   const queryClient = useQueryClient();
   const [initial] = useState(game);
   const editor = useGamePresentationEditor(initial);
@@ -70,7 +78,27 @@ export function GameDetailsDialog({
   });
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const sameGame = sameEditableGame(current, initial);
+  const available =
+    admin &&
+    (standalone ? initial.demo != null : sameEditableGame(current, initial));
+  const editableTeams = standalone
+    ? [
+        ...new Set([
+          1,
+          2,
+          ...Object.keys(
+            details?.presentation.teamNames ??
+              initial.presentation.teamNames ??
+              {},
+          )
+            .map(Number)
+            .filter((id) => id > 0),
+        ]),
+      ].map((teamId) => ({
+        teamId,
+        name: DEFAULT_TEAM_NAMES[teamId] ?? `Team ${teamId}`,
+      }))
+    : teams;
   useEffect(() => {
     inputControlsStore.setState({ keys: new Set() });
     if (document.pointerLockElement) document.exitPointerLock();
@@ -100,7 +128,7 @@ export function GameDetailsDialog({
           className={styles.Form}
           onSubmit={async (event) => {
             event.preventDefault();
-            if (pending || !sameGame || !details) return;
+            if (pending || !available || !details) return;
             const presentation = readGamePresentation({
               title,
               teamNames: names,
@@ -133,11 +161,11 @@ export function GameDetailsDialog({
               games={editor.games}
               selectedIndex={editor.selectedIndex}
               onSelect={editor.selectGame}
-              disabled={pending || !sameGame}
+              disabled={pending || !available}
             />
             <fieldset
               className={editorStyles.Fields}
-              disabled={pending || !sameGame || !details}
+              disabled={pending || !available || !details}
             >
               <label className={styles.Field}>
                 Game title
@@ -151,16 +179,17 @@ export function GameDetailsDialog({
                 />
               </label>
               <TeamNameFields
-                teams={teams}
+                teams={editableTeams}
                 names={names}
                 autoFocus={false}
+                showPlayerCounts={!standalone}
                 onChange={(id, name) =>
                   setNames((old) => ({ ...old, [id]: name }))
                 }
               />
             </fieldset>
           </div>
-          {!sameGame && (
+          {!available && (
             <p className={styles.Error} role="alert">
               Editing is unavailable for this game. Your unsaved changes are
               preserved.
@@ -178,7 +207,7 @@ export function GameDetailsDialog({
             <DataSaveButton
               loading={editor.loading}
               saving={pending}
-              disabled={pending || !sameGame || !details}
+              disabled={pending || !available || !details}
             />
           </div>
         </form>

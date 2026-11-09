@@ -1,6 +1,8 @@
 @layer button;
 
 :root {
+  --game-title-color: #ffd76e;
+
   --monospace-font:
     ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
     monospace;

@@ -56,12 +56,18 @@ it("hides the account controls when the relay has not enabled login", () => {
   expect(renderToStaticMarkup(<AccountControls />)).toBe("");
 });
 
-it("hides an initial request failure before account support is known", () => {
-  state.account.enabled = null;
-  state.account.status = "error";
-  state.account.error = "Sign-in is unavailable. Please try again.";
-  expect(renderToStaticMarkup(<AccountControls />)).toBe("");
-});
+it.each(["idle", "loading"] as const)(
+  "keeps a disabled sign-in button visible while account support is %s",
+  (status) => {
+    state.account.enabled = null;
+    state.account.status = status;
+    const markup = renderToStaticMarkup(<AccountControls />);
+    expect(markup).toContain("Sign in with Discord");
+    expect(markup).toContain('disabled=""');
+    expect(markup).toContain('aria-busy="true"');
+    expect(markup).not.toContain("Loading");
+  },
+);
 
 it.each(["admin", "user"] as const)(
   "shows the Discord profile and a crown only for the admin role (%s)",
@@ -87,18 +93,62 @@ it.each(["admin", "user"] as const)(
   },
 );
 
-it("shows a retry action for an unavailable session API", () => {
-  state.account.status = "error";
+it.each([true, null])(
+  "keeps sign-in visible but disabled and offers retry when the session API fails (enabled: %s)",
+  (enabled) => {
+    state.account.enabled = enabled;
+    state.account.status = "error";
+    state.account.error = "Sign-in is unavailable. Please try again.";
+    const markup = renderToStaticMarkup(<AccountControls />);
+    expect(markup).toContain('role="alert"');
+    expect(markup).toContain("Sign-in is unavailable. Please try again.");
+    expect(markup).toContain("Retry");
+    const buttons = markup.match(/<button\b[^>]*>[\s\S]*?<\/button>/g);
+    expect(buttons).toHaveLength(2);
+    expect(buttons![0]).toContain("Sign in with Discord");
+    expect(buttons![0]).toContain('disabled=""');
+    expect(buttons![1]).not.toContain('disabled=""');
+  },
+);
+
+it("keeps the error and retry action visible while retrying the session check", () => {
+  state.account.status = "loading";
   state.account.error = "Sign-in is unavailable. Please try again.";
   const markup = renderToStaticMarkup(<AccountControls />);
-  expect(markup).toContain('role="alert"');
-  expect(markup).toContain("Retry");
-  expect(markup).not.toContain("Sign in with Discord");
+  expect(markup).toContain("Sign-in is unavailable. Please try again.");
+  const buttons = markup.match(/<button\b[^>]*>[\s\S]*?<\/button>/g);
+  expect(buttons).toHaveLength(2);
+  expect(buttons![0]).toContain("Sign in with Discord");
+  expect(buttons![1]).toContain("Retry");
+  for (const button of buttons!) {
+    expect(button).toContain('disabled=""');
+    expect(button).toContain('aria-busy="true"');
+  }
 });
 
 it("prevents duplicate sign-in actions while Discord is opening", () => {
   state.account.pending = "sign-in";
   const markup = renderToStaticMarkup(<AccountControls />);
-  expect(markup).toContain("Opening Discord…");
+  expect(markup).toContain("Sign in with Discord");
+  expect(markup).not.toContain("Opening Discord");
   expect(markup).toContain('disabled=""');
+  expect(markup).toContain('aria-busy="true"');
+});
+
+it("keeps the sign-out label fixed while signing out", () => {
+  state.account.user = {
+    id: "1",
+    name: "Example player",
+    image: null,
+    role: "user",
+    discordId: "123456789012345678",
+    discordUsername: "example_player",
+  };
+  state.account.pending = "sign-out";
+  const markup = renderToStaticMarkup(<AccountControls />);
+  expect(markup).toContain("Example player");
+  expect(markup).toContain("Sign out");
+  expect(markup).not.toContain("Signing out");
+  expect(markup).toContain('disabled=""');
+  expect(markup).toContain('aria-busy="true"');
 });

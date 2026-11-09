@@ -40,6 +40,7 @@ export function TeamNameFields({
   savedNames,
   focusTeamId,
   autoFocus = true,
+  showPlayerCounts = true,
   disabled = false,
   onChange,
 }: {
@@ -48,6 +49,7 @@ export function TeamNameFields({
   savedNames?: Record<number, string>;
   focusTeamId?: number;
   autoFocus?: boolean;
+  showPlayerCounts?: boolean;
   disabled?: boolean;
   onChange: (teamId: number, name: string) => void;
 }) {
@@ -71,7 +73,7 @@ export function TeamNameFields({
                   <label className={styles.Label} htmlFor={inputId}>
                     Team {teamId}
                   </label>
-                  <TeamPlayerCount teamId={teamId} />
+                  {showPlayerCounts && <TeamPlayerCount teamId={teamId} />}
                 </div>
                 <div className={styles.DefaultControls}>
                   <span

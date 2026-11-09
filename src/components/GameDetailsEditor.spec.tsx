@@ -5,6 +5,8 @@ import type { PublishedGame } from "../../relay/gamePresentation";
 import type { AppAccountState } from "../state/appAccountStore";
 import type { LiveConnectionState } from "../state/liveConnectionStore";
 import type { PlayerRosterEntry, TeamScore } from "../stream/types";
+import type { EditableGame } from "../state/editableGame";
+import type { useGamePresentationEditor } from "./useEditableGame";
 import { GameDetailsButton, GameDetailsDialog } from "./GameDetailsEditor";
 
 const fixture = vi.hoisted(() => ({
@@ -16,6 +18,7 @@ const fixture = vi.hoisted(() => ({
     publishedGames: [] as import("../../relay/demoMetadata").DemoGame[],
   },
   source: "live",
+  editor: null as ReturnType<typeof useGamePresentationEditor> | null,
   snapshot: {
     teamScores: [] as TeamScore[],
     playerRoster: [] as PlayerRosterEntry[],
@@ -46,6 +49,14 @@ vi.mock("../state/gamePresentationApi", () => ({
   publishGamePresentation: vi.fn(),
   readPublishedDemoPresentation: vi.fn(),
 }));
+vi.mock("./useEditableGame", async (original) => {
+  const actual = await original<typeof import("./useEditableGame")>();
+  return {
+    ...actual,
+    useGamePresentationEditor: (target: EditableGame | null) =>
+      fixture.editor ?? actual.useGamePresentationEditor(target),
+  };
+});
 vi.mock("../state/demoLoadStore", () => ({
   useDemoLoad: (select: (state: typeof fixture.demo) => unknown) =>
     select(fixture.demo),
@@ -106,6 +117,7 @@ beforeEach(() => {
   fixture.live = { role: "watcher", watchStatus: "live" };
   fixture.caster.publishedGame = game;
   fixture.source = "live";
+  fixture.editor = null;
   fixture.snapshot = { teamScores: [], playerRoster: [], missionReadySec: 0 };
   fixture.demo = { sourceUrl: null, publishedGames: [] };
   vi.stubGlobal("document", { body: {} });
@@ -248,4 +260,99 @@ it("disables an open editor after switching to another game", () => {
   expect(html).toContain("<fieldset class=");
   expect(html).toMatch(/<fieldset[^>]*disabled=""/);
   expect(html).toMatch(/<button[^>]*type="submit"[^>]*disabled=""/);
+});
+
+const archived: EditableGame = {
+  ...game,
+  presentation: { title: "Final", teamNames: { 1: "Knights", 4: "Dragons" } },
+  demo: { filename: "old.rec" },
+};
+
+function standaloneDemo() {
+  fixture.source = "mission";
+  fixture.caster.publishedGame = null;
+  fixture.editor = {
+    details: archived,
+    games: [
+      { mission: "Katabatic", startMs: 0, gameType: "CTF", tournament: false },
+    ],
+    selectedIndex: 0,
+    selectGame: vi.fn(),
+    loading: false,
+    error: null,
+  };
+  return renderToStaticMarkup(
+    <GameDetailsDialog
+      game={archived}
+      teams={[]}
+      standalone
+      onClose={() => {}}
+    />,
+  );
+}
+
+it("edits a listed demo without loading it and uses its teams instead of the current roster", () => {
+  const html = standaloneDemo();
+  expect(html).toContain("Update demo data");
+  expect(html).not.toContain("Editing is unavailable");
+  expect(html).not.toMatch(/<fieldset[^>]*disabled=""/);
+  expect(html).not.toMatch(/<button[^>]*type="submit"[^>]*disabled=""/);
+  expect(html).toContain('value="Knights"');
+  expect(html).toContain('value="Dragons"');
+  expect(html).toContain('placeholder="Storm"');
+  expect(html).toContain('placeholder="Inferno"');
+  expect(html).toContain('placeholder="Diamond Sword"');
+  expect(html).not.toContain("0 players");
+  expect(html).not.toContain("Players");
+});
+
+it.each(["guest", "regular user", "loading account", "failed account"])(
+  "disables listed-demo editing for a %s",
+  (kind) => {
+    if (kind === "guest") fixture.account.user = null;
+    else if (kind === "regular user") fixture.account.user!.role = "user";
+    else
+      fixture.account.status = kind === "loading account" ? "loading" : "error";
+    const html = standaloneDemo();
+    expect(html).toContain("Editing is unavailable");
+    expect(html).toMatch(/<fieldset[^>]*disabled=""/);
+    expect(html).toMatch(/<button[^>]*type="submit"[^>]*disabled=""/);
+  },
+);
+
+it("allows game selection in a listed multi-game demo before enabling fields", () => {
+  standaloneDemo();
+  fixture.editor!.details = null;
+  fixture.editor!.selectedIndex = null;
+  fixture.editor!.games!.push({
+    mission: "Raindance",
+    startMs: 1000,
+    gameType: "CTF",
+    tournament: false,
+  });
+  const html = renderToStaticMarkup(
+    <GameDetailsDialog
+      game={archived}
+      teams={[]}
+      standalone
+      onClose={() => {}}
+    />,
+  );
+  expect(html).toContain("Choose a game…");
+  expect(html).not.toMatch(/<select[^>]*disabled=""/);
+  expect(html).toMatch(/<fieldset[^>]*disabled=""/);
+  expect(html).not.toContain("Editing is unavailable");
+});
+
+it("does not let standalone editing bypass the loaded-game guard for streams", () => {
+  const html = renderToStaticMarkup(
+    <GameDetailsDialog
+      game={game}
+      teams={teams}
+      standalone
+      onClose={() => {}}
+    />,
+  );
+  expect(html).toContain("Editing is unavailable");
+  expect(html).toMatch(/<fieldset[^>]*disabled=""/);
 });

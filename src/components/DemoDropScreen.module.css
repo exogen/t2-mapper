@@ -5,10 +5,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: space-evenly;
-  gap: 32px;
   overflow-y: auto;
-  padding: 24px 0;
+  padding: 40px 0 0;
   background: rgb(14, 27, 28);
   box-shadow: inset 0 0 100px rgba(0, 0, 0, 0.6);
   color: #83938b;
@@ -23,6 +21,7 @@
 }
 
 .Featured {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -37,12 +36,17 @@
   pointer-events: none;
 }
 
-/* The cassette + hints as one section for the space-around layout. */
+/* Center the cassette and hints in the space left below the gallery. */
 .DropUi {
+  flex: 1 0 auto;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 4px;
+  width: 100%;
+  padding: 32px 24px;
+  text-align: center;
 }
 
 .FeaturedHeader {
@@ -160,6 +164,109 @@
   gap: 10px;
 }
 
+.FeaturedCard {
+  min-width: 0;
+}
+
+.FeaturedCard,
+.SkeletonTile {
+  min-height: 80px;
+}
+
+.FeaturedBody {
+  gap: 3px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.FeaturedMission {
+  margin-block: 1px;
+}
+
+.FeaturedLink {
+  display: flex;
+  align-items: stretch;
+  flex: 1;
+  min-width: 0;
+  gap: inherit;
+  color: inherit;
+  text-decoration: none;
+}
+
+.FeaturedCard:focus-within {
+  border-color: rgba(125, 255, 255, 0.6);
+}
+
+.EditDemoButton {
+  position: absolute;
+  top: 50%;
+  left: 44px;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #86b6ac;
+  font-size: 32px;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.15s,
+    color 0.15s;
+}
+
+.FeaturedCard:is(:hover, :focus-within) .EditDemoButton {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.FeaturedCard[data-editable="true"]:is(:hover, :focus-within) .CassetteIcon {
+  opacity: 0;
+}
+
+.EditDemoButton:hover,
+.EditDemoButton:focus-visible {
+  color: #7dffff;
+}
+
+.EditDemoButton:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  .EditDemoButton {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .FeaturedCard[data-editable="true"] .CassetteIcon {
+    opacity: 0;
+  }
+}
+
+@media (max-width: 399px) {
+  .FeaturedCard[data-editable="true"] .FeaturedLink {
+    padding-right: 44px;
+  }
+
+  .EditDemoButton {
+    top: 6px;
+    right: 2px;
+    left: auto;
+    transform: none;
+    font-size: 24px;
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 .BrowseButton {
   display: flex;
   align-items: center;
@@ -245,7 +352,6 @@
   display: flex;
   align-items: stretch;
   gap: 12px;
-  height: 72px;
   overflow: hidden;
   border: 1px solid rgba(65, 131, 139, 0.25);
   border-radius: 8px;

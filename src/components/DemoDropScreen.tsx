@@ -1,4 +1,5 @@
 import {
+  Fragment,
   Suspense,
   useCallback,
   useEffect,
@@ -7,18 +8,33 @@ import {
   useState,
 } from "react";
 import type { ReactNode } from "react";
-import { PiCassetteTapeFill, PiCassetteTapeLight } from "react-icons/pi";
+import {
+  PiCassetteTapeFill,
+  PiCassetteTapeLight,
+  PiGlobe,
+} from "react-icons/pi";
 import { FaMicrophoneAlt, FaSearch } from "react-icons/fa";
-import { LuChevronLeft, LuChevronRight, LuUser, LuUsers } from "react-icons/lu";
+import { FaPenToSquare } from "react-icons/fa6";
+import { IoCalendarNumberOutline } from "react-icons/io5";
+import {
+  LuChevronLeft,
+  LuChevronRight,
+  LuClock,
+  LuUser,
+  LuUsers,
+} from "react-icons/lu";
 import { TbLaurelWreathFilled } from "react-icons/tb";
 import { useDemoLoad } from "../state/demoLoadStore";
+import { useAppAccount } from "../state/appAccountStore";
+import { editableDemoGame, type EditableGame } from "../state/editableGame";
+import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import { demoPlayerCount, type DemoIndexEntry } from "../stream/demoIndex";
 import { useDemoIndexSuspense } from "./useDemoIndex";
 import { QuietErrorBoundary } from "./QuietErrorBoundary";
 import { normalizeMissionType } from "../mission";
 import {
   demoTitle,
-  demoGameDetails,
+  demoTeams,
   formatDuration,
   formatRecordedTime,
   recordedDayLabel,
@@ -31,6 +47,7 @@ import { focusDemoSelect } from "./demoSelectFocus";
 import { LoadingIndicator } from "./LoadingIndicator";
 import styles from "./DemoDropScreen.module.css";
 import { DEMO_CHECKPOINT_SUFFIX } from "../stream/demoCheckpoints";
+import { GameDetailsDialog } from "./GameDetailsEditor";
 
 /** Featured demos: recently indexed games with a real crowd and length. */
 const FEATURED_MIN_PLAYERS = 10;
@@ -52,12 +69,20 @@ const CARD_ART_NAME_FALLBACKS: readonly RegExp[] = [
 function FeaturedCard({
   demo,
   onLoad,
+  onEdit,
 }: {
   demo: DemoIndexEntry;
   onLoad: () => void;
+  onEdit?: () => void;
 }) {
   const mission = demo.games[0]?.mission ?? "";
-  const details = demoGameDetails(demo);
+  const matchups = demoTeams(demo).filter((teams) =>
+    teams.some(([id, name]) => name !== DEFAULT_TEAM_NAMES[Number(id)]),
+  );
+  const matchTitle = demo.games
+    .map((game) => game.title)
+    .filter(Boolean)
+    .join(" → ");
   const gameTypes = [
     ...new Set(
       demo.games
@@ -66,80 +91,158 @@ function FeaturedCard({
     ),
   ];
   return (
-    <a
-      href={`?demo=${encodeURIComponent(demo.filename)}`}
-      className={tileStyles.Tile}
-      onClick={(event) => {
-        if (
-          event.defaultPrevented ||
-          event.button !== 0 ||
-          event.metaKey ||
-          event.ctrlKey ||
-          event.shiftKey ||
-          event.altKey
-        )
-          return;
-        event.preventDefault();
-        onLoad();
-      }}
+    <div
+      className={`${tileStyles.Tile} ${styles.FeaturedCard}`}
+      data-editable={!!onEdit}
+      data-has-title={!!matchTitle}
     >
-      {/* Local load-screen art (with variant-name fallbacks), then the
-          t2-maps gallery screenshot, then the generic background. */}
-      <PreviewTileArt
-        candidates={[
-          missionLoadScreenUrl(mission, CARD_ART_NAME_FALLBACKS),
-          missionGalleryArtUrl(mission),
-        ]}
+      <a
+        href={`?demo=${encodeURIComponent(demo.filename)}`}
+        className={styles.FeaturedLink}
+        onClick={(event) => {
+          if (
+            event.defaultPrevented ||
+            event.button !== 0 ||
+            event.metaKey ||
+            event.ctrlKey ||
+            event.shiftKey ||
+            event.altKey
+          )
+            return;
+          event.preventDefault();
+          onLoad();
+        }}
       >
-        <PiCassetteTapeFill className={tileStyles.TilePlaceholder} />
-      </PreviewTileArt>
-      <span className={tileStyles.TileBody}>
-        <span className={tileStyles.TileTitle}>
-          <span className={tileStyles.TileMapTitle}>{demoTitle(demo)}</span>
-          {gameTypes.map((type) => (
-            <span
-              key={type}
-              className={tileStyles.TileTag}
-              data-mission-type={type}
-            >
-              {type}
+        {/* Local load-screen art (with variant-name fallbacks), then the
+          t2-maps gallery screenshot, then the generic background. */}
+        <PreviewTileArt
+          candidates={[
+            missionLoadScreenUrl(mission, CARD_ART_NAME_FALLBACKS),
+            missionGalleryArtUrl(mission),
+          ]}
+        >
+          <PiCassetteTapeFill
+            className={`${tileStyles.TilePlaceholder} ${styles.CassetteIcon}`}
+          />
+        </PreviewTileArt>
+        <span className={`${tileStyles.TileBody} ${styles.FeaturedBody}`}>
+          {matchTitle && (
+            <span className={tileStyles.TileMatchTitle} title={matchTitle}>
+              {matchTitle}
             </span>
-          ))}
-          {demo.games.some((game) => game.tournament) && (
-            <TbLaurelWreathFilled
-              className={tileStyles.TileTournamentIcon}
-              title="Tournament mode"
-              aria-label="Tournament mode"
-            />
           )}
-          {demo.hasCommentary && (
-            <FaMicrophoneAlt
-              className={tileStyles.TileCommentaryIcon}
-              title="Commentary track"
-              aria-label="Commentary track"
-            />
+          {matchups.length > 0 && (
+            <span className={tileStyles.TileTeams}>
+              {matchups.map((teams, gameIndex) => (
+                <Fragment key={gameIndex}>
+                  {gameIndex > 0 && " → "}
+                  {teams.map(([id, name], teamIndex) => (
+                    <Fragment key={id}>
+                      {teamIndex > 0 && " vs "}
+                      <span className={tileStyles.TileTeamName}>{name}</span>
+                    </Fragment>
+                  ))}
+                </Fragment>
+              ))}
+            </span>
           )}
+          <span className={`${tileStyles.TileTitle} ${styles.FeaturedMission}`}>
+            <span className={tileStyles.TileMapTitle}>{demoTitle(demo)}</span>
+            {gameTypes.map((type) => (
+              <span
+                key={type}
+                className={tileStyles.TileTag}
+                data-mission-type={type}
+              >
+                {type}
+              </span>
+            ))}
+            {demo.games.some((game) => game.tournament) && (
+              <TbLaurelWreathFilled
+                className={tileStyles.TileTournamentIcon}
+                title="Tournament mode"
+                aria-label="Tournament mode"
+              />
+            )}
+            {demo.hasCommentary && (
+              <FaMicrophoneAlt
+                className={tileStyles.TileCommentaryIcon}
+                title="Commentary track"
+                aria-label="Commentary track"
+              />
+            )}
+          </span>
+          <span className={tileStyles.TileDetails}>
+            <span className={tileStyles.TileMetaItem}>
+              <IoCalendarNumberOutline
+                className={tileStyles.TileMetaIcon}
+                title="Recorded on"
+                aria-hidden
+              />
+              <span className={tileStyles.TileMetaText}>
+                {recordedDayLabel(demo.recordedAt)}{" "}
+                {formatRecordedTime(demo.recordedAt)}
+              </span>
+            </span>
+            <span className={tileStyles.TileDuration}>
+              <LuClock
+                className={tileStyles.TileCompactMetaIcon}
+                aria-label="Duration"
+              />
+              {formatDuration(demo.durationMs)}
+            </span>
+            <span
+              className={tileStyles.TileMetaItem}
+              title={demo.players.join(", ") || undefined}
+            >
+              <LuUsers
+                className={tileStyles.TileCompactMetaIcon}
+                aria-label="Players"
+              />
+              {demoPlayerCount(demo)}
+            </span>
+          </span>
+          <span className={tileStyles.TileSource}>
+            {demo.recorder ? (
+              <span className={tileStyles.TileMetaItem}>
+                <LuUser
+                  className={tileStyles.TileRecorderIcon}
+                  title="Recorded by"
+                  aria-hidden
+                />
+                <span className={tileStyles.TileMetaText} title={demo.recorder}>
+                  {demo.recorder}
+                </span>
+              </span>
+            ) : null}
+            {demo.server && (
+              <span className={tileStyles.TileMetaItem}>
+                <PiGlobe
+                  className={tileStyles.TileMetaIcon}
+                  title="Server"
+                  aria-hidden
+                />
+                <span className={tileStyles.TileMetaText} title={demo.server}>
+                  {demo.server}
+                </span>
+              </span>
+            )}
+          </span>
         </span>
-        {details && <span className={tileStyles.TileMeta}>{details}</span>}
-        <span className={tileStyles.TileMeta}>
-          {demo.server} · {recordedDayLabel(demo.recordedAt)} ·{" "}
-          {formatRecordedTime(demo.recordedAt)}
-        </span>
-        <span className={tileStyles.TileMeta}>
-          {demo.recorder ? (
-            <>
-              <LuUser className={tileStyles.TileMetaIcon} title="Recorded by" />{" "}
-              {demo.recorder} ·{" "}
-            </>
-          ) : null}
-          <span title={demo.players.join(", ") || undefined}>
-            <LuUsers className={tileStyles.TileMetaIcon} aria-label="Players" />{" "}
-            {demoPlayerCount(demo)} players
-          </span>{" "}
-          · {formatDuration(demo.durationMs)}
-        </span>
-      </span>
-    </a>
+      </a>
+      {onEdit && (
+        <button
+          type="button"
+          className={styles.EditDemoButton}
+          title="Edit demo data"
+          aria-label={`Edit demo data: ${matchTitle || demoTitle(demo)}`}
+          aria-haspopup="dialog"
+          onClick={onEdit}
+        >
+          <FaPenToSquare aria-hidden />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -205,6 +308,10 @@ function FeaturedDemos() {
 
 function FeaturedList() {
   const navigation = useAppNavigation();
+  const admin = useAppAccount(
+    (state) => state.status === "ready" && state.user?.role === "admin",
+  );
+  const [editing, setEditing] = useState<EditableGame | null>(null);
   const [page, setPage] = useState(0);
   const { data: demos } = useDemoIndexSuspense();
   const matching = useMemo(
@@ -264,9 +371,23 @@ function FeaturedList() {
             key={demo.filename}
             demo={demo}
             onLoad={() => navigation.selectDemo(demo.filename)}
+            onEdit={
+              admin
+                ? () =>
+                    setEditing(editableDemoGame(demo.filename, demo.games, 0))
+                : undefined
+            }
           />
         ))}
       </div>
+      {editing && (
+        <GameDetailsDialog
+          game={editing}
+          teams={[]}
+          standalone
+          onClose={() => setEditing(null)}
+        />
+      )}
     </div>
   );
 }
@@ -395,10 +516,6 @@ export function DemoDropScreen() {
               Drag &amp; drop a Tribes 2 demo (.rec file) here
             </p>
             <p className={styles.SubHint}>or click the cassette to browse</p>
-            <p className={styles.SubHint}>
-              Include its .checkpoints.json file for faster seeking, if
-              available
-            </p>
           </div>
         </>
       )}

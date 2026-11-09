@@ -61,6 +61,14 @@
   transition: opacity 0.3s;
 }
 
+.Tile[data-has-title="true"] .TilePreview {
+  overflow: hidden;
+}
+
+.Tile[data-has-title="true"] .TileImage {
+  transform: scale(1.05);
+}
+
 .TilePreview[data-default-image="true"] .TileImage {
   opacity: 0.8;
   object-position: 50% 100%;
@@ -137,6 +145,12 @@
   color: #fff;
 }
 
+.TileMatchTitle {
+  composes: TileMapTitle;
+  color: var(--game-title-color);
+  font-size: 12px;
+}
+
 .TileMod {
   font-size: 13px;
 }
@@ -181,6 +195,64 @@
   white-space: nowrap;
 }
 
+.TileTeamName {
+  color: #7dffff;
+}
+
+.TileTeams {
+  composes: TileMeta;
+  color: rgba(125, 255, 255, 0.6);
+}
+
+.TileDetails {
+  composes: TileMeta;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.TileSource {
+  composes: TileDetails;
+}
+
+.TileTeams,
+.TileSource {
+  font-size: 11px;
+}
+
+.TileMetaItem {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 4px;
+  min-width: 0;
+}
+
+.TileMetaItem:first-child,
+.TileSource .TileMetaItem {
+  flex-shrink: 1;
+}
+
+.TileSource .TileMetaItem {
+  gap: 3px;
+}
+
+.TileDuration {
+  composes: TileMetaItem;
+  gap: 3px;
+}
+
+.TileMetaText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.TileMetaItem .TileMetaIcon {
+  flex: 0 0 auto;
+  font-size: 14px;
+}
+
 .TileMapName {
   font-size: 13px;
   font-weight: 600;
@@ -196,4 +268,18 @@
 
 .TileMetaIcon {
   vertical-align: -2px;
+}
+
+.TileCompactMetaIcon {
+  composes: TileMetaIcon;
+}
+
+.TileMetaItem .TileCompactMetaIcon {
+  font-size: 13px;
+}
+
+.TileRecorderIcon {
+  composes: TileMetaIcon;
+  /* Remove the icon's built-in left gutter, shifting the text with it. */
+  margin-inline-start: -0.125em;
 }

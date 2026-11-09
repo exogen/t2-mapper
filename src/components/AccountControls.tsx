@@ -11,10 +11,13 @@ import styles from "./AccountControls.module.css";
 export function AccountControls() {
   const account = useAppAccount((state) => state);
 
-  // Only show accounts after the relay confirms sign-in is configured.
-  if (account.enabled !== true) return null;
+  // Keep the row in place during the initial check; hide it only when the
+  // relay explicitly reports that sign-in is disabled.
+  if (account.enabled === false) return null;
 
   const pending = account.pending != null;
+  const checking = account.status === "idle" || account.status === "loading";
+  const retrying = account.status === "loading" && account.error != null;
   return (
     <section className={styles.Root} aria-label="Account">
       {account.user ? (
@@ -47,51 +50,52 @@ export function AccountControls() {
           )}
           <button
             type="button"
-            className={styles.SignOut}
+            className={styles.SecondaryButton}
             onClick={() => void signOutAccount()}
             disabled={pending}
+            aria-busy={account.pending === "sign-out"}
           >
-            <span className={buttonStyles.ButtonLabel}>
-              {account.pending === "sign-out" ? "Signing out…" : "Sign out"}
-            </span>
+            <span className={buttonStyles.ButtonLabel}>Sign out</span>
           </button>
         </div>
-      ) : account.status !== "error" ? (
+      ) : (
         <button
           type="button"
           className={styles.DiscordButton}
           onClick={() => void signInWithDiscord()}
-          disabled={pending || account.status === "loading"}
-          aria-busy={account.pending === "sign-in"}
+          disabled={
+            pending || account.enabled !== true || account.status !== "ready"
+          }
+          aria-busy={checking || account.pending === "sign-in"}
           title="Sign in in a separate window"
         >
           <FaDiscord aria-hidden focusable="false" />
-          <span>
-            {account.pending === "sign-in"
-              ? "Opening Discord…"
-              : "Sign in with Discord"}
-          </span>
+          <span>Sign in with Discord</span>
         </button>
-      ) : null}
+      )}
       {(account.error || account.signInUrl) && (
         <div className={styles.Error} role="alert">
-          {account.error && <span>{account.error}</span>}
-          {account.signInUrl && (
-            <a
-              href={account.signInUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Open sign-in in a new tab
-            </a>
-          )}
-          {account.status === "error" && (
+          <div className={styles.ErrorContent}>
+            {account.error && <span>{account.error}</span>}
+            {account.signInUrl && (
+              <a
+                href={account.signInUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Open sign-in in a new tab
+              </a>
+            )}
+          </div>
+          {(account.status === "error" || retrying) && (
             <button
               type="button"
-              className={buttonStyles.SmallButton}
+              className={styles.SecondaryButton}
               onClick={() => void refreshAccount()}
+              disabled={checking}
+              aria-busy={retrying}
             >
-              Retry
+              <span className={buttonStyles.ButtonLabel}>Retry</span>
             </button>
           )}
         </div>

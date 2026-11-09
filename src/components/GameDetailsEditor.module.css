@@ -20,6 +20,13 @@
   outline: 1px solid currentColor;
   border-radius: 3px;
 }
+
+@media (max-width: 639px) {
+  .EditButton {
+    display: none;
+  }
+}
+
 .ScrollArea {
   min-height: 0;
   overflow-y: auto;

@@ -60,16 +60,21 @@ export function demoTitle(demo: Pick<DemoIndexEntry, "games">): string {
   );
 }
 
+/** Saved teams in team order, grouped by game. */
+export function demoTeams(demo: Pick<DemoIndexEntry, "games">) {
+  return demo.games
+    .map((game) =>
+      Object.entries(game.teamNames ?? {})
+        .filter(([id]) => Number(id) > 0)
+        .sort(([a], [b]) => Number(a) - Number(b)),
+    )
+    .filter((teams) => teams.length > 0);
+}
+
 /** Shared team labels for each game; the primary demo label supplies map names. */
 export function demoGameDetails(demo: DemoIndexEntry): string {
-  return demo.games
-    .map((game) => {
-      const names = Object.entries(game.teamNames ?? {})
-        .filter(([id]) => Number(id) > 0)
-        .sort(([a], [b]) => Number(a) - Number(b))
-        .map(([, name]) => name);
-      return names.join(" vs ");
-    })
+  return demoTeams(demo)
+    .map((teams) => teams.map(([, name]) => name).join(" vs "))
     .filter(Boolean)
     .join(" → ");
 }
