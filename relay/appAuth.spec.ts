@@ -277,6 +277,25 @@ async function echoPresentationUpdate(
   };
 }
 
+it("allows the production frontend origin with the default auth configuration", async () => {
+  const app = await fixture({
+    extraEnv: {
+      NODE_ENV: "production",
+      AUTH_BASE_URL: "https://api.tribes2.online",
+      AUTH_TRUSTED_ORIGINS: "",
+    },
+  });
+  const response = await app.request("/api/account", {
+    headers: { Origin: "https://play.tribes2.online" },
+  });
+  expect(response.status).toBe(200);
+  expect(response.headers.get("access-control-allow-origin")).toBe(
+    "https://play.tribes2.online",
+  );
+  expect(response.headers.get("access-control-allow-credentials")).toBe("true");
+  expect(await response.json()).toEqual({ enabled: true, user: null });
+});
+
 const oldDemo: DemoMetadata = {
   filename: "community-final-2002.rec",
   bytes: 1024,

@@ -115,7 +115,7 @@ export function loadAppAuthConfig(
     ...new Set(
       (
         env.AUTH_TRUSTED_ORIGINS ||
-        (production ? "https://tribes2.online" : "http://localhost:3000")
+        (production ? "https://play.tribes2.online" : "http://localhost:3000")
       )
         .split(",")
         .map((value) =>
@@ -187,7 +187,7 @@ export function handleDisabledAppAuth(
   trustedOrigins = (
     process.env.AUTH_TRUSTED_ORIGINS ||
     (process.env.NODE_ENV === "production"
-      ? "https://tribes2.online"
+      ? "https://play.tribes2.online"
       : "http://localhost:3000")
   )
     .split(",")
