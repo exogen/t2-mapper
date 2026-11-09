@@ -55,6 +55,36 @@ it("retains recording provenance and extra metadata while analyzed facts win", (
   expect(analyzed.reason).toBe("backfilled: 20 players, 1 game");
 });
 
+it("preserves an existing sidecar's exact timestamp instead of the recording header's minute precision", () => {
+  const analyzed = {
+    ...record([game]),
+    recordedAt: "2026-10-13T05:20:00.000Z",
+  };
+  const original = {
+    ...record([game]),
+    recordedAt: "2026-10-13T05:20:01.237Z",
+  };
+  expect(preserveDemoGamePresentation(analyzed, original).recordedAt).toBe(
+    original.recordedAt,
+  );
+});
+
+it("uses the recording timestamp only when there is no previous sidecar", () => {
+  const analyzed = {
+    ...record([game]),
+    recordedAt: "2026-10-13T05:20:00.000Z",
+  };
+  expect(preserveDemoGamePresentation(analyzed).recordedAt).toBe(
+    analyzed.recordedAt,
+  );
+  for (const recordedAt of [undefined, "", "unrecognized timestamp"]) {
+    const original = { ...record([game]), recordedAt } as DemoMetadata;
+    expect(preserveDemoGamePresentation(analyzed, original).recordedAt).toBe(
+      recordedAt,
+    );
+  }
+});
+
 it("retains extra game fields without restoring obsolete protocol fields or older labels", () => {
   const originalGame = {
     ...saved,
@@ -94,15 +124,18 @@ it("upgrades legacy top-level mission fields without losing provenance or extens
     gameType: "CTF",
     reason: "original keep reason",
     attribution: "Community",
+    recordedAt: "2026-10-13T05:20:01.237Z",
   } as unknown as DemoMetadata;
   const analyzed = {
     ...record([game]),
     reason: "backfilled: 2 players, 1 game",
+    recordedAt: "2026-10-13T05:20:00.000Z",
   };
   expect(preserveDemoGamePresentation(analyzed, original)).toEqual({
     ...analyzed,
     reason: original.reason,
     attribution: "Community",
+    recordedAt: original.recordedAt,
   });
 });
 
@@ -110,10 +143,12 @@ it("uses canonical sidecar fields at equal index revisions but keeps newer index
   const current = {
     ...record([saved]),
     reason: "original keep reason",
+    recordedAt: "2026-10-13T05:20:01.237Z",
   };
   const indexed = {
     ...record([{ ...saved, title: "Stale index title" }]),
     reason: "outdated index reason",
+    recordedAt: "2026-10-13T05:20:00.000Z",
   };
   expect(preserveDemoGamePresentation(current, indexed, "index")).toEqual(
     current,

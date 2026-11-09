@@ -228,6 +228,202 @@ it("writes nothing in dry-run mode", async () => {
   ).toBe(false);
 });
 
+function sidecarDiffs(): string[] {
+  return vi
+    .mocked(console.log)
+    .mock.calls.flatMap(([message]) =>
+      typeof message === "string" && message.startsWith("--- old/")
+        ? [message]
+        : [],
+    );
+}
+
+it.each([false, true])(
+  "preserves the original recordedAt without a timestamp diff (dry run=%s)",
+  async (dryRun) => {
+    process.argv.push("--diff");
+    if (dryRun) process.argv.push("--dry-run");
+    const precise = "2026-10-13T05:20:01.237Z";
+    const truncated = "2026-10-13T05:20:00.000Z";
+    sidecar = { ...original, recordedAt: precise };
+    index = [{ ...sidecar, recordedAt: truncated }, added];
+    mocks.analyze.mockResolvedValue({ ...repaired, recordedAt: truncated });
+
+    await import("./backfill-demo-index");
+
+    expect(sidecar.recordedAt).toBe(precise);
+    expect(sidecarDiffs()).toHaveLength(1);
+    expect(sidecarDiffs()[0]).not.toContain('-  "recordedAt":');
+    expect(sidecarDiffs()[0]).not.toContain('+  "recordedAt":');
+    if (!dryRun)
+      expect(
+        index.find((record) => record.filename === original.filename)
+          ?.recordedAt,
+      ).toBe(precise);
+    expect(process.exitCode).toBeUndefined();
+  },
+);
+
+it("uses the recording timestamp when no previous sidecar exists", async () => {
+  const truncated = "2026-10-13T05:20:00.000Z";
+  mocks.list.mockResolvedValue([{ key: "demos/old.rec", size: 1 }]);
+  mocks.analyze.mockResolvedValue({ ...repaired, recordedAt: truncated });
+  const send = mocks.send.getMockImplementation()!;
+  mocks.send.mockImplementation(async (command) => {
+    if (
+      command instanceof GetObjectCommand &&
+      command.input.Key === "demos/old.rec.json"
+    )
+      throw Object.assign(new Error("missing"), { name: "NoSuchKey" });
+    return send(command);
+  });
+
+  await import("./backfill-demo-index");
+
+  expect(sidecar.recordedAt).toBe(truncated);
+  expect(
+    index.find((record) => record.filename === original.filename)?.recordedAt,
+  ).toBe(truncated);
+  expect(process.exitCode).toBeUndefined();
+});
+
+it("preserves the latest precise sidecar timestamp after a conditional-write retry", async () => {
+  const latest = "2026-10-13T05:20:01.237Z";
+  sidecar = { ...original, recordedAt: "2026-10-13T05:20:01.000Z" };
+  mocks.analyze.mockResolvedValue({
+    ...repaired,
+    recordedAt: "2026-10-13T05:20:00.000Z",
+  });
+  beforeSidecarPut = () => {
+    sidecar = { ...sidecar, recordedAt: latest };
+    sidecarVersion++;
+  };
+
+  await import("./backfill-demo-index");
+
+  expect(sidecar.recordedAt).toBe(latest);
+  expect(
+    index.find((record) => record.filename === original.filename)?.recordedAt,
+  ).toBe(latest);
+  expect(process.exitCode).toBeUndefined();
+});
+
+it("shows proposed value changes without writing in --dry-run --diff mode", async () => {
+  process.argv.push("--dry-run", "--diff");
+  await import("./backfill-demo-index");
+  expect(sidecarDiffs()).toHaveLength(1);
+  expect(sidecarDiffs()[0]).toContain("+++ new/demos/old.rec.json");
+  expect(sidecarDiffs()[0]).toContain('-  "games": [],');
+  expect(sidecarDiffs()[0]).toContain('+      "mission": "Katabatic",');
+  expect(
+    mocks.send.mock.calls.some(
+      ([command]) => command instanceof PutObjectCommand,
+    ),
+  ).toBe(false);
+  expect(sidecar).toEqual(original);
+});
+
+it.each([false, true])(
+  "omits unchanged sidecar output in diff mode (dry run=%s)",
+  async (dryRun) => {
+    process.argv.push("--diff");
+    if (dryRun) process.argv.push("--dry-run");
+    sidecar = repaired;
+    index = [repaired, added];
+    // Equal JSON values stay quiet while normal writes refresh cache headers.
+    mocks.analyze.mockResolvedValue({
+      ...repaired,
+      games: [{ ...repaired.games[0] }],
+    });
+    await import("./backfill-demo-index");
+    expect(sidecarDiffs()).toEqual([]);
+    expect(
+      vi
+        .mocked(console.log)
+        .mock.calls.some(([message]) => String(message).includes("old.rec")),
+    ).toBe(false);
+    const puts = mocks.send.mock.calls.flatMap(([command]) =>
+      command instanceof PutObjectCommand ? [command.input] : [],
+    );
+    if (dryRun) expect(puts).toEqual([]);
+    else
+      expect(puts).toContainEqual(
+        expect.objectContaining({
+          Key: "demos/old.rec.json",
+          CacheControl: "no-cache",
+        }),
+      );
+  },
+);
+
+it("shows a newly created sidecar as additions", async () => {
+  process.argv.push("--dry-run", "--diff");
+  mocks.list.mockResolvedValue([{ key: "demos/old.rec", size: 1 }]);
+  await import("./backfill-demo-index");
+  expect(sidecarDiffs()).toHaveLength(1);
+  expect(sidecarDiffs()[0]).toContain('+  "filename": "old.rec",');
+  expect(sidecarDiffs()[0]).not.toContain('-  "filename"');
+});
+
+it.each([false, true])(
+  "shows commentary reconciliation without mutating the old diff baseline (dry run=%s)",
+  async (dryRun) => {
+    process.argv = ["node", "backfill-demo-index.ts", "--diff"];
+    if (dryRun) process.argv.push("--dry-run");
+    sidecar = { ...original, hasCommentary: false };
+    mocks.list.mockResolvedValue([
+      { key: "demos/old.rec", size: 1 },
+      { key: "demos/old.rec.json", size: 1 },
+      { key: "demos/old.rec.commentary.m4a", size: 1 },
+    ]);
+    await import("./backfill-demo-index");
+    expect(mocks.analyze).not.toHaveBeenCalled();
+    expect(sidecarDiffs()).toHaveLength(1);
+    expect(sidecarDiffs()[0]).toContain('-  "hasCommentary": false,');
+    expect(sidecarDiffs()[0]).toContain('+  "hasCommentary": true,');
+    expect(sidecar.hasCommentary).toBe(!dryRun);
+  },
+);
+
+it("shows one committed diff against the latest sidecar after a conditional-write conflict", async () => {
+  process.argv.push("--players-only", "--diff");
+  sidecar = { ...original, playerCount: 0, reason: "Initial" };
+  mocks.analyze.mockResolvedValue({
+    ...repaired,
+    players: ["Alice"],
+    playerCount: 1,
+  });
+  beforeSidecarPut = () => {
+    sidecar = { ...sidecar, reason: "Concurrent edit" };
+    sidecarVersion++;
+  };
+  await import("./backfill-demo-index");
+  expect(sidecarDiffs()).toHaveLength(1);
+  const diff = sidecarDiffs()[0];
+  expect(diff).toContain('-  "playerCount": 0,');
+  expect(diff).toContain('+  "playerCount": 1,');
+  expect(diff).not.toContain('-  "reason": "Initial"');
+  expect(diff).not.toContain('+  "reason": "Concurrent edit"');
+  expect(sidecar.reason).toBe("Concurrent edit");
+});
+
+it("does not report a committed diff when the sidecar write fails", async () => {
+  process.argv.push("--diff");
+  const send = mocks.send.getMockImplementation()!;
+  mocks.send.mockImplementation(async (command) => {
+    if (
+      command instanceof PutObjectCommand &&
+      command.input.Key === "demos/old.rec.json"
+    )
+      throw new Error("Write failed");
+    return send(command);
+  });
+  await import("./backfill-demo-index");
+  expect(sidecarDiffs()).toEqual([]);
+  expect(sidecar).toEqual(original);
+  expect(process.exitCode).toBe(1);
+});
+
 it("leaves nested source recordings and their provenance sidecars out of the published catalog", async () => {
   const provenance = {
     format: "t2-mapper-source-demo",

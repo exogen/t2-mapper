@@ -26,10 +26,12 @@ import { updateDemoIndex } from "../relay/demoIndexStorage.js";
 import { analyzeDemo } from "./lib/analyzeDemo";
 import { updateDemoMetadata } from "./lib/updateDemoMetadata";
 import { preserveDemoGamePresentation } from "./lib/preserveDemoGamePresentation";
+import { formatJsonDiff } from "./lib/jsonDiff";
 
 const { values } = parseArgs({
   options: {
     "dry-run": { type: "boolean", default: false },
+    diff: { type: "boolean", default: false },
     force: { type: "boolean", default: false },
     "players-only": { type: "boolean", default: false },
     filter: { type: "string" },
@@ -46,6 +48,9 @@ if (values.help) {
   console.error();
   console.error("Options:");
   console.error("  --dry-run          Analyze only; write nothing to R2");
+  console.error(
+    "  --diff             Show value diffs only for changed sidecars",
+  );
   console.error(
     "  --force            Re-analyze demos that already have sidecars",
   );
@@ -85,6 +90,31 @@ async function backup(key: string, body: string) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
   }
+}
+
+async function saveSidecar(
+  key: string,
+  existing: DemoMetadata | undefined,
+  update: (latest: DemoMetadata | undefined) => DemoMetadata,
+): Promise<DemoMetadata> {
+  let before = existing;
+  const record = dryRun
+    ? update(existing)
+    : await updateDemoMetadata(
+        client,
+        config.bucket,
+        key,
+        (latest) => {
+          before = latest;
+          return update(latest);
+        },
+        backup,
+      );
+  if (values.diff) {
+    const diff = await formatJsonDiff(key, before, record);
+    if (diff) console.log(diff);
+  }
+  return record;
 }
 
 async function listBucket(): Promise<Map<string, number>> {
@@ -186,23 +216,17 @@ await runPool(recKeys, async (key) => {
         let record = raw;
         // Reconcile the commentary fields against the bucket listing —
         // the sidecar fields that change after the demo is written.
-        if (!playersOnly && reconcileCommentary(raw, key)) {
-          if (!dryRun) {
-            record = await updateDemoMetadata(
-              client,
-              config.bucket,
-              sidecarKey,
-              (latest) => ({
-                ...(latest ?? raw),
-                hasCommentary: raw.hasCommentary,
-              }),
-              backup,
+        const preview = { ...raw };
+        if (!playersOnly && reconcileCommentary(preview, key)) {
+          record = await saveSidecar(sidecarKey, raw, (latest) => ({
+            ...(latest ?? raw),
+            hasCommentary: preview.hasCommentary,
+          }));
+          if (!values.diff)
+            console.log(
+              `${dryRun ? "[dry-run] " : ""}${filename}: ` +
+                `hasCommentary → ${preview.hasCommentary}`,
             );
-          }
-          console.log(
-            `${dryRun ? "[dry-run] " : ""}${filename}: ` +
-              `hasCommentary → ${raw.hasCommentary}`,
-          );
         }
         records.push(record);
         reused++;
@@ -212,7 +236,7 @@ await runPool(recKeys, async (key) => {
       // fall through to a full re-analysis instead of reshaping it —
       // the replay also recovers stream-authoritative server/gameType
       // and per-game data the old writer didn't record.
-      if (!Array.isArray(raw.games))
+      if (!values.diff && !Array.isArray(raw.games))
         console.log(`${filename}: old-format sidecar — re-analyzing`);
     }
     const bytes = await getObjectBytes(key);
@@ -226,34 +250,29 @@ await runPool(recKeys, async (key) => {
           }
         : preserveDemoGamePresentation(analyzedRecord, existing);
     if (!playersOnly) reconcileCommentary(record, key);
-    if (!dryRun) {
-      record = await updateDemoMetadata(
-        client,
-        config.bucket,
-        sidecarKey,
-        (latest) =>
-          playersOnly
-            ? {
-                ...(latest ?? record),
-                players: record.players,
-                playerCount: record.playerCount,
-              }
-            : preserveDemoGamePresentation(record, latest),
-        backup,
-      );
-    }
+    record = await saveSidecar(sidecarKey, existing, (latest) =>
+      playersOnly
+        ? {
+            ...(latest ?? record),
+            players: record.players,
+            playerCount: record.playerCount,
+          }
+        : preserveDemoGamePresentation(record, latest),
+    );
     records.push(record);
     analyzed++;
-    const gameSummary =
-      record.games?.map((g) => `${g.mission} (${g.gameType})`).join(", ") ||
-      "no started games";
-    console.log(
-      `${dryRun ? "[dry-run] " : ""}${filename}: ` +
-        `${gameSummary} on ${record.server}, ` +
-        `${Math.round(record.durationMs / 1000)}s, ` +
-        `${record.playerCount} players (${record.players.length} names` +
-        `${existing ? `; previously displayed ${existing.playerCount ?? existing.players.length}` : ""})`,
-    );
+    if (!values.diff) {
+      const gameSummary =
+        record.games?.map((g) => `${g.mission} (${g.gameType})`).join(", ") ||
+        "no started games";
+      console.log(
+        `${dryRun ? "[dry-run] " : ""}${filename}: ` +
+          `${gameSummary} on ${record.server}, ` +
+          `${Math.round(record.durationMs / 1000)}s, ` +
+          `${record.playerCount} players (${record.players.length} names` +
+          `${existing ? `; previously displayed ${existing.playerCount ?? existing.players.length}` : ""})`,
+      );
+    }
   } catch (err) {
     failed++;
     console.error(`FAILED ${filename}: ${String(err)}`);

@@ -121,5 +121,11 @@ export function preserveDemoGamePresentation(
     savedSource === "sidecar"
       ? (saved.reason ?? record.reason)
       : (record.reason ?? saved.reason);
-  return { ...metadata, ...(reason !== undefined && { reason }) };
+  return {
+    ...metadata,
+    // Recording headers lose timestamp precision; existing sidecars are authoritative.
+    recordedAt:
+      savedSource === "sidecar" ? saved.recordedAt : record.recordedAt,
+    ...(reason !== undefined && { reason }),
+  };
 }

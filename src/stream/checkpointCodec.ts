@@ -21,6 +21,7 @@ export function base64ToBytes(text: string): Uint8Array<ArrayBuffer> {
 export function encodeCheckpoint(value: unknown): string {
   const nodes: Node[] = [];
   const seen = new Map<object, number>();
+  const pending: object[] = [];
   function encode(value: unknown): Value {
     if (value === undefined) return { special: "undefined" };
     if (
@@ -43,6 +44,15 @@ export function encodeCheckpoint(value: unknown): string {
     seen.set(value, ref);
     const node: Node = { type: "object", value: null };
     nodes.push(node);
+    pending.push(value);
+    return { ref };
+  }
+  const root = encode(value);
+  // Timeline histories can be thousands of objects deep. Assign references
+  // first, then visit their contents without recursing through the graph.
+  for (let index = 0; index < pending.length; index++) {
+    const value = pending[index];
+    const node = nodes[index];
     if (value instanceof Map) {
       node.type = "map";
       node.value = [...value].map(([key, item]) => [encode(key), encode(item)]);
@@ -65,9 +75,8 @@ export function encodeCheckpoint(value: unknown): string {
         Object.entries(value).map(([key, item]) => [key, encode(item)]),
       );
     }
-    return { ref };
   }
-  return JSON.stringify({ root: encode(value), nodes } satisfies Graph);
+  return JSON.stringify({ root, nodes } satisfies Graph);
 }
 
 export function decodeCheckpoint(text: string): unknown {
@@ -104,16 +113,16 @@ export function decodeCheckpoint(text: string): unknown {
       }
     }
   });
+  function checkedReference(ref: number): number {
+    if (!Number.isSafeInteger(ref) || ref < 0 || ref >= objects.length)
+      throw new Error("Invalid checkpoint reference");
+    return ref;
+  }
   function decode(value: Value): unknown {
     if (value === null || typeof value !== "object") return value;
     if ("ref" in value) {
-      if (
-        !Number.isSafeInteger(value.ref) ||
-        value.ref < 0 ||
-        value.ref >= objects.length
-      )
-        throw new Error("Invalid checkpoint reference");
-      return objects[value.ref] ?? decodeArray(value.ref);
+      const ref = checkedReference(value.ref);
+      return objects[ref] ?? decodeArray(ref);
     }
     switch (value.special) {
       case "undefined":
@@ -135,13 +144,29 @@ export function decodeCheckpoint(text: string): unknown {
   // boxed elements once any array held an object.
   const building = new Set<number>();
   function decodeArray(ref: number): unknown[] {
-    if (building.has(ref))
-      throw new Error("Unsupported checkpoint array cycle");
-    building.add(ref);
-    const array = Array.from(graph.nodes[ref].value as Value[], decode);
-    building.delete(ref);
-    objects[ref] = array;
-    return array;
+    const pending: Array<{ ref: number; values: Value[]; next: number }> = [];
+    const visit = (ref: number) => {
+      if (building.has(ref))
+        throw new Error("Unsupported checkpoint array cycle");
+      building.add(ref);
+      pending.push({ ref, values: graph.nodes[ref].value as Value[], next: 0 });
+    };
+    visit(ref);
+    while (pending.length) {
+      const node = pending[pending.length - 1];
+      if (node.next < node.values.length) {
+        const value = node.values[node.next++];
+        if (value && typeof value === "object" && "ref" in value) {
+          const child = checkedReference(value.ref);
+          if (objects[child] === null) visit(child);
+        }
+        continue;
+      }
+      objects[node.ref] = Array.from(node.values, decode);
+      building.delete(node.ref);
+      pending.pop();
+    }
+    return objects[ref] as unknown[];
   }
   graph.nodes.forEach((node, i) => {
     const object = objects[i];
