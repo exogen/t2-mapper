@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Sign in with Discord – MapGenius</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="icon" type="image/png" href="/icon.png" />
+  </head>
+  <body>
+    <main class="sign-in-panel" aria-labelledby="sign-in-title">
+      <p class="brand">MapGenius</p>
+      <h1 id="sign-in-title">Sign in with Discord</h1>
+      <div class="status" role="status" aria-live="polite" aria-atomic="true">
+        <span id="sign-in-spinner" class="spinner" aria-hidden="true"></span>
+        <p id="sign-in-message">Connecting to Discord…</p>
+      </div>
+      <div class="actions">
+        <button id="sign-in-retry" type="button" hidden>Try again</button>
+        <button id="sign-in-close" class="secondary" type="button" hidden>
+          Close window
+        </button>
+        <a id="sign-in-return" class="secondary" href="../../" hidden>
+          Return to MapGenius
+        </a>
+      </div>
+      <noscript>JavaScript is required to sign in with Discord.</noscript>
+    </main>
+    <script type="module" src="/src/account/discordSignInPage.ts"></script>
+  </body>
+</html>

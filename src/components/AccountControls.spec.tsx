@@ -7,7 +7,6 @@ const state = vi.hoisted(() => ({ account: {} as AppAccountState }));
 vi.mock("../state/appAccountStore", () => ({
   useAppAccount: (selector: (value: AppAccountState) => unknown) =>
     selector(state.account),
-  consumeAccountSignInError() {},
   refreshAccount() {},
   signInWithDiscord() {},
   signOutAccount() {},
@@ -20,14 +19,36 @@ beforeEach(() => {
     user: null,
     pending: null,
     error: null,
+    signInUrl: null,
   };
 });
 
 it("offers Discord sign-in without account creation or profile fields", () => {
   const markup = renderToStaticMarkup(<AccountControls />);
   expect(markup).toContain("Sign in with Discord");
+  expect(markup).toContain('title="Sign in in a separate window"');
   expect(markup).not.toContain("<input");
   expect(markup).not.toContain("Relay status");
+});
+
+it("offers a safe separate-tab link when the browser blocks the popup", () => {
+  state.account.error = "Your browser blocked the sign-in window.";
+  state.account.signInUrl =
+    "https://example.com/account/sign-in/#12345678-1234-4123-8123-123456789abc";
+  const markup = renderToStaticMarkup(<AccountControls />);
+  expect(markup).toContain("Sign in with Discord");
+  expect(markup).toContain("Open sign-in in a new tab");
+  expect(markup).toContain('target="_blank" rel="noopener noreferrer"');
+  expect(markup).toContain('role="alert"');
+});
+
+it("keeps the separate-tab fallback visible after a focus refresh clears the error", () => {
+  state.account.signInUrl =
+    "https://example.com/account/sign-in/#12345678-1234-4123-8123-123456789abc";
+  const markup = renderToStaticMarkup(<AccountControls />);
+  expect(markup).toContain("Open sign-in in a new tab");
+  expect(markup).toContain("Sign in with Discord");
+  expect(markup).not.toContain("Your browser blocked the sign-in window.");
 });
 
 it("hides the account controls when the relay has not enabled login", () => {

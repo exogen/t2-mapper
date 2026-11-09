@@ -273,7 +273,7 @@ export async function createAppAuth({
     // raw provider responses or database errors to the router's console.
     onAPIError: {
       throw: true,
-      errorURL: `${config.trustedOrigins[0]}/?accountError=discord`,
+      errorURL: `${config.trustedOrigins[0]}/account/sign-in/?accountError=discord`,
     },
     logger: {
       // Provider responses and token material must never be included in logs.

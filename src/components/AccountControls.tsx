@@ -1,7 +1,5 @@
-import { useEffect } from "react";
 import { FaCrown, FaDiscord } from "react-icons/fa6";
 import {
-  consumeAccountSignInError,
   refreshAccount,
   signInWithDiscord,
   signOutAccount,
@@ -12,14 +10,6 @@ import styles from "./AccountControls.module.css";
 
 export function AccountControls() {
   const account = useAppAccount((state) => state);
-
-  useEffect(() => {
-    void refreshAccount().then(consumeAccountSignInError);
-    // Pick up account changes in other tabs without a request on every focus.
-    const onFocus = () => void refreshAccount({ onlyIfStale: true });
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, []);
 
   // Older relays return a cross-origin 404 without CORS headers. Wait until
   // account support is confirmed before showing this optional section.
@@ -74,6 +64,7 @@ export function AccountControls() {
           onClick={() => void signInWithDiscord()}
           disabled={pending || account.status === "loading"}
           aria-busy={account.pending === "sign-in"}
+          title="Sign in in a separate window"
         >
           <FaDiscord aria-hidden focusable="false" />
           <span>
@@ -83,9 +74,18 @@ export function AccountControls() {
           </span>
         </button>
       ) : null}
-      {account.error && (
+      {(account.error || account.signInUrl) && (
         <div className={styles.Error} role="alert">
-          <span>{account.error}</span>
+          {account.error && <span>{account.error}</span>}
+          {account.signInUrl && (
+            <a
+              href={account.signInUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Open sign-in in a new tab
+            </a>
+          )}
           {account.status === "error" && (
             <button
               type="button"

@@ -161,3 +161,17 @@
   line-height: 1.4;
   color: #ffd4c9;
 }
+
+.Error a {
+  color: #c5ccff;
+  text-underline-offset: 2px;
+}
+
+.Error a:hover {
+  color: #fff;
+}
+
+.Error a:focus-visible {
+  outline: 2px solid #c5ccff;
+  outline-offset: 2px;
+}

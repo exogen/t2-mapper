@@ -194,7 +194,14 @@ async function fixture({
     }
     return response;
   };
-  const beginLogin = async (additionalData: Record<string, unknown> = {}) => {
+  const beginLogin = async (
+    additionalData: Record<string, unknown> = {},
+    options: {
+      callbackURL?: string;
+      errorCallbackURL?: string;
+      disableRedirect?: boolean;
+    } = {},
+  ) => {
     const response = await request("/api/auth/sign-in/social", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -203,10 +210,17 @@ async function fixture({
         callbackURL: `${APP_ORIGIN}/watch/`,
         errorCallbackURL: `${APP_ORIGIN}/?accountError=discord`,
         additionalData,
+        ...options,
       }),
     });
     expect(response.status).toBe(200);
-    const authorization = (await response.json()) as { url: string };
+    const authorization = (await response.json()) as {
+      url: string;
+      redirect: boolean;
+    };
+    expect(authorization.redirect).toBe(!options.disableRedirect);
+    if (options.disableRedirect)
+      expect(response.headers.get("location")).toBeNull();
     const authorizationURL = new URL(authorization.url);
     expect(authorizationURL.hostname).toBe("discord.com");
     expect(authorizationURL.searchParams.get("scope")).toBe("identify");
@@ -935,6 +949,49 @@ it("rejects untrusted origins, unsafe redirects, extra account routes, and overs
   ).toBe(413);
 });
 
+it.each(["success", "denied"] as const)(
+  "completes popup OAuth (%s) at the lightweight page without changing its attempt fragment",
+  async (outcome) => {
+    const app = await fixture();
+    const attemptId = "7e80539c-2599-4cd9-a9d7-8c5019e425a0";
+    const callbackURL = `${APP_ORIGIN}/account/sign-in/?complete=1#${attemptId}`;
+    const errorCallbackURL = `${APP_ORIGIN}/account/sign-in/?accountError=discord#${attemptId}`;
+    const state = await app.beginLogin(
+      {},
+      {
+        callbackURL,
+        errorCallbackURL,
+        disableRedirect: true,
+      },
+    );
+    const query = new URLSearchParams({ state, iss: "https://discord.com" });
+    if (outcome === "success") query.set("code", "valid-code");
+    else query.set("error", "access_denied");
+    const response = await app.request(`/api/auth/callback/discord?${query}`);
+    expect(response.status).toBe(302);
+    const location = new URL(response.headers.get("location")!);
+    expect(location.origin).toBe(APP_ORIGIN);
+    expect(location.pathname).toBe("/account/sign-in/");
+    expect(location.hash).toBe(`#${attemptId}`);
+    if (outcome === "success") {
+      expect(location.searchParams.get("complete")).toBe("1");
+      expect(await app.account()).toMatchObject({
+        discordId: USER_ID,
+        role: "user",
+      });
+      expect(
+        response.headers
+          .getSetCookie()
+          .some((cookie) => cookie.includes("HttpOnly")),
+      ).toBe(true);
+    } else {
+      expect(location.searchParams.get("accountError")).toBe("discord");
+      expect(await app.account()).toBeNull();
+      expect(app.providerRequests).toEqual([]);
+    }
+  },
+);
+
 it("rejects a callback without its matching OAuth state cookie", async () => {
   const app = await fixture();
   const state = await app.beginLogin();
@@ -948,7 +1005,7 @@ it("rejects a callback without its matching OAuth state cookie", async () => {
 });
 
 it.each(["missing", "unknown", "expired"])(
-  "returns to the app when OAuth state is %s without contacting Discord",
+  "returns to the sign-in page when OAuth state is %s without contacting Discord",
   async (kind) => {
     const app = await fixture();
     let state: string | undefined;
@@ -964,7 +1021,7 @@ it.each(["missing", "unknown", "expired"])(
     expect(response.status).toBe(302);
     const location = new URL(response.headers.get("location")!);
     expect(location.origin).toBe(APP_ORIGIN);
-    expect(location.pathname).toBe("/");
+    expect(location.pathname).toBe("/account/sign-in/");
     expect(location.searchParams.get("accountError")).toBe("discord");
     expect(await app.account()).toBeNull();
     expect(app.providerRequests).toEqual([]);

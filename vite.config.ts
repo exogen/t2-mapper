@@ -6,28 +6,36 @@ import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
 
 /**
- * Dev-server convenience: serve the /watch entry at /watch and /watch/
- * (production hosts resolve docs/watch/index.html for those URLs
+ * Dev-server convenience: resolve directory URLs to their standalone entries
+ * (production hosts resolve each directory's index.html for those URLs
  * natively, so this is dev-only parity).
  */
-function watchEntryDevRewrite(): Plugin {
+function pageEntryDevRewrite(): Plugin {
   return {
-    name: "watch-entry-dev-rewrite",
+    name: "page-entry-dev-rewrite",
     configureServer(server) {
+      const directoryPaths = new Set(
+        ["watch", "account/sign-in"].map(
+          (entry) => `${server.config.base}${entry}`,
+        ),
+      );
       server.middlewares.use((req, res, next) => {
         // Match on the pathname — req.url includes any query string
         // (e.g. /watch?name=…), which must survive in both branches.
         const url = new URL(req.url ?? "", "http://localhost");
-        if (url.pathname === "/watch") {
+        if (directoryPaths.has(url.pathname)) {
           // Real redirect to the canonical trailing-slash URL, mirroring
           // Cloudflare/GitHub Pages resolving docs/watch/index.html.
           res.statusCode = 308;
-          res.setHeader("Location", `/watch/${url.search}`);
+          res.setHeader("Location", `${url.pathname}/${url.search}`);
           res.end();
           return;
         }
-        if (url.pathname === "/watch/") {
-          req.url = `/watch/index.html${url.search}`;
+        if (
+          url.pathname.endsWith("/") &&
+          directoryPaths.has(url.pathname.slice(0, -1))
+        ) {
+          req.url = `${url.pathname}index.html${url.search}`;
         }
         next();
       });
@@ -213,6 +221,9 @@ export default defineConfig(({ mode }) => {
         input: {
           main: fileURLToPath(new URL("index.html", import.meta.url)),
           watch: fileURLToPath(new URL("watch/index.html", import.meta.url)),
+          signIn: fileURLToPath(
+            new URL("account/sign-in/index.html", import.meta.url),
+          ),
         },
       },
     },
@@ -223,7 +234,7 @@ export default defineConfig(({ mode }) => {
       react(),
       babel({ presets: [reactCompilerPreset()] }),
       preconnectGameAssets(publicEnv.GAME_ASSETS_BASE_URL),
-      watchEntryDevRewrite(),
+      pageEntryDevRewrite(),
       ...(localCastDir
         ? [localCasts(localCastDir, castBaseUrl.replace(/\/+$/, ""))]
         : []),

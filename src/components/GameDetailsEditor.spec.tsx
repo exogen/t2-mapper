@@ -93,6 +93,7 @@ beforeEach(() => {
     enabled: true,
     pending: null,
     error: null,
+    signInUrl: null,
     user: {
       id: "admin",
       role: "admin",

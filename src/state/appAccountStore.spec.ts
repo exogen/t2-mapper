@@ -1,12 +1,20 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const client = vi.hoisted(() => ({ social: vi.fn(), signOut: vi.fn() }));
-vi.mock("better-auth/client", () => ({
-  createAuthClient: () => ({
+const popup = vi.hoisted(() => ({
+  open: vi.fn(),
+  focus: vi.fn(),
+  dispose: vi.fn(),
+}));
+vi.mock("../account/authClient", () => ({
+  appApiBaseUrl: "https://api.example.com",
+  AUTH_REQUEST_TIMEOUT_MS: 20_000,
+  authClient: {
     signIn: { social: client.social },
     signOut: client.signOut,
-  }),
+  },
 }));
+vi.mock("../account/discordSignIn", () => ({ openDiscordSignIn: popup.open }));
 
 let account: typeof import("./appAccountStore");
 let fetchMock: ReturnType<typeof vi.fn<typeof fetch>>;
@@ -32,6 +40,15 @@ beforeEach(async () => {
   });
   client.social.mockReset();
   client.signOut.mockReset();
+  popup.open.mockReset();
+  popup.focus.mockReset().mockReturnValue(true);
+  popup.dispose.mockReset();
+  popup.open.mockReturnValue({
+    url: "https://example.com/account/sign-in/#12345678-1234-4123-8123-123456789abc",
+    opened: true,
+    focus: popup.focus,
+    dispose: popup.dispose,
+  });
   account = await import("./appAccountStore");
 });
 
@@ -49,6 +66,7 @@ it("loads a verified app session with its cookie and never caches the response",
     {
       credentials: "include",
       cache: "no-store",
+      signal: expect.any(AbortSignal),
     },
   );
   expect(account.appAccountStore.getState()).toMatchObject({
@@ -56,6 +74,77 @@ it("loads a verified app session with its cookie and never caches the response",
     status: "ready",
     user: admin,
   });
+});
+
+function stalledRequest(
+  _input: Parameters<typeof fetch>[0],
+  options?: RequestInit,
+): ReturnType<typeof fetch> {
+  return new Promise((_resolve, reject) => {
+    const signal = options?.signal;
+    if (!signal) throw new Error("Expected an account request signal");
+    signal.addEventListener("abort", () => reject(signal.reason), {
+      once: true,
+    });
+  });
+}
+
+it("times out a stalled account request, clears its observer, and permits an immediate retry", async () => {
+  vi.useFakeTimers();
+  fetchMock.mockImplementationOnce(stalledRequest);
+  const request = account.refreshAccount();
+  const duplicate = account.refreshAccount();
+  expect(duplicate).toBe(request);
+  await vi.advanceTimersByTimeAsync(19_999);
+  expect(account.appAccountStore.getState().status).toBe("loading");
+  await vi.advanceTimersByTimeAsync(1);
+  await request;
+  expect(account.appAccountStore.getState()).toMatchObject({
+    status: "error",
+    user: null,
+    error: "Sign-in is unavailable. Please try again.",
+  });
+  expect(vi.getTimerCount()).toBe(0);
+  fetchMock.mockResolvedValueOnce(
+    Response.json({ enabled: true, user: admin }),
+  );
+  await account.refreshAccount();
+  expect(account.appAccountStore.getState()).toMatchObject({
+    status: "ready",
+    user: admin,
+  });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("does not let an older timed-out request clear or overwrite a newer sign-in verification", async () => {
+  vi.useFakeTimers();
+  account.appAccountStore.setState({ status: "ready", enabled: true });
+  fetchMock.mockImplementationOnce(stalledRequest);
+  const older = account.refreshAccount();
+  await vi.advanceTimersByTimeAsync(10_000);
+  account.signInWithDiscord();
+  let resolveVerification!: (response: Response) => void;
+  fetchMock.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveVerification = resolve;
+      }),
+  );
+  signInEvent("complete");
+  const verification = account.refreshAccount();
+  await vi.advanceTimersByTimeAsync(10_000);
+  await older;
+  expect(account.refreshAccount()).toBe(verification);
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(account.appAccountStore.getState()).toMatchObject({
+    status: "ready",
+    error: null,
+  });
+  resolveVerification(Response.json({ enabled: true, user: admin }));
+  await verification;
+  expect(account.appAccountStore.getState().user).toEqual(admin);
+  expect(vi.getTimerCount()).toBe(0);
 });
 
 it.each(["idle", "error"] as const)(
@@ -244,50 +333,318 @@ it("keeps account support unknown after an initial CORS failure and discovers it
   });
 });
 
-it("starts only Discord sign-in and preserves the selected map/demo URL", async () => {
-  client.social.mockResolvedValue({
-    data: { url: "https://discord.com/oauth2/authorize" },
-    error: null,
-  });
-  await account.signInWithDiscord();
-  expect(client.social).toHaveBeenCalledWith({
-    provider: "discord",
-    callbackURL: "https://example.com/watch/?server=abc#camera",
-    errorCallbackURL:
-      "https://example.com/watch/?server=abc&accountError=discord#camera",
-  });
-  expect(account.appAccountStore.getState().pending).toBe(null);
-});
+function signInEvent(event: "opened" | "complete" | "error") {
+  popup.open.mock.calls.at(-1)![0].onEvent(event);
+}
 
-it("coalesces duplicate sign-in clicks while the provider request is pending", async () => {
-  let resolveSignIn!: (result: unknown) => void;
-  client.social.mockImplementationOnce(
-    () =>
-      new Promise((resolve) => {
-        resolveSignIn = resolve;
-      }),
+it("opens sign-in synchronously without navigating the demo or calling Discord from the game", () => {
+  account.signInWithDiscord();
+  expect(popup.open).toHaveBeenCalledTimes(1);
+  expect(client.social).not.toHaveBeenCalled();
+  expect(fetchMock).not.toHaveBeenCalled();
+  expect(window.location.href).toBe(
+    "https://example.com/watch/?server=abc#camera",
   );
-  const request = account.signInWithDiscord();
-  await account.signInWithDiscord();
-  expect(client.social).toHaveBeenCalledTimes(1);
-  resolveSignIn({
-    data: { url: "https://discord.com/oauth2/authorize" },
-    error: null,
-  });
-  await request;
-  expect(account.appAccountStore.getState().pending).toBe(null);
+  expect(replaceState).not.toHaveBeenCalled();
+  expect(account.appAccountStore.getState().pending).toBe("sign-in");
 });
 
-it("clears pending sign-in after a provider failure so the user can retry", async () => {
-  client.social.mockResolvedValue({
-    error: { message: "Private provider detail" },
-    data: null,
+it("coalesces startup clicks and focuses the same popup after it opens", () => {
+  account.signInWithDiscord();
+  account.signInWithDiscord();
+  expect(popup.open).toHaveBeenCalledTimes(1);
+  signInEvent("opened");
+  expect(account.appAccountStore.getState().pending).toBe(null);
+  account.signInWithDiscord();
+  expect(popup.focus).toHaveBeenCalledOnce();
+  expect(popup.open).toHaveBeenCalledTimes(1);
+});
+
+it("offers a separate-tab fallback when the popup is blocked", () => {
+  const signInUrl =
+    "https://example.com/account/sign-in/#12345678-1234-4123-8123-123456789abc";
+  popup.open.mockReturnValueOnce({
+    url: signInUrl,
+    opened: false,
+    focus: popup.focus,
+    dispose: popup.dispose,
   });
-  await account.signInWithDiscord();
+  account.signInWithDiscord();
+  expect(account.appAccountStore.getState()).toMatchObject({
+    pending: null,
+    error: "Your browser blocked the sign-in window.",
+    signInUrl,
+  });
+  signInEvent("opened");
+  expect(account.appAccountStore.getState()).toMatchObject({
+    pending: null,
+    error: null,
+    signInUrl: null,
+  });
+});
+
+it("replaces a closed popup without letting the old attempt hold the UI busy", () => {
+  account.signInWithDiscord();
+  signInEvent("opened");
+  popup.focus.mockReturnValueOnce(false);
+  account.signInWithDiscord();
+  expect(popup.dispose).toHaveBeenCalledOnce();
+  expect(popup.open).toHaveBeenCalledTimes(2);
+  expect(account.appAccountStore.getState().pending).toBe("sign-in");
+});
+
+it("clears pending state after a startup exception so the user can retry", () => {
+  popup.open.mockImplementationOnce(() => {
+    throw new Error("Private browser detail");
+  });
+  account.signInWithDiscord();
   expect(account.appAccountStore.getState()).toMatchObject({
     pending: null,
     error: "Could not start Discord sign-in. Please try again.",
   });
+  account.signInWithDiscord();
+  expect(popup.open).toHaveBeenCalledTimes(2);
+});
+
+it("verifies the cookie session on completion after clearing busy state, without navigating", async () => {
+  account.appAccountStore.setState({ status: "ready", enabled: true });
+  fetchMock.mockImplementation(async () => {
+    expect(account.appAccountStore.getState().pending).toBeNull();
+    return Response.json({ enabled: true, user: admin });
+  });
+  account.signInWithDiscord();
+  signInEvent("complete");
+  await account.refreshAccount();
+  expect(fetchMock).toHaveBeenCalledOnce();
+  expect(account.appAccountStore.getState()).toMatchObject({
+    pending: null,
+    status: "ready",
+    user: admin,
+    signInUrl: null,
+  });
+  expect(popup.dispose).toHaveBeenCalledOnce();
+  expect(window.location.href).toBe(
+    "https://example.com/watch/?server=abc#camera",
+  );
+  expect(replaceState).not.toHaveBeenCalled();
+});
+
+it("ignores an older guest focus refresh after authentication even when the startup notification was lost", async () => {
+  account.appAccountStore.setState({ status: "ready", enabled: true });
+  account.signInWithDiscord();
+  let resolveOld!: (response: Response) => void;
+  fetchMock.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveOld = resolve;
+      }),
+  );
+  const oldRequest = account.refreshAccountOnFocus();
+  fetchMock.mockResolvedValueOnce(
+    Response.json({ enabled: true, user: admin }),
+  );
+  signInEvent("complete");
+  await account.refreshAccount();
+  resolveOld(Response.json({ enabled: true, user: null }));
+  await oldRequest;
+  expect(account.appAccountStore.getState().user).toEqual(admin);
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+it("keeps authentication unverified when completion arrives while the relay is offline", async () => {
+  account.appAccountStore.setState({ status: "ready", enabled: true });
+  fetchMock.mockRejectedValue(new TypeError("Offline"));
+  account.signInWithDiscord();
+  signInEvent("complete");
+  await account.refreshAccount();
+  expect(account.appAccountStore.getState()).toMatchObject({
+    pending: null,
+    status: "error",
+    user: null,
+    error: "Sign-in is unavailable. Please try again.",
+  });
+  expect(window.location.href).toBe(
+    "https://example.com/watch/?server=abc#camera",
+  );
+});
+
+it("does not trust a completion notification when the relay still reports an anonymous session", async () => {
+  account.appAccountStore.setState({ status: "ready", enabled: true });
+  fetchMock.mockResolvedValue(Response.json({ enabled: true, user: null }));
+  account.signInWithDiscord();
+  signInEvent("complete");
+  await account.refreshAccount();
+  expect(account.appAccountStore.getState()).toMatchObject({
+    status: "ready",
+    pending: null,
+    user: null,
+    error: "Sign-in could not be verified. Please try again.",
+  });
+});
+
+it.each(["retry", "sign-out"] as const)(
+  "ignores a superseded sign-in verification failure after %s",
+  async (action) => {
+    account.appAccountStore.setState({ status: "ready", enabled: true });
+    let resolveVerification!: (response: Response) => void;
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveVerification = resolve;
+        }),
+    );
+    account.signInWithDiscord();
+    signInEvent("complete");
+    const verification = account.refreshAccount();
+    if (action === "retry") account.signInWithDiscord();
+    else {
+      client.signOut.mockResolvedValue({
+        data: { success: true },
+        error: null,
+      });
+      await account.signOutAccount();
+    }
+    resolveVerification(Response.json({ enabled: true, user: null }));
+    await verification;
+    expect(account.appAccountStore.getState()).toMatchObject({
+      pending: action === "retry" ? "sign-in" : null,
+      user: null,
+      error: null,
+    });
+  },
+);
+
+it("retains the manual-tab link when a focus refresh clears the popup-blocked error", async () => {
+  account.appAccountStore.setState({ status: "ready", enabled: true });
+  const signInUrl =
+    "https://example.com/account/sign-in/#12345678-1234-4123-8123-123456789abc";
+  popup.open.mockReturnValueOnce({
+    url: signInUrl,
+    opened: false,
+    focus: popup.focus,
+    dispose: popup.dispose,
+  });
+  account.signInWithDiscord();
+  fetchMock.mockResolvedValue(Response.json({ enabled: true, user: null }));
+  await account.refreshAccountOnFocus();
+  expect(account.appAccountStore.getState()).toMatchObject({
+    error: null,
+    signInUrl,
+  });
+});
+
+it("refreshes on focus during sign-in even before the normal cooldown expires", async () => {
+  fetchMock.mockResolvedValueOnce(Response.json({ enabled: true, user: null }));
+  await account.refreshAccount();
+  account.signInWithDiscord();
+  signInEvent("opened");
+  fetchMock.mockResolvedValueOnce(
+    Response.json({ enabled: true, user: admin }),
+  );
+  await account.refreshAccountOnFocus();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(account.appAccountStore.getState().user).toEqual(admin);
+  await account.refreshAccountOnFocus();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+it("verifies a fast popup login even when every startup and completion notification is lost", async () => {
+  account.appAccountStore.setState({ status: "ready", enabled: true });
+  account.signInWithDiscord();
+  expect(account.appAccountStore.getState().pending).toBe("sign-in");
+  fetchMock.mockResolvedValueOnce(
+    Response.json({ enabled: true, user: admin }),
+  );
+  // The app owns focus checks, independently of the sidebar's React Activity.
+  await account.refreshAccountOnFocus();
+  expect(fetchMock).toHaveBeenCalledOnce();
+  expect(account.appAccountStore.getState()).toMatchObject({
+    pending: null,
+    user: admin,
+  });
+  expect(popup.dispose).toHaveBeenCalledOnce();
+});
+
+it("coalesces focus checks while an anonymous sign-in attempt stays active", async () => {
+  account.appAccountStore.setState({ status: "ready", enabled: true });
+  account.signInWithDiscord();
+  let resolveGuest!: (response: Response) => void;
+  fetchMock.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveGuest = resolve;
+      }),
+  );
+  const request = account.refreshAccountOnFocus();
+  expect(account.refreshAccountOnFocus()).toBe(request);
+  expect(fetchMock).toHaveBeenCalledOnce();
+  resolveGuest(Response.json({ enabled: true, user: null }));
+  await request;
+  expect(account.appAccountStore.getState()).toMatchObject({
+    pending: null,
+    user: null,
+  });
+  expect(popup.dispose).not.toHaveBeenCalled();
+  fetchMock.mockResolvedValueOnce(
+    Response.json({ enabled: true, user: admin }),
+  );
+  signInEvent("complete");
+  await account.refreshAccount();
+  expect(account.appAccountStore.getState().user).toEqual(admin);
+});
+
+it("does not bypass an in-progress sign-out when the window regains focus", async () => {
+  account.appAccountStore.setState({ status: "ready", enabled: true });
+  account.signInWithDiscord();
+  signInEvent("opened");
+  let resolveSignOut!: (result: unknown) => void;
+  client.signOut.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveSignOut = resolve;
+      }),
+  );
+  const signOut = account.signOutAccount();
+  await account.refreshAccountOnFocus();
+  expect(fetchMock).not.toHaveBeenCalled();
+  expect(account.appAccountStore.getState().pending).toBe("sign-out");
+  resolveSignOut({ data: { success: true }, error: null });
+  await signOut;
+});
+
+it("allows retry inside the popup after a safe cancellation/error notification", () => {
+  account.signInWithDiscord();
+  signInEvent("error");
+  expect(account.appAccountStore.getState()).toMatchObject({
+    pending: null,
+    user: null,
+    error: "Discord sign-in was cancelled or failed. Please try again.",
+  });
+  expect(popup.dispose).not.toHaveBeenCalled();
+  signInEvent("opened");
+  expect(account.appAccountStore.getState().error).toBeNull();
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it("restores a usable button and fallback after the popup page fails to load", () => {
+  account.signInWithDiscord();
+  popup.open.mock.calls[0][0].onUnavailable();
+  expect(account.appAccountStore.getState()).toMatchObject({
+    pending: null,
+    error: "Could not open sign-in. Try opening it in a new tab.",
+    signInUrl: expect.stringContaining("/account/sign-in/"),
+  });
+});
+
+it("expires an abandoned sign-in observer without leaving busy state or a stale fallback", () => {
+  account.signInWithDiscord();
+  popup.open.mock.calls[0][0].onExpired();
+  expect(account.appAccountStore.getState()).toMatchObject({
+    pending: null,
+    signInUrl: null,
+  });
+  account.signInWithDiscord();
+  expect(popup.open).toHaveBeenCalledTimes(2);
 });
 
 it("does not restore a signed-out account from an older session request", async () => {
@@ -375,24 +732,44 @@ it("keeps the current account visible when sign-out fails", async () => {
   });
 });
 
-it("consumes sign-in error parameters without clearing app navigation or history state", () => {
-  window.location.href =
-    "https://example.com/watch/?server=abc&accountError=discord&error=access_denied&error_description=Provider+details#camera";
-  account.consumeAccountSignInError();
-  expect(replaceState).toHaveBeenCalledWith(
-    { keep: true },
-    "",
-    "https://example.com/watch/?server=abc#camera",
+it("bounds the whole sign-out action and retains the profile for retry after an abort", async () => {
+  vi.useFakeTimers();
+  account.appAccountStore.setState({
+    status: "ready",
+    enabled: true,
+    user: admin,
+  });
+  client.signOut.mockImplementationOnce(
+    ({ fetchOptions }: { fetchOptions: { signal: AbortSignal } }) =>
+      new Promise((_resolve, reject) => {
+        fetchOptions.signal.addEventListener(
+          "abort",
+          () => reject(fetchOptions.signal.reason),
+          { once: true },
+        );
+      }),
   );
-  expect(account.appAccountStore.getState().error).toContain(
-    "Discord sign-in was cancelled or failed",
-  );
-});
-
-it("preserves unrelated error parameters without the sign-in marker", () => {
-  window.location.href =
-    "https://example.com/watch/?server=abc&error=other&error_description=Unrelated#camera";
-  account.consumeAccountSignInError();
-  expect(replaceState).not.toHaveBeenCalled();
-  expect(account.appAccountStore.getState().error).toBeNull();
+  const request = account.signOutAccount();
+  expect(account.appAccountStore.getState().pending).toBe("sign-out");
+  await vi.advanceTimersByTimeAsync(19_999);
+  expect(account.appAccountStore.getState().pending).toBe("sign-out");
+  await vi.advanceTimersByTimeAsync(1);
+  await request;
+  expect(account.appAccountStore.getState()).toMatchObject({
+    user: admin,
+    pending: null,
+    error: "Could not sign out. Please try again.",
+  });
+  expect(vi.getTimerCount()).toBe(0);
+  client.signOut.mockResolvedValueOnce({
+    data: { success: true },
+    error: null,
+  });
+  await account.signOutAccount();
+  expect(account.appAccountStore.getState()).toMatchObject({
+    user: null,
+    pending: null,
+    error: null,
+  });
+  expect(vi.getTimerCount()).toBe(0);
 });
