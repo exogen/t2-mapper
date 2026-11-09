@@ -11,8 +11,7 @@ import styles from "./AccountControls.module.css";
 export function AccountControls() {
   const account = useAppAccount((state) => state);
 
-  // Older relays return a cross-origin 404 without CORS headers. Wait until
-  // account support is confirmed before showing this optional section.
+  // Only show accounts after the relay confirms sign-in is configured.
   if (account.enabled !== true) return null;
 
   const pending = account.pending != null;

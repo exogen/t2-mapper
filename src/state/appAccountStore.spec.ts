@@ -13,8 +13,8 @@ vi.mock("../account/authClient", () => ({
     signIn: { social: client.social },
     signOut: client.signOut,
   },
+  openDiscordSignIn: popup.open,
 }));
-vi.mock("../account/discordSignIn", () => ({ openDiscordSignIn: popup.open }));
 
 let account: typeof import("./appAccountStore");
 let fetchMock: ReturnType<typeof vi.fn<typeof fetch>>;
@@ -294,27 +294,19 @@ it.each([
   });
 });
 
-it.each([200, 404])(
-  "keeps guest controls usable when accounts are disabled (%s)",
-  async (status) => {
-    fetchMock.mockResolvedValue(
-      status === 404
-        ? new Response(null, { status })
-        : Response.json({ enabled: false, user: null }),
-    );
-    await account.refreshAccount();
-    expect(account.appAccountStore.getState()).toMatchObject({
-      enabled: false,
-      user: null,
-      error: null,
-      status: "ready",
-    });
-    expect(client.social).not.toHaveBeenCalled();
-  },
-);
+it("keeps guest controls usable when accounts are disabled", async () => {
+  fetchMock.mockResolvedValue(Response.json({ enabled: false, user: null }));
+  await account.refreshAccount();
+  expect(account.appAccountStore.getState()).toMatchObject({
+    enabled: false,
+    user: null,
+    error: null,
+    status: "ready",
+  });
+  expect(client.social).not.toHaveBeenCalled();
+});
 
 it("keeps account support unknown after an initial CORS failure and discovers it on retry", async () => {
-  // A browser cannot expose an old relay's 404 when it has no CORS headers.
   fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
   await account.refreshAccount();
   expect(account.appAccountStore.getState()).toMatchObject({

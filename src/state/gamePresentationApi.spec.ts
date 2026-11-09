@@ -18,8 +18,10 @@ vi.mock("../stream/demoIndex", () => ({
 }));
 
 const mocks = vi.hoisted(() => ({ refresh: vi.fn(async () => {}) }));
-vi.mock("./appAccountStore", () => ({
+vi.mock("../account/authClient", () => ({
   appApiBaseUrl: "https://api.example.com",
+}));
+vi.mock("./appAccountStore", () => ({
   refreshAccount: mocks.refresh,
 }));
 

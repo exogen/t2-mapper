@@ -1,14 +1,11 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const client = vi.hoisted(() => ({ social: vi.fn(), notify: vi.fn() }));
-vi.mock("./authClient", () => ({
-  AUTH_REQUEST_TIMEOUT_MS: 20_000,
-  authClient: { signIn: { social: client.social } },
-}));
-vi.mock("./discordSignIn", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./discordSignIn")>();
+vi.mock("./authClient", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./authClient")>();
   return {
     ...actual,
+    authClient: { signIn: { social: client.social } },
     notifyDiscordSignIn: client.notify,
   };
 });

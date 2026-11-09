@@ -4,7 +4,8 @@ import {
   type GamePresentation,
   type PublishedGame,
 } from "../../relay/gamePresentation";
-import { appApiBaseUrl, refreshAccount } from "./appAccountStore";
+import { appApiBaseUrl } from "../account/authClient";
+import { refreshAccount } from "./appAccountStore";
 import { casterStore } from "./casterStore";
 import { demoLoadStore } from "./demoLoadStore";
 import { engineStore } from "./engineStore";

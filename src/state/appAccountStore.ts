@@ -5,13 +5,9 @@ import {
   appApiBaseUrl,
   AUTH_REQUEST_TIMEOUT_MS,
   authClient,
-} from "../account/authClient";
-import {
   openDiscordSignIn,
   type DiscordSignInWindow,
-} from "../account/discordSignIn";
-
-export { appApiBaseUrl } from "../account/authClient";
+} from "../account/authClient";
 
 export interface AppAccountState {
   status: "idle" | "loading" | "ready" | "error";
@@ -82,26 +78,21 @@ export function refreshAccount({ onlyIfStale = false } = {}): Promise<void> {
           signal: controller.signal,
         },
       );
-      // Older relays have no account API. Keep their existing guest UI usable.
-      let account: { enabled: boolean; user: AccountUser | null } = {
-        enabled: false,
-        user: null,
-      };
-      if (response.status !== 404) {
-        if (!response.ok) throw new Error("Account request failed");
-        account = await response.json();
-      }
+      if (!response.ok) throw new Error("Account request failed");
+      const account: { enabled: boolean; user: AccountUser | null } =
+        await response.json();
       if (typeof account.enabled !== "boolean") {
         throw new Error("Invalid account response");
       }
       if (generation !== refreshGeneration) return;
-      if (account.user) finishSignInAttempt();
+      const user = account.enabled ? account.user : null;
+      if (user) finishSignInAttempt();
       appAccountStore.setState({
         status: "ready",
         enabled: account.enabled,
-        user: account.enabled ? account.user : null,
+        user,
         error: null,
-        signInUrl: account.user ? null : appAccountStore.getState().signInUrl,
+        signInUrl: user ? null : appAccountStore.getState().signInUrl,
       });
     } catch {
       if (generation !== refreshGeneration) return;
@@ -127,7 +118,7 @@ export function refreshAccountOnFocus(): Promise<void> {
   // While sign-in is open, focus is also a fallback for blocked cross-window
   // messaging. This never navigates or recreates the game engine.
   if (signInWindow && appAccountStore.getState().pending === "sign-in") {
-    // A browser can block both completion transports, including the initial
+    // A browser can block popup notifications, including the initial
     // "opened" notification. Returning from that popup must still verify login.
     appAccountStore.setState({ pending: null });
   }
@@ -166,15 +157,14 @@ export function signInWithDiscord(): void {
       onEvent(event) {
         appAccountStore.setState({
           pending: null,
-          error: null,
+          error:
+            event === "error"
+              ? "Discord sign-in was cancelled or failed. Please try again."
+              : null,
           signInUrl: null,
         });
         if (event === "complete") {
           void verifyDiscordSignIn();
-        } else if (event === "error") {
-          appAccountStore.setState({
-            error: "Discord sign-in was cancelled or failed. Please try again.",
-          });
         }
       },
       onUnavailable() {

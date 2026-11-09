@@ -1,10 +1,11 @@
-import { authClient, AUTH_REQUEST_TIMEOUT_MS } from "./authClient";
 import {
+  authClient,
+  AUTH_REQUEST_TIMEOUT_MS,
   DISCORD_SIGN_IN_STORAGE_KEY,
   discordSignInUrl,
   notifyDiscordSignIn,
   readDiscordSignInAttempt,
-} from "./discordSignIn";
+} from "./authClient";
 import "./discordSignInPage.css";
 
 const title = document.getElementById("sign-in-title")!;
@@ -98,7 +99,7 @@ async function startSignIn() {
     notifyDiscordSignIn(currentAttempt, "error");
   } finally {
     window.clearTimeout(timeout);
-    if (request === controller) request = null;
+    request = null;
   }
 }
 

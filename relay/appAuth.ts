@@ -85,10 +85,28 @@ function configuredOrigin(
   return url.origin;
 }
 
+function trustedAppOrigins(env: NodeJS.ProcessEnv = process.env): string[] {
+  const production = env.NODE_ENV === "production";
+  const origins =
+    env.AUTH_TRUSTED_ORIGINS ||
+    (production ? "https://play.tribes2.online" : "http://localhost:3000");
+  return [
+    ...new Set(
+      origins
+        .split(",")
+        .map((origin) =>
+          configuredOrigin(origin.trim(), "AUTH_TRUSTED_ORIGINS", production),
+        ),
+    ),
+  ];
+}
+
 /** Public deployment defaults can exist before Discord credentials are installed. */
 export function loadAppAuthConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): AppAuthConfig | null {
+  // CORS remains active while Discord credentials are not configured.
+  const trustedOrigins = trustedAppOrigins(env);
   const credentials = [
     env.DISCORD_CLIENT_ID,
     env.DISCORD_CLIENT_SECRET,
@@ -111,18 +129,6 @@ export function loadAppAuthConfig(
     "AUTH_BASE_URL",
     production,
   );
-  const trustedOrigins = [
-    ...new Set(
-      (
-        env.AUTH_TRUSTED_ORIGINS ||
-        (production ? "https://play.tribes2.online" : "http://localhost:3000")
-      )
-        .split(",")
-        .map((value) =>
-          configuredOrigin(value.trim(), "AUTH_TRUSTED_ORIGINS", production),
-        ),
-    ),
-  ];
   return {
     baseURL,
     trustedOrigins,
@@ -134,7 +140,7 @@ export function loadAppAuthConfig(
 }
 
 /** Discord is the identity source; email is an internal library identifier only. */
-export function mapDiscordProfile(profile: DiscordProfile) {
+function mapDiscordProfile(profile: DiscordProfile) {
   if (
     !DISCORD_ID.test(profile.id) ||
     typeof profile.username !== "string" ||
@@ -181,21 +187,11 @@ function requestPathname(
   }
 }
 
-export function handleDisabledAppAuth(
+function handleAccountCors(
   req: IncomingMessage,
   res: ServerResponse,
-  trustedOrigins = (
-    process.env.AUTH_TRUSTED_ORIGINS ||
-    (process.env.NODE_ENV === "production"
-      ? "https://play.tribes2.online"
-      : "http://localhost:3000")
-  )
-    .split(",")
-    .map((origin) => origin.trim()),
+  trustedOrigins: readonly string[],
 ): boolean {
-  const pathname = requestPathname(req, res);
-  if (pathname === null) return true;
-  if (!isAccountPath(pathname)) return false;
   res.setHeader("Vary", "Origin");
   if (req.headers.origin) {
     if (!trustedOrigins.includes(req.headers.origin)) {
@@ -212,6 +208,19 @@ export function handleDisabledAppAuth(
     res.end();
     return true;
   }
+  return false;
+}
+
+export function handleDisabledAppAuth(
+  req: IncomingMessage,
+  res: ServerResponse,
+  trustedOrigins?: string[],
+): boolean {
+  const pathname = requestPathname(req, res);
+  if (pathname === null) return true;
+  if (!isAccountPath(pathname)) return false;
+  if (handleAccountCors(req, res, trustedOrigins ?? trustedAppOrigins()))
+    return true;
   json(
     res,
     pathname === "/api/account" ? 200 : 503,
@@ -260,6 +269,7 @@ export async function createAppAuth({
   ) => Promise<PublishedGame>;
   onReadDemoPresentation?: (filename: string) => Promise<DemoMetadata>;
 }): Promise<AppAuthService> {
+  const requestOrigins = [...config.trustedOrigins, config.baseURL];
   const options = {
     appName: "MapGenius",
     baseURL: config.baseURL,
@@ -408,14 +418,13 @@ export async function createAppAuth({
   };
   const getAccount: AppAuthService["getAccount"] = async (headers) =>
     (await readAccount(headers)).user;
-  const checkAdmin = (user: AccountUser | null): AccountUser => {
+  const requireAdmin: AppAuthService["requireAdmin"] = async (headers) => {
+    const user = await getAccount(headers);
     if (!user) throw new AppAuthError(401, "Sign in to continue");
     if (user.role !== "admin")
       throw new AppAuthError(403, "An administrator account is required");
     return user;
   };
-  const requireAdmin: AppAuthService["requireAdmin"] = async (headers) =>
-    checkAdmin(await getAccount(headers));
   return {
     close: () => clearInterval(cleanupTimer),
     getAccount,
@@ -426,27 +435,8 @@ export async function createAppAuth({
       if (!isAccountPath(pathname)) return false;
       res.setHeader("Cache-Control", "no-store");
       res.setHeader("X-Content-Type-Options", "nosniff");
-      res.setHeader("Vary", "Origin");
+      if (handleAccountCors(req, res, requestOrigins)) return true;
       const origin = req.headers.origin;
-      if (
-        origin &&
-        !config.trustedOrigins.includes(origin) &&
-        origin !== config.baseURL
-      ) {
-        json(res, 403, { error: "Origin is not allowed" });
-        return true;
-      }
-      if (origin) {
-        res.setHeader("Access-Control-Allow-Origin", origin);
-        res.setHeader("Access-Control-Allow-Credentials", "true");
-      }
-      if (req.method === "OPTIONS") {
-        res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-        res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-        res.writeHead(204);
-        res.end();
-        return true;
-      }
       try {
         if (pathname === "/api/account") {
           if (req.method !== "GET") {

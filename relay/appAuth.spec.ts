@@ -33,6 +33,7 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 function env(values: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -64,6 +65,50 @@ it("keeps login disabled until credentials exist and rejects partial/unsafe conf
       env({ NODE_ENV: "production", AUTH_BASE_URL: "http://localhost:8765" }),
     ),
   ).toThrow("HTTPS origin");
+});
+
+it.each([
+  "https://*.tribes2.online",
+  "https://play.tribes2.online/path",
+  "http://play.tribes2.online",
+])(
+  "rejects invalid trusted origins at startup even without Discord credentials (%s)",
+  (origin) => {
+    expect(() =>
+      loadAppAuthConfig({
+        NODE_ENV: "production",
+        AUTH_TRUSTED_ORIGINS: origin,
+      }),
+    ).toThrow("exact HTTPS origin");
+  },
+);
+
+it("normalizes and deduplicates the same configured origins before and after enabling login", () => {
+  const origins = ` ${APP_ORIGIN}/, ${APP_ORIGIN} `;
+  expect(
+    loadAppAuthConfig(env({ AUTH_TRUSTED_ORIGINS: origins }))?.trustedOrigins,
+  ).toEqual([APP_ORIGIN]);
+  vi.stubEnv("NODE_ENV", "test");
+  vi.stubEnv("AUTH_TRUSTED_ORIGINS", origins);
+  const response = { setHeader: vi.fn(), writeHead: vi.fn(), end: vi.fn() };
+  expect(
+    handleDisabledAppAuth(
+      {
+        url: "/api/account",
+        method: "GET",
+        headers: { origin: APP_ORIGIN },
+      } as http.IncomingMessage,
+      response as unknown as http.ServerResponse,
+    ),
+  ).toBe(true);
+  expect(response.setHeader).toHaveBeenCalledWith(
+    "Access-Control-Allow-Origin",
+    APP_ORIGIN,
+  );
+  expect(response.writeHead).toHaveBeenCalledWith(200, expect.any(Object));
+  expect(response.end).toHaveBeenCalledWith(
+    JSON.stringify({ enabled: false, user: null }),
+  );
 });
 
 async function fixture({
@@ -493,6 +538,35 @@ it("returns a disabled account state with credentialed CORS before configuration
     (await app.request("/api/account", { method: "OPTIONS" })).status,
   ).toBe(204);
 });
+
+it.each([false, true])(
+  "rejects untrusted account origins and preflights (accounts disabled: %s)",
+  async (disabled) => {
+    const app = await fixture({ disabled });
+    for (const method of ["GET", "OPTIONS"]) {
+      const response = await app.request("/api/account", {
+        method,
+        headers: { Origin: "https://attacker.example" },
+      });
+      expect(response.status).toBe(403);
+      expect(response.headers.get("access-control-allow-origin")).toBeNull();
+    }
+  },
+);
+
+it.each([false, true])(
+  "keeps the API-origin allowance limited to enabled auth (accounts disabled: %s)",
+  async (disabled) => {
+    const app = await fixture({ disabled });
+    const response = await app.request("/api/account", {
+      headers: { Origin: app.baseURL },
+    });
+    expect(response.status).toBe(disabled ? 403 : 200);
+    expect(response.headers.get("access-control-allow-origin")).toBe(
+      disabled ? null : app.baseURL,
+    );
+  },
+);
 
 it("requires a current admin session for saving shared game details", async () => {
   const update = vi.fn(echoPresentationUpdate);
