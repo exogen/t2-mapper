@@ -4,7 +4,7 @@
 
 ![Screenshot of demo playback](./screenshot-demo.png "Demo playback on TWL-Harvester")
 
-👉 **[Open the app!](https://exogen.github.io/t2-mapper/)**
+👉 **[Open the app!](https://play.tribes2.online/)**
 
 MapGenius renders Tribes 2 the way the game does, straight from the original game files. Built with Three.js and React.
 
