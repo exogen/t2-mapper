@@ -194,7 +194,7 @@ export function DemoSelect() {
 
   const enabled = DEMOS_BASE_URL !== "";
 
-  const { data: demos, isPending, isError } = useDemoIndex();
+  const { data: demos, isPending, isError, refetch } = useDemoIndex();
 
   const combobox = useComboboxStore({
     resetValueOnHide: true,
@@ -211,6 +211,11 @@ export function DemoSelect() {
   });
 
   const isOpen = useStoreState(combobox, "open");
+
+  // Keep cached demos usable immediately while each opening refreshes the list.
+  useEffect(() => {
+    if (enabled && isOpen) void refetch();
+  }, [enabled, isOpen, refetch]);
 
   // The demo landing page's search button focuses this input (focusing
   // also opens the popover via the input's onFocus).
@@ -239,9 +244,9 @@ export function DemoSelect() {
 
   const emptyMessage = !enabled
     ? "Demo index not configured (DEMOS_BASE_URL)"
-    : isPending
+    : isPending && demos === undefined
       ? "Loading demos…"
-      : isError
+      : isError && demos === undefined
         ? "Couldn't load the demo list"
         : demos?.length === 0
           ? "No demos indexed yet"

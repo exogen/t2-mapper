@@ -1,11 +1,57 @@
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, expect, it, vi } from "vitest";
+import {
+  QueryClient,
+  QueryObserver,
+  type UseQueryResult,
+} from "@tanstack/react-query";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { DemoIndexEntry } from "../stream/demoIndex";
 import { DemoSelect } from "./DemoSelect";
 import { formatRecordedTime, recordedDayLabel } from "./demoFormat";
 
-const fixture = vi.hoisted(() => ({ demos: [] as DemoIndexEntry[] }));
+type IndexQueryResult = Pick<
+  UseQueryResult<DemoIndexEntry[]>,
+  "data" | "isPending" | "isError" | "refetch"
+>;
+
+const fixture = vi.hoisted(() => ({
+  demos: [] as DemoIndexEntry[],
+  isOpen: true,
+  refetch: vi.fn(),
+  queryResult: null as (() => IndexQueryResult) | null,
+}));
+const effects = vi.hoisted(() => ({
+  enabled: false,
+  index: 0,
+  entries: [] as {
+    deps: readonly unknown[];
+    cleanup?: (() => void) | void;
+  }[],
+  pending: [] as (() => void)[],
+}));
+const cleanups: (() => void)[] = [];
+
+// Exercise opening effects after each render while keeping the markup tests
+// independent of a browser and preserving React's real render hooks.
+vi.mock("react", async (original) => ({
+  ...(await original<typeof import("react")>()),
+  useEffect(effect: () => void | (() => void), deps: readonly unknown[]) {
+    if (!effects.enabled) return;
+    const index = effects.index++;
+    const previous = effects.entries[index];
+    if (
+      previous &&
+      deps.length === previous.deps.length &&
+      deps.every((value, i) => Object.is(value, previous.deps[i]))
+    )
+      return;
+    effects.pending.push(() => {
+      previous?.cleanup?.();
+      effects.entries[index] = { deps, cleanup: effect() };
+    });
+  },
+}));
 
 type Children = { children?: ReactNode };
 
@@ -23,14 +69,16 @@ vi.mock("@ariakit/react", () => ({
     <input placeholder={placeholder} />
   ),
   useComboboxStore: () => ({}),
-  useStoreState: () => true,
+  useStoreState: () => fixture.isOpen,
 }));
 vi.mock("./useDemoIndex", () => ({
-  useDemoIndex: () => ({
-    data: fixture.demos,
-    isPending: false,
-    isError: false,
-  }),
+  useDemoIndex: () =>
+    fixture.queryResult?.() ?? {
+      data: fixture.demos,
+      isPending: false,
+      isError: false,
+      refetch: fixture.refetch,
+    },
 }));
 vi.mock("./useAppNavigation", () => ({ useAppNavigation: () => ({}) }));
 vi.mock("./useQueryParams", () => ({ useDemoQueryState: () => [null] }));
@@ -67,16 +115,135 @@ const demo: DemoIndexEntry = {
 
 beforeEach(() => {
   fixture.demos = [demo];
+  fixture.isOpen = true;
+  fixture.refetch.mockReset().mockResolvedValue(undefined);
+  fixture.queryResult = null;
+  effects.enabled = false;
+  effects.index = 0;
+  effects.entries = [];
+  effects.pending = [];
 });
 
-function renderItem() {
+afterEach(() => {
+  for (const effect of effects.entries) effect.cleanup?.();
+  for (const cleanup of cleanups.splice(0)) cleanup();
+});
+
+function renderPicker() {
+  effects.index = 0;
   const markup = renderToStaticMarkup(<DemoSelect />);
+  for (const effect of effects.pending.splice(0)) effect();
+  return markup;
+}
+
+function renderItem() {
+  const markup = renderPicker();
   const item = markup.match(/<article\b[^>]*>([\s\S]*?)<\/article>/)?.[1];
   expect(item).toBeDefined();
   return item!;
 }
 
 const text = (markup: string) => markup.replace(/<[^>]*>/g, "");
+
+function observeIndex(
+  cached: DemoIndexEntry[],
+  queryFn: () => Promise<DemoIndexEntry[]>,
+) {
+  const client = new QueryClient();
+  const queryKey = ["demoIndex"];
+  client.setQueryData(queryKey, cached);
+  const observer = new QueryObserver(client, {
+    queryKey,
+    queryFn,
+    staleTime: Infinity,
+    retry: false,
+  });
+  const unsubscribe = observer.subscribe(() => {});
+  cleanups.push(() => {
+    unsubscribe();
+    client.clear();
+  });
+  fixture.queryResult = () => observer.getCurrentResult();
+  effects.enabled = true;
+  return observer;
+}
+
+it("refreshes on opening without delaying the cached list, then updates it in place", async () => {
+  const replacement = { ...demo, filename: "replacement.rec" };
+  let finishRefresh!: (demos: DemoIndexEntry[]) => void;
+  const pending = new Promise<DemoIndexEntry[]>((resolve) => {
+    finishRefresh = resolve;
+  });
+  const queryFn = vi
+    .fn<() => Promise<DemoIndexEntry[]>>()
+    .mockReturnValueOnce(pending)
+    .mockResolvedValue([replacement]);
+  const observer = observeIndex([demo], queryFn);
+
+  fixture.isOpen = false;
+  renderPicker();
+  expect(queryFn).not.toHaveBeenCalled();
+
+  fixture.isOpen = true;
+  const duringRefresh = renderPicker();
+  expect(queryFn).toHaveBeenCalledOnce();
+  expect(observer.getCurrentResult().isFetching).toBe(true);
+  expect(duringRefresh).toContain('data-demo="match.rec"');
+  expect(duringRefresh).toContain("Tournament mode only");
+  expect(duringRefresh).not.toContain("Loading demos");
+
+  renderPicker();
+  expect(queryFn).toHaveBeenCalledOnce();
+
+  finishRefresh([replacement]);
+  await vi.waitFor(() =>
+    expect(observer.getCurrentResult().data).toEqual([replacement]),
+  );
+  const refreshed = renderPicker();
+  expect(refreshed).toContain('data-demo="replacement.rec"');
+  expect(refreshed).not.toContain('data-demo="match.rec"');
+  expect(queryFn).toHaveBeenCalledOnce();
+
+  fixture.isOpen = false;
+  renderPicker();
+  fixture.isOpen = true;
+  const reopened = renderPicker();
+  expect(reopened).toContain('data-demo="replacement.rec"');
+  expect(queryFn).toHaveBeenCalledTimes(2);
+});
+
+it.each([false, true])(
+  "keeps the cached picker usable if its background refresh fails, with an empty cache: %s",
+  async (empty) => {
+    const cached = empty ? [] : [demo];
+    let failRefresh!: (error: Error) => void;
+    const queryFn = vi.fn(
+      () =>
+        new Promise<DemoIndexEntry[]>((_resolve, reject) => {
+          failRefresh = reject;
+        }),
+    );
+    const observer = observeIndex(cached, queryFn);
+    renderPicker();
+    expect(queryFn).toHaveBeenCalledOnce();
+
+    failRefresh(new Error("Demo index unavailable"));
+    await vi.waitFor(() =>
+      expect(observer.getCurrentResult().isError).toBe(true),
+    );
+    const failed = renderPicker();
+    expect(observer.getCurrentResult().data).toEqual(cached);
+    expect(failed).not.toContain("Couldn't load the demo list");
+    expect(failed).not.toContain("Loading demos");
+    if (empty) expect(failed).toContain("No demos indexed yet");
+    else {
+      expect(failed).toContain('data-demo="match.rec"');
+      expect(failed).toContain("Tournament mode only");
+      expect(failed).toContain("Has commentary");
+    }
+    expect(queryFn).toHaveBeenCalledOnce();
+  },
+);
 
 it("shows the map, saved match title, teams, recording details, and source in card order", () => {
   const item = renderItem();
