@@ -4,12 +4,12 @@ import { useTouchDevice } from "./useTouchDevice";
 import { useIsWatchSpectator } from "./useIsWatchSpectator";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { subtitlesStore } from "../state/commentaryTrack";
-import { useSettings } from "./SettingsProvider";
+import { useControls, useSettings } from "./SettingsProvider";
 import { useRecording } from "./usePlayback";
 import { WatchedPlayerHUD } from "./WatchedPlayerHUD";
 import styles from "./VisualInput.module.css";
 import { useCameraOwner } from "../state/cameraOwner";
-import { usePlayerOrbitLocked } from "./usePlayerOrbitLocked";
+import { useInputMode } from "../state/inputModeStore";
 
 const TouchJoystick = lazy(() =>
   import("./TouchJoystick").then((mod) => ({
@@ -23,52 +23,65 @@ const KeyboardOverlay = lazy(() =>
   })),
 );
 
-export function VisualInput() {
+export function VisualInput({
+  menuOpen = false,
+  cameraLauncherVisible = false,
+}: {
+  menuOpen?: boolean;
+  cameraLauncherVisible?: boolean;
+}) {
   const isTouch = useTouchDevice();
   const cameraOwner = useCameraOwner();
-  const orbitLocked = usePlayerOrbitLocked();
+  const inputMode = useInputMode();
   // Tour > director > command circuit > input. The joysticks show only
   // while local input owns the camera: a touch is the director's
   // interrupt gesture, and the command circuit pans and zooms by direct
   // touch, so joysticks would fight both.
   const { showInputOverlay } = useSettings();
+  const { touchMode } = useControls();
   const recording = useRecording();
   const isWatcher = useIsWatchSpectator();
   const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
 
-  // Demo playback and watch-mode spectating drive the camera from the
-  // stream unless the user breaks it free: the recorded view ("original")
-  // and first-person follow accept no movement or look input, so the
-  // joysticks would be dead weight. Free-fly has full controls and
-  // orbit-follow consumes look input. Everything else (map explore, live
-  // observer fly and follow) always has camera controls.
+  // Only free-fly shows touch sticks during demo playback or watch-mode
+  // spectating. Live server observers track follow separately in inputMode.
+  // Map exploration ignores the inactive stream camera's default mode.
   const isStreamCamera =
     recording?.source === "demo" || (recording?.source === "live" && isWatcher);
   const hasCameraControls = isStreamCamera
-    ? cameraMode === "freeFly" ||
-      (cameraMode === "orbitOverride" && !orbitLocked)
-    : true;
+    ? cameraMode === "freeFly"
+    : inputMode !== "follow";
 
   // isTouch can be `null` before we know for sure — only render the
   // desktop HUD once it's definitively false.
   const isDesktop = isTouch === false;
-  // The watched-player chip shows during any stream, independent of the
-  // input-overlay setting; the overlay obeys it.
-  const showWatchedPlayer = isDesktop && !!recording;
+  // Keep the followed player's name available on touch screens, clearing
+  // the bottom controls while the camera menu is open.
+  const showWatchedPlayer =
+    !!recording && (isDesktop || (isTouch === true && !menuOpen));
   // Subtitles sit where the overlay does; when they are actually up
   // (setting on AND lines found for this demo) they take the space.
   const subtitlesUp = useStore(subtitlesStore, (s) => s.showing);
   const showOverlay = isDesktop && showInputOverlay && !subtitlesUp;
+  let stackClass = styles.Stack;
+  if (isTouch) {
+    stackClass =
+      cameraLauncherVisible && touchMode !== "dualStick"
+        ? styles.MobileStackWithLauncher
+        : styles.MobileStack;
+  }
 
   return (
     <>
-      {isTouch && cameraOwner === "input" && hasCameraControls ? (
-        <Suspense>
-          <TouchJoystick />
-        </Suspense>
+      {isTouch && !menuOpen && cameraOwner === "input" && hasCameraControls ? (
+        <div className={styles.TouchControls}>
+          <Suspense>
+            <TouchJoystick />
+          </Suspense>
+        </div>
       ) : null}
       {showWatchedPlayer || showOverlay ? (
-        <div className={styles.Stack}>
+        <div className={stackClass}>
           {showOverlay ? (
             <Suspense>
               <KeyboardOverlay />

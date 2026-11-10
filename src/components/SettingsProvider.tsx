@@ -45,8 +45,10 @@ export type {
 } from "../state/settingsStore";
 export {
   DEFAULT_MOUSE_SENSITIVITY,
+  MAX_JOYSTICK_OPACITY,
   MAX_MOUSE_SENSITIVITY,
   MAX_SPEED_MULTIPLIER,
+  MIN_JOYSTICK_OPACITY,
   MIN_MOUSE_SENSITIVITY,
   MIN_SPEED_MULTIPLIER,
   RENDER_SCALE_OPTIONS,
@@ -149,6 +151,8 @@ type ControlsContextType = {
   setClickToCycle: StateSetter<boolean>;
   touchMode: TouchMode;
   setTouchMode: StateSetter<TouchMode>;
+  joystickOpacity: number;
+  setJoystickOpacity: StateSetter<number>;
   invertScroll: boolean;
   setInvertScroll: StateSetter<boolean>;
   invertDrag: boolean;
@@ -273,6 +277,7 @@ const controlsActions = {
   setMouseSensitivity: setter("mouseSensitivity"),
   setClickToCycle: setter("clickToCycle"),
   setTouchMode: setter("touchMode"),
+  setJoystickOpacity: setter("joystickOpacity"),
   setInvertScroll: setter("invertScroll"),
   setInvertDrag: setter("invertDrag"),
   setInvertJoystick: setter("invertJoystick"),
@@ -285,6 +290,7 @@ function selectControls(state: SettingsState): ControlsContextType {
     mouseSensitivity: state.mouseSensitivity,
     clickToCycle: state.clickToCycle,
     touchMode: state.touchMode,
+    joystickOpacity: state.joystickOpacity,
     invertScroll: state.invertScroll,
     invertDrag: state.invertDrag,
     invertJoystick: state.invertJoystick,

@@ -145,8 +145,13 @@ export function installKeyboardMouseInput(engine: GameEngine): () => void {
       // speed. Direction matches the command-circuit map (scroll up = zoom
       // in = closer): distance *= exp(deltaY * k), where up gives deltaY < 0.
       // Like CC, this ignores invertScroll so the two stay in sync.
-      if (streamPlaybackStore.getState().cameraMode === "orbitOverride") {
-        const prev = streamPlaybackStore.getState().orbitOverrideDistance;
+      const { cameraMode, orbitOverrideDistance: prev } =
+        streamPlaybackStore.getState();
+      if (
+        cameraMode === "orbitOverride" ||
+        (inputModeStore.getState().mode === "follow" &&
+          cameraMode !== "firstPersonOverride")
+      ) {
         const next = prev * Math.exp(scroll.deltaY * ORBIT_ZOOM_SENSITIVITY);
         streamPlaybackStore.setState({
           orbitOverrideDistance: Math.max(

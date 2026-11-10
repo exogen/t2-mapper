@@ -40,7 +40,8 @@ function useTouchStick(
       mode: "static",
       position: { [side]: "70px", bottom: "70px" },
       size: 120,
-      restOpacity: 0.9,
+      // The zone controls opacity for both resting and active sticks.
+      restOpacity: 1,
       dynamicPage: true,
     });
 
@@ -79,7 +80,7 @@ function useTouchStick(
 }
 
 export function TouchJoystick() {
-  const { touchMode } = useControls();
+  const { touchMode, joystickOpacity } = useControls();
   const [moveZone, setMoveZone] = useState<HTMLDivElement | null>(null);
   const [lookZone, setLookZone] = useState<HTMLDivElement | null>(null);
 
@@ -98,6 +99,7 @@ export function TouchJoystick() {
         ref={setMoveZone}
         key={touchMode}
         className={touchMode === "dualStick" ? styles.Left : styles.Joystick}
+        style={{ opacity: joystickOpacity }}
         onContextMenu={(e) => e.preventDefault()}
         onTouchStart={blurActiveElement}
       />
@@ -105,6 +107,7 @@ export function TouchJoystick() {
         <div
           ref={setLookZone}
           className={styles.Right}
+          style={{ opacity: joystickOpacity }}
           onContextMenu={(e) => e.preventDefault()}
           onTouchStart={blurActiveElement}
         />

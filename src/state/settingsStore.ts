@@ -47,6 +47,9 @@ const SERVER_BROWSER_VIEW_VALUES: readonly ServerBrowserView[] = [
 
 export type TouchMode = "dualStick" | "moveLookStick";
 
+export const MIN_JOYSTICK_OPACITY = 0.1;
+export const MAX_JOYSTICK_OPACITY = 1;
+
 export const MIN_SPEED_MULTIPLIER = 0.01;
 export const MAX_SPEED_MULTIPLIER = 1;
 
@@ -83,6 +86,7 @@ export interface Preferences {
   shadowsEnabled: boolean;
   debugMode: boolean;
   touchMode: TouchMode;
+  joystickOpacity: number;
   warriorName: string;
   invertScroll: boolean;
   invertDrag: boolean;
@@ -151,6 +155,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   shadowsEnabled: true,
   debugMode: false,
   touchMode: "moveLookStick",
+  joystickOpacity: 0.9,
   warriorName: "MapGenius",
   invertScroll: false,
   invertDrag: false,
@@ -248,6 +253,16 @@ export function restorePreferences(
   copy("fov");
   copy("clickToCycle", isBoolean);
   copy("touchMode");
+  if (
+    typeof saved.joystickOpacity === "number" &&
+    Number.isFinite(saved.joystickOpacity)
+  )
+    restored.joystickOpacity = clamp(
+      // Keep saved opacity on the same 5% grid as the slider.
+      Math.round(saved.joystickOpacity * 20) / 20,
+      MIN_JOYSTICK_OPACITY,
+      MAX_JOYSTICK_OPACITY,
+    );
   copy("warriorName");
   copy("audioVolume");
   copy("commentaryEnabled");

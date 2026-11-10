@@ -1,0 +1,341 @@
+.Control {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  height: auto;
+  min-width: 48px;
+  min-height: 48px;
+  gap: 6px;
+  margin: 0;
+  padding: 8px;
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+  cursor: pointer;
+  transform: translate(0, 0);
+}
+
+.Control svg {
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+
+.Control:not(:disabled):active {
+  transform: translate(0, 1px);
+}
+
+.Control:focus-visible {
+  outline: 2px solid #81c6c3;
+  outline-offset: 2px;
+}
+
+.Button {
+  composes: Control;
+  background: rgba(38, 49, 48, 0.7);
+  border: 1px solid rgba(82, 109, 108, 0.75);
+  color: #e7f1f0;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  flex: 1 1 0;
+  transition:
+    background 0.2s,
+    border-color 0.2s;
+}
+
+.Button svg {
+  font-size: 18px;
+}
+
+@media (hover: hover) {
+  .Button:not(:disabled):hover {
+    background: rgba(53, 71, 68, 0.85);
+    border-color: #719e98;
+    color: #fff;
+  }
+}
+
+.Button:not(:disabled):active {
+  background: rgba(64, 86, 81, 0.9);
+  border-color: #81c6c3;
+}
+
+.Button[data-active="true"] {
+  background: rgba(113, 158, 152, 0.2);
+  border-color: #81c6c3;
+  color: #fff;
+}
+
+.Button:disabled {
+  background: rgba(113, 158, 152, 0.035);
+  border-color: rgba(82, 109, 108, 0.22);
+  box-shadow: none;
+  color: #6b7f7d;
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.Launcher {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  padding: 12px max(12px, env(safe-area-inset-right, 0px))
+    max(12px, env(safe-area-inset-bottom, 0px)) 12px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  appearance: none;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.LauncherCentered {
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  padding-inline: 12px;
+}
+
+.LauncherAboveFollowing {
+  bottom: calc(max(4px, env(safe-area-inset-bottom, 0px)) + 36px);
+  padding-bottom: 0;
+}
+
+.LauncherCircle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  padding: 6px;
+  border-radius: 50%;
+  font-family: inherit;
+  font-size: 30px;
+  font-weight: 500;
+  transition: background 0.2s;
+  background: rgba(14, 56, 53, 0.75);
+  border: 1px solid rgba(0, 219, 223, 0.5);
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.7);
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+
+.LauncherIcon {
+  flex: 0 0 auto;
+  color: #19c79f;
+  filter: drop-shadow(0 -1px 0 rgba(255, 255, 255, 0.15))
+    drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4));
+}
+
+@media (hover: hover) {
+  .Launcher:hover .LauncherCircle {
+    background: rgba(22, 79, 70, 0.8);
+  }
+}
+
+.Launcher:active .LauncherCircle,
+.Launcher[aria-expanded="true"] .LauncherCircle {
+  background: rgba(25, 91, 79, 0.85);
+}
+
+.Launcher:focus-visible {
+  outline: none;
+}
+
+.Launcher:focus-visible .LauncherCircle {
+  outline: 2px solid #81c6c3;
+  outline-offset: 2px;
+}
+
+.Backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.Dialog {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  width: min(
+    390px,
+    calc(
+      100% - max(12px, env(safe-area-inset-left, 0px)) -
+        max(12px, env(safe-area-inset-right, 0px))
+    )
+  );
+  max-width: none;
+  max-height: calc(100% - max(12px, env(safe-area-inset-top, 0px)));
+  min-width: 0;
+  min-height: 0;
+  background: rgba(25, 31, 31, 0.7);
+  border: 1px solid #526d6c;
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  color: #e7f1f0;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow: hidden;
+  outline: none;
+  user-select: text;
+  -webkit-touch-callout: default;
+  backdrop-filter: blur(2px);
+  transform: translate(-50%, 100%);
+  transition: transform 80ms ease-out;
+}
+
+.Dialog[data-enter] {
+  transform: translate(-50%, 0);
+}
+
+@media (max-width: 399px) {
+  .Dialog {
+    width: 100%;
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .Dialog {
+    transition: none;
+  }
+}
+
+.Header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid #364747;
+  background: rgba(113, 158, 152, 0.04);
+}
+
+.Close {
+  composes: Control;
+  font-size: 24px;
+  background: transparent;
+  border: 0;
+  color: #99adac;
+  box-shadow: none;
+  flex: 0 0 auto;
+}
+
+.Close:hover {
+  color: #e7f1f0;
+}
+
+.Body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 12px 12px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
+}
+
+.Section {
+  min-width: 0;
+}
+
+.Row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+}
+
+.FlagButton {
+  composes: Button;
+  flex-basis: 96px;
+}
+
+.ModeRow {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.ModeButton {
+  composes: Button;
+  min-width: 0;
+  padding-inline: 4px;
+  overflow-wrap: anywhere;
+}
+
+.PlayerRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 48px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.PreviousPlayerButton {
+  composes: Button;
+  padding-left: 4px;
+}
+
+.NextPlayerButton {
+  composes: Button;
+  padding-right: 4px;
+}
+
+.TargetButton {
+  composes: Button;
+  width: 48px;
+  height: 48px;
+  align-self: center;
+}
+
+.TargetButton svg {
+  font-size: 16px;
+}
+
+.SeekRow {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.SeekButton {
+  composes: Button;
+  gap: 0;
+  padding: 4px;
+  font-size: 13px;
+  flex-direction: column;
+  padding-bottom: 6px;
+  line-height: 1.2;
+}
+
+.SeekButton svg {
+  font-size: 20px;
+}
+
+.FlagButton svg {
+  font-size: 15px;
+}
+
+.FlagLabel {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

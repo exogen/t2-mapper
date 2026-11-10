@@ -18,7 +18,8 @@
  * 4. the director picks the shot and writes its orbit parameters;
  * 5. the stream applies the resulting pose (recorded, orbit, first person);
  * 6. tour, input and the command circuit override it in turn. Input runs
- *    as a pipeline: it is sampled (touch first, then keyboard and mouse,
+ *    as a pipeline: a modal guard clears gestures before input is sampled
+ *    (touch first, then keyboard and mouse,
  *    whose handler clears the raw deltas), then drained (local input poses
  *    the camera here, live input is staged), then the 32 ms ticks turn
  *    staged live input into moves, and only then does the live prediction
@@ -49,6 +50,8 @@ export const FramePriority = {
   CameraStream: -30,
   /** Map tour animation. */
   CameraTour: -25,
+  /** Modal input guards, before touch can apply direct pinch zoom. */
+  InputGuard: -24.5,
   /**
    * Touch sticks and drag-look sample this frame's input — ahead of the
    * keyboard and mouse handler, which clears every raw input delta (touch

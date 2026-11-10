@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, expect, it, vi } from "vitest";
 import { InputBindings } from "./InputBindings";
 import {
+  clearInputDeltas,
   inputControlsStore,
   subscribeAction,
   type InputMapEntry,
@@ -23,10 +24,13 @@ const test = vi.hoisted(() => {
     Object.assign(new EventTarget(), {
       activeElement: null,
       pointerLockElement: null,
+      hidden: false,
     }),
   );
   return {
-    canvas: new EventTarget(),
+    canvas: Object.assign(new EventTarget(), {
+      getBoundingClientRect: () => ({ left: 0, top: 0 }),
+    }),
     effects: [] as (() => void | (() => void))[],
     cleanups: [] as (() => void)[],
   };
@@ -64,7 +68,11 @@ function watch(action: string) {
 }
 
 beforeEach(() => {
-  Object.assign(document, { activeElement: null, pointerLockElement: null });
+  Object.assign(document, {
+    activeElement: null,
+    pointerLockElement: null,
+    hidden: false,
+  });
   inputControlsStore.setState({ keys: new Set(), actions: {} });
   mount();
 });
@@ -307,3 +315,148 @@ it("starts with fresh gesture state when the listener effect is reattached", () 
     deltaY: 10,
   });
 });
+
+const TOUCH_CAMERA_INPUT = [
+  { name: "touchCamera", keys: { type: "touch" } },
+  { name: "cameraPinch", keys: { type: "pinch" } },
+] as const satisfies readonly InputMapEntry[];
+
+function touch(
+  target: EventTarget,
+  type: string,
+  points: readonly (readonly [number, number, number])[],
+) {
+  const event = Object.assign(new Event(type, { cancelable: true }), {
+    changedTouches: points.map(([identifier, clientX, clientY]) => ({
+      identifier,
+      clientX,
+      clientY,
+    })),
+  });
+  target.dispatchEvent(event);
+  return event;
+}
+
+it.each([1, 2])(
+  "continues dragging without a jump after pinch finger %s lifts",
+  (lifted) => {
+    mount(TOUCH_CAMERA_INPUT);
+    touch(test.canvas, "touchstart", [[1, 10, 20]]);
+    touch(test.canvas, "touchstart", [[2, 100, 20]]);
+    touch(document, "touchmove", [
+      [1, 30, 40],
+      [2, 140, 60],
+    ]);
+    expect(inputControlsStore.getState().actions.touchCamera).toMatchObject({
+      deltaX: 0,
+      deltaY: 0,
+    });
+    clearInputDeltas();
+    touch(document, "touchend", [lifted === 1 ? [1, 30, 40] : [2, 140, 60]]);
+    touch(document, "touchmove", [lifted === 1 ? [2, 147, 69] : [1, 37, 49]]);
+    expect(inputControlsStore.getState().actions.touchCamera).toMatchObject({
+      touching: true,
+      dragging: true,
+      deltaX: 7,
+      deltaY: 9,
+    });
+    expect(inputControlsStore.getState().actions.cameraPinch).toMatchObject({
+      pinching: false,
+      deltaScale: 1,
+    });
+  },
+);
+
+it("retains final drag and pinch movement through normal release until consumed", () => {
+  mount(TOUCH_CAMERA_INPUT);
+  touch(test.canvas, "touchstart", [[1, 10, 20]]);
+  touch(document, "touchmove", [[1, 20, 30]]);
+  touch(document, "touchend", [[1, 25, 35]]);
+  expect(inputControlsStore.getState().actions.touchCamera).toEqual({
+    touching: false,
+    dragging: false,
+    deltaX: 15,
+    deltaY: 15,
+  });
+  clearInputDeltas();
+  touch(test.canvas, "touchstart", [
+    [1, 0, 0],
+    [2, 100, 0],
+  ]);
+  touch(document, "touchmove", [[2, 200, 0]]);
+  touch(document, "touchend", [
+    [1, 0, 0],
+    [2, 220, 0],
+  ]);
+  expect(inputControlsStore.getState().actions.cameraPinch).toMatchObject({
+    pinching: false,
+    deltaDistance: 120,
+    deltaScale: 2.2,
+  });
+  clearInputDeltas();
+  expect(inputControlsStore.getState().actions.cameraPinch).toMatchObject({
+    deltaDistance: 0,
+    deltaScale: 1,
+  });
+});
+
+it.each([100, 200])(
+  "reports the same pinch scale when doubling a %s px span",
+  (span) => {
+    mount(TOUCH_CAMERA_INPUT);
+    touch(test.canvas, "touchstart", [
+      [1, 0, 0],
+      [2, span, 0],
+    ]);
+    touch(document, "touchmove", [[2, span * 2, 0]]);
+    expect(inputControlsStore.getState().actions.cameraPinch).toMatchObject({
+      deltaScale: 2,
+    });
+  },
+);
+
+it("does not capture movement from an unrelated overlay finger", () => {
+  mount(TOUCH_CAMERA_INPUT);
+  touch(test.canvas, "touchstart", [[1, 10, 20]]);
+  expect(touch(document, "touchmove", [[99, 50, 60]]).defaultPrevented).toBe(
+    false,
+  );
+  expect(inputControlsStore.getState().actions.touchCamera).toMatchObject({
+    deltaX: 0,
+    deltaY: 0,
+  });
+  expect(touch(document, "touchmove", [[1, 15, 30]]).defaultPrevented).toBe(
+    true,
+  );
+});
+
+it.each(["touchcancel", "blur", "hidden"])(
+  "discards pending gestures and old contact IDs on %s",
+  (interruption) => {
+    mount(TOUCH_CAMERA_INPUT);
+    touch(test.canvas, "touchstart", [[1, 10, 20]]);
+    touch(document, "touchmove", [[1, 20, 30]]);
+    touch(test.canvas, "touchstart", [[2, 100, 30]]);
+    touch(document, "touchmove", [[2, 200, 30]]);
+    if (interruption === "touchcancel") {
+      touch(document, "touchcancel", [[1, 20, 30]]);
+    } else if (interruption === "blur") {
+      window.dispatchEvent(new Event("blur"));
+    } else {
+      Object.assign(document, { hidden: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    }
+    touch(document, "touchmove", [[1, 60, 80]]);
+    expect(inputControlsStore.getState().actions.touchCamera).toEqual({
+      touching: false,
+      dragging: false,
+      deltaX: 0,
+      deltaY: 0,
+    });
+    expect(inputControlsStore.getState().actions.cameraPinch).toMatchObject({
+      pinching: false,
+      deltaDistance: 0,
+      deltaScale: 1,
+    });
+  },
+);

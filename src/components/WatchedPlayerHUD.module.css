@@ -1,10 +1,16 @@
 .WatchedPlayer {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
   color: #fff;
   font-size: 9px;
   font-weight: 500;
+}
+
+.WatchedPlayerWithViewButton {
+  composes: WatchedPlayer;
 }
 
 .Badge {
@@ -12,7 +18,8 @@
   border-radius: 10px;
   background: rgba(0, 0, 0, 0.5);
   white-space: nowrap;
-  max-width: 60vw;
+  min-width: 0;
+  max-width: min(60vw, 100%);
   overflow: hidden;
   text-overflow: ellipsis;
   opacity: 0.8;
@@ -24,6 +31,10 @@
 }
 
 .ViewButton {
+  position: absolute;
+  left: calc(100% + 5px);
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -35,10 +46,28 @@
   border: 0;
   padding: 3px;
   font-size: 12px;
-  flex: 0 0 auto;
   appearance: none;
   cursor: pointer;
   pointer-events: auto;
+}
+
+@media (pointer: coarse) {
+  .WatchedPlayer {
+    --view-button-size: 34px;
+    justify-content: center;
+    min-height: 44px;
+    font-size: 10px;
+  }
+
+  .WatchedPlayerWithViewButton {
+    max-width: calc(100% - 2 * (var(--view-button-size) + 5px));
+  }
+
+  .ViewButton {
+    min-width: var(--view-button-size);
+    min-height: var(--view-button-size);
+    font-size: 14px;
+  }
 }
 
 .ViewButton[data-active="false"] {

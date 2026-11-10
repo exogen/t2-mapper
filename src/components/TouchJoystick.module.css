@@ -6,6 +6,7 @@
   width: 140px;
   height: 140px;
   z-index: 1;
+  pointer-events: auto;
 }
 
 .Left {
@@ -19,4 +20,14 @@
   left: auto;
   right: 20px;
   transform: none;
+}
+
+@media (max-width: 359px) {
+  .Left {
+    left: 10px;
+  }
+
+  .Right {
+    right: 10px;
+  }
 }

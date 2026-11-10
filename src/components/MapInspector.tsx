@@ -61,6 +61,7 @@ import {
   useMissionType,
 } from "../state/gameEntityStore";
 import { useCameraTour } from "../state/cameraTourStore";
+import { useCameraOwner } from "../state/cameraOwner";
 import { useMediaQuery } from "./useMediaQuery";
 import { useTouchDevice } from "./useTouchDevice";
 import { GameDialogSpinner } from "./GameDialogSpinner";
@@ -89,6 +90,10 @@ const ServerBrowser = lazyNamed(
   () => import("./ServerBrowser"),
 );
 const ScoreScreen = lazyNamed("ScoreScreen", () => import("./ScoreScreen"));
+const MobileCameraDrawer = lazyNamed(
+  "MobileCameraDrawer",
+  () => import("./MobileCameraDrawer"),
+);
 
 export function MapInspector() {
   const [currentMission] = useMissionQueryState();
@@ -108,6 +113,7 @@ export function MapInspector() {
   const { missionName, missionType } = currentMission;
   const [mapInfoOpen, setMapInfoOpen] = useState(false);
   const [scoreScreenOpen, setScoreScreenOpen] = useState(false);
+  const [cameraDrawerOpen, setCameraDrawerOpen] = useState(false);
   useAutoScoreScreen(setScoreScreenOpen);
   useInputAction("toggleScoreScreen", () =>
     setScoreScreenOpen((open) => !open),
@@ -116,6 +122,7 @@ export function MapInspector() {
   const [missionLoadingProgress, setMissionLoadingProgress] = useState(0);
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(true);
   const isTouch = useTouchDevice();
+  const cameraOwner = useCameraOwner();
   // Below this width the sidebar overlays the content area instead of
   // sitting beside it — keep in sync with MapInspector.module.css.
   const sidebarOverlayMode = useMediaQuery("(max-width: 899px)") ?? false;
@@ -535,6 +542,17 @@ export function MapInspector() {
     gameStatus !== "connected" &&
     hasStreamData &&
     !errorAcknowledged;
+  const showCameraDrawer =
+    isTouch === true &&
+    hasStreamData &&
+    recording != null &&
+    engine != null &&
+    (cameraOwner === "input" || cameraOwner === "commandCircuit") &&
+    !splashVisible &&
+    !(sidebarOverlayMode && sidebarOpen) &&
+    !mapInfoOpen &&
+    !scoreScreenOpen &&
+    !showDisconnectDialog;
   // Rejoin only makes sense when there's a session worth resuming: a
   // voluntary leave, or a drop after we actually reached the server.
   // A failed probe / name lookup never connected, so it offers no Rejoin.
@@ -648,7 +666,11 @@ export function MapInspector() {
                 }}
               />
             </div>
-            <AccountControls />
+            <AccountControls
+              onNavigate={() => {
+                if (sidebarOverlayMode) setSidebarOpen(false);
+              }}
+            />
           </div>
         </Activity>
         <div className={styles.Content}>
@@ -739,8 +761,20 @@ export function MapInspector() {
                   }
                 />
               ) : (
-                <VisualInput />
+                <VisualInput
+                  menuOpen={cameraDrawerOpen}
+                  cameraLauncherVisible={showCameraDrawer}
+                />
               )}
+              {showCameraDrawer ? (
+                <Suspense>
+                  <MobileCameraDrawer
+                    key={`${dataSource}:${effectiveMissionName}`}
+                    engine={engine}
+                    onOpenChange={setCameraDrawerOpen}
+                  />
+                </Suspense>
+              ) : null}
               {loadingIndicatorUp && !splashVisible && (
                 <LoadingIndicator
                   id="loadingIndicator"

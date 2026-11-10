@@ -9,6 +9,7 @@ import { InputBindings } from "./InputBindings";
 import { usePlayerOrbitAvailable } from "./usePlayerOrbitLocked";
 import { targetFinderStore } from "../state/targetFinderStore";
 import {
+  CAMERA_SCROLL_INPUT,
   FREE_FLY_INPUT,
   MOVABLE_CAMERA_INPUT,
   POINTER_LOCKABLE_INPUT,
@@ -26,6 +27,7 @@ import {
   COMMAND_CIRCUIT_EXIT_INPUT,
   TARGET_FINDER_INPUT,
   SCORE_SCREEN_INPUT,
+  ORBIT_CAMERA_INPUT,
   PLAYER_ORBIT_INPUT,
 } from "./inputMap";
 
@@ -48,11 +50,18 @@ export function ActiveInputBindings() {
     streamPlaybackStore,
     (s) => s.followFlagSlot != null,
   );
+  const isOrbitFollow = useStore(
+    streamPlaybackStore,
+    (s) => s.cameraMode === "orbitOverride",
+  );
   const isDemo = recording?.source === "demo";
   const isLive = recording?.source === "live";
   const isMap = !recording;
   const targetFinderOpen = useStore(targetFinderStore, (s) => s.open);
   const canFindTarget = isDemo || (isLive && isWatcher);
+  const hasOrbitCamera =
+    (canFindTarget && isOrbitFollow) ||
+    (isLive && !isWatcher && inputMode === "follow");
   const orbitAvailable = usePlayerOrbitAvailable();
 
   if (targetFinderOpen) return null;
@@ -103,8 +112,15 @@ export function ActiveInputBindings() {
   return (
     <>
       {showFreeFly && <InputBindings map={FREE_FLY_INPUT} />}
+      {hasOrbitCamera && !showFreeFly && !isCommandCircuit && (
+        <InputBindings map={CAMERA_SCROLL_INPUT} />
+      )}
       {canFindTarget && <InputBindings map={TARGET_FINDER_INPUT} />}
-      {!isCommandCircuit && <InputBindings map={MOVABLE_CAMERA_INPUT} />}
+      {!isCommandCircuit && (
+        <InputBindings
+          map={hasOrbitCamera ? ORBIT_CAMERA_INPUT : MOVABLE_CAMERA_INPUT}
+        />
+      )}
       {!isCommandCircuit && <InputBindings map={POINTER_LOCKABLE_INPUT} />}
       {isMap && !isCommandCircuit && <InputBindings map={MAP_MODE_INPUT} />}
       <InputBindings map={COMMAND_CIRCUIT_TOGGLE_INPUT} />

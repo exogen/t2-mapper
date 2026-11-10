@@ -73,11 +73,6 @@ const PAN_SPEED = 500;
  */
 const ZOOM_SENSITIVITY = 0.002;
 
-/**
- * Pinch zoom sensitivity (exponent per pixel of finger-distance change).
- */
-const PINCH_SENSITIVITY = 0.005;
-
 const MIN_ZOOM_FACTOR = 0.5;
 const MAX_ZOOM_FACTOR = 50;
 
@@ -737,15 +732,10 @@ function startOrthoRig(engine: GameEngine): () => void {
             dx += drag.deltaY / zoom;
           }
           const pinch = inputState.commandPinchZoom as PinchState | undefined;
-          const pinching = pinch?.pinching ?? false;
-          // While two fingers are down, the gesture midpoint drives the view
-          // (map-app style) and the single-finger pan is ignored.
+          // The binding separates one-finger pan from pinch midpoint movement.
+          // Consume queued deltas even if the fingers lifted before this frame.
           const touch = inputState.commandPanTouch as TouchState | undefined;
-          if (
-            !pinching &&
-            touch?.dragging &&
-            (touch.deltaX !== 0 || touch.deltaY !== 0)
-          ) {
+          if (touch && (touch.deltaX !== 0 || touch.deltaY !== 0)) {
             dz -= touch.deltaX / zoom;
             dx += touch.deltaY / zoom;
           }
@@ -753,17 +743,13 @@ function startOrthoRig(engine: GameEngine): () => void {
           // Pinch (touch devices): pan with the midpoint's movement, zoom
           // anchored on the midpoint so the world point between the fingers
           // stays put — matching Google Maps-style focal point gestures.
-          if (pinch && pinching) {
+          if (pinch) {
             if (pinch.deltaX !== 0 || pinch.deltaY !== 0) {
               dz -= pinch.deltaX / zoom;
               dx += pinch.deltaY / zoom;
             }
-            if (pinch.deltaDistance !== 0) {
-              zoomAnchoredAt(
-                zoom * Math.exp(pinch.deltaDistance * PINCH_SENSITIVITY),
-                pinch.x,
-                pinch.y,
-              );
+            if (pinch.deltaScale !== 1) {
+              zoomAnchoredAt(zoom * pinch.deltaScale, pinch.x, pinch.y);
             }
           }
 

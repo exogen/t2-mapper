@@ -10,7 +10,7 @@ import styles from "./AccountControls.module.css";
 import { useAppNavigation } from "./useAppNavigation";
 import { UserIdentity } from "./UserIdentity";
 
-export function AccountControls() {
+export function AccountControls({ onNavigate }: { onNavigate?: () => void }) {
   const account = useAppAccount((state) => state);
   const navigation = useAppNavigation();
   const user = account.user;
@@ -41,6 +41,7 @@ export function AccountControls() {
                 return;
               event.preventDefault();
               navigation.userDemos(user.discordId);
+              onNavigate?.();
             }}
           >
             <UserIdentity user={user} />

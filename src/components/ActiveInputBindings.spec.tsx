@@ -10,6 +10,8 @@ const fixture = vi.hoisted(() => ({
   owner: "input" as "input" | "tour" | "director" | "commandCircuit",
   targetFinderOpen: false,
   orbit: false,
+  inputMode: "local" as "local" | "fly" | "follow",
+  cameraMode: "original" as "original" | "freeFly" | "orbitOverride",
 }));
 
 vi.mock("./usePlayback", () => ({
@@ -19,7 +21,9 @@ vi.mock("./usePlayback", () => ({
       streamingPlayback: { localSpectator: fixture.replay },
     },
 }));
-vi.mock("../state/inputModeStore", () => ({ useInputMode: () => "local" }));
+vi.mock("../state/inputModeStore", () => ({
+  useInputMode: () => fixture.inputMode,
+}));
 vi.mock("./SettingsProvider", () => ({
   useControls: () => ({ clickToCycle: true }),
 }));
@@ -32,7 +36,11 @@ vi.mock("../state/liveConnectionStore", () => ({
 }));
 vi.mock("zustand", () => ({
   useStore: (_store: unknown, select: (state: unknown) => unknown) =>
-    select({ open: fixture.targetFinderOpen, followFlagSlot: null }),
+    select({
+      open: fixture.targetFinderOpen,
+      followFlagSlot: null,
+      cameraMode: fixture.cameraMode,
+    }),
 }));
 vi.mock("./usePlayerOrbitLocked", () => ({
   usePlayerOrbitAvailable: () => fixture.orbit,
@@ -50,7 +58,37 @@ afterEach(() => {
   fixture.owner = "input";
   fixture.targetFinderOpen = false;
   fixture.orbit = false;
+  fixture.inputMode = "local";
+  fixture.cameraMode = "original";
 });
+
+it.each([
+  ["live", false, false, "follow", "original", 1, false],
+  ["live", false, false, "fly", "original", 1, true],
+  ["live", false, false, "local", "original", 0, false],
+  ["demo", false, false, "follow", "orbitOverride", 1, true],
+  ["live", true, false, "follow", "orbitOverride", 1, true],
+  ["live", false, true, "follow", "orbitOverride", 1, true],
+  [null, false, false, "local", "original", 1, true],
+] as const)(
+  "binds wheel control once for %s, watcher %s, replay %s, input %s, camera %s",
+  (source, watcher, replay, inputMode, cameraMode, scrollCount, movement) => {
+    Object.assign(fixture, { source, watcher, replay, inputMode, cameraMode });
+    const html = renderToStaticMarkup(<ActiveInputBindings />);
+    expect(html.match(/\badjustSpeed\b/g) ?? []).toHaveLength(scrollCount);
+    expect(html.includes("moveForward")).toBe(movement);
+  },
+);
+
+it.each(["tour", "director", "commandCircuit"] as const)(
+  "keeps native follow wheel zoom unbound while %s owns the camera",
+  (owner) => {
+    Object.assign(fixture, { source: "live", inputMode: "follow", owner });
+    expect(renderToStaticMarkup(<ActiveInputBindings />)).not.toContain(
+      "adjustSpeed",
+    );
+  },
+);
 
 it.each(["input", "tour", "director", "commandCircuit"] as const)(
   "offers demo quick cams while %s owns the camera, without competing number bindings",

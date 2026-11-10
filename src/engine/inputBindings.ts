@@ -61,6 +61,9 @@ export function installInputBindings<T extends string = string>(
       });
     }
 
+    const onVisibilityChange = () => {
+      if (document.hidden) bindings.resetTouch();
+    };
     if (bindings.hasTouchBindings) {
       canvas.addEventListener("touchstart", bindings.handleTouchStart, {
         passive: true,
@@ -73,9 +76,11 @@ export function installInputBindings<T extends string = string>(
       document.addEventListener("touchend", bindings.handleTouchEnd, {
         passive: true,
       });
-      document.addEventListener("touchcancel", bindings.handleTouchEnd, {
+      document.addEventListener("touchcancel", bindings.handleTouchCancel, {
         passive: true,
       });
+      window.addEventListener("blur", bindings.resetTouch);
+      document.addEventListener("visibilitychange", onVisibilityChange);
     }
 
     return () => {
@@ -106,7 +111,9 @@ export function installInputBindings<T extends string = string>(
         canvas.removeEventListener("touchstart", bindings.handleTouchStart);
         document.removeEventListener("touchmove", bindings.handleTouchMove);
         document.removeEventListener("touchend", bindings.handleTouchEnd);
-        document.removeEventListener("touchcancel", bindings.handleTouchEnd);
+        document.removeEventListener("touchcancel", bindings.handleTouchCancel);
+        window.removeEventListener("blur", bindings.resetTouch);
+        document.removeEventListener("visibilitychange", onVisibilityChange);
       }
 
       // Remove this instance's actions from the store.

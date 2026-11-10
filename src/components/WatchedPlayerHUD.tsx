@@ -75,7 +75,13 @@ export function WatchedPlayerHUD() {
 
   if (!name) return null;
   return (
-    <div className={styles.WatchedPlayer}>
+    <div
+      className={
+        orbitAvailable
+          ? styles.WatchedPlayerWithViewButton
+          : styles.WatchedPlayer
+      }
+    >
       <div className={styles.Badge}>
         <span className={styles.Label}>Following:</span> {name}
       </div>

@@ -313,132 +313,144 @@ export function createInputBindingHandlers(map: readonly InputMapEntry[]) {
 
   // ── Touch handlers ──
 
-  let touchId: number | null = null;
-  let lastTouchX = 0;
-  let lastTouchY = 0;
-  // A second concurrent touch drives pinch bindings (distance changes
-  // between the two points). Pan deltas keep following the primary touch.
-  let pinchTouchId: number | null = null;
-  let pinchTouchX = 0;
-  let pinchTouchY = 0;
-  // The canvas the gesture started on, for canvas-relative midpoints.
-  // Captured on touchstart (canvas-scoped); touchmove is document-scoped
-  // so its currentTarget can't be used for this.
+  // Keep only contacts that started on this canvas. Insertion order gives
+  // stable pinch fingers and naturally promotes a survivor when one lifts.
+  const touches = new Map<number, { x: number; y: number }>();
   let touchSurface: HTMLElement | null = null;
 
-  function touchDistance(): number {
-    return Math.hypot(pinchTouchX - lastTouchX, pinchTouchY - lastTouchY);
+  function touchPoints() {
+    return Array.from(touches.values()).slice(0, 2);
+  }
+
+  function updateTouchActivity() {
+    const points = touchPoints();
+    for (const { action } of touchBindings) {
+      const prev = store.getState().actions[action.name] as TouchState;
+      setAction(action.name, {
+        ...prev,
+        touching: points.length > 0,
+        dragging: points.length === 1 && prev.dragging,
+      } satisfies TouchState);
+    }
+    for (const { action } of pinchBindings) {
+      const prev = store.getState().actions[action.name] as PinchState;
+      const pinching = points.length === 2;
+      const rect = pinching ? touchSurface?.getBoundingClientRect() : null;
+      setAction(action.name, {
+        ...prev,
+        pinching,
+        ...(rect && pinching
+          ? {
+              x: (points[0].x + points[1].x) / 2 - rect.left,
+              y: (points[0].y + points[1].y) / 2 - rect.top,
+            }
+          : null),
+      } satisfies PinchState);
+    }
   }
 
   function handleTouchStart(e: TouchEvent) {
     if (touchBindings.length === 0 && pinchBindings.length === 0) return;
     touchSurface = e.currentTarget as HTMLElement;
-    for (let i = 0; i < e.changedTouches.length; i++) {
-      const touch = e.changedTouches[i];
-      if (touchId === null) {
-        touchId = touch.identifier;
-        lastTouchX = touch.clientX;
-        lastTouchY = touch.clientY;
-        for (const { action } of touchBindings) {
-          setAction(action.name, {
-            touching: true,
-            dragging: false,
-            deltaX: 0,
-            deltaY: 0,
-          } satisfies TouchState);
-        }
-      } else if (
-        pinchTouchId === null &&
-        pinchBindings.length > 0 &&
-        touch.identifier !== touchId
-      ) {
-        pinchTouchId = touch.identifier;
-        pinchTouchX = touch.clientX;
-        pinchTouchY = touch.clientY;
-        const rect = touchSurface.getBoundingClientRect();
-        for (const { action } of pinchBindings) {
-          setAction(action.name, {
-            pinching: true,
-            deltaX: 0,
-            deltaY: 0,
-            x: (lastTouchX + pinchTouchX) / 2 - rect.left,
-            y: (lastTouchY + pinchTouchY) / 2 - rect.top,
-            deltaDistance: 0,
-          } satisfies PinchState);
-        }
+    for (const touch of Array.from(e.changedTouches)) {
+      if (!touches.has(touch.identifier)) {
+        touches.set(touch.identifier, { x: touch.clientX, y: touch.clientY });
       }
     }
+    // Active flags and baselines change here; queued movement belongs to
+    // the next frame even when several gestures occur between frames.
+    updateTouchActivity();
   }
 
-  function handleTouchMove(e: TouchEvent) {
-    if (touchId === null) return;
-    // The gesture started on the canvas and is ours: stop the browser
-    // from also scrolling/zooming/rubber-banding the page with it.
-    e.preventDefault();
-    const prevDistance = pinchTouchId !== null ? touchDistance() : 0;
-    const prevMidX = (lastTouchX + pinchTouchX) / 2;
-    const prevMidY = (lastTouchY + pinchTouchY) / 2;
-    let pinchMoved = false;
-    for (let i = 0; i < e.changedTouches.length; i++) {
-      const touch = e.changedTouches[i];
-      if (touch.identifier === touchId) {
-        const dx = touch.clientX - lastTouchX;
-        const dy = touch.clientY - lastTouchY;
-        lastTouchX = touch.clientX;
-        lastTouchY = touch.clientY;
-        pinchMoved = true;
+  function sampleTouchPositions(changedTouches: TouchList): boolean {
+    const before = touchPoints();
+    let moved = false;
+    for (const touch of Array.from(changedTouches)) {
+      if (!touches.has(touch.identifier)) continue;
+      touches.set(touch.identifier, { x: touch.clientX, y: touch.clientY });
+      moved = true;
+    }
+    if (!moved) return false;
+    const after = touchPoints();
+    if (before.length === 1) {
+      const dx = after[0].x - before[0].x;
+      const dy = after[0].y - before[0].y;
+      if (dx !== 0 || dy !== 0) {
         for (const { action } of touchBindings) {
           const prev = store.getState().actions[action.name] as TouchState;
           setAction(action.name, {
+            ...prev,
             touching: true,
             dragging: true,
             deltaX: prev.deltaX + dx,
             deltaY: prev.deltaY + dy,
           } satisfies TouchState);
         }
-      } else if (touch.identifier === pinchTouchId) {
-        pinchTouchX = touch.clientX;
-        pinchTouchY = touch.clientY;
-        pinchMoved = true;
       }
-    }
-    if (pinchTouchId !== null && pinchMoved && touchSurface) {
-      const delta = touchDistance() - prevDistance;
-      const midX = (lastTouchX + pinchTouchX) / 2;
-      const midY = (lastTouchY + pinchTouchY) / 2;
+    } else if (before.length === 2 && touchSurface) {
+      const previousSpan = Math.hypot(
+        before[1].x - before[0].x,
+        before[1].y - before[0].y,
+      );
+      const span = Math.hypot(after[1].x - after[0].x, after[1].y - after[0].y);
+      // OrbitControls scales zoom by the ratio of successive finger spans.
+      // Ignore near-zero spans instead of dividing by a degenerate baseline.
+      const scale = previousSpan >= 1 && span >= 1 ? span / previousSpan : 1;
+      const midX = (after[0].x + after[1].x) / 2;
+      const midY = (after[0].y + after[1].y) / 2;
       const rect = touchSurface.getBoundingClientRect();
       for (const { action } of pinchBindings) {
         const prev = store.getState().actions[action.name] as PinchState;
         setAction(action.name, {
+          ...prev,
           pinching: true,
-          deltaX: prev.deltaX + (midX - prevMidX),
-          deltaY: prev.deltaY + (midY - prevMidY),
+          deltaX: prev.deltaX + midX - (before[0].x + before[1].x) / 2,
+          deltaY: prev.deltaY + midY - (before[0].y + before[1].y) / 2,
           x: midX - rect.left,
           y: midY - rect.top,
-          deltaDistance: prev.deltaDistance + delta,
+          deltaDistance: prev.deltaDistance + span - previousSpan,
+          deltaScale: prev.deltaScale * scale,
         } satisfies PinchState);
       }
     }
+    return true;
+  }
+
+  function handleTouchMove(e: TouchEvent) {
+    // Document-level listeners also see sidebar and other overlay touches.
+    // Only prevent browser handling when one of our own contacts moved.
+    if (sampleTouchPositions(e.changedTouches)) e.preventDefault();
   }
 
   function handleTouchEnd(e: TouchEvent) {
-    for (let i = 0; i < e.changedTouches.length; i++) {
-      const id = e.changedTouches[i].identifier;
-      if (id === pinchTouchId) {
-        pinchTouchId = null;
-        for (const { action } of pinchBindings) {
-          setAction(action.name, defaultPinchState());
-        }
-      } else if (id === touchId) {
-        touchId = null;
-        pinchTouchId = null;
-        for (const { action } of touchBindings) {
-          setAction(action.name, defaultTouchState());
-        }
-        for (const { action } of pinchBindings) {
-          setAction(action.name, defaultPinchState());
-        }
-      }
+    // A normal release commits its last position and leaves pending movement
+    // for the frame consumer. Cancellation follows the separate reset path.
+    sampleTouchPositions(e.changedTouches);
+    for (const touch of Array.from(e.changedTouches)) {
+      touches.delete(touch.identifier);
+    }
+    updateTouchActivity();
+    if (touches.size === 0) touchSurface = null;
+  }
+
+  function resetTouch() {
+    touches.clear();
+    touchSurface = null;
+    for (const { action } of touchBindings) {
+      setAction(action.name, defaultTouchState());
+    }
+    for (const { action } of pinchBindings) {
+      setAction(action.name, defaultPinchState());
+    }
+  }
+
+  function handleTouchCancel(e: TouchEvent) {
+    if (
+      Array.from(e.changedTouches).some((touch) =>
+        touches.has(touch.identifier),
+      )
+    ) {
+      resetTouch();
     }
   }
 
@@ -459,6 +471,8 @@ export function createInputBindingHandlers(map: readonly InputMapEntry[]) {
     handleTouchStart,
     handleTouchMove,
     handleTouchEnd,
+    handleTouchCancel,
+    resetTouch,
     hasMouseBindings:
       clickBindings.length > 0 ||
       dragBindings.length > 0 ||

@@ -6,6 +6,8 @@ import {
 } from "../state/liveConnectionStore";
 import { engineStore } from "../state/engineStore";
 import {
+  MAX_ORBIT_DISTANCE,
+  MIN_ORBIT_DISTANCE,
   streamPlaybackStore,
   type DemoCameraMode,
 } from "../state/streamPlaybackStore";
@@ -628,6 +630,16 @@ export function installInputConsumer(engine: GameEngine): () => void {
         const serverMode = serverCam.mode === "third-person" ? "follow" : "fly";
         if (serverMode !== mode) {
           log.info("server corrected observer mode: %s → %s", mode, serverMode);
+          if (serverMode === "follow") {
+            // Start at the server's distance, then retain local pinch zoom
+            // through later corrections while this follow remains active.
+            streamPlaybackStore.setState({
+              orbitOverrideDistance: Math.max(
+                MIN_ORBIT_DISTANCE,
+                Math.min(MAX_ORBIT_DISTANCE, serverCam.orbitDistance ?? 4),
+              ),
+            });
+          }
           setInputMode(serverMode);
           if (activeAdapter) {
             activeAdapter.observerMode = serverMode;
@@ -686,7 +698,7 @@ export function installInputConsumer(engine: GameEngine): () => void {
           predYaw,
           predPitch,
           engine.ticks.fraction,
-          serverCam?.orbitDistance ?? 4,
+          streamPlaybackStore.getState().orbitOverrideDistance,
           serverCam?.orbitTargetId,
         );
       }

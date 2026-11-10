@@ -1,5 +1,10 @@
 import type { InputMapEntry } from "./InputControls";
 
+/** Wheel control for fly speed or the shared follow-camera orbit distance. */
+export const CAMERA_SCROLL_INPUT = [
+  { name: "adjustSpeed", keys: [{ type: "scroll" }] },
+] as const satisfies readonly InputMapEntry[];
+
 /** WASD movement + speed adjust. Active in free-fly modes only. */
 export const FREE_FLY_INPUT = [
   { name: "moveForward", keys: ["KeyW"] },
@@ -8,7 +13,7 @@ export const FREE_FLY_INPUT = [
   { name: "moveRight", keys: ["KeyD"] },
   { name: "moveUp", keys: ["KeyE"] },
   { name: "moveDown", keys: ["KeyQ"] },
-  { name: "adjustSpeed", keys: [{ type: "scroll" }] },
+  ...CAMERA_SCROLL_INPUT,
 ] as const satisfies readonly InputMapEntry[];
 
 /** Arrow keys, drag, touch, and pointer-locked look. Active in any mode
@@ -68,6 +73,12 @@ export const TARGET_FINDER_INPUT = [
  */
 export const SCORE_SCREEN_INPUT = [
   { name: "toggleScoreScreen", keys: ["F2"] },
+] as const satisfies readonly InputMapEntry[];
+
+/** Track follow rotation and pinch zoom together for one/two-finger handoff. */
+export const ORBIT_CAMERA_INPUT = [
+  ...MOVABLE_CAMERA_INPUT,
+  { name: "orbitPinchZoom", keys: [{ type: "pinch" }] },
 ] as const satisfies readonly InputMapEntry[];
 
 /**
@@ -171,6 +182,7 @@ export type ActionName =
   | (typeof LIVE_OBSERVER_INPUT)[number]["name"]
   | (typeof TARGET_FINDER_INPUT)[number]["name"]
   | (typeof SCORE_SCREEN_INPUT)[number]["name"]
+  | (typeof ORBIT_CAMERA_INPUT)[number]["name"]
   | (typeof PLAYER_ORBIT_INPUT)[number]["name"]
   | (typeof LIVE_FOLLOW_INPUT)[number]["name"]
   | (typeof FOLLOW_KEYBOARD_INPUT)[number]["name"]

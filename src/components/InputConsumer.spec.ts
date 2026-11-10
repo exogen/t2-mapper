@@ -77,7 +77,7 @@ vi.mock("../state/settingsStore", () => ({
   },
 }));
 
-import { PerspectiveCamera, Scene } from "three";
+import { PerspectiveCamera, Scene, Vector3 } from "three";
 import { GameEngine } from "../engine/gameEngine";
 import { installInputBindings } from "../engine/inputBindings";
 import { installInputConsumer } from "../engine/inputConsumer";
@@ -88,6 +88,12 @@ import { FREE_FLY_INPUT, MOVABLE_CAMERA_INPUT } from "./inputMap";
 import { inputControlsStore } from "./InputControls";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import { joystickState } from "../state/joystickState";
+import {
+  MAX_ORBIT_DISTANCE,
+  MIN_ORBIT_DISTANCE,
+  resetStreamPlayback,
+  streamPlaybackStore,
+} from "../state/streamPlaybackStore";
 
 // Systems left installed by a failed test would keep running (and
 // clearing input) in the next one.
@@ -99,6 +105,8 @@ afterEach(async () => {
   }
   joystickState.move.force = 0;
   joystickState.look.force = 0;
+  resetStreamPlayback();
+  inputControlsStore.setState({ actions: {} });
 });
 afterAll(() => {
   for (const key of Object.keys(browser.globals)) {
@@ -116,6 +124,18 @@ interface SentMove {
   index: number;
   y: number;
   yaw: number;
+}
+
+interface TestSnapshot {
+  camera: {
+    yaw: number;
+    pitch: number;
+    position: number[];
+    mode: string;
+    orbitDistance?: number;
+    orbitTargetId?: string;
+  };
+  entities: { id: string; position: number[] }[];
 }
 
 /**
@@ -156,7 +176,7 @@ async function mountInput({
     snapshot: {
       camera: { yaw: 0, pitch: 0, position: [0, 0, 0], mode: "observer" },
       entities: [],
-    },
+    } as TestSnapshot,
     getSnapshot() {
       return this.snapshot;
     },
@@ -289,6 +309,200 @@ it("reads touch drag-look before the keyboard handler clears the raw deltas", as
   }
   expect(live.sent.reduce((sum, move) => sum + move.yaw, 0)).not.toBe(0);
 });
+
+function touchGesture(
+  deltaX: number,
+  deltaY: number,
+  pinchScale?: number,
+  active = true,
+) {
+  inputControlsStore.setState(({ actions }) => ({
+    actions: {
+      ...actions,
+      touchLook: { touching: active, dragging: active, deltaX, deltaY },
+      orbitPinchZoom: {
+        pinching: active && pinchScale != null,
+        deltaX: 0,
+        deltaY: 0,
+        x: 0,
+        y: 0,
+        deltaDistance: 0,
+        deltaScale: pinchScale ?? 1,
+      },
+    },
+  }));
+}
+
+it.each(["moveLookStick", "dualStick"] as const)(
+  "orbits a followed target with a canvas drag in %s mode, consuming the drag once",
+  async (touchMode) => {
+    const local = await mountInput({ live: false, touch: true, touchMode });
+    streamPlaybackStore.setState({
+      playback: {} as never,
+      cameraMode: "orbitOverride",
+      orbitOverrideYaw: 0,
+      orbitOverridePitch: 0,
+    });
+    touchGesture(50, 25);
+    await local.step(1 / 60);
+    expect(streamPlaybackStore.getState().orbitOverrideYaw).toBeCloseTo(0.2);
+    expect(streamPlaybackStore.getState().orbitOverridePitch).toBeCloseTo(0.1);
+    await local.step(1 / 60);
+    expect(streamPlaybackStore.getState().orbitOverrideYaw).toBeCloseTo(0.2);
+    expect(streamPlaybackStore.getState().orbitOverridePitch).toBeCloseTo(0.1);
+  },
+);
+
+it("pinches orbit distance in both directions without rotating, replaying deltas, or exceeding the zoom limits", async () => {
+  const local = await mountInput({ live: false, touch: true });
+  streamPlaybackStore.setState({
+    playback: {} as never,
+    cameraMode: "orbitOverride",
+    orbitOverrideDistance: 8,
+    orbitOverrideYaw: 0,
+    orbitOverridePitch: 0,
+  });
+  // Raw handlers keep two-finger motion out of the single-finger deltas.
+  touchGesture(0, 0, 2);
+  await local.step(1 / 60);
+  const closer = streamPlaybackStore.getState().orbitOverrideDistance;
+  expect(closer).toBe(4);
+  expect(streamPlaybackStore.getState().orbitOverrideYaw).toBe(0);
+  expect(streamPlaybackStore.getState().orbitOverridePitch).toBe(0);
+  await local.step(1 / 60);
+  expect(streamPlaybackStore.getState().orbitOverrideDistance).toBe(closer);
+
+  touchGesture(0, 0, 0.5);
+  await local.step(1 / 60);
+  expect(streamPlaybackStore.getState().orbitOverrideDistance).toBeCloseTo(8);
+  touchGesture(0, 0, 1_000_000);
+  await local.step(1 / 60);
+  expect(streamPlaybackStore.getState().orbitOverrideDistance).toBe(
+    MIN_ORBIT_DISTANCE,
+  );
+  touchGesture(0, 0, 0.000001);
+  await local.step(1 / 60);
+  expect(streamPlaybackStore.getState().orbitOverrideDistance).toBe(
+    MAX_ORBIT_DISTANCE,
+  );
+});
+
+it("shares native live follow distance and limits between wheel and pinch, preserving zoom through server corrections", async () => {
+  const live = await mountInput({ touch: true });
+  live.adapter.snapshot = {
+    camera: {
+      yaw: 0,
+      pitch: 0,
+      position: [0, 0, 0],
+      mode: "third-person",
+      orbitDistance: 6,
+      orbitTargetId: "target",
+    },
+    entities: [{ id: "target", position: [5, 7, 11] }],
+  };
+  await live.step(1 / 60);
+  expect(streamPlaybackStore.getState().orbitOverrideDistance).toBe(6);
+
+  const flySpeed = preferences.speedMultiplier;
+  live.wheel(-100);
+  const wheelDistance = streamPlaybackStore.getState().orbitOverrideDistance;
+  expect(wheelDistance).toBeLessThan(6);
+  expect(preferences.speedMultiplier).toBe(flySpeed);
+
+  touchGesture(0, 0, 2);
+  await live.step(1 / 60);
+  const distance = streamPlaybackStore.getState().orbitOverrideDistance;
+  const target = new Vector3(7, 11, 5);
+  expect(distance).toBeCloseTo(wheelDistance / 2);
+  expect(live.camera.position.distanceTo(target)).toBeCloseTo(distance);
+
+  live.adapter.serverUpdateId++;
+  live.adapter.snapshot = {
+    ...live.adapter.snapshot,
+    camera: { ...live.adapter.snapshot.camera, orbitDistance: 6 },
+  };
+  await live.step(1 / 60);
+  expect(streamPlaybackStore.getState().orbitOverrideDistance).toBe(distance);
+  expect(live.camera.position.distanceTo(target)).toBeCloseTo(distance);
+
+  live.wheel(1_000_000);
+  expect(streamPlaybackStore.getState().orbitOverrideDistance).toBe(
+    MAX_ORBIT_DISTANCE,
+  );
+  touchGesture(0, 0, 1_000_000);
+  await live.step(1 / 60);
+  expect(streamPlaybackStore.getState().orbitOverrideDistance).toBe(
+    MIN_ORBIT_DISTANCE,
+  );
+  touchGesture(0, 0, 0.000001);
+  await live.step(1 / 60);
+  expect(streamPlaybackStore.getState().orbitOverrideDistance).toBe(
+    MAX_ORBIT_DISTANCE,
+  );
+  live.wheel(-1_000_000);
+  expect(streamPlaybackStore.getState().orbitOverrideDistance).toBe(
+    MIN_ORBIT_DISTANCE,
+  );
+});
+
+it("consumes a completed quick pinch once, then accepts a fresh drag", async () => {
+  const local = await mountInput({ live: false, touch: true });
+  streamPlaybackStore.setState({
+    playback: {} as never,
+    cameraMode: "orbitOverride",
+    orbitOverrideDistance: 8,
+    orbitOverrideYaw: 0,
+    orbitOverridePitch: 0,
+  });
+  touchGesture(0, 0, 2, false);
+  await local.step(1 / 60);
+  expect(streamPlaybackStore.getState().orbitOverrideDistance).toBe(4);
+  expect(streamPlaybackStore.getState().orbitOverrideYaw).toBe(0);
+  expect(streamPlaybackStore.getState().orbitOverridePitch).toBe(0);
+  await local.step(1 / 60);
+  expect(streamPlaybackStore.getState().orbitOverrideDistance).toBe(4);
+
+  touchGesture(10, 5);
+  await local.step(1 / 60);
+  expect(streamPlaybackStore.getState().orbitOverrideYaw).toBeCloseTo(0.04);
+  expect(streamPlaybackStore.getState().orbitOverridePitch).toBeCloseTo(0.02);
+});
+
+it("consumes the final drag after release without repeating it on later frames", async () => {
+  const local = await mountInput({ live: false, touch: true });
+  streamPlaybackStore.setState({
+    playback: {} as never,
+    cameraMode: "orbitOverride",
+    orbitOverrideYaw: 0,
+    orbitOverridePitch: 0,
+  });
+  touchGesture(50, 25, undefined, false);
+  await local.step(1 / 60);
+  expect(streamPlaybackStore.getState().orbitOverrideYaw).toBeCloseTo(0.2);
+  expect(streamPlaybackStore.getState().orbitOverridePitch).toBeCloseTo(0.1);
+  await local.step(1 / 60);
+  expect(streamPlaybackStore.getState().orbitOverrideYaw).toBeCloseTo(0.2);
+  expect(streamPlaybackStore.getState().orbitOverridePitch).toBeCloseTo(0.1);
+});
+
+it.each(["original", "firstPersonOverride", "freeFly"] as const)(
+  "does not change orbit distance or angles from stale follow gestures in %s mode",
+  async (cameraMode) => {
+    const local = await mountInput({ live: false, touch: true });
+    streamPlaybackStore.setState({
+      playback: {} as never,
+      cameraMode,
+      orbitOverrideDistance: 8,
+      orbitOverrideYaw: 0,
+      orbitOverridePitch: 0,
+    });
+    touchGesture(50, 25, 2);
+    await local.step(1 / 60);
+    expect(streamPlaybackStore.getState().orbitOverrideDistance).toBe(8);
+    expect(streamPlaybackStore.getState().orbitOverrideYaw).toBe(0);
+    expect(streamPlaybackStore.getState().orbitOverridePitch).toBe(0);
+  },
+);
 
 it.each([
   [0.01, 12.5],

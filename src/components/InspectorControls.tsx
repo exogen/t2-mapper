@@ -4,7 +4,9 @@ import { useCommentaryTracks } from "../state/commentaryTracksStore";
 import { useEffect, useState, useRef, memo } from "react";
 import { FaRotateRight } from "react-icons/fa6";
 import {
+  MAX_JOYSTICK_OPACITY,
   MAX_SPEED_MULTIPLIER,
+  MIN_JOYSTICK_OPACITY,
   MIN_SPEED_MULTIPLIER,
   RENDER_SCALE_OPTIONS,
   useControls,
@@ -178,6 +180,8 @@ export const InspectorControls = memo(function InspectorControls({
     setClickToCycle,
     touchMode,
     setTouchMode,
+    joystickOpacity,
+    setJoystickOpacity,
     invertScroll,
     setInvertScroll,
     invertDrag,
@@ -632,6 +636,29 @@ export const InspectorControls = memo(function InspectorControls({
                       Single stick has a unified move + look control. Dual stick
                       has independent move + look.
                     </p>
+                  </div>
+                ) : null}
+                {isTouch ? (
+                  <div className={styles.Field}>
+                    <label htmlFor="joystickOpacityInput">
+                      Joystick opacity
+                    </label>
+                    <div className={styles.Control}>
+                      <output htmlFor="joystickOpacityInput">
+                        {Math.round(joystickOpacity * 100)}%
+                      </output>
+                      <input
+                        id="joystickOpacityInput"
+                        type="range"
+                        min={MIN_JOYSTICK_OPACITY * 100}
+                        max={MAX_JOYSTICK_OPACITY * 100}
+                        step={5}
+                        value={Math.round(joystickOpacity * 100)}
+                        onChange={(event) =>
+                          setJoystickOpacity(Number(event.target.value) / 100)
+                        }
+                      />
+                    </div>
                   </div>
                 ) : null}
                 {isTouch === false ? (

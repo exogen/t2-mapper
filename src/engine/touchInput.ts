@@ -1,7 +1,17 @@
-import { commandCircuitStore } from "../state/commandCircuitStore";
-import { inputControlsStore, type TouchState } from "../state/inputControls";
+import { resolveCameraOwner } from "../state/cameraOwner";
+import {
+  inputControlsStore,
+  type PinchState,
+  type TouchState,
+} from "../state/inputControls";
+import { inputModeStore } from "../state/inputModeStore";
 import { joystickState } from "../state/joystickState";
 import { settingsStore } from "../state/settingsStore";
+import {
+  MAX_ORBIT_DISTANCE,
+  MIN_ORBIT_DISTANCE,
+  streamPlaybackStore,
+} from "../state/streamPlaybackStore";
 import { FramePriority } from "./framePriority";
 import type { GameEngine } from "./gameEngine";
 
@@ -11,8 +21,7 @@ const DUAL_MOVE_DEADZONE = 0.08;
 const DUAL_LOOK_DEADZONE = 0.15;
 const SINGLE_STICK_DEADZONE = 0.15;
 
-/** Touch look (drags) and the on-screen joysticks' movement, on touch
- *  devices. */
+/** Canvas look/orbit gestures and on-screen joystick movement on touch devices. */
 export function installTouchInput(engine: GameEngine): () => void {
   const touchQuery = window.matchMedia("(pointer: coarse)");
   let stop: (() => void) | null = null;
@@ -30,9 +39,7 @@ export function installTouchInput(engine: GameEngine): () => void {
 
 function startTouchInput(engine: GameEngine): () => void {
   return engine.scheduler.add(FramePriority.InputTouch, ({ delta }) => {
-    // Suppress joystick/touch-look input while command circuit is active —
-    // its rig consumes touch gestures directly.
-    if (commandCircuitStore.getState().active) return;
+    if (resolveCameraOwner() !== "input") return;
 
     const { speedMultiplier, touchMode, invertDrag, invertJoystick } =
       settingsStore.getState();
@@ -42,13 +49,35 @@ function startTouchInput(engine: GameEngine): () => void {
     // Read touch deltas from InputControls store.
     const inputState = inputControlsStore.getState().actions;
     const touch = inputState.touchLook as TouchState | undefined;
-    const dragSign = invertDrag ? 1 : -1;
+    const cameraMode = streamPlaybackStore.getState().cameraMode;
+    const orbit =
+      cameraMode === "orbitOverride" ||
+      (inputModeStore.getState().mode === "follow" &&
+        cameraMode !== "firstPersonOverride");
+    const pinch = inputState.orbitPinchZoom as PinchState | undefined;
+    const dragSign = (invertDrag ? 1 : -1) * (orbit ? -1 : 1);
+
+    if (orbit && pinch && pinch.deltaScale !== 1) {
+      const distance = streamPlaybackStore.getState().orbitOverrideDistance;
+      streamPlaybackStore.setState({
+        orbitOverrideDistance: Math.max(
+          MIN_ORBIT_DISTANCE,
+          Math.min(MAX_ORBIT_DISTANCE, distance / pinch.deltaScale),
+        ),
+      });
+    }
 
     let deltaYaw = 0;
     let deltaPitch = 0;
 
-    // Touch-drag look (moveLookStick mode only — dualStick uses joystick).
-    if (touchMode === "moveLookStick" && touch && touch.dragging) {
+    // Follow always uses canvas drags, regardless of the free-fly stick layout.
+    // The binding queues only single-finger rotation, even across a pinch.
+    // Read queued movement after release too, before the frame clears it.
+    if (
+      (orbit || touchMode === "moveLookStick") &&
+      touch &&
+      (touch.deltaX !== 0 || touch.deltaY !== 0)
+    ) {
       deltaYaw = dragSign * touch.deltaX * LOOK_SENSITIVITY;
       deltaPitch = dragSign * touch.deltaY * LOOK_SENSITIVITY;
     }
@@ -57,7 +86,7 @@ function startTouchInput(engine: GameEngine): () => void {
     let y = 0;
     const z = 0;
 
-    if (touchMode === "dualStick") {
+    if (!orbit && touchMode === "dualStick") {
       // Right stick -> camera rotation
       if (lookForce > DUAL_LOOK_DEADZONE) {
         const normalizedLookForce =
@@ -103,7 +132,7 @@ function startTouchInput(engine: GameEngine): () => void {
           ),
         );
       }
-    } else if (touchMode === "moveLookStick") {
+    } else if (!orbit && touchMode === "moveLookStick") {
       if (moveForce > 0) {
         // Move forward at half speed.
         y = Math.min(1, 0.5 * speedMultiplier + 0.05);

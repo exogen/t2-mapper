@@ -52,7 +52,7 @@ function isDeadEntity(entity: GameEntity): boolean {
  * some players and take ages to reach others. A client without a target
  * id falls back to a stable per-entity key so it still appears once.
  */
-function playerEntityIds(): string[] {
+export function getFollowablePlayerIds(): string[] {
   const byIdentity = new Map<
     string,
     { id: string; targetId: number | null; ghostIndex: number }
@@ -179,7 +179,7 @@ export function getFollowTargets(
       flagSlot: flag.slot,
     });
   }
-  for (const id of playerEntityIds()) {
+  for (const id of getFollowablePlayerIds()) {
     const entity = entities.get(id)!;
     if (entity.renderType !== "Player") continue;
     const targetId = entity.targetId;
@@ -330,7 +330,7 @@ function resumeFollowTarget(players: string[]): string | undefined {
 /** Follow a specific player, or resume the last-followed one when omitted. */
 export function enterWatchFollow(targetId?: string): void {
   const current = streamPlaybackStore.getState().followEntityId;
-  const players = playerEntityIds();
+  const players = getFollowablePlayerIds();
   const target =
     targetId ??
     (current && players.includes(current)
@@ -631,7 +631,7 @@ export function cycleDemoCameraMode(hasOriginalView = true): void {
 /** Cycle to the next player (fire trigger / ArrowRight in the real
  *  client), or the previous with direction -1 (jet trigger / ArrowLeft). */
 export function cycleWatchFollow(direction: 1 | -1 = 1): void {
-  const players = playerEntityIds();
+  const players = getFollowablePlayerIds();
   if (players.length === 0) {
     exitWatchFollow();
     return;

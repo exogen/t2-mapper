@@ -52,6 +52,7 @@ export interface ScrollState {
 export interface TouchState {
   touching: boolean;
   dragging: boolean;
+  /** Pending movement survives normal release until the frame consumes it. */
   deltaX: number;
   deltaY: number;
 }
@@ -60,7 +61,8 @@ export interface PinchState {
   pinching: boolean;
   /**
    * Accumulated movement of the midpoint between the two touch points, in
-   * pixels, since the deltas were last cleared.
+   * pixels, since the deltas were last cleared. Pending movement survives
+   * normal release until the frame consumes it.
    */
   deltaX: number;
   deltaY: number;
@@ -74,6 +76,8 @@ export interface PinchState {
    * since the deltas were last cleared. Positive = fingers moving apart.
    */
   deltaDistance: number;
+  /** Accumulated pinch span ratio since the deltas were cleared; 1 = unchanged. */
+  deltaScale: number;
 }
 
 export type ActionState =
@@ -175,6 +179,7 @@ export function defaultPinchState(): PinchState {
     x: 0,
     y: 0,
     deltaDistance: 0,
+    deltaScale: 1,
   };
 }
 
@@ -363,8 +368,8 @@ window.addEventListener("keydown", handleGlobalKeyDown);
 window.addEventListener("keyup", handleGlobalKeyUp);
 window.addEventListener("blur", handleGlobalBlur);
 
-/** Zero accumulated deltas for drag, scroll, and touch actions.
- *  Does NOT reset `dragging` — that is managed by binding lifecycle.
+/** Clear accumulated movement for drag, scroll, touch, and pinch actions.
+ *  Does NOT reset activity flags — those are managed by binding lifecycle.
  *  Call after reading deltas in your frame callback. */
 export function clearInputDeltas() {
   const { actions } = inputControlsStore.getState();
@@ -372,11 +377,13 @@ export function clearInputDeltas() {
   for (const [name, s] of Object.entries(actions)) {
     const hasMoveDeltas = "deltaX" in s && (s.deltaX !== 0 || s.deltaY !== 0);
     const hasDistanceDelta = "deltaDistance" in s && s.deltaDistance !== 0;
-    if (hasMoveDeltas || hasDistanceDelta) {
+    const hasScaleDelta = "deltaScale" in s && s.deltaScale !== 1;
+    if (hasMoveDeltas || hasDistanceDelta || hasScaleDelta) {
       updates[name] = {
         ...s,
         ...(hasMoveDeltas ? { deltaX: 0, deltaY: 0 } : null),
         ...(hasDistanceDelta ? { deltaDistance: 0 } : null),
+        ...(hasScaleDelta ? { deltaScale: 1 } : null),
       };
     }
   }
