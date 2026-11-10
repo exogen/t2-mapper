@@ -126,15 +126,32 @@ export function openDiscordSignIn({
     channel?.close();
     window.removeEventListener("storage", onStorage);
   }
+  const width = 500;
+  const height = 650;
+  let features = `popup,width=${width},height=${height}`;
   try {
-    popup = window.open(url, "_blank", "popup,width=500,height=650");
+    const { screenX, screenY, outerWidth, outerHeight } = window;
+    const left = Math.round(screenX + (outerWidth - width) / 2);
+    const top = Math.round(screenY + (outerHeight - height) / 2);
+    if (
+      outerWidth > 0 &&
+      outerHeight > 0 &&
+      Number.isFinite(left) &&
+      Number.isFinite(top)
+    )
+      features += `,left=${left},top=${top}`;
+  } catch {
+    // Positioning is optional; unavailable geometry must not prevent sign-in.
+  }
+  try {
+    popup = window.open(url, "_blank", features);
   } catch {
     // An ordinary link remains usable if opening a popup is unavailable.
   }
   if (!popup) clearTimeout(openingTimeout);
   return {
     url,
-    opened: popup !== null,
+    opened: Boolean(popup),
     focus() {
       if (disposed) return false;
       try {

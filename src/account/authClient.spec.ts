@@ -33,6 +33,10 @@ beforeEach(async () => {
   open = vi.fn(() => popup);
   vi.stubGlobal("window", {
     location: { href: PAGE_URL },
+    screenX: 120,
+    screenY: 80,
+    outerWidth: 1440,
+    outerHeight: 900,
     open,
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
@@ -113,9 +117,50 @@ it("subscribes before synchronously opening the popup and never navigates the pa
   expect(open).toHaveBeenCalledWith(
     `https://play.tribes2.online/account/sign-in/#${ATTEMPT}`,
     "_blank",
-    "popup,width=500,height=650",
+    "popup,width=500,height=650,left=590,top=205",
   );
   expect(window.location.href).toBe(PAGE_URL);
+});
+
+it.each([
+  { screenX: undefined },
+  { screenY: NaN },
+  { outerWidth: Infinity },
+  { outerHeight: -Infinity },
+  { outerWidth: 0 },
+  { outerHeight: -1 },
+])(
+  "opens without positioning when window geometry is unusable: %o",
+  (geometry) => {
+    Object.assign(window, geometry);
+    const { attempt, onEvent } = start();
+    expect(attempt.opened).toBe(true);
+    expect(open).toHaveBeenCalledExactlyOnceWith(
+      attempt.url,
+      "_blank",
+      "popup,width=500,height=650",
+    );
+    deliver({ attemptId: ATTEMPT, event: "complete" });
+    expect(onEvent).toHaveBeenCalledExactlyOnceWith("complete");
+  },
+);
+
+it("still opens sign-in when reading window geometry throws", () => {
+  Object.defineProperty(window, "screenX", {
+    configurable: true,
+    get() {
+      throw new Error("Window position unavailable");
+    },
+  });
+  const { attempt, onEvent } = start();
+  expect(attempt.opened).toBe(true);
+  expect(open).toHaveBeenCalledExactlyOnceWith(
+    attempt.url,
+    "_blank",
+    "popup,width=500,height=650",
+  );
+  deliver({ attemptId: ATTEMPT, event: "complete" });
+  expect(onEvent).toHaveBeenCalledExactlyOnceWith("complete");
 });
 
 it("rejects malformed, unknown, and other-attempt notifications", () => {
@@ -156,10 +201,11 @@ it("focuses the existing popup and safely tolerates an inaccessible WindowProxy"
   expect(attempt.focus()).toBe(false);
 });
 
-it.each(["blocked", "throws"])(
+it.each(["returns null", "returns undefined", "throws"])(
   "keeps the completion observer for a manual-tab fallback when window.open %s",
   (kind) => {
-    if (kind === "blocked") open.mockReturnValueOnce(null);
+    if (kind === "returns null") open.mockReturnValueOnce(null);
+    else if (kind === "returns undefined") open.mockReturnValueOnce(undefined);
     else
       open.mockImplementationOnce(() => {
         throw new Error("Popup unavailable");
