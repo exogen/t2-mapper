@@ -7,6 +7,7 @@ import {
   sidecarUrl,
   demoPlayerCount,
   fetchDemoIndex,
+  demoDownloadUrl,
 } from "./demoIndex";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -19,7 +20,26 @@ it("revalidates the demo index so saved metadata is not hidden by browser caches
 
   expect(fetchMock).toHaveBeenCalledWith(`${DEMOS_BASE_URL}/index.json`, {
     cache: "no-cache",
+    signal: expect.any(AbortSignal),
   });
+});
+
+it("cancels an in-flight index request when its query is cancelled", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      (_url, { signal }: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          signal!.addEventListener("abort", () => reject(signal!.reason), {
+            once: true,
+          });
+        }),
+    ),
+  );
+  const controller = new AbortController();
+  const request = fetchDemoIndex(controller.signal);
+  controller.abort();
+  await expect(request).rejects.toMatchObject({ name: "AbortError" });
 });
 
 describe("demo player count", () => {
@@ -38,6 +58,30 @@ describe("demo player count", () => {
 });
 
 describe("sidecarUrl", () => {
+  it("keeps legacy hashed uploads downloadable with their nested sidecars", () => {
+    const key = `users/126767979894407168/${"a".repeat(64)}.rec`;
+    const source = `https://demos.example/demos/${key}`;
+    expect(demoDownloadUrl(key)).toBe(`${DEMOS_BASE_URL}/${key}`);
+    expect(sidecarUrl(source, "cast.json")).toBe(
+      `${CAST_BASE_URL}/${key}.cast.json`,
+    );
+    expect(commentarySidecarUrl(source, null, "m4a")).toBe(
+      `${CAST_BASE_URL}/${key}.commentary.m4a`,
+    );
+  });
+
+  it("preserves user directories for recordings and all cast/commentary sidecars", () => {
+    const key = `users/126767979894407168/server_20260901T2000_katabatic_aaaaaa.rec`;
+    const source = `https://demos.example/demos/${key}`;
+    expect(demoDownloadUrl(key)).toBe(`${DEMOS_BASE_URL}/${key}`);
+    expect(sidecarUrl(source, "cast.json")).toBe(
+      `${CAST_BASE_URL}/${key}.cast.json`,
+    );
+    expect(commentarySidecarUrl(source, null, "m4a")).toBe(
+      `${CAST_BASE_URL}/${key}.commentary.m4a`,
+    );
+  });
+
   it("names the sidecar after the demo, under the cast base", () => {
     // The demo streams from the bucket; its sidecars may come from
     // elsewhere (a local folder in dev) but keep the bucket's names.

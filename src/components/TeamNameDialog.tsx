@@ -10,7 +10,7 @@ import { sameEditableGame, type EditableGame } from "../state/editableGame";
 import { publishTeamNames } from "../state/gamePresentationApi";
 import { inputControlsStore } from "./InputControls";
 import {
-  DataSaveButton,
+  DataSaveActions,
   GameDataSelector,
   TeamNameFields,
 } from "./GameDataFields";
@@ -227,10 +227,8 @@ export function TeamNamesDialog({
                 Save to demo data
               </label>
             )}
-            <button type="button" className={styles.Cancel} onClick={onClose}>
-              Cancel
-            </button>
-            <DataSaveButton
+            <DataSaveActions
+              onCancel={onClose}
               loading={saveToDemo && editor.loading}
               saving={pending}
               disabled={

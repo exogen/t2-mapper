@@ -124,6 +124,23 @@ describe("offline checkpoint generation", () => {
     ).not.toHaveProperty("matchStartSec");
   });
 
+  it("enforces an upload output budget before publishing a sidecar", async () => {
+    await expect(
+      generateDemoCheckpoints(
+        file,
+        output,
+        "/absent-assets",
+        undefined,
+        false,
+        plan(6),
+        10,
+      ),
+    ).rejects.toThrow("output size limit");
+    await expect(fs.access(output)).rejects.toThrow();
+    await expect(fs.access(`${output}.tmp`)).rejects.toThrow();
+    expect(await fs.readFile(file)).toBeDefined();
+  });
+
   it("registers effect shape sequences from the game files, skipping missing shapes", async () => {
     clearShapeSequences();
     await writeDemo(303);

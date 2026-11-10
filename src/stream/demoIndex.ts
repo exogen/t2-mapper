@@ -4,6 +4,11 @@
  * with the `.rec` files alongside it under the same base.
  */
 import { type DemoMetadata, readDemoGames } from "../../relay/demoMetadata";
+import {
+  encodedDemoKey,
+  isUserDemoKey,
+  publishedDemoKeyFromUrl,
+} from "../../relay/demoKeys";
 
 import type { CastCommentaryTrack } from "../director/castSidecar";
 
@@ -25,7 +30,7 @@ export const DEMOS_BASE_URL = (process.env.DEMOS_BASE_URL || "").replace(
 );
 
 export function demoDownloadUrl(filename: string): string {
-  return `${DEMOS_BASE_URL}/${encodeURIComponent(filename)}`;
+  return `${DEMOS_BASE_URL}/${encodedDemoKey(filename)}`;
 }
 
 /** Escape legacy immutable JSON cache entries while keeping stable cache keys. */
@@ -85,7 +90,21 @@ export function commentarySidecarUrl(
 }
 
 function demoFileName(sourceUrl: string): string {
-  return sourceUrl.slice(sourceUrl.lastIndexOf("/") + 1);
+  const published = publishedDemoKeyFromUrl(sourceUrl, DEMOS_BASE_URL);
+  if (published) return encodedDemoKey(published);
+  // Local cast previews may use another base URL, but retain user directories.
+  try {
+    const path = new URL(sourceUrl, "http://localhost/").pathname;
+    const candidate = path
+      .split("/")
+      .slice(-3)
+      .map(decodeURIComponent)
+      .join("/");
+    if (isUserDemoKey(candidate)) return encodedDemoKey(candidate);
+    return path.slice(path.lastIndexOf("/") + 1);
+  } catch {
+    return sourceUrl.slice(sourceUrl.lastIndexOf("/") + 1);
+  }
 }
 
 function normalizeEntry(raw: unknown): DemoIndexEntry {
@@ -101,10 +120,16 @@ function normalizeEntry(raw: unknown): DemoIndexEntry {
   };
 }
 
-export async function fetchDemoIndex(): Promise<DemoIndexEntry[]> {
+export async function fetchDemoIndex(
+  signal?: AbortSignal,
+): Promise<DemoIndexEntry[]> {
+  const deadline = AbortSignal.timeout(20_000);
   const response = await fetch(
     versionedDemoMetadataUrl(`${DEMOS_BASE_URL}/index.json`),
-    { cache: "no-cache" },
+    {
+      cache: "no-cache",
+      signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
+    },
   );
   if (!response.ok) {
     throw new Error(`Demo index fetch failed: HTTP ${response.status}`);

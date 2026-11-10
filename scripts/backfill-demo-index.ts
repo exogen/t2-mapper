@@ -6,7 +6,8 @@
  * replaying every packet through the same parser + WatchStateAccumulator
  * the live relay uses, so backfilled sidecars match live-written ones.
  * Finally sidecar records are merged into the latest `index.json`, preserving
- * uploads made during the scan. A missing index is rebuilt from the records.
+ * uploads made during the scan. Managed user entries and sidecars must already
+ * exist, so maintenance cannot recreate demos deleted during the scan.
  *
  * R2 credentials come from the same DEMO_R2_* env vars as the relay.
  * Run with node --env-file-if-exists=.env.development.local --import=tsx/esm.
@@ -21,7 +22,7 @@ import { parseArgs } from "node:util";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { listAllObjects, r2Client } from "./lib/r2";
 import type { DemoMetadata } from "../relay/demoMetadata.js";
-import { isPublishedDemoFilename } from "../relay/gamePresentation.js";
+import { isPublishedDemoKey, isUserDemoKey } from "../relay/demoKeys.js";
 import { updateDemoIndex } from "../relay/demoIndexStorage.js";
 import { analyzeDemo } from "./lib/analyzeDemo";
 import { updateDemoMetadata } from "./lib/updateDemoMetadata";
@@ -80,12 +81,13 @@ const { client, config } = r2Client();
 
 async function backup(key: string, body: string) {
   if (values["backup-dir"]) {
+    const file = path.join(
+      values["backup-dir"],
+      key.slice(config.prefix.length),
+    );
+    await fs.mkdir(path.dirname(file), { recursive: true });
     try {
-      await fs.writeFile(
-        path.join(values["backup-dir"], path.basename(key)),
-        body,
-        { flag: "wx" },
-      );
+      await fs.writeFile(file, body, { flag: "wx" });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
@@ -109,6 +111,7 @@ async function saveSidecar(
           return update(latest);
         },
         backup,
+        { existingOnly: isUserDemoKey(key.slice(config.prefix.length, -5)) },
       );
   if (values.diff) {
     const diff = await formatJsonDiff(key, before, record);
@@ -145,21 +148,21 @@ async function runPool(
 
 console.log(`Listing s3://${config.bucket}/${config.prefix}...`);
 const objects = await listBucket();
-// Cached external recordings have a different provenance sidecar contract.
-// Only direct children of the published directory belong in this index.
-const isPublishedDemoKey = (key: string) =>
+// Flat recordings and managed user paths share this catalog; cached external
+// recordings have a different provenance sidecar contract.
+const isPublishedBucketKey = (key: string) =>
   key.startsWith(config.prefix) &&
-  isPublishedDemoFilename(key.slice(config.prefix.length));
+  isPublishedDemoKey(key.slice(config.prefix.length));
 const recKeys = [...objects.keys()]
   .filter(
     (k) =>
-      isPublishedDemoKey(k) &&
+      isPublishedBucketKey(k) &&
       (!values.filter || path.basename(k).includes(values.filter)),
   )
   .sort();
 const sidecarKeys = new Set(
   [...objects.keys()].filter(
-    (k) => k.endsWith(".json") && isPublishedDemoKey(k.slice(0, -5)),
+    (k) => k.endsWith(".json") && isPublishedBucketKey(k.slice(0, -5)),
   ),
 );
 console.log(
@@ -170,6 +173,7 @@ console.log(
 const records: DemoMetadata[] = [];
 let analyzed = 0;
 let reused = 0;
+let skipped = 0;
 let failed = 0;
 
 /**
@@ -197,9 +201,16 @@ function reconcileCommentary(record: DemoMetadata, key: string): boolean {
 }
 
 await runPool(recKeys, async (key) => {
-  const filename = path.basename(key);
+  const filename = key.slice(config.prefix.length);
   const sidecarKey = `${key}.json`;
   try {
+    // Publishing writes the sidecar after the recording, and deleting removes
+    // it (and the index entry) before the recording; the relay owns both.
+    if (isUserDemoKey(filename) && !sidecarKeys.has(sidecarKey)) {
+      skipped++;
+      console.warn(`SKIP ${filename}: no sidecar (publishing or deleting)`);
+      return;
+    }
     let existing: DemoMetadata | undefined;
     if (sidecarKeys.has(sidecarKey)) {
       const body = Buffer.from(await getObjectBytes(sidecarKey)).toString(
@@ -240,7 +251,9 @@ await runPool(recKeys, async (key) => {
         console.log(`${filename}: old-format sidecar — re-analyzing`);
     }
     const bytes = await getObjectBytes(key);
-    const analyzedRecord = await analyzeDemo(bytes, filename);
+    const analyzedRecord = await analyzeDemo(bytes, filename, {
+      strict: isUserDemoKey(filename),
+    });
     let record =
       playersOnly && existing
         ? {
@@ -317,11 +330,19 @@ if (failed > 0) {
             : entry;
         });
       }
+      if (!index && records.some((record) => isUserDemoKey(record.filename)))
+        throw new Error(
+          "Cannot update user demos in a missing demo index; restore the index from backup first",
+        );
       // Preserve recordings added since the initial listing, including on retries.
       const merged = new Map(
         (index ?? []).map((entry) => [entry.filename, entry]),
       );
-      for (const record of records)
+      for (const record of records) {
+        // User uploads are indexed when published. A missing entry may have
+        // been deleted since this scan started; never bring it back.
+        if (isUserDemoKey(record.filename) && !merged.has(record.filename))
+          continue;
         merged.set(
           record.filename,
           preserveDemoGamePresentation(
@@ -330,6 +351,7 @@ if (failed > 0) {
             "index",
           ),
         );
+      }
       return [...merged.values()].sort(
         (a, b) =>
           a.recordedAt.localeCompare(b.recordedAt) ||
@@ -345,6 +367,6 @@ if (failed > 0) {
   );
 }
 console.log(
-  `Done: ${analyzed} analyzed, ${reused} sidecars reused, ${failed} failed`,
+  `Done: ${analyzed} analyzed, ${reused} sidecars reused, ${skipped} skipped, ${failed} failed`,
 );
 if (failed > 0) process.exitCode = 1;

@@ -70,16 +70,14 @@ export function StreamingMissionInfo({
   const isLiveServer = isLive && !replay;
   const ServerIcon = isLiveServer ? WifiSignalIcon : PiGlobe;
   const demoSourceUrl = useDemoLoad((s) => s.sourceUrl);
-  // Indexed demos use their known instant. Local demos and shared replays
-  // use the recording header: the relay writes UTC; a retail client writes
-  // its local time with no zone, so that one is shown as written.
+  // Prefer the indexed date and timezone policy. Without one, relay headers
+  // use UTC; retail recordings keep their timezone-free clock as written.
   const { data: demos } = useDemoIndex();
   const indexedDemo = !replay
     ? findIndexedDemo(demos, demoSourceUrl)
     : undefined;
-  const indexedAt = indexedDemo?.recordedAt;
   const recordedIso =
-    indexedAt ??
+    indexedDemo?.recordedAt ??
     (dateString && isRelayRecording(dateRecorderName)
       ? parseDemoHeaderDate(dateString)
       : null);
@@ -269,7 +267,7 @@ export function StreamingMissionInfo({
                 />
                 <span className={styles.RecordingDate}>
                   {recordedIso
-                    ? `${recordedDayLabel(recordedIso)} ${formatRecordedTime(recordedIso)}`
+                    ? `${recordedDayLabel(recordedIso, indexedDemo?.recordedAtTimezone)} ${formatRecordedTime(recordedIso, indexedDemo?.recordedAtTimezone)}`
                     : `${datePart!.replace(/-/g, " ")} ${(timePart ?? "").replace(/(AM|PM)$/, " $1")}`}
                 </span>
               </>

@@ -10,10 +10,14 @@ vi.mock("../stream/demoIndex", () => ({
   DEMOS_BASE_URL: "https://demos.example.com/demos",
 }));
 
-it("recognizes only recordings directly inside the configured published-demo directory", () => {
+it("recognizes only supported recordings inside the configured published-demo directory", () => {
   expect(
     publishedDemoFilename("https://demos.example.com/demos/old%202002.rec"),
   ).toBe("old 2002.rec");
+  const userKey = `users/126767979894407168/server_20260901T2000_katabatic_aaaaaa.rec`;
+  expect(
+    publishedDemoFilename(`https://demos.example.com/demos/${userKey}`),
+  ).toBe(userKey);
   for (const source of [
     null,
     "https://other.example.com/demos/old.rec",

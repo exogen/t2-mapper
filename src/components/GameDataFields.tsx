@@ -156,31 +156,36 @@ export function GameDataSelector({
   );
 }
 
-/** Reserve the activity indicator's space so loading never moves the dialog. */
-export function DataSaveButton({
+/** Keep activity to the left of both buttons without changing their spacing. */
+export function DataSaveActions({
+  onCancel,
   loading = false,
   saving = false,
   disabled = false,
 }: {
+  onCancel: () => void;
   loading?: boolean;
   saving?: boolean;
   disabled?: boolean;
 }) {
   const busy = loading || saving;
   return (
-    <span className={styles.SaveControl}>
-      <span className={styles.SaveSpinner} role="status">
+    <div className={styles.SaveActions}>
+      <div className={styles.SaveSpinner} role="status">
         {busy && (
           <>
             <VisuallyHidden>
               {saving ? "Saving data" : "Loading demo data"}
             </VisuallyHidden>
-            <span aria-hidden="true">
+            <div aria-hidden="true">
               <LoadingIndicator isLoading inline />
-            </span>
+            </div>
           </>
         )}
-      </span>
+      </div>
+      <button type="button" className={styles.Cancel} onClick={onCancel}>
+        Cancel
+      </button>
       <button
         type="submit"
         className={styles.Save}
@@ -189,6 +194,6 @@ export function DataSaveButton({
       >
         Save
       </button>
-    </span>
+    </div>
   );
 }

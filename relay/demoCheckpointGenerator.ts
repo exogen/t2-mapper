@@ -42,6 +42,10 @@ export interface DemoCheckpointGenerationResult {
   peakRSSMiB?: number;
 }
 
+/** Completed local checkpoints and the plan used to produce them. */
+export type PreparedDemoCheckpoints = DemoCheckpointGenerationResult &
+  DemoCheckpointPlan;
+
 export async function generateDemoCheckpoints(
   input: string,
   output: string,
@@ -49,6 +53,7 @@ export async function generateDemoCheckpoints(
   progress: (event: unknown) => void = () => {},
   reuseExisting = true,
   plan: DemoCheckpointPlan = loadDemoCheckpointPlan(),
+  maxOutputBytes = Infinity,
 ): Promise<DemoCheckpointGenerationResult> {
   plan = checkDemoCheckpointPlan(plan);
   if (
@@ -70,6 +75,10 @@ export async function generateDemoCheckpoints(
   if (reuseExisting) {
     try {
       const text = await fs.readFile(output, "utf8");
+      if (Buffer.byteLength(text) > maxOutputBytes)
+        throw new Error(
+          "Generated checkpoint data exceeds the output size limit",
+        );
       const existing = JSON.parse(text) as DemoCheckpointSidecar;
       if (
         existing.requestedCount !== plan.maxCount ||
@@ -116,6 +125,7 @@ export async function generateDemoCheckpoints(
     intervalTicks: plan.intervalTicks,
     checkpoints: [],
   };
+  let checkpointDataBytes = 0;
   if (targets.length > 0) {
     parser.reset();
     const recording = createRecordingFromParser(parser, { checkpoints: false });
@@ -210,6 +220,11 @@ export async function generateDemoCheckpoints(
             },
           );
           const packed = gzipSync(encodeCheckpoint(checkpoint));
+          checkpointDataBytes += Math.ceil(packed.byteLength / 3) * 4;
+          if (checkpointDataBytes > maxOutputBytes)
+            throw new Error(
+              "Generated checkpoint data exceeds the output size limit",
+            );
           sidecar.checkpoints.push({ ...target, data: bytesToBase64(packed) });
           progress({
             phase: "checkpoint",
@@ -226,7 +241,10 @@ export async function generateDemoCheckpoints(
   }
   await fs.mkdir(path.dirname(output), { recursive: true });
   const temporary = `${output}.tmp`;
-  await fs.writeFile(temporary, JSON.stringify(sidecar));
+  const serialized = JSON.stringify(sidecar);
+  if (Buffer.byteLength(serialized) > maxOutputBytes)
+    throw new Error("Generated checkpoint data exceeds the output size limit");
+  await fs.writeFile(temporary, serialized);
   await fs.rename(temporary, output);
   return {
     version: sidecar.version,

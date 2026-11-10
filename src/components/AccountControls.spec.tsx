@@ -11,6 +11,9 @@ vi.mock("../state/appAccountStore", () => ({
   signInWithDiscord() {},
   signOutAccount() {},
 }));
+vi.mock("./useAppNavigation", () => ({
+  useAppNavigation: () => ({ userDemos: vi.fn() }),
+}));
 
 beforeEach(() => {
   state.account = {
@@ -29,6 +32,7 @@ it("offers Discord sign-in without account creation or profile fields", () => {
   expect(markup).toContain('title="Sign in in a separate window"');
   expect(markup).not.toContain("<input");
   expect(markup).not.toContain("Relay status");
+  expect(markup).not.toContain('aria-label="My demos"');
 });
 
 it("offers a safe separate-tab link when the browser blocks the popup", () => {
@@ -84,6 +88,17 @@ it.each(["admin", "user"] as const)(
     expect(markup).toContain("Example &lt;Player&gt;");
     expect(markup).toContain("@example_player");
     expect(markup).toContain("Sign out");
+    expect(markup).not.toContain('aria-label="My demos"');
+    const profileLink = markup.match(/<a\b[^>]*>[\s\S]*?<\/a>/)?.[0];
+    expect(profileLink).toContain(
+      'href="?mode=demo&amp;user=123456789012345678"',
+    );
+    expect(profileLink).toContain("<img");
+    expect(profileLink).toContain("Example &lt;Player&gt;");
+    expect(profileLink).toContain("@example_player");
+    expect(profileLink).not.toContain("https://discord.com/users/");
+    expect(profileLink).not.toContain("<button");
+    expect(profileLink).not.toContain('aria-label="Admin"');
     expect(markup.includes('role="img" aria-label="Admin"')).toBe(
       role === "admin",
     );

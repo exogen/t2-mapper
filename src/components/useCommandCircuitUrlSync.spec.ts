@@ -32,6 +32,7 @@ function route(view: "cc" | null) {
   let query: NavigationQuery = {
     mode: "demo",
     demo: "a.rec",
+    user: null,
     replay: null,
     view,
     mission: null,

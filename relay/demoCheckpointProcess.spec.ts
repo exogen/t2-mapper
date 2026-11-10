@@ -140,7 +140,7 @@ describe("checkpoint child process", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("kills a stalled worker and waits for exit before releasing the queue", async () => {
+  it("kills a stalled worker and waits for exit before reporting the timeout", async () => {
     const pending = runDemoCheckpointProcess(
       "demo.rec",
       "output.json",

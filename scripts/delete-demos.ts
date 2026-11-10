@@ -42,6 +42,7 @@ if (values.help) {
       "Default: dry run. --delete removes index entries first, then recordings and sidecars.",
       "If the index update fails, no demo objects are deleted. Metadata sidecars stay until other deletions succeed.",
       "Metadata comes from index.json, or .rec.json for unindexed demos. Missing fields are reported and skipped.",
+      "User uploads under users/ are always skipped; delete them from the owner's demo library.",
       "Uses DEMO_R2_* credentials from .env.development.local.",
     ].join("\n"),
   );
@@ -93,7 +94,7 @@ try {
     if (
       !entry ||
       typeof entry.filename !== "string" ||
-      !entry.filename.endsWith(".rec") ||
+      !/\.rec$/i.test(entry.filename) ||
       indexed.has(`${config.prefix}${entry.filename}`)
     )
       throw new Error("Invalid or duplicate filename in demo index");
@@ -126,6 +127,17 @@ const counts = {
 };
 
 for (const key of demoKeys) {
+  if (key.slice(config.prefix.length).startsWith("users/")) {
+    counts.skipped++;
+    console.log(
+      JSON.stringify({
+        key,
+        action: "skip",
+        reason: "User uploads are managed by the owner's demo library",
+      }),
+    );
+    continue;
+  }
   try {
     let metadata = indexed.get(key);
     if (!metadata && objectSet.has(`${key}.json`)) {

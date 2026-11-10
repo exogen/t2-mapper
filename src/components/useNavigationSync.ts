@@ -55,14 +55,23 @@ export function useNavigationSync() {
     previousDemo.current = demo;
     if (!demo) {
       // Browser history can remove ?demo without an explicit eject action.
-      if (previous && demoLoadStore.getState().requestedDemo === previous)
+      const load = demoLoadStore.getState();
+      const userListing = mode === "demo" && query.user !== null;
+      if (
+        (previous && load.requestedDemo === previous) ||
+        (userListing &&
+          (load.requestedDemo ||
+            load.requestedUrl ||
+            load.phase !== "idle" ||
+            engineStore.getState().playback.recording?.source === "demo"))
+      )
         unloadDemo();
       return;
     }
     if (demoLoadStore.getState().requestedDemo === demo) return;
     unloadDemo();
     void loadDemoReference(demo);
-  }, [mode, query.demo]);
+  }, [mode, query.demo, query.user]);
 
   useEffect(() => {
     if (mode !== "replay") {

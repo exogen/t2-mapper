@@ -7,9 +7,13 @@ import {
 } from "../state/appAccountStore";
 import buttonStyles from "./Button.module.css";
 import styles from "./AccountControls.module.css";
+import { useAppNavigation } from "./useAppNavigation";
+import { UserIdentity } from "./UserIdentity";
 
 export function AccountControls() {
   const account = useAppAccount((state) => state);
+  const navigation = useAppNavigation();
+  const user = account.user;
 
   // Keep the row in place during the initial check; hide it only when the
   // relay explicitly reports that sign-in is disabled.
@@ -20,25 +24,28 @@ export function AccountControls() {
   const retrying = account.status === "loading" && account.error != null;
   return (
     <section className={styles.Root} aria-label="Account">
-      {account.user ? (
+      {user ? (
         <div className={styles.Profile}>
-          {account.user.image && (
-            <img
-              className={styles.Avatar}
-              src={account.user.image}
-              alt=""
-              width={32}
-              height={32}
-              referrerPolicy="no-referrer"
-            />
-          )}
-          <div className={styles.Identity}>
-            <span className={styles.Name}>{account.user.name}</span>
-            <span className={styles.Handle}>
-              @{account.user.discordUsername}
-            </span>
-          </div>
-          {account.user.role === "admin" && (
+          <a
+            className={styles.ProfileLink}
+            href={`?mode=demo&user=${user.discordId}`}
+            onClick={(event) => {
+              if (
+                event.defaultPrevented ||
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+              )
+                return;
+              event.preventDefault();
+              navigation.userDemos(user.discordId);
+            }}
+          >
+            <UserIdentity user={user} />
+          </a>
+          {user.role === "admin" && (
             <span
               className={styles.Role}
               role="img"

@@ -37,6 +37,6 @@ it("revalidates the versioned index URL", async () => {
   await metadata.fetchDemoIndex();
   expect(fetchMock).toHaveBeenCalledWith(
     "https://demos.example.com/demos/index.json?metadata=2",
-    { cache: "no-cache" },
+    { cache: "no-cache", signal: expect.any(AbortSignal) },
   );
 });

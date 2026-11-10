@@ -38,6 +38,38 @@ describe("replay demo loading", () => {
     expect(request.mock.calls[0][1]).toMatchObject({ redirect: "error" });
   });
 
+  it.each([
+    [
+      "server_20260901T2000_katabatic_aaaaaa.rec",
+      "server_20260901T2000_katabatic_aaaaaa.rec",
+    ],
+    [`${"a".repeat(64)}.rec`, `${"a".repeat(64)}.rec`],
+    ["Historical final ?#%.REC", "Historical%20final%20%3F%23%25.REC"],
+  ])(
+    "loads user recording %s and its sibling metadata from the managed directory",
+    async (filename, encodedFilename) => {
+      const key = `users/126767979894407168/${filename}`;
+      const url = `https://demos.test/recordings/users/126767979894407168/${encodedFilename}`;
+      const request = vi.fn<typeof fetch>(async (url) =>
+        String(url).endsWith(".json")
+          ? Response.json({ games: [] })
+          : new Response(demo),
+      );
+      const load = createReplayDemoLoader({
+        baseUrl: "https://demos.test/recordings",
+        fetch: request,
+      });
+      await expect(load(key, signal())).resolves.toEqual({
+        bytes: demo,
+        games: [],
+      });
+      expect(request.mock.calls.map(([url]) => url)).toEqual([
+        url,
+        `${url}.json`,
+      ]);
+    },
+  );
+
   it("loads validated per-game labels only from the published demo's sibling sidecar", async () => {
     const game = {
       mission: "Katabatic",

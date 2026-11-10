@@ -15,6 +15,7 @@ const empty: NavigationQuery = {
   mode: null,
   mission: null,
   demo: null,
+  user: null,
   replay: null,
   t: null,
   address: null,
@@ -56,6 +57,37 @@ describe("navigation URL updates", () => {
     ).toEqual({ mission: null, demo: null, t: null, name: null });
   });
 
+  it("preserves a user listing, including invalid IDs for an explicit error state", () => {
+    for (const user of ["126767979894407168", "invalid", ""]) {
+      expect(
+        normalizeNavigationQuery({ ...empty, mode: "demo", user }),
+      ).toEqual({});
+      expect(normalizeNavigationQuery({ ...empty, user })).toEqual({
+        mode: "demo",
+      });
+    }
+  });
+
+  it("clears a user listing when a demo or another mode is selected", () => {
+    for (const mode of ["map", "live", "replay"] as const) {
+      expect(
+        normalizeNavigationQuery({
+          ...empty,
+          mode,
+          user: "126767979894407168",
+        }),
+      ).toEqual({ user: null });
+    }
+    expect(
+      normalizeNavigationQuery({
+        ...empty,
+        mode: "demo",
+        demo: "a.rec",
+        user: "126767979894407168",
+      }),
+    ).toEqual({ user: null });
+  });
+
   it("ties view changes to the selection and view, but not a copied timestamp", () => {
     const query: NavigationQuery = {
       ...empty,
@@ -71,6 +103,7 @@ describe("navigation URL updates", () => {
     );
     for (const change of [
       { demo: "b.rec" },
+      { user: "126767979894407168" },
       { view: null },
       { mode: "live" as const },
     ]) {

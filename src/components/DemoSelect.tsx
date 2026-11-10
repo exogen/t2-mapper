@@ -1,5 +1,6 @@
 import {
   Activity,
+  Fragment,
   useDeferredValue,
   useEffect,
   useMemo,
@@ -19,7 +20,9 @@ import {
 } from "@ariakit/react";
 import { FaMicrophoneAlt } from "react-icons/fa";
 import { IoMdCloseCircle } from "react-icons/io";
-import { LuUsers } from "react-icons/lu";
+import { IoCalendarNumberOutline } from "react-icons/io5";
+import { LuClock, LuUser, LuUsers } from "react-icons/lu";
+import { PiGlobe } from "react-icons/pi";
 import { TbLaurelWreathFilled } from "react-icons/tb";
 import {
   DEMOS_BASE_URL,
@@ -32,69 +35,121 @@ import { registerDemoSelectFocus } from "./demoSelectFocus";
 import { searchDemos } from "./demoSearch";
 import { useDemoQueryState } from "./useQueryParams";
 import { useAppNavigation } from "./useAppNavigation";
-import { normalizeMissionType } from "../mission";
 import {
+  demoSummary,
   demoTitle,
-  demoGameDetails,
   formatDuration,
   formatRecordedTime,
   recordedDayLabel,
 } from "./demoFormat";
 import styles from "./MissionSelect.module.css";
+import demoStyles from "./DemoSelect.module.css";
 
 const isMac =
   typeof navigator !== "undefined" &&
   /Mac|iPhone|iPad|iPod/.test(navigator.platform);
 
 function DemoItemContent({ demo }: { demo: DemoIndexEntry }) {
-  const details = demoGameDetails(demo);
-  const gameTypes = [
-    ...new Set(
-      demo.games
-        .map((game) => normalizeMissionType(game.gameType))
-        .filter(Boolean),
-    ),
-  ];
+  const { matchups, matchTitle, gameTypes, tournament } = demoSummary(demo);
   return (
     <>
-      <span className={styles.ItemHeader}>
-        <span className={styles.ItemName}>{demoTitle(demo)}</span>
-        {gameTypes.length > 0 && (
-          <span className={styles.ItemTypes}>
-            {gameTypes.map((type) => (
-              <span
-                key={type}
-                className={styles.ItemType}
-                data-mission-type={type}
-              >
-                {type}
-              </span>
-            ))}
+      <span className={demoStyles.Header}>
+        <span className={demoStyles.MapTitle}>{demoTitle(demo)}</span>
+        {gameTypes.map((type) => (
+          <span key={type} className={demoStyles.Tag} data-mission-type={type}>
+            {type}
           </span>
-        )}
-        {demo.games.some((game) => game.tournament) && (
+        ))}
+        {tournament && (
           <TbLaurelWreathFilled
-            className={styles.ItemTournamentIcon}
+            className={demoStyles.TournamentIcon}
             title="Tournament mode"
             aria-label="Tournament mode"
           />
         )}
         {demo.hasCommentary && (
           <FaMicrophoneAlt
-            className={styles.ItemCommentaryIcon}
+            className={demoStyles.CommentaryIcon}
             title="Commentary track"
             aria-label="Commentary track"
           />
         )}
       </span>
-      {details && <span className={styles.ItemMissionName}>{details}</span>}
-      <span className={styles.ItemMissionName}>
-        {demo.server} · {formatRecordedTime(demo.recordedAt)} ·{" "}
-        <span title={demo.players.join(", ") || undefined}>
-          <LuUsers className={styles.ItemPlayersIcon} aria-label="Players" />{" "}
+      {matchTitle && (
+        <span className={demoStyles.MatchTitle} title={matchTitle}>
+          {matchTitle}
+        </span>
+      )}
+      {matchups.length > 0 && (
+        <span className={demoStyles.Teams}>
+          {matchups.map((teams, gameIndex) => (
+            <Fragment key={gameIndex}>
+              {gameIndex > 0 && " → "}
+              {teams.map(([id, name], teamIndex) => (
+                <Fragment key={id}>
+                  {teamIndex > 0 && " vs "}
+                  <span className={demoStyles.TeamName}>{name}</span>
+                </Fragment>
+              ))}
+            </Fragment>
+          ))}
+        </span>
+      )}
+      <span className={demoStyles.Details}>
+        <span className={demoStyles.MetaItem}>
+          <IoCalendarNumberOutline
+            className={demoStyles.MetaIcon}
+            title="Recorded on"
+            aria-hidden
+          />
+          <span className={demoStyles.MetaText}>
+            {recordedDayLabel(demo.recordedAt, demo.recordedAtTimezone)}{" "}
+            {formatRecordedTime(demo.recordedAt, demo.recordedAtTimezone)}
+          </span>
+        </span>
+        <span className={`${demoStyles.MetaItem} ${demoStyles.Duration}`}>
+          <LuClock
+            className={`${demoStyles.MetaIcon} ${demoStyles.CompactMetaIcon}`}
+            aria-label="Duration"
+          />
+          {formatDuration(demo.durationMs)}
+        </span>
+        <span
+          className={demoStyles.MetaItem}
+          title={demo.players.join(", ") || undefined}
+        >
+          <LuUsers
+            className={`${demoStyles.MetaIcon} ${demoStyles.CompactMetaIcon}`}
+            aria-label="Players"
+          />
           {demoPlayerCount(demo)}
-        </span>{" "}
-        · {formatDuration(demo.durationMs)}
+        </span>
+      </span>
+      <span className={`${demoStyles.Details} ${demoStyles.Source}`}>
+        {demo.recorder ? (
+          <span className={demoStyles.MetaItem}>
+            <LuUser
+              className={`${demoStyles.MetaIcon} ${demoStyles.RecorderIcon}`}
+              title="Recorded by"
+              aria-hidden
+            />
+            <span className={demoStyles.MetaText} title={demo.recorder}>
+              {demo.recorder}
+            </span>
+          </span>
+        ) : null}
+        {demo.server && (
+          <span className={demoStyles.MetaItem}>
+            <PiGlobe
+              className={demoStyles.MetaIcon}
+              title="Server"
+              aria-hidden
+            />
+            <span className={demoStyles.MetaText} title={demo.server}>
+              {demo.server}
+            </span>
+          </span>
+        )}
       </span>
     </>
   );
@@ -114,7 +169,7 @@ function groupDemos(
   );
   const byDay = new Map<string, DemoIndexEntry[]>();
   for (const demo of sorted) {
-    const day = recordedDayLabel(demo.recordedAt);
+    const day = recordedDayLabel(demo.recordedAt, demo.recordedAtTimezone);
     const group = byDay.get(day) ?? [];
     group.push(demo);
     byDay.set(day, group);
@@ -198,7 +253,7 @@ export function DemoSelect() {
     <ComboboxItem
       key={demo.filename}
       value={demo.filename}
-      className={styles.Item}
+      className={demoStyles.Item}
       data-tournament={
         demo.games.some((game) => game.tournament) ? "" : undefined
       }

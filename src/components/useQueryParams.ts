@@ -73,6 +73,7 @@ export function useModeQueryState() {
   const [query, setQuery] = useQueryStates({
     mode: navigationParsers.mode,
     demo: navigationParsers.demo,
+    user: navigationParsers.user,
     replay: navigationParsers.replay,
     address: navigationParsers.address,
     name: navigationParsers.name,
@@ -89,12 +90,15 @@ const navigationParsers = {
   mode: parseAsStringLiteral(APP_MODES),
   mission: parseAsMissionWithType,
   demo: parseAsString,
+  user: parseAsString,
   replay: parseAsString,
   t: parseAsInteger,
   address: parseAsString,
   name: parseAsString,
   view: parseAsStringLiteral(["cc"] as const),
 };
+
+export const serializeNavigationQuery = createSerializer(navigationParsers);
 
 /** Related route fields must change in one update, including pending nuqs writes. */
 export function useNavigationQueryState() {
@@ -110,6 +114,9 @@ export function normalizeNavigationQuery(query: NavigationQuery) {
     ...(query.mode === null && mode !== "map" ? { mode } : {}),
     ...(mode !== "map" && query.mission !== null ? { mission: null } : {}),
     ...(mode !== "demo" && query.demo !== null ? { demo: null } : {}),
+    ...((mode !== "demo" || query.demo) && query.user !== null
+      ? { user: null }
+      : {}),
     ...(mode !== "replay" && query.replay !== null ? { replay: null } : {}),
     ...((mode !== "demo" || !query.demo) && query.t !== null
       ? { t: null }
@@ -128,6 +135,7 @@ export function navigationViewKey(query: NavigationQuery): string {
     query.mission?.missionName,
     query.mission?.missionType,
     query.demo,
+    query.user,
     query.replay,
     query.address,
     query.name,
@@ -158,6 +166,7 @@ export function clearEndedServerQuery(
 export function navigationMode(query: {
   mode: AppMode | null;
   demo: string | null;
+  user?: string | null;
   replay?: string | null;
   address: string | null;
   name: string | null;
@@ -166,7 +175,7 @@ export function navigationMode(query: {
     query.mode ??
     (query.replay
       ? "replay"
-      : query.demo
+      : query.demo || query.user != null
         ? "demo"
         : query.address || query.name
           ? "live"

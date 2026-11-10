@@ -3,6 +3,7 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { DemoCheckpointPublisher } from "../relay/demoCheckpointPublisher.js";
 import { loadDemoCheckpointPlan } from "../relay/demoCheckpointConfig.js";
+import { isUserDemoKey } from "../relay/demoKeys.js";
 import type { DemoCheckpointPlan } from "../src/stream/demoCheckpoints";
 import { listAllObjects, r2Client } from "./lib/r2.js";
 import { ASSET_BASE_DIR } from "../src/resourcePaths";
@@ -81,7 +82,12 @@ await Promise.all(
           counts.planned++;
           console.log(JSON.stringify({ key, action: "generate" }));
         } else {
-          const result = await publisher.publish(key, { force: values.force });
+          const result = await publisher.publish(key, {
+            force: values.force,
+            ...(isUserDemoKey(key.slice(config.prefix.length)) && {
+              existingOnly: true,
+            }),
+          });
           counts[result]++;
           console.log(JSON.stringify({ key, result }));
         }

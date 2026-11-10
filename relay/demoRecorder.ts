@@ -10,9 +10,9 @@
  * in order with its packets and send markers — they are the playback
  * clock.
  */
-import crypto from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { buildDemoFilename } from "./demoKeys.js";
 import { demoLog as log } from "./logger.js";
 import {
   DEMO_TICK_MS,
@@ -111,36 +111,6 @@ export interface DemoRecorderOptions {
   onStateChange?: (state: RecorderState) => void;
   /** Clock override for tests. */
   now?: () => number;
-}
-
-/** Lowercase slug: special chars stripped, word runs joined with dashes. */
-function slugify(part: string): string {
-  return part
-    .toLowerCase()
-    .replace(/['’]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-/**
- * `<server-slug>_<sortable UTC datetime>_<mission-slug>_<random id>.rec`
- * — the random component guarantees uniqueness (same-named servers
- * cycling in the same minute would otherwise collide and corrupt each
- * other's spools).
- */
-export function buildDemoFilename(
-  date: Date,
-  serverName: string,
-  missionName: string,
-): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const stamp =
-    `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}` +
-    `T${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}`;
-  const serverSlug = slugify(serverName).slice(0, 60) || "server";
-  const missionSlug = slugify(missionName).slice(0, 40) || "mission";
-  const id = crypto.randomBytes(3).toString("hex");
-  return `${serverSlug}_${stamp}_${missionSlug}_${id}.rec`;
 }
 
 export class DemoRecorder {

@@ -40,7 +40,10 @@ beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   process.exitCode = undefined;
   process.argv = ["node", "backfill-demo-checkpoints.ts"];
-  mocks.r2Client.mockReturnValue({ client: {}, config: {} });
+  mocks.r2Client.mockReturnValue({
+    client: {},
+    config: { prefix: "demos/" },
+  });
   mocks.list.mockResolvedValue([
     ...keys.map((key) => ({ key })),
     { key: "demos/a.rec.json" },
@@ -128,7 +131,7 @@ it.each([
     await import("./backfill-demo-checkpoints");
     expect(mocks.construct).toHaveBeenCalledExactlyOnceWith(
       expect.anything(),
-      {},
+      { prefix: "demos/" },
       path.resolve("docs/base"),
       { intervalTicks: DEFAULT_CHECKPOINT_INTERVAL_TICKS, maxCount: count },
     );
@@ -148,7 +151,7 @@ it.each([
     await import("./backfill-demo-checkpoints");
     expect(mocks.construct).toHaveBeenCalledExactlyOnceWith(
       expect.anything(),
-      {},
+      { prefix: "demos/" },
       path.resolve("docs/base"),
       { intervalTicks, maxCount: 1 },
     );
@@ -210,6 +213,21 @@ it("honors the demo filter in dry-run mode without publishing", async () => {
     failed: 0,
     planned: 1,
   });
+});
+
+it("only replaces existing checkpoints for managed user uploads", async () => {
+  const userKey = `demos/users/126767979894407168/server_20260901T2000_katabatic_aaaaaa.rec`;
+  mocks.list.mockResolvedValue([{ key: keys[0] }, { key: userKey }]);
+  process.argv.push("--force");
+
+  await import("./backfill-demo-checkpoints");
+
+  expect(
+    mocks.publish.mock.calls.map(([, key, options]) => [key, options]),
+  ).toEqual([
+    [keys[0], { force: true }],
+    [userKey, { force: true, existingOnly: true }],
+  ]);
 });
 
 it.each(["0", "-1", "1.5", "invalid", "Infinity"])(

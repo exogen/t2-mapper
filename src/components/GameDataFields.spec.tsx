@@ -1,20 +1,30 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 import {
-  DataSaveButton,
+  DataSaveActions,
   GameDataSelector,
   TeamNameFields,
 } from "./GameDataFields";
 
-it("keeps the same Save label and reserved spinner slot while idle, loading, and saving", () => {
-  const ready = renderToStaticMarkup(<DataSaveButton />);
-  const loading = renderToStaticMarkup(<DataSaveButton loading />);
-  const saving = renderToStaticMarkup(<DataSaveButton saving />);
+it("reserves the spinner before Cancel and Save while idle, loading, and saving", () => {
+  const ready = renderToStaticMarkup(<DataSaveActions onCancel={() => {}} />);
+  const loading = renderToStaticMarkup(
+    <DataSaveActions onCancel={() => {}} loading />,
+  );
+  const saving = renderToStaticMarkup(
+    <DataSaveActions onCancel={() => {}} saving />,
+  );
   for (const html of [ready, loading, saving]) {
     expect(html).toContain(">Save</button>");
     expect(html).not.toContain("Saving…");
     expect(html).toContain('role="status"');
     expect(html).not.toContain("<p");
+    expect(html.indexOf('role="status"')).toBeLessThan(
+      html.indexOf(">Cancel</button>"),
+    );
+    expect(html.indexOf(">Cancel</button>")).toBeLessThan(
+      html.indexOf(">Save</button>"),
+    );
   }
   expect(ready).toContain('aria-busy="false"');
   expect(ready).not.toContain("Loading demo data");

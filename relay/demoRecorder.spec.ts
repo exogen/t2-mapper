@@ -17,11 +17,7 @@ import {
   parseDemoValues,
 } from "../src/stream/demoStreaming";
 import { BitStreamWriter } from "./BitStreamWriter.js";
-import {
-  DemoRecorder,
-  buildDemoFilename,
-  type ServerIdentity,
-} from "./demoRecorder.js";
+import { DemoRecorder, type ServerIdentity } from "./demoRecorder.js";
 import * as demoStart from "./demoStart.js";
 import { JoinGameOverFilter } from "./joinGameOver.js";
 import type { ServerInfo } from "./types.js";
@@ -1194,34 +1190,5 @@ describe("DemoRecorder", () => {
     expect(recorder.state).toBe("aborted");
     expect(await fsp.readdir(dir)).toEqual([]);
     expect(await recorder.finalize("test")).toBeNull();
-  });
-});
-
-describe("buildDemoFilename", () => {
-  it("slugs server and mission, stamps sortable UTC time, appends a random id", () => {
-    const name = buildDemoFilename(
-      new Date(Date.UTC(2026, 7, 20, 9, 5, 7)),
-      "| the cut |",
-      "MiniSunDried",
-    );
-    expect(name).toMatch(
-      /^the-cut_20260820T0905_minisundried_[0-9a-f]{6}\.rec$/,
-    );
-  });
-
-  it("falls back when a component slugs to nothing", () => {
-    const name = buildDemoFilename(
-      new Date(Date.UTC(2026, 0, 2, 0, 5)),
-      "|||",
-      "",
-    );
-    expect(name).toMatch(/^server_20260102T0005_mission_[0-9a-f]{6}\.rec$/);
-  });
-
-  it("generates distinct names for identical inputs", () => {
-    const date = new Date(Date.UTC(2026, 7, 20, 9, 5));
-    expect(buildDemoFilename(date, "Legacy CTF+", "Katabatic")).not.toBe(
-      buildDemoFilename(date, "Legacy CTF+", "Katabatic"),
-    );
   });
 });

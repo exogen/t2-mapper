@@ -12,14 +12,19 @@ import { fromNodeHeaders } from "better-auth/node";
 import { getRequest, setResponse } from "better-call/node";
 import type { DiscordProfile } from "better-auth/social-providers";
 import { createAccountDatabaseBackup } from "./accountDatabase.js";
-import type { AccountUser } from "./accountTypes.js";
+import { handleAccountCors, json } from "./accountHttp.js";
+import {
+  isDiscordId,
+  type AccountPublicProfile,
+  type AccountUser,
+} from "./accountTypes.js";
 import { browserIdentity } from "./browserAudit.js";
+import { isPublishedDemoKey } from "./demoKeys.js";
 import { discordPkce } from "./discordPkce.js";
 import { relayLog } from "./logger.js";
 import {
   GAME_PRESENTATION_PATH,
   GamePresentationError,
-  isPublishedDemoFilename,
   readGamePresentationUpdate,
   type GamePresentationUpdate,
   type PublishedGame,
@@ -45,8 +50,8 @@ export class AppAuthError extends Error {
   }
 }
 
-const DISCORD_ID = /^\d{17,20}$/;
 const AUTH_PATH = "/api/auth";
+const PUBLIC_USERS_PATH = "/api/users";
 const MAX_AUTH_BODY_BYTES = 16 * 1024;
 const AUTH_CLIENT_IP_HEADER = "x-mapgenius-account-client-ip";
 // Keep counters well beyond the configured and built-in rate-limit windows.
@@ -85,7 +90,9 @@ function configuredOrigin(
   return url.origin;
 }
 
-function trustedAppOrigins(env: NodeJS.ProcessEnv = process.env): string[] {
+export function trustedAppOrigins(
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
   const production = env.NODE_ENV === "production";
   const origins =
     env.AUTH_TRUSTED_ORIGINS ||
@@ -118,7 +125,7 @@ export function loadAppAuthConfig(
       "Discord login requires DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, and AUTH_SECRET together",
     );
   }
-  if (!DISCORD_ID.test(env.DISCORD_CLIENT_ID!))
+  if (!isDiscordId(env.DISCORD_CLIENT_ID))
     throw new Error("DISCORD_CLIENT_ID must be a Discord application ID");
   if (Buffer.byteLength(env.AUTH_SECRET!, "utf8") < 32)
     throw new Error("AUTH_SECRET must contain at least 32 bytes");
@@ -142,7 +149,7 @@ export function loadAppAuthConfig(
 /** Discord is the identity source; email is an internal library identifier only. */
 function mapDiscordProfile(profile: DiscordProfile) {
   if (
-    !DISCORD_ID.test(profile.id) ||
+    !isDiscordId(profile.id) ||
     typeof profile.username !== "string" ||
     !profile.username
   ) {
@@ -157,21 +164,22 @@ function mapDiscordProfile(profile: DiscordProfile) {
   };
 }
 
-function json(res: ServerResponse, status: number, value: unknown): void {
-  res.writeHead(status, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store",
-    "X-Content-Type-Options": "nosniff",
-  });
-  res.end(JSON.stringify(value));
-}
+const ACCOUNT_METHODS = "GET, POST, OPTIONS";
 
 function isAccountPath(pathname: string): boolean {
   return (
     pathname === "/api/account" ||
+    isPublicProfilePath(pathname) ||
     pathname === GAME_PRESENTATION_PATH ||
     pathname === AUTH_PATH ||
     pathname.startsWith(`${AUTH_PATH}/`)
+  );
+}
+
+function isPublicProfilePath(pathname: string): boolean {
+  return (
+    pathname === PUBLIC_USERS_PATH ||
+    pathname.startsWith(`${PUBLIC_USERS_PATH}/`)
   );
 }
 
@@ -187,30 +195,6 @@ function requestPathname(
   }
 }
 
-function handleAccountCors(
-  req: IncomingMessage,
-  res: ServerResponse,
-  trustedOrigins: readonly string[],
-): boolean {
-  res.setHeader("Vary", "Origin");
-  if (req.headers.origin) {
-    if (!trustedOrigins.includes(req.headers.origin)) {
-      json(res, 403, { error: "Origin is not allowed" });
-      return true;
-    }
-    res.setHeader("Access-Control-Allow-Origin", req.headers.origin);
-    res.setHeader("Access-Control-Allow-Credentials", "true");
-  }
-  if (req.method === "OPTIONS") {
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-    res.writeHead(204);
-    res.end();
-    return true;
-  }
-  return false;
-}
-
 export function handleDisabledAppAuth(
   req: IncomingMessage,
   res: ServerResponse,
@@ -219,14 +203,25 @@ export function handleDisabledAppAuth(
   const pathname = requestPathname(req, res);
   if (pathname === null) return true;
   if (!isAccountPath(pathname)) return false;
-  if (handleAccountCors(req, res, trustedOrigins ?? trustedAppOrigins()))
+  if (
+    handleAccountCors(
+      req,
+      res,
+      trustedOrigins ?? trustedAppOrigins(),
+      ACCOUNT_METHODS,
+    )
+  )
     return true;
   json(
     res,
     pathname === "/api/account" ? 200 : 503,
     pathname === "/api/account"
       ? { enabled: false, user: null }
-      : { error: "Discord sign-in is not configured" },
+      : {
+          error: isPublicProfilePath(pathname)
+            ? "User profiles are unavailable"
+            : "Discord sign-in is not configured",
+        },
   );
   return true;
 }
@@ -418,6 +413,9 @@ export async function createAppAuth({
   };
   const getAccount: AppAuthService["getAccount"] = async (headers) =>
     (await readAccount(headers)).user;
+  const publicProfileQuery = database.prepare(
+    'SELECT a."accountId" AS "discordId", u."name", u."discordUsername", u."image" FROM "user" u JOIN "account" a ON a."userId" = u."id" WHERE a."providerId" = ? AND a."accountId" = ? LIMIT 2',
+  );
   const requireAdmin: AppAuthService["requireAdmin"] = async (headers) => {
     const user = await getAccount(headers);
     if (!user) throw new AppAuthError(401, "Sign in to continue");
@@ -435,9 +433,34 @@ export async function createAppAuth({
       if (!isAccountPath(pathname)) return false;
       res.setHeader("Cache-Control", "no-store");
       res.setHeader("X-Content-Type-Options", "nosniff");
-      if (handleAccountCors(req, res, requestOrigins)) return true;
+      if (handleAccountCors(req, res, requestOrigins, ACCOUNT_METHODS))
+        return true;
       const origin = req.headers.origin;
       try {
+        if (isPublicProfilePath(pathname)) {
+          if (req.method !== "GET") {
+            res.setHeader("Allow", "GET, OPTIONS");
+            json(res, 405, { error: "Method not allowed" });
+            return true;
+          }
+          const discordId = pathname.slice(PUBLIC_USERS_PATH.length + 1);
+          if (!isDiscordId(discordId)) {
+            json(res, 400, { error: "Invalid Discord user ID" });
+            return true;
+          }
+          const profiles = publicProfileQuery.all(
+            "discord",
+            discordId,
+          ) as AccountPublicProfile[];
+          if (profiles.length > 1)
+            throw new Error("Discord account linkage is ambiguous");
+          json(
+            res,
+            profiles.length === 1 ? 200 : 404,
+            profiles[0] ?? { error: "User not found" },
+          );
+          return true;
+        }
         if (pathname === "/api/account") {
           if (req.method !== "GET") {
             json(res, 405, { error: "Method not allowed" });
@@ -486,7 +509,7 @@ export async function createAppAuth({
             const params = new URL(req.url || "/", config.baseURL).searchParams;
             const filename = params.get("filename");
             if (
-              !isPublishedDemoFilename(filename) ||
+              !isPublishedDemoKey(filename) ||
               params.getAll("filename").length !== 1 ||
               [...params.keys()].some((key) => key !== "filename")
             ) {

@@ -307,3 +307,105 @@ it("leaves ordinary and pre-games metadata usable", () => {
     } as DemoMetadata),
   ).toEqual(analyzed);
 });
+
+const uploadIdentity = {
+  discordHandleAtUploadTime: "original_handle",
+  discordDisplayNameAtUploadTime: "Original Display Name",
+};
+
+it("keeps upload-time identity snapshots when fresh analysis contains different names", () => {
+  const original = { ...record([game]), ...uploadIdentity };
+  const analyzed = {
+    ...record([game]),
+    discordHandleAtUploadTime: "current_handle",
+    discordDisplayNameAtUploadTime: "Current Display Name",
+  };
+  expect(preserveDemoGamePresentation(analyzed, original)).toMatchObject(
+    uploadIdentity,
+  );
+  expect(original).toMatchObject(uploadIdentity);
+  expect(analyzed.discordHandleAtUploadTime).toBe("current_handle");
+});
+
+it("does not discard saved upload snapshots when analyzed optional fields are undefined", () => {
+  const analyzed = {
+    ...record([game]),
+    discordHandleAtUploadTime: undefined,
+    discordDisplayNameAtUploadTime: undefined,
+  };
+  expect(
+    preserveDemoGamePresentation(analyzed, {
+      ...record([game]),
+      ...uploadIdentity,
+    }),
+  ).toMatchObject(uploadIdentity);
+});
+
+it("prefers canonical upload snapshots over a conflicting index copy", () => {
+  const current = { ...record([game]), ...uploadIdentity };
+  const index = {
+    ...record([game]),
+    discordHandleAtUploadTime: "different_handle",
+    discordDisplayNameAtUploadTime: "Different Display Name",
+  };
+  expect(preserveDemoGamePresentation(current, index, "index")).toMatchObject(
+    uploadIdentity,
+  );
+});
+
+it("can recover historical snapshot fields present only in an existing index record", () => {
+  expect(
+    preserveDemoGamePresentation(
+      record([game]),
+      { ...record([game]), ...uploadIdentity },
+      "index",
+    ),
+  ).toMatchObject(uploadIdentity);
+});
+
+it("does not invent Discord attribution for legacy recordings", () => {
+  const merged = preserveDemoGamePresentation(record([game]), record([game]));
+  expect(merged).not.toHaveProperty("discordHandleAtUploadTime");
+  expect(merged).not.toHaveProperty("discordDisplayNameAtUploadTime");
+});
+
+it("does not copy snapshots between owners whose recordings share a basename", () => {
+  const basename = "server_20260901T2000_katabatic_aaaaaa.rec";
+  const analyzed = record([game], `users/123456789012345678/${basename}`);
+  const other = {
+    ...record([game], `users/223456789012345678/${basename}`),
+    ...uploadIdentity,
+  };
+  expect(preserveDemoGamePresentation(analyzed, other)).toBe(analyzed);
+  expect(analyzed).not.toHaveProperty("discordHandleAtUploadTime");
+});
+
+it("does not copy malformed snapshot values from saved JSON metadata", () => {
+  const original = JSON.parse(
+    JSON.stringify({
+      ...record([game]),
+      discordHandleAtUploadTime: { current: "not a string" },
+      discordDisplayNameAtUploadTime: 123,
+    }),
+  ) as DemoMetadata;
+  const merged = preserveDemoGamePresentation(record([game]), original);
+  expect(merged).not.toHaveProperty("discordHandleAtUploadTime");
+  expect(merged).not.toHaveProperty("discordDisplayNameAtUploadTime");
+});
+
+it("recovers valid historical fields when a preferred copy has malformed values", () => {
+  const current = JSON.parse(
+    JSON.stringify({
+      ...record([game]),
+      discordHandleAtUploadTime: false,
+      discordDisplayNameAtUploadTime: [],
+    }),
+  ) as DemoMetadata;
+  expect(
+    preserveDemoGamePresentation(
+      current,
+      { ...record([game]), ...uploadIdentity },
+      "index",
+    ),
+  ).toMatchObject(uploadIdentity);
+});

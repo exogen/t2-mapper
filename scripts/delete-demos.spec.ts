@@ -192,6 +192,70 @@ it("conditionally removes the index entry before deleting the recording or any s
   expect(summary()).toMatchObject({ deleted: 1, deletedObjects: 7, failed: 0 });
 });
 
+it.each([false, true])(
+  "leaves managed user uploads to their library even when matching the maintenance filter (delete=%s)",
+  async (remove) => {
+    const userPrefix = "users/126767979894407168/";
+    const indexedUploads = [
+      { ...short, filename: `${userPrefix}${"a".repeat(64)}.rec` },
+      { ...short, filename: `${userPrefix}Historical final.REC` },
+    ];
+    for (const record of indexedUploads) addDemo(record);
+    addDemo(
+      { ...short, filename: `${userPrefix}another naming scheme.rec` },
+      false,
+    );
+    store.set(
+      `demos/${userPrefix}orphan.rec.json`,
+      JSON.stringify({ durationMs: 1000 }),
+    );
+    store.set(
+      `demos/${indexedUploads[0].filename}.checkpoints.json`,
+      "checkpoint",
+    );
+    const userObjects = [...store].filter(([key]) =>
+      key.startsWith("demos/users/"),
+    );
+    if (remove) process.argv.push("--delete");
+
+    await import("./delete-demos");
+
+    expect(
+      [...store].filter(([key]) => key.startsWith("demos/users/")),
+    ).toEqual(userObjects);
+    expect(index()).toEqual(
+      remove ? [kept, ...indexedUploads] : [short, kept, ...indexedUploads],
+    );
+    expect(
+      deletes()
+        .flat()
+        .some((key) => key.startsWith("demos/users/")),
+    ).toBe(false);
+    expect(store.has("demos/short.rec")).toBe(!remove);
+    const skipped = vi
+      .mocked(console.log)
+      .mock.calls.map(([line]) => JSON.parse(line))
+      .filter(
+        (entry) =>
+          entry.action === "skip" && entry.key.startsWith("demos/users/"),
+      );
+    expect(skipped).toHaveLength(4);
+    expect(
+      skipped.every(
+        (entry) =>
+          entry.reason ===
+          "User uploads are managed by the owner's demo library",
+      ),
+    ).toBe(true);
+    expect(summary()).toMatchObject({
+      matched: 1,
+      skipped: 5,
+      failed: 0,
+      deleted: remove ? 1 : 0,
+    });
+  },
+);
+
 it.each([
   ["--min-players=2", ["short.rec"]],
   ["--exclude-server=server a", ["short.rec"]],
@@ -239,6 +303,9 @@ it("shows help without requiring a filter or credentials", async () => {
   await expect(import("./delete-demos")).rejects.toThrow("exit");
   expect(process.exit).toHaveBeenCalledWith(0);
   expect(mocks.client).not.toHaveBeenCalled();
+  expect(vi.mocked(console.log).mock.calls[0][0]).toContain(
+    "User uploads under users/ are always skipped; delete them from the owner's demo library.",
+  );
 });
 
 it("uses unindexed .rec.json metadata, including imported source durations", async () => {

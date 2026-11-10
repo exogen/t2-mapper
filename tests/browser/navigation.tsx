@@ -146,6 +146,91 @@ function NavigationChecks() {
     setResults([]);
     const pass = (s: string) => setResults((old) => [...old, "PASS: " + s]);
     try {
+      const origin = location.origin;
+      const initialHref = location.href;
+      const initialHistoryLength = history.length;
+      const userId = "123456789012345678";
+      const assertOrigin = () =>
+        assert(location.origin === origin, "navigation changed app origin");
+
+      nav.serverBrowser();
+      await until(() => url().get("mode") === "live", "push server browser");
+      assertOrigin();
+      assert(
+        history.length === initialHistoryLength + 1,
+        "server browser did not add a history entry",
+      );
+      nav.userDemos(userId);
+      await until(() => url().get("user") === userId, "push user demos");
+      assertOrigin();
+      assert(
+        history.length === initialHistoryLength + 2,
+        "user demos did not add a history entry",
+      );
+
+      history.back();
+      await until(
+        () => url().get("mode") === "live" && !url().has("user"),
+        "Back returns to server browser",
+      );
+      assertOrigin();
+      history.back();
+      await until(
+        () => location.href === initialHref,
+        "Back returns to the initial app screen",
+      );
+      assertOrigin();
+      history.forward();
+      await until(
+        () => url().get("mode") === "live",
+        "Forward returns to server browser",
+      );
+      assertOrigin();
+      history.forward();
+      await until(
+        () => url().get("user") === userId,
+        "Forward returns to user demos",
+      );
+      assertOrigin();
+      pass("App navigation records routes for Back/Forward on the same host");
+
+      const listingHref = location.href;
+      const listingHistoryLength = history.length;
+      nav.userDemos(userId);
+      await sleep(100);
+      assert(
+        history.length === listingHistoryLength &&
+          location.href === listingHref,
+        "reselecting the same destination added a duplicate history entry",
+      );
+      pass("Reselecting the current destination does not add history");
+
+      const cameraHash = "#c1,2,3~0,0,0,1";
+      navigate("?mode=demo" + cameraHash);
+      const cameraHref = location.href;
+      await sleep(80);
+      nav.serverBrowser();
+      await until(
+        () => url().get("mode") === "live" && location.hash === "",
+        "new destination clears its camera hash",
+      );
+      assertOrigin();
+      history.back();
+      await until(
+        () => location.href === cameraHref,
+        "Back restores the previous camera hash",
+      );
+      assertOrigin();
+      assert(location.hash === cameraHash, "previous camera hash was erased");
+      pass(
+        "Back restores the old camera hash without leaking it to a new screen",
+      );
+      nav.demoIndex();
+      await until(
+        () => url().get("mode") === "demo" && location.hash === "",
+        "return to a clean demo index",
+      );
+
       nav.selectDemo("audit-one.rec");
       const abandoned = downloads.at(-1)!;
       nav.demoIndex();

@@ -1,4 +1,6 @@
 import { findMissionInfo } from "../manifest";
+import { normalizeMissionType } from "../mission";
+import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import { demoDownloadUrl, type DemoIndexEntry } from "../stream/demoIndex";
 
 /**
@@ -14,16 +16,17 @@ export function formatDuration(durationMs: number): string {
   return min === 0 ? `${hours}h` : `${hours}h ${min}m`;
 }
 
-export function formatRecordedTime(iso: string): string {
+export function formatRecordedTime(iso: string, timezone?: "unknown"): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
   return date.toLocaleTimeString(undefined, {
     hour: "numeric",
     minute: "2-digit",
+    timeZone: timezone === "unknown" ? "UTC" : undefined,
   });
 }
 
-export function recordedDayLabel(iso: string): string {
+export function recordedDayLabel(iso: string, timezone?: "unknown"): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "Unknown date";
   return date.toLocaleDateString(undefined, {
@@ -31,6 +34,7 @@ export function recordedDayLabel(iso: string): string {
     month: "short",
     day: "numeric",
     year: "numeric",
+    timeZone: timezone === "unknown" ? "UTC" : undefined,
   });
 }
 
@@ -56,27 +60,36 @@ export function findIndexedDemo(
 export function demoTitle(demo: Pick<DemoIndexEntry, "games">): string {
   return (
     demo.games.map((game) => missionDisplayName(game.mission)).join(" → ") ||
-    "Warmup only"
+    "Unknown map"
   );
 }
 
-/** Saved teams in team order, grouped by game. */
-export function demoTeams(demo: Pick<DemoIndexEntry, "games">) {
-  return demo.games
-    .map((game) =>
-      Object.entries(game.teamNames ?? {})
-        .filter(([id]) => Number(id) > 0)
-        .sort(([a], [b]) => Number(a) - Number(b)),
-    )
-    .filter((teams) => teams.length > 0);
-}
-
-/** Shared team labels for each game; the primary demo label supplies map names. */
-export function demoGameDetails(demo: DemoIndexEntry): string {
-  return demoTeams(demo)
-    .map((teams) => teams.map(([, name]) => name).join(" vs "))
-    .filter(Boolean)
-    .join(" → ");
+/** Everything a demo card or list item shows besides its map title. */
+export function demoSummary(demo: Pick<DemoIndexEntry, "games">) {
+  return {
+    /** Saved non-default team names in team order, one list per game. */
+    matchups: demo.games
+      .map((game) =>
+        Object.entries(game.teamNames ?? {})
+          .filter(([id]) => Number(id) > 0)
+          .sort(([a], [b]) => Number(a) - Number(b)),
+      )
+      .filter((teams) =>
+        teams.some(([id, name]) => name !== DEFAULT_TEAM_NAMES[Number(id)]),
+      ),
+    matchTitle: demo.games
+      .map((game) => game.title)
+      .filter(Boolean)
+      .join(" → "),
+    gameTypes: [
+      ...new Set(
+        demo.games
+          .map((game) => normalizeMissionType(game.gameType))
+          .filter(Boolean),
+      ),
+    ],
+    tournament: demo.games.some((game) => game.tournament),
+  };
 }
 
 /**

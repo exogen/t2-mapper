@@ -5,6 +5,7 @@ const test = vi.hoisted(() => ({
   effects: [] as Array<() => void>,
   previous: { current: null as string | null },
   replayPrevious: { current: null as string | null },
+  recording: null as { source: string } | null,
   refIndex: 0,
   replay: { sessionId: null as string | null, join: vi.fn(), leave: vi.fn() },
   query: {} as NavigationQuery,
@@ -29,7 +30,9 @@ vi.mock("../stream/demoFileLoader", () => ({
   unloadDemo: test.unload,
 }));
 vi.mock("../state/engineStore", () => ({
-  engineStore: { getState: () => ({ playback: { recording: null } }) },
+  engineStore: {
+    getState: () => ({ playback: { recording: test.recording } }),
+  },
 }));
 vi.mock("../state/gameEntityStore", () => ({
   gameEntityStore: { getState: () => ({ dataSource: "map" }) },
@@ -56,6 +59,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   test.previous.current = null;
   test.replayPrevious.current = null;
+  test.recording = null;
   test.replay.sessionId = null;
   test.replay.leave.mockImplementation(() => {
     test.replay.sessionId = null;
@@ -66,6 +70,7 @@ beforeEach(() => {
   test.query = {
     mode: null,
     demo: null,
+    user: null,
     replay: null,
     mission: null,
     address: null,
@@ -74,9 +79,10 @@ beforeEach(() => {
     view: null,
   };
   demoLoadStore.setState(demoLoadStore.getInitialState(), true);
-  test.unload.mockImplementation(() =>
-    demoLoadStore.setState(demoLoadStore.getInitialState(), true),
-  );
+  test.unload.mockImplementation(() => {
+    test.recording = null;
+    demoLoadStore.setState(demoLoadStore.getInitialState(), true);
+  });
   test.load.mockImplementation((requestedDemo: string) =>
     demoLoadStore.setState({ requestedDemo }),
   );
@@ -168,5 +174,26 @@ describe("demo URL loading", () => {
     demoLoadStore.setState({ requestedDemo: "unknown:1", phase: "error" });
     SyncNavigation();
     expect(test.unload).toHaveBeenCalledOnce();
+  });
+
+  it("unloads a local demo when history opens a user listing", () => {
+    test.query.mode = "demo";
+    test.query.user = "126767979894407168";
+    test.recording = { source: "demo" };
+    SyncNavigation();
+    SyncNavigation();
+    expect(test.unload).toHaveBeenCalledOnce();
+    expect(test.load).not.toHaveBeenCalled();
+  });
+
+  it("does not load or eject anything for a user listing with no recording", () => {
+    test.query.mode = "demo";
+    test.query.user = "126767979894407168";
+    SyncNavigation();
+    test.query.user = "123456789012345678";
+    SyncNavigation();
+    expect(test.unload).not.toHaveBeenCalled();
+    expect(test.load).not.toHaveBeenCalled();
+    expect(test.setQuery).not.toHaveBeenCalled();
   });
 });

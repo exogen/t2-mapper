@@ -14,7 +14,7 @@ import { useAppAccount } from "../state/appAccountStore";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import { inputControlsStore } from "./InputControls";
 import {
-  DataSaveButton,
+  DataSaveActions,
   GameDataSelector,
   TeamNameFields,
   type NamedTeam,
@@ -201,10 +201,8 @@ export function GameDetailsDialog({
             </p>
           )}
           <div className={styles.Buttons}>
-            <button type="button" className={styles.Cancel} onClick={onClose}>
-              Cancel
-            </button>
-            <DataSaveButton
+            <DataSaveActions
+              onCancel={onClose}
               loading={editor.loading}
               saving={pending}
               disabled={pending || !available || !details}

@@ -1,4 +1,8 @@
-import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
+import {
+  useQuery,
+  useSuspenseQuery,
+  type QueryClient,
+} from "@tanstack/react-query";
 import {
   DEMOS_BASE_URL,
   fetchDemoIndex,
@@ -13,9 +17,18 @@ const NO_DEMOS: DemoIndexEntry[] = [];
  */
 const demoIndexQuery = {
   queryKey: ["demoIndex"] as const,
-  queryFn: async () => (DEMOS_BASE_URL === "" ? NO_DEMOS : fetchDemoIndex()),
+  queryFn: async ({ signal }: { signal: AbortSignal }) =>
+    DEMOS_BASE_URL === "" ? NO_DEMOS : fetchDemoIndex(signal),
   staleTime: 60_000,
 };
+
+/** Publication needs a read started after the write, even during the initial fetch. */
+export async function refreshDemoIndex(
+  queryClient: QueryClient,
+): Promise<void> {
+  await queryClient.cancelQueries({ queryKey: demoIndexQuery.queryKey });
+  await queryClient.invalidateQueries({ queryKey: demoIndexQuery.queryKey });
+}
 
 /**
  * The published demo index, shared by the demo dropdown and the landing

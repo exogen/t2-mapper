@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
-import type { AccountRole } from "./accountTypes.js";
+import { isDiscordId, type AccountRole } from "./accountTypes.js";
 
 // 3.51.3 fixes SQLite's WAL-reset corruption bug. Check the embedded engine,
 // rather than the unrelated sqlite3 executable installed on the host.
@@ -133,7 +133,7 @@ export function setAccountRole(
   discordId: string,
   role: AccountRole,
 ): { id: string; discordId: string; role: AccountRole } {
-  if (typeof discordId !== "string" || !/^\d{17,20}$/.test(discordId)) {
+  if (!isDiscordId(discordId)) {
     throw new Error("--discord-id must be a numeric Discord user ID");
   }
   if (role !== "admin" && role !== "user") {

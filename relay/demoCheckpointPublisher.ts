@@ -16,6 +16,7 @@ import {
   type DemoCheckpointPlan,
 } from "../src/stream/demoCheckpoints";
 import type { DemoUploadConfig } from "./demoUpload.js";
+import type { PreparedDemoCheckpoints } from "./demoCheckpointGenerator.js";
 import { demoLog as log } from "./logger.js";
 import {
   DemoCheckpointGenerationError,
@@ -29,16 +30,18 @@ import {
 export interface PublishDemoCheckpointsOptions {
   localFile?: string;
   force?: boolean;
+  existingOnly?: boolean;
 }
 
 export type DemoCheckpointPublishResult = "published" | "current" | "failed";
 
-/** One replay worker at a time, shared by recordings, imports, and backfills. */
+/** Publish checkpoint artifacts, serializing replay jobs within this instance. */
 export class DemoCheckpointPublisher {
   private readonly client: S3Client;
   private readonly config: DemoUploadConfig;
   private readonly assetRoot: string;
   private readonly plan: DemoCheckpointPlan;
+  private readonly generateCheckpoints: typeof runDemoCheckpointProcess;
   private tail: Promise<unknown> = Promise.resolve();
   private readonly pending = new Map<
     string,
@@ -49,10 +52,12 @@ export class DemoCheckpointPublisher {
     config: DemoUploadConfig,
     assetRoot: string,
     plan: DemoCheckpointPlan = loadDemoCheckpointPlan(),
+    generateCheckpoints: typeof runDemoCheckpointProcess = runDemoCheckpointProcess,
   ) {
     this.config = config;
     this.assetRoot = assetRoot;
     this.plan = checkDemoCheckpointPlan(plan);
+    this.generateCheckpoints = generateCheckpoints;
     this.client = new S3Client({
       region: "auto",
       endpoint: config.endpoint,
@@ -117,6 +122,25 @@ export class DemoCheckpointPublisher {
     return job;
   }
 
+  /** Upload the worker's completed artifact without another generation pass. */
+  async publishPrepared(
+    key: string,
+    localFile: string,
+    prepared: PreparedDemoCheckpoints,
+  ): Promise<"published"> {
+    const demo = await this.client.send(
+      new HeadObjectCommand({ Bucket: this.config.bucket, Key: key }),
+      { abortSignal: AbortSignal.timeout(30_000) },
+    );
+    await this.uploadSidecar(
+      key,
+      `${localFile}${DEMO_CHECKPOINT_SUFFIX}`,
+      prepared,
+      demo.ETag,
+    );
+    return "published";
+  }
+
   private async prepareJob(
     key: string,
     options: PublishDemoCheckpointsOptions,
@@ -131,10 +155,36 @@ export class DemoCheckpointPublisher {
 
   private async publishOne(
     key: string,
-    { localFile, force = false }: PublishDemoCheckpointsOptions,
+    {
+      localFile,
+      force = false,
+      existingOnly = false,
+    }: PublishDemoCheckpointsOptions,
   ): Promise<DemoCheckpointPublishResult> {
     let temporaryDir: string | undefined;
     try {
+      let checkpointETag: string | undefined;
+      if (existingOnly) {
+        try {
+          const current = await this.client.send(
+            new HeadObjectCommand({
+              Bucket: this.config.bucket,
+              Key: `${key}${DEMO_CHECKPOINT_SUFFIX}`,
+            }),
+            { abortSignal: AbortSignal.timeout(30_000) },
+          );
+          checkpointETag = current.ETag;
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            (error.name === "NoSuchKey" || error.name === "NotFound")
+          )
+            throw new Error(`Cannot update missing checkpoint sidecar: ${key}`);
+          throw error;
+        }
+        if (!checkpointETag)
+          throw new Error(`Missing checkpoint sidecar ETag: ${key}`);
+      }
       let demoETag: string | undefined;
       if (!localFile) {
         temporaryDir = await fsp.mkdtemp(
@@ -163,7 +213,7 @@ export class DemoCheckpointPublisher {
       const output = `${localFile}${DEMO_CHECKPOINT_SUFFIX}`;
       let result;
       try {
-        result = await runDemoCheckpointProcess(
+        result = await this.generateCheckpoints(
           localFile,
           output,
           this.assetRoot,
@@ -178,36 +228,53 @@ export class DemoCheckpointPublisher {
         );
         return "failed";
       }
-      const body = fs.createReadStream(output);
-      body.on("error", () => {});
-      try {
-        await this.client.send(
-          new PutObjectCommand({
-            Bucket: this.config.bucket,
-            Key: `${key}${DEMO_CHECKPOINT_SUFFIX}`,
-            Body: body,
-            ContentLength: result.bytes,
-            ContentType: "application/json; charset=utf-8",
-            CacheControl: "no-cache",
-            Metadata: {
-              "checkpoint-version": String(result.version),
-              "checkpoint-count": String(this.plan.maxCount),
-              "checkpoint-interval": String(this.plan.intervalTicks),
-              "demo-bytes": String(result.demoBytes),
-              "demo-sha256": result.demoSha256,
-              ...(demoETag ? { "demo-etag": demoETag } : {}),
-            },
-          }),
-          { abortSignal: AbortSignal.timeout(60_000) },
-        );
-      } finally {
-        body.destroy();
-      }
-      log.info({ key, ...result }, "Seek checkpoints published");
+      await this.uploadSidecar(
+        key,
+        output,
+        { ...result, ...this.plan },
+        demoETag,
+        checkpointETag,
+      );
       return "published";
     } finally {
       if (temporaryDir)
         await fsp.rm(temporaryDir, { recursive: true, force: true });
     }
+  }
+
+  private async uploadSidecar(
+    key: string,
+    output: string,
+    prepared: PreparedDemoCheckpoints,
+    demoETag?: string,
+    checkpointETag?: string,
+  ): Promise<void> {
+    const body = fs.createReadStream(output);
+    body.on("error", () => {});
+    try {
+      await this.client.send(
+        new PutObjectCommand({
+          Bucket: this.config.bucket,
+          Key: `${key}${DEMO_CHECKPOINT_SUFFIX}`,
+          Body: body,
+          ContentLength: prepared.bytes,
+          ContentType: "application/json; charset=utf-8",
+          CacheControl: "no-cache",
+          ...(checkpointETag ? { IfMatch: checkpointETag } : {}),
+          Metadata: {
+            "checkpoint-version": String(prepared.version),
+            "checkpoint-count": String(prepared.maxCount),
+            "checkpoint-interval": String(prepared.intervalTicks),
+            "demo-bytes": String(prepared.demoBytes),
+            "demo-sha256": prepared.demoSha256,
+            ...(demoETag ? { "demo-etag": demoETag } : {}),
+          },
+        }),
+        { abortSignal: AbortSignal.timeout(60_000) },
+      );
+    } finally {
+      body.destroy();
+    }
+    log.info({ key, ...prepared }, "Seek checkpoints published");
   }
 }

@@ -2,6 +2,7 @@ import {
   DEMO_DOWNLOAD_PREFIX,
   tribesForeverDownloadUrl,
 } from "../../relay/demoSources";
+import { isPublishedDemoKey } from "../../relay/demoKeys";
 import { DEMOS_BASE_URL, demoDownloadUrl } from "./demoIndex";
 import {
   sourceDemoMetadata,
@@ -140,6 +141,8 @@ export function resolveDemoSource(reference: string): DemoSource {
   }
   if (!DEMOS_BASE_URL)
     throw new Error("Demo index not configured (DEMOS_BASE_URL)");
+  if (!isPublishedDemoKey(reference))
+    throw new Error("Invalid published demo key");
   return directDemoSource(demoDownloadUrl(reference));
 }
 

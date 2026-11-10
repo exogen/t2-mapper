@@ -7,6 +7,7 @@ import {
 import { gzipSync } from "node:zlib";
 import { DemoParser, DemoIdentString, type Move } from "t2-demo-parser";
 import type { WebSocket } from "ws";
+import { abortable } from "./abortable.js";
 import { DemoReplaySource } from "./demoReplaySource.js";
 import {
   createReplayDemoLoader,
@@ -136,21 +137,6 @@ export interface UploadedReplayRequest {
     onProgress?: (receivedBytes: number) => void,
   ) => Promise<Uint8Array>;
   signal: AbortSignal;
-}
-
-/** Preparation still stops when a source implementation is slow to acknowledge cancellation. */
-async function abortable<T>(task: Promise<T>, signal: AbortSignal): Promise<T> {
-  let cancel!: () => void;
-  const aborted = new Promise<never>((_resolve, reject) => {
-    cancel = () => reject(signal.reason);
-    if (signal.aborted) cancel();
-    else signal.addEventListener("abort", cancel, { once: true });
-  });
-  try {
-    return await Promise.race([task, aborted]);
-  } finally {
-    signal.removeEventListener("abort", cancel);
-  }
 }
 
 function hashToken(token: string): Buffer {

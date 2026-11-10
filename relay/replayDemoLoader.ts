@@ -1,10 +1,12 @@
 import { DemoParser, DemoIdentString } from "t2-demo-parser";
+import { abortable } from "./abortable.js";
 import type { DemoSourceCache } from "./demoSourceCache.js";
 import { resolveRemoteDemo } from "./demoSources.js";
 import { DEMO_TRANSFER_TIMEOUT_MS } from "./demoImportQueue.js";
 import { SOURCE_DEMO_PROTOCOL_VERSION } from "./demoSourceMetadata.js";
 import { MAX_SOURCE_DEMO_BYTES } from "./demoSourceValidation.js";
 import { readDemoGames, type DemoGame } from "./demoMetadata.js";
+import { encodedDemoKey, isPublishedDemoKey } from "./demoKeys.js";
 
 const MAX_METADATA_BYTES = 128 * 1024;
 const METADATA_TIMEOUT_MS = 2_000;
@@ -34,30 +36,8 @@ export function validateReplayDemoReference(reference: string): void {
     );
     return;
   }
-  if (
-    !reference.toLowerCase().endsWith(".rec") ||
-    /[/\\\x00-\x1f\x7f]/.test(reference) ||
-    reference === "." ||
-    reference === ".."
-  )
+  if (!isPublishedDemoKey(reference))
     throw new Error("Choose a published demo or a supported demo source");
-}
-
-async function abortable<T>(
-  promise: Promise<T>,
-  signal: AbortSignal,
-): Promise<T> {
-  signal.throwIfAborted();
-  let cancel!: () => void;
-  const stopped = new Promise<never>((_resolve, reject) => {
-    cancel = () => reject(signal.reason);
-    signal.addEventListener("abort", cancel, { once: true });
-  });
-  try {
-    return await Promise.race([promise, stopped]);
-  } finally {
-    signal.removeEventListener("abort", cancel);
-  }
 }
 
 async function responseBytes(
@@ -174,9 +154,7 @@ export function createReplayDemoLoader(options: ReplayDemoLoaderOptions = {}) {
         ? await abortable(options.cache.ensure(demo), downloadSignal)
         : demo.url;
     } else {
-      // Encode the complete filename so even percent-encoded slashes cannot
-      // escape the configured directory after URL resolution.
-      url = new URL(encodeURIComponent(reference), base).href;
+      url = new URL(encodedDemoKey(reference), base).href;
     }
     const responseTask = fetchDemo(url, {
       signal: downloadSignal,

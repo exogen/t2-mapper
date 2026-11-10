@@ -44,7 +44,11 @@ vi.mock("./logger", () => ({
 }));
 
 import { DemoCheckpointPublisher } from "./demoCheckpointPublisher";
-import { DemoCheckpointGenerationError } from "./demoCheckpointProcess";
+import {
+  DemoCheckpointGenerationError,
+  runDemoCheckpointProcess,
+} from "./demoCheckpointProcess";
+import type { PreparedDemoCheckpoints } from "./demoCheckpointGenerator";
 import { DEMO_CHECKPOINT_VERSION } from "../src/stream/demoCheckpoints";
 
 const config = {
@@ -57,6 +61,16 @@ const config = {
 const key = "demos/example.rec";
 const defaultPlan = { intervalTicks: 22_500, maxCount: 1 };
 const contents = '{"checkpoints":[]}';
+const prepared: PreparedDemoCheckpoints = {
+  version: DEMO_CHECKPOINT_VERSION,
+  demoBytes: 3,
+  demoSha256: "abc",
+  count: 0,
+  bytes: contents.length,
+  reused: false,
+  elapsedMS: 1,
+  ...defaultPlan,
+};
 const metadata = {
   "checkpoint-version": String(DEMO_CHECKPOINT_VERSION),
   "checkpoint-count": "1",
@@ -194,6 +208,134 @@ describe("demo checkpoint publishing", () => {
     );
   });
 
+  it("passes the recording, output, assets, force flag, and plan to an injected generator", async () => {
+    const plan = { intervalTicks: 100, maxCount: 4 };
+    const generate = vi.fn<typeof runDemoCheckpointProcess>(
+      async (_input, output) => {
+        await fs.writeFile(output, contents);
+        return prepared;
+      },
+    );
+    publisher = new DemoCheckpointPublisher(
+      config,
+      "/custom-assets",
+      plan,
+      generate,
+    );
+
+    expect(await publisher.publish(key, { localFile, force: true })).toBe(
+      "published",
+    );
+
+    expect(generate).toHaveBeenCalledExactlyOnceWith(
+      localFile,
+      `${localFile}.checkpoints.json`,
+      "/custom-assets",
+      true,
+      plan,
+    );
+    expect(mocks.run).not.toHaveBeenCalled();
+  });
+
+  it("uploads prepared checkpoint bytes without rereading or replaying the recording", async () => {
+    const generate = vi
+      .fn<typeof runDemoCheckpointProcess>()
+      .mockRejectedValue(new Error("Unexpected generation"));
+    publisher = new DemoCheckpointPublisher(
+      config,
+      "/assets",
+      defaultPlan,
+      generate,
+    );
+    await fs.writeFile(`${localFile}.checkpoints.json`, contents);
+    await fs.rm(localFile);
+    let uploaded = "";
+    mocks.send.mockImplementation(async (command) => {
+      if (command.kind === "head")
+        return { ContentLength: 3, ETag: '"demo-v1"' };
+      for await (const chunk of command.input.Body)
+        uploaded += chunk.toString();
+      return {};
+    });
+
+    expect(await publisher.publishPrepared(key, localFile, prepared)).toBe(
+      "published",
+    );
+
+    expect(generate).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(uploaded).toBe(contents);
+    expect(mocks.send.mock.calls.map(([command]) => command.kind)).toEqual([
+      "head",
+      "put",
+    ]);
+    expect(mocks.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "head",
+        input: { Bucket: "demos", Key: key },
+      }),
+      { abortSignal: expect.any(AbortSignal) },
+    );
+    expect(mocks.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "put",
+        input: expect.objectContaining({
+          Bucket: "demos",
+          Key: `${key}.checkpoints.json`,
+          ContentLength: contents.length,
+          ContentType: "application/json; charset=utf-8",
+          CacheControl: "no-cache",
+          Metadata: { ...metadata, "demo-sha256": "abc" },
+        }),
+      }),
+      { abortSignal: expect.any(AbortSignal) },
+    );
+  });
+
+  it("publishes prepared checkpoints with their originating plan rather than the current publisher plan", async () => {
+    await fs.writeFile(`${localFile}.checkpoints.json`, contents);
+    publisher = new DemoCheckpointPublisher(config, "/assets", {
+      intervalTicks: 100,
+      maxCount: 4,
+    });
+
+    expect(await publisher.publishPrepared(key, localFile, prepared)).toBe(
+      "published",
+    );
+
+    const upload = mocks.send.mock.calls.find(
+      ([command]) => command.kind === "put",
+    )![0];
+    expect(upload.input.Metadata).toMatchObject({
+      "checkpoint-count": "1",
+      "checkpoint-interval": "22500",
+    });
+    expect(mocks.run).not.toHaveBeenCalled();
+  });
+
+  it("propagates prepared upload failures and closes the stream without removing the artifact", async () => {
+    await fs.writeFile(`${localFile}.checkpoints.json`, contents);
+    let body!: Readable;
+    mocks.send.mockImplementation(async (command) => {
+      if (command.kind === "head")
+        return { ContentLength: 3, ETag: '"demo-v1"' };
+      body = command.input.Body;
+      throw new Error("upload failed");
+    });
+
+    await expect(
+      publisher.publishPrepared(key, localFile, prepared),
+    ).rejects.toThrow("upload failed");
+
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.warn).not.toHaveBeenCalled();
+    expect(body.destroyed).toBe(true);
+    await vi.waitFor(() => expect(body.closed).toBe(true));
+    await expect(
+      fs.readFile(`${localFile}.checkpoints.json`, "utf8"),
+    ).resolves.toBe(contents);
+  });
+
   it("forces regeneration after source bytes at a stable key are replaced", async () => {
     await publisher.publish(key, { force: true });
     expect(
@@ -201,6 +343,81 @@ describe("demo checkpoint publishing", () => {
     ).toBe(false);
     expect(mocks.run.mock.calls[0][3]).toBe(true);
   });
+
+  it("conditionally replaces an existing sidecar when requested", async () => {
+    mocks.send.mockResolvedValueOnce({ ETag: '"checkpoint-v1"' });
+
+    expect(
+      await publisher.publish(key, { force: true, existingOnly: true }),
+    ).toBe("published");
+
+    const upload = mocks.send.mock.calls.find(
+      ([command]) => command.kind === "put",
+    )![0];
+    expect(upload.input.IfMatch).toBe('"checkpoint-v1"');
+    expect(upload.input.IfNoneMatch).toBeUndefined();
+  });
+
+  it.each(["NotFound", "NoSuchKey"])(
+    "does not replay or recreate a missing existing-only sidecar (%s)",
+    async (name) => {
+      mocks.send.mockRejectedValueOnce(
+        Object.assign(new Error("missing"), { name }),
+      );
+
+      await expect(
+        publisher.publish(key, { force: true, existingOnly: true }),
+      ).rejects.toThrow(`Cannot update missing checkpoint sidecar: ${key}`);
+
+      expect(mocks.run).not.toHaveBeenCalled();
+      expect(mocks.send).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("requires an ETag for an existing-only sidecar", async () => {
+    mocks.send.mockResolvedValueOnce({});
+    await expect(
+      publisher.publish(key, { force: true, existingOnly: true }),
+    ).rejects.toThrow("Missing checkpoint sidecar ETag");
+    expect(mocks.run).not.toHaveBeenCalled();
+  });
+
+  it.each(["ConditionalRequestConflict", "PreconditionFailed"])(
+    "does not recreate a sidecar deleted while replaying (%s)",
+    async (name) => {
+      const send = mocks.send.getMockImplementation()!;
+      let exists = true;
+      mocks.send.mockImplementation(async (command, ...args) => {
+        if (
+          command.kind === "head" &&
+          command.input.Key.endsWith(".checkpoints.json")
+        )
+          return { ETag: '"checkpoint-v1"' };
+        if (command.kind === "put" && !exists) {
+          expect(command.input.IfMatch).toBe('"checkpoint-v1"');
+          throw Object.assign(new Error("deleted"), { name });
+        }
+        return send(command, ...args);
+      });
+      const run = mocks.run.getMockImplementation()!;
+      mocks.run.mockImplementationOnce(async (...args) => {
+        exists = false;
+        return run(...args);
+      });
+
+      await expect(
+        publisher.publish(key, { force: true, existingOnly: true }),
+      ).rejects.toThrow("deleted");
+
+      expect(exists).toBe(false);
+      expect(
+        mocks.send.mock.calls.filter(([command]) => command.kind === "put"),
+      ).toHaveLength(1);
+      await expect(
+        fs.access(path.dirname(mocks.run.mock.calls[0][0])),
+      ).rejects.toThrow();
+    },
+  );
 
   it.each([
     { "checkpoint-count": undefined },
@@ -303,9 +520,53 @@ describe("demo checkpoint publishing", () => {
     expect(await blocked).toBe("published");
   });
 
-  it("allows ordinary playback if the replay worker fails", async () => {
-    mocks.run.mockRejectedValueOnce(
+  it("lets prepared artifacts bypass the generation queue", async () => {
+    await fs.writeFile(`${localFile}.checkpoints.json`, contents);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const run = mocks.run.getMockImplementation()!;
+    mocks.run.mockImplementationOnce(async (...args) => {
+      await gate;
+      return run(...args);
+    });
+    const blocked = publisher.publish("demos/generating.rec", { localFile });
+    await vi.waitFor(() => expect(mocks.run).toHaveBeenCalledOnce());
+    const upload = publisher.publishPrepared(key, localFile, prepared);
+    try {
+      await vi.waitFor(() =>
+        expect(
+          mocks.send.mock.calls.some(
+            ([command]) =>
+              command.kind === "put" &&
+              command.input.Key === `${key}.checkpoints.json`,
+          ),
+        ).toBe(true),
+      );
+      expect(await upload).toBe("published");
+      expect(mocks.run).toHaveBeenCalledOnce();
+    } finally {
+      release();
+      await blocked;
+    }
+  });
+
+  it("allows ordinary playback if the injected replay worker fails", async () => {
+    const generate = vi.fn<typeof runDemoCheckpointProcess>(
+      async (_input, output) => {
+        await fs.writeFile(output, contents);
+        return prepared;
+      },
+    );
+    generate.mockRejectedValueOnce(
       new DemoCheckpointGenerationError("missing collision assets"),
+    );
+    publisher = new DemoCheckpointPublisher(
+      config,
+      "/assets",
+      defaultPlan,
+      generate,
     );
     expect(await publisher.publish(key)).toBe("failed");
     expect(
@@ -313,9 +574,11 @@ describe("demo checkpoint publishing", () => {
     ).toBe(false);
     expect(mocks.warn).toHaveBeenCalledOnce();
     await expect(
-      fs.access(path.dirname(mocks.run.mock.calls[0][0])),
+      fs.access(path.dirname(generate.mock.calls[0][0])),
     ).rejects.toThrow();
     expect(await publisher.publish(key, { localFile })).toBe("published");
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(mocks.run).not.toHaveBeenCalled();
   });
 
   it("keeps local outputs on an upload failure and does not poison later jobs", async () => {

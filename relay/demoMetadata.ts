@@ -7,7 +7,8 @@ import {
 /**
  * One match within a demo. Only missions whose match actually started
  * are listed — warmup-only tails (e.g. a recording ending moments into
- * the next rotation) are excluded.
+ * the next rotation) are excluded. A recording where no match started
+ * lists the mission(s) it was on instead, so every demo has a map.
  */
 export interface DemoGame extends GamePresentation {
   /** Relay-generated identity shared with the live watch session. */
@@ -35,6 +36,9 @@ export interface DemoMetadata {
   filename: string;
   bytes: number;
   recordedAt: string;
+  /** Retail headers contain local wall time without a timezone. */
+  recordedAtRaw?: string;
+  recordedAtTimezone?: "unknown";
   server: string;
   address: string;
   /**
@@ -45,6 +49,9 @@ export interface DemoMetadata {
   games: DemoGame[];
   mod: string;
   recorder: string;
+  /** Authenticated Discord profile captured when this user upload was accepted. */
+  discordHandleAtUploadTime?: string;
+  discordDisplayNameAtUploadTime?: string;
   durationMs: number;
   /**
    * Unique names observed at any point, observers included. A player can
@@ -67,6 +74,25 @@ export interface DemoMetadata {
    * browser's indicator.
    */
   hasCommentary?: boolean;
+}
+
+/** Only these saved fields identify the uploader's profile at acceptance time. */
+export function readDiscordUploadSnapshot(
+  record: unknown,
+): Pick<
+  DemoMetadata,
+  "discordHandleAtUploadTime" | "discordDisplayNameAtUploadTime"
+> {
+  if (!record || typeof record !== "object") return {};
+  const saved = record as Partial<DemoMetadata>;
+  return {
+    ...(typeof saved.discordHandleAtUploadTime === "string" && {
+      discordHandleAtUploadTime: saved.discordHandleAtUploadTime,
+    }),
+    ...(typeof saved.discordDisplayNameAtUploadTime === "string" && {
+      discordDisplayNameAtUploadTime: saved.discordDisplayNameAtUploadTime,
+    }),
+  };
 }
 
 /** Select the latest mission whose ready boundary has been reached. */

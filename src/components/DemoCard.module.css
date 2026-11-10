@@ -1,0 +1,146 @@
+.Card {
+  --card-action-size: 28px;
+  --card-action-gap: 4px;
+  min-width: 0;
+  min-height: 80px;
+}
+
+.Pending,
+.Pending:hover {
+  border-color: rgba(65, 131, 139, 0.3);
+  background: rgba(0, 0, 0, 0.3);
+  cursor: default;
+}
+
+.PendingStatus {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #b0d5c9;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.Pending .Body {
+  flex: 1;
+}
+
+.PendingStatus[role="alert"] {
+  color: #ffb7ad;
+}
+
+.Spinner {
+  flex-shrink: 0;
+  font-size: 14px;
+  animation: spin 1s linear infinite;
+}
+
+.UploadProgress {
+  width: 100%;
+  height: 6px;
+  accent-color: #7dffff;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .Spinner {
+    animation: none;
+  }
+}
+
+.Body {
+  gap: 3px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.Card[data-action-count="1"] .Body {
+  padding-right: calc(var(--card-action-size) + 12px);
+}
+
+.Card[data-action-count="2"] .Body {
+  padding-right: calc(
+    2 * var(--card-action-size) + var(--card-action-gap) + 12px
+  );
+}
+
+.Mission {
+  margin: 1px 0 2px 0;
+}
+
+.Link {
+  display: flex;
+  align-items: stretch;
+  flex: 1;
+  min-width: 0;
+  gap: inherit;
+  color: inherit;
+  text-decoration: none;
+}
+
+.Card:focus-within {
+  border-color: rgba(125, 255, 255, 0.6);
+}
+
+.Actions {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  display: flex;
+  gap: var(--card-action-gap);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+
+.Card:is(:hover, :focus-within) .Actions,
+.Actions[aria-busy="true"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.EditButton {
+  composes: ActionButton from "./Button.module.css";
+}
+
+.EditIcon {
+  font-size: 14px;
+}
+
+.DeleteButton {
+  composes: DestructiveActionButton from "./Button.module.css";
+}
+
+.Actions button {
+  width: var(--card-action-size);
+  height: var(--card-action-size);
+  margin: 0;
+  padding: 0;
+}
+
+.Actions button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  .Card {
+    --card-action-size: 36px;
+  }
+
+  .EditIcon {
+    font-size: 18px;
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .Actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}

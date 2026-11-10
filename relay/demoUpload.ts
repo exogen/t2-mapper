@@ -15,16 +15,22 @@ import { randomUUID } from "node:crypto";
 import {
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
+  DeleteObjectsCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
 import { DEMO_CHECKPOINT_SUFFIX } from "../src/stream/demoCheckpoints";
+import type { PreparedDemoCheckpoints } from "./demoCheckpointGenerator.js";
 import { demoLog as log } from "./logger.js";
-import { type DemoMetadata, withGamePresentation } from "./demoMetadata.js";
+import {
+  type DemoMetadata,
+  readDiscordUploadSnapshot,
+  withGamePresentation,
+} from "./demoMetadata.js";
 import {
   GamePresentationError,
-  isPublishedDemoFilename,
   readGamePresentation,
   readGamePresentationUpdate,
   readPublishedGame,
@@ -41,6 +47,7 @@ import {
 import { atomicWrite } from "./atomicWrite.js";
 import { updateDemoIndex } from "./demoIndexStorage.js";
 import { UPLOAD_PART_BYTES, fileEtags, unquoteEtag } from "./objectEtag.js";
+import { isPublishedDemoKey, isUserDemoKey } from "./demoKeys.js";
 import {
   FAILED_SUFFIX,
   PARTIAL_SUFFIX,
@@ -72,8 +79,12 @@ export interface DemoUploaderOptions {
   isLive?: (filePath: string) => boolean;
   /** Keep gate for salvaged crash spools (the recorder's minLengthMs). */
   salvageMinLengthMs?: number;
-  /** Prepare and upload a seek sidecar before the demo is advertised. */
-  publishCheckpoints?: (filePath: string, key: string) => Promise<unknown>;
+  /** Upload prepared checkpoints, or generate them for a finalized recording. */
+  publishCheckpoints?: (
+    filePath: string,
+    key: string,
+    prepared?: PreparedDemoCheckpoints,
+  ) => Promise<unknown>;
 }
 
 export interface DemoUploadConfig {
@@ -180,6 +191,120 @@ export class DemoUploader {
     };
   }
 
+  /** Publish a validated upload using the same metadata/index contract as recordings. */
+  async publishPreparedDemo(
+    relativeKey: string,
+    localFile: string,
+    metadata: DemoMetadata,
+    checkpoints: PreparedDemoCheckpoints,
+  ): Promise<void> {
+    if (!this.client) throw new Error("Demo storage is unavailable");
+    if (!isUserDemoKey(relativeKey) || metadata.filename !== relativeKey)
+      throw new Error("Invalid user demo key");
+    const cacheFile = path.join(this.dir, relativeKey);
+    await this.serialize("remote", () =>
+      this.serializeMetadata(cacheFile, async () => {
+        const key = `${this.config!.prefix}${relativeKey}`;
+        // User recordings can be deleted; revalidate cached public copies.
+        await this.uploadFile(
+          localFile,
+          key,
+          "application/octet-stream",
+          "no-cache",
+        );
+        await this.publishCheckpoints?.(localFile, key, checkpoints);
+        // A retry after the sidecar was written must not replace saved labels
+        // or upload-time identity.
+        const published =
+          (await this.readRemoteSidecar(relativeKey))?.record ?? metadata;
+        await this.publishMetadata(relativeKey, {
+          ...published,
+          ...readDiscordUploadSnapshot(metadata),
+          ...readDiscordUploadSnapshot(published),
+        });
+      }),
+    );
+  }
+
+  /** The caller owns authorization and the durable deleting state/retry policy. */
+  async deleteUserDemo(relativeKey: string): Promise<void> {
+    if (!this.client) throw new Error("Demo storage is unavailable");
+    if (!isUserDemoKey(relativeKey)) throw new Error("Invalid user demo key");
+    const cacheFile = path.join(this.dir, relativeKey);
+    await this.serialize("remote", () =>
+      this.serializeMetadata(cacheFile, async () => {
+        const config = this.config!;
+        const key = `${config.prefix}${relativeKey}`;
+        await updateDemoIndex(
+          this.client!,
+          config.bucket,
+          `${config.prefix}index.json`,
+          (entries) => {
+            if (!entries) return undefined;
+            const kept = entries.filter(
+              (entry) => entry.filename !== relativeKey,
+            );
+            return kept.length === entries.length ? undefined : kept;
+          },
+        );
+        // The exact ".rec." prefix cannot include another recording or its files.
+        const objects = new Set([
+          key,
+          `${key}.json`,
+          `${key}${DEMO_CHECKPOINT_SUFFIX}`,
+        ]);
+        let continuationToken: string | undefined;
+        do {
+          const page = await this.client!.send(
+            new ListObjectsV2Command({
+              Bucket: config.bucket,
+              Prefix: `${key}.`,
+              ContinuationToken: continuationToken,
+            }),
+            { abortSignal: AbortSignal.timeout(30_000) },
+          );
+          for (const object of page.Contents ?? [])
+            if (object.Key?.startsWith(`${key}.`)) objects.add(object.Key);
+          continuationToken = page.IsTruncated
+            ? page.NextContinuationToken
+            : undefined;
+          if (page.IsTruncated && !continuationToken)
+            throw new Error("Incomplete demo sidecar listing");
+        } while (continuationToken);
+        const remove = async (keys: string[]) => {
+          for (let offset = 0; offset < keys.length; offset += 1000) {
+            const result = await this.client!.send(
+              new DeleteObjectsCommand({
+                Bucket: config.bucket,
+                Delete: {
+                  Objects: keys
+                    .slice(offset, offset + 1000)
+                    .map((Key) => ({ Key })),
+                  Quiet: true,
+                },
+              }),
+              { abortSignal: AbortSignal.timeout(30_000) },
+            );
+            if (result.Errors?.length)
+              throw new Error("Could not remove all demo objects");
+          }
+        };
+        // Keep the recording until its sidecars have all been removed.
+        await remove([...objects].filter((object) => object !== key));
+        await remove([key]);
+        for (const suffix of [".json", ".json.edit"])
+          await fsp
+            .unlink(`${cacheFile}${suffix}`)
+            .catch((error: NodeJS.ErrnoException) => {
+              if (error.code !== "ENOENT") throw error;
+            });
+        this.pendingEdits.delete(cacheFile);
+        this.presentationFiles.delete(cacheFile);
+        this.publishedPresentations.delete(cacheFile);
+      }),
+    );
+  }
+
   enqueue(filePath: string): void {
     if (!this.client) return;
     if (this.queued.has(filePath)) return;
@@ -277,6 +402,14 @@ export class DemoUploader {
     return result;
   }
 
+  private publishedFilename(filePath: string): string {
+    const relative = path
+      .relative(this.dir, filePath)
+      .split(path.sep)
+      .join("/");
+    return isUserDemoKey(relative) ? relative : path.basename(filePath);
+  }
+
   /** Read canonical published metadata, independently of live sessions or local caches. */
   async readPublishedDemo(filename: string): Promise<DemoMetadata> {
     if (!this.client)
@@ -284,7 +417,7 @@ export class DemoUploader {
         503,
         "Published demo storage is unavailable",
       );
-    if (!isPublishedDemoFilename(filename))
+    if (!isPublishedDemoKey(filename))
       throw new GamePresentationError(404, "Published demo not found");
     const remote = await this.readRemoteSidecar(filename);
     return publishedDemoRecord(
@@ -304,7 +437,7 @@ export class DemoUploader {
         503,
         "Published demo storage is unavailable",
       );
-    if (!isPublishedDemoFilename(target.filename))
+    if (!isPublishedDemoKey(target.filename))
       throw new GamePresentationError(404, "Published demo not found");
     const filePath = path.join(this.dir, target.filename);
     try {
@@ -359,7 +492,7 @@ export class DemoUploader {
           },
         };
         await this.serialize("local", async () => {
-          await fsp.mkdir(this.dir, { recursive: true });
+          await fsp.mkdir(path.dirname(filePath), { recursive: true });
           atomicWrite(`${filePath}.json.edit`, JSON.stringify(edit));
           this.pendingEdits.add(filePath);
         });
@@ -393,7 +526,7 @@ export class DemoUploader {
         expectedRevision: game.revision - 1,
         presentation: game.presentation,
       });
-    const filename = path.basename(filePath);
+    const filename = this.publishedFilename(filePath);
     if (
       value.version !== 1 ||
       !game ||
@@ -555,9 +688,9 @@ export class DemoUploader {
       await this.recoverPublishedEdit(filePath);
       let record = await this.readSidecar(`${filePath}.json`);
       if (!record && this.client)
-        record = await this.readRemoteSidecar(path.basename(filePath)).then(
-          (result) => result?.record ?? null,
-        );
+        record = await this.readRemoteSidecar(
+          this.publishedFilename(filePath),
+        ).then((result) => result?.record ?? null);
       const previous =
         record &&
         this.publishedGames(record).find((entry) => entry.id === game.id);
@@ -605,7 +738,7 @@ export class DemoUploader {
             return;
           // Only finalized uploads may be edited. A missing remote record stays missing.
           const remote = await this.writeSidecar(
-            path.basename(filePath),
+            this.publishedFilename(filePath),
             local,
             false,
           );
@@ -647,7 +780,7 @@ export class DemoUploader {
       // inspection so it doesn't accumulate on the volume. No sidecar,
       // no index entry — it isn't a demo.
       const key = `${config.prefix}${FAILED_PREFIX}${basename}`;
-      await this.uploadDemoFile(filePath, key);
+      await this.uploadFile(filePath, key);
       return key;
     }
     const key = `${config.prefix}${basename}`;
@@ -660,7 +793,7 @@ export class DemoUploader {
       if (record) await this.updateIndex(record);
       return key;
     }
-    await this.uploadDemoFile(filePath, key);
+    await this.uploadFile(filePath, key);
     await this.publishCheckpoints?.(filePath, key);
     if (record) {
       await this.serializeMetadata(filePath, async () => {
@@ -669,8 +802,7 @@ export class DemoUploader {
         // durable until that append succeeds.
         await this.recoverPublishedEdit(filePath, false);
         const latest = (await this.readSidecar(`${filePath}.json`)) ?? record;
-        const published = (await this.writeSidecar(basename, latest, true))!;
-        await this.updateIndex(published);
+        await this.publishMetadata(basename, latest);
         if (latest.games?.some((game) => game.gameId)) {
           this.publishedPresentations.set(
             filePath,
@@ -874,6 +1006,13 @@ export class DemoUploader {
         )
       )
         updated = { ...updated, reason: desired.reason };
+      // Fill missing identity fields, retaining canonical values on every CAS retry.
+      if (current)
+        updated = {
+          ...updated,
+          ...readDiscordUploadSnapshot(desired),
+          ...readDiscordUploadSnapshot(current),
+        };
       if (current && JSON.stringify(updated) === JSON.stringify(current))
         return updated;
       try {
@@ -978,7 +1117,10 @@ export class DemoUploader {
         found = !!existing || !existingOnly;
         if (!existing)
           return existingOnly ? undefined : [...(entries ?? []), record];
-        const updated = this.overlayPresentations(existing, snapshots, record);
+        const updated = {
+          ...this.overlayPresentations(existing, snapshots, record),
+          ...readDiscordUploadSnapshot(record),
+        };
         if (
           existingOnly &&
           snapshots.some(
@@ -1037,7 +1179,20 @@ export class DemoUploader {
     });
   }
 
-  private async uploadDemoFile(filePath: string, key: string): Promise<void> {
+  private async publishMetadata(
+    filename: string,
+    record: DemoMetadata,
+  ): Promise<void> {
+    const published = (await this.writeSidecar(filename, record, true))!;
+    await this.updateIndex(published);
+  }
+
+  private async uploadFile(
+    filePath: string,
+    key: string,
+    contentType = "application/octet-stream",
+    cacheControl = "public, max-age=31536000, immutable",
+  ): Promise<void> {
     const bytes = await fsp.stat(filePath).then(
       (s) => s.size,
       () => null,
@@ -1058,10 +1213,10 @@ export class DemoUploader {
           Bucket: this.config!.bucket,
           Key: key,
           Body: body,
-          ContentType: "application/octet-stream",
+          ContentType: contentType,
           // Demo filenames are unique (random suffix), so objects are
           // immutable — cache them as hard as anything will allow.
-          CacheControl: "public, max-age=31536000, immutable",
+          CacheControl: cacheControl,
         },
         partSize: UPLOAD_PART_BYTES,
         queueSize: 2,
@@ -1081,6 +1236,7 @@ export class DemoUploader {
     } catch {
       return; // Dir doesn't exist yet — nothing recorded.
     }
+    await this.restoreUserPresentationFiles();
     let requeued = 0;
     for (const name of entries) {
       const filePath = path.join(this.dir, name);
@@ -1143,5 +1299,43 @@ export class DemoUploader {
     }
     await this.retryGamePresentations();
     await this.prunePublishedSidecars();
+  }
+
+  /** Nested upload caches only hold metadata/edit intents, never recorder spools. */
+  private async restoreUserPresentationFiles(): Promise<void> {
+    let entries;
+    try {
+      entries = await fsp.readdir(path.join(this.dir, "users"), {
+        recursive: true,
+        withFileTypes: true,
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const suffix = entry.name.endsWith(".rec.json.edit")
+        ? ".json.edit"
+        : entry.name.endsWith(".rec.json")
+          ? ".json"
+          : null;
+      if (!suffix) continue;
+      const filePath = path.join(
+        entry.parentPath,
+        entry.name.slice(0, -suffix.length),
+      );
+      const relative = path
+        .relative(this.dir, filePath)
+        .split(path.sep)
+        .join("/");
+      if (!isUserDemoKey(relative)) continue;
+      if (suffix === ".json.edit") this.pendingEdits.add(filePath);
+      else {
+        const record = await this.readSidecar(`${filePath}.json`);
+        if (record?.games?.some((game) => game.gameId))
+          this.presentationFiles.add(filePath);
+      }
+    }
   }
 }

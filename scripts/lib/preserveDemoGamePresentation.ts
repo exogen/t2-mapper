@@ -1,4 +1,8 @@
-import type { DemoGame, DemoMetadata } from "../../relay/demoMetadata.js";
+import {
+  readDiscordUploadSnapshot,
+  type DemoGame,
+  type DemoMetadata,
+} from "../../relay/demoMetadata.js";
 
 function missionKey(mission: string): string {
   return mission
@@ -112,17 +116,32 @@ export function preserveDemoGamePresentation(
   const {
     mission: _mission,
     gameType: _gameType,
+    discordHandleAtUploadTime: _handle,
+    discordDisplayNameAtUploadTime: _displayName,
     ...metadata
   } = { ...saved, ...record, games } as DemoMetadata & {
     mission?: unknown;
     gameType?: unknown;
   };
+  // Only valid historical snapshot fields participate, with the canonical
+  // sidecar taking precedence over analysis and index copies.
+  const snapshots =
+    savedSource === "sidecar"
+      ? {
+          ...readDiscordUploadSnapshot(record),
+          ...readDiscordUploadSnapshot(saved),
+        }
+      : {
+          ...readDiscordUploadSnapshot(saved),
+          ...readDiscordUploadSnapshot(record),
+        };
   const reason =
     savedSource === "sidecar"
       ? (saved.reason ?? record.reason)
       : (record.reason ?? saved.reason);
   return {
     ...metadata,
+    ...snapshots,
     // Recording headers lose timestamp precision; existing sidecars are authoritative.
     recordedAt:
       savedSource === "sidecar" ? saved.recordedAt : record.recordedAt,

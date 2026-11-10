@@ -26,34 +26,19 @@
   min-height: var(--footer-control-size, 36px);
 }
 
-.Avatar {
-  flex: 0 0 32px;
-  border-radius: 50%;
-}
-
-.Identity {
+.ProfileLink {
   flex: 1;
   display: flex;
-  flex-direction: column;
-  gap: 0;
+  align-items: center;
   min-width: 0;
+  color: inherit;
+  text-decoration: none;
+  border-radius: 3px;
 }
 
-.Name,
-.Handle {
-  line-height: 16px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.Name {
-  font-weight: 600;
-}
-
-.Handle {
-  font-size: 12px;
-  opacity: 0.65;
+.ProfileLink:focus-visible {
+  outline: 2px solid #c9cccc;
+  outline-offset: 3px;
 }
 
 .Role {
@@ -90,7 +75,6 @@
   justify-content: center;
   gap: 10px;
   box-sizing: border-box;
-  height: var(--footer-control-size, 36px);
   min-height: var(--footer-control-size, 36px);
   margin: 0;
   padding: 4px 16px;
@@ -121,9 +105,8 @@
 }
 
 .DiscordButton svg {
-  flex: 0 0 24px;
-  width: 24px;
-  height: 24px;
+  flex-shrink: 0;
+  font-size: 24px;
   color: #fff;
 }
 
@@ -142,7 +125,6 @@
   }
 
   .Root .DiscordButton {
-    height: var(--footer-control-size, 40px);
     min-height: var(--footer-control-size, 40px);
   }
 }

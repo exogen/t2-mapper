@@ -1,40 +1,19 @@
 import { demoGameIndexAt, type DemoGame } from "../../relay/demoMetadata";
 import {
-  isPublishedDemoFilename,
   type DemoGameTarget,
   type PublishedGame,
 } from "../../relay/gamePresentation";
 import { DEMOS_BASE_URL } from "../stream/demoIndex";
+import { publishedDemoKeyFromUrl } from "../../relay/demoKeys";
 
 export interface EditableGame extends PublishedGame {
   /** The loaded recording; a target is resolved from fresh metadata before saving. */
   demo?: { filename: string; target?: DemoGameTarget };
 }
 
-/** Only filenames directly under our configured published-demo directory are editable. */
+/** Only recognized recordings inside our published-demo directory are editable. */
 export function publishedDemoFilename(sourceUrl: string | null): string | null {
-  if (!sourceUrl || !DEMOS_BASE_URL) return null;
-  try {
-    const origin =
-      typeof location === "undefined" ? "http://localhost/" : location.href;
-    const base = new URL(`${DEMOS_BASE_URL}/`, origin);
-    const source = new URL(sourceUrl, origin);
-    if (
-      source.origin !== base.origin ||
-      source.username ||
-      source.password ||
-      source.search ||
-      source.hash ||
-      !source.pathname.startsWith(base.pathname)
-    )
-      return null;
-    const filename = decodeURIComponent(
-      source.pathname.slice(base.pathname.length),
-    );
-    return isPublishedDemoFilename(filename) ? filename : null;
-  } catch {
-    return null;
-  }
+  return publishedDemoKeyFromUrl(sourceUrl, DEMOS_BASE_URL);
 }
 
 export function editableDemoGame(

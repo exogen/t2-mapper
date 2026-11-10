@@ -106,6 +106,35 @@ describe("demo source registry", () => {
     });
   });
 
+  it("loads legacy hashed user uploads from their published directory", async () => {
+    const { resolveDemoSource, demoSourceUrl } = await import("./demoSources");
+    const key = `users/126767979894407168/${"a".repeat(64)}.rec`;
+    const source = resolveDemoSource(key);
+    const signal = new AbortController().signal;
+    await source.load(signal);
+    expect(source.url).toBe(`https://demos.example/demos/${key}`);
+    expect(source.sidecarSourceUrl).toBe(source.url);
+    expect(demoSourceUrl(key)).toBe(source.url);
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(source.url, {
+      signal,
+      cache: "no-cache",
+    });
+  });
+
+  it.each([
+    "../demo.rec",
+    "users/126767979894407168/../demo.rec",
+    "users/126767979894407168/demo%2fescape.rec",
+    "users/126767979894407168/demo\\escape.rec",
+    "sources/tribesforever/1.rec",
+  ])("rejects unsafe incoming published references: %s", async (reference) => {
+    const { resolveDemoSource } = await import("./demoSources");
+    expect(() => resolveDemoSource(reference)).toThrow(
+      "Invalid published demo key",
+    );
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["wss://relay.example", "https://relay.example"],
     ["ws://localhost:8765", "http://localhost:8765"],

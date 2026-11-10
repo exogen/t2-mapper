@@ -141,6 +141,46 @@ describe("conditional demo metadata updates", () => {
     expect(puts()[0].IfNoneMatch).toBe("*");
   });
 
+  it("refuses to create an existing-only sidecar", async () => {
+    const { client, send, backup, puts } = setup();
+    send.mockRejectedValueOnce(errorNamed("NoSuchKey"));
+    await expect(
+      updateDemoMetadata(client, "bucket", key, mergePlayers, backup, {
+        existingOnly: true,
+      }),
+    ).rejects.toThrow(`Cannot update missing demo sidecar: ${key}`);
+    expect(puts()).toEqual([]);
+  });
+
+  it("does not recreate an existing-only sidecar deleted during a CAS retry", async () => {
+    const { client, send, backup, current, puts } = setup();
+    send
+      .mockResolvedValueOnce(current(original, '"v1"'))
+      .mockRejectedValueOnce(errorNamed("PreconditionFailed"))
+      .mockRejectedValueOnce(errorNamed("NoSuchKey"));
+    await expect(
+      updateDemoMetadata(client, "bucket", key, mergePlayers, backup, {
+        existingOnly: true,
+      }),
+    ).rejects.toThrow(`Cannot update missing demo sidecar: ${key}`);
+    expect(puts()).toHaveLength(1);
+    expect(puts()[0]).toMatchObject({ IfMatch: '"v1"' });
+  });
+
+  it("aborts an existing-only sidecar update on a 409 conflict", async () => {
+    const { client, send, backup, current, puts } = setup();
+    send
+      .mockResolvedValueOnce(current(original, '"v1"'))
+      .mockRejectedValueOnce(errorNamed("ConditionalRequestConflict"));
+    await expect(
+      updateDemoMetadata(client, "bucket", key, mergePlayers, backup, {
+        existingOnly: true,
+      }),
+    ).rejects.toThrow("ConditionalRequestConflict");
+    expect(puts()).toHaveLength(1);
+    expect(puts()[0]).toMatchObject({ IfMatch: '"v1"' });
+  });
+
   it("leaves unreadable sidecars untouched", async () => {
     const { client, send, backup, puts } = setup();
     send.mockRejectedValueOnce(errorNamed("AccessDenied"));

@@ -10,7 +10,9 @@ import {
 } from "../stream/demoFileLoader";
 import {
   dropLocationHash,
+  serializeNavigationQuery,
   useNavigationQueryState,
+  type NavigationQuery,
   type CurrentMission,
   type AppMode,
 } from "./useQueryParams";
@@ -19,13 +21,38 @@ import {
 export function useAppNavigation() {
   const [, setQuery] = useNavigationQueryState();
   return useMemo(() => {
+    function navigate(next: Partial<NavigationQuery>) {
+      const hash = window.location.hash;
+      const committed = setQuery(
+        (current) =>
+          !hash &&
+          serializeNavigationQuery(current) ===
+            serializeNavigationQuery({ ...current, ...next })
+            ? {}
+            : next,
+        { history: "push" },
+      );
+      if (!hash) return;
+      // Clear the new entry's camera only after pushing; keep the old entry intact.
+      let canceled = false;
+      const onPopState = () => {
+        canceled = true;
+      };
+      window.addEventListener("popstate", onPopState);
+      void committed
+        .then(() => {
+          if (!canceled && window.location.hash === hash) dropLocationHash();
+        })
+        .finally(() => window.removeEventListener("popstate", onPopState));
+    }
+
     function destination(mode: AppMode) {
-      dropLocationHash();
       cameraTourStore.getState().cancel();
       return {
         mode,
         mission: null,
         demo: null,
+        user: null,
         replay: null,
         t: null,
         address: null,
@@ -43,24 +70,28 @@ export function useAppNavigation() {
     }
 
     function demoIndex() {
-      void setQuery(destination("demo"));
+      navigate(destination("demo"));
       leaveStream(true);
     }
 
     return {
       demoIndex,
+      userDemos(discordId: string) {
+        navigate({ ...destination("demo"), user: discordId });
+        leaveStream(true);
+      },
       createReplay(reference: string, tick?: number) {
-        void setQuery(destination("replay"));
+        navigate(destination("replay"));
         leaveStream(true);
         replayConnectionStore.getState().create(reference, tick);
       },
       createLocalReplay(buffer: ArrayBuffer, name: string, tick?: number) {
-        void setQuery(destination("replay"));
+        navigate(destination("replay"));
         leaveStream(true);
         replayConnectionStore.getState().createLocal(buffer, name, tick);
       },
       selectDemo(reference: string) {
-        void setQuery({ ...destination("demo"), demo: reference });
+        navigate({ ...destination("demo"), demo: reference });
         leaveStream(true);
         void loadDemoReference(reference);
       },
@@ -69,11 +100,11 @@ export function useAppNavigation() {
         void loadDemoFile(file, checkpoints);
       },
       selectMission(mission: CurrentMission) {
-        void setQuery({ ...destination("map"), mission });
+        navigate({ ...destination("map"), mission });
         leaveStream(true);
       },
       serverBrowser() {
-        void setQuery(destination("live"));
+        navigate(destination("live"));
         leaveStream(false);
       },
       watchServer(address: string) {
@@ -82,7 +113,7 @@ export function useAppNavigation() {
         const uniqueName =
           server?.name &&
           live.servers.filter((s) => s.name === server.name).length === 1;
-        void setQuery({
+        navigate({
           ...destination("live"),
           ...(uniqueName ? { name: server.name } : { address }),
         });
@@ -90,7 +121,7 @@ export function useAppNavigation() {
         live.watchServer(address);
       },
       disconnectServer() {
-        void setQuery(destination("live"));
+        navigate(destination("live"));
         const live = liveConnectionStore.getState();
         if (live.role === "watcher") live.leaveServer();
         else live.disconnectServer();

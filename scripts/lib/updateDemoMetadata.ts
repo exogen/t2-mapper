@@ -12,6 +12,7 @@ export async function updateDemoMetadata(
   key: string,
   update: (latest: DemoMetadata | undefined) => DemoMetadata,
   backup: (key: string, body: string) => Promise<void>,
+  { existingOnly = false }: { existingOnly?: boolean } = {},
 ): Promise<DemoMetadata> {
   for (let attempt = 0; ; attempt++) {
     let latest: DemoMetadata | undefined;
@@ -34,6 +35,8 @@ export async function updateDemoMetadata(
     } catch (error) {
       if (!(error instanceof Error) || error.name !== "NoSuchKey") throw error;
     }
+    if (existingOnly && !latest)
+      throw new Error(`Cannot update missing demo sidecar: ${key}`);
     const merged = update(latest);
     try {
       await client.send(

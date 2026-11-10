@@ -150,6 +150,37 @@ describe("demo metadata replay", () => {
     expect(record.games[1].missionSequence).toBe(42);
   });
 
+  it("lists the maps a recording was on when no match started", async () => {
+    source(
+      [
+        packet("MsgMissionDropInfo", "", "Test", "CTF", "Server"),
+        remoteCommand("MissionStartPhase1", "42", "Raindance"),
+      ],
+      ["Alice\t1\t10\t\t1\t0\t40\t0"],
+    );
+    const record = await analyzeDemo(new Uint8Array(), "test.rec");
+    expect(record.games).toEqual([
+      { mission: "Test", gameType: "CTF", startMs: 0, tournament: false },
+      {
+        mission: "Raindance",
+        missionSequence: 42,
+        gameType: "",
+        startMs: 0,
+        tournament: false,
+      },
+    ]);
+  });
+
+  it("omits a warmup-only tail once a match has started", async () => {
+    source([
+      remoteCommand("MissionStartPhase1", "41", "Test"),
+      packet("MsgMissionStart", "Match started"),
+      remoteCommand("MissionStartPhase1", "42", "Raindance"),
+    ]);
+    const record = await analyzeDemo(new Uint8Array(), "test.rec");
+    expect(record.games.map((game) => game.mission)).toEqual(["Test"]);
+  });
+
   it("links the initial handshake to the seeded game and distinguishes same-map rematches", async () => {
     source([
       remoteCommand("MissionStartPhase1", "41", "Test"),

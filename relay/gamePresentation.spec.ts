@@ -1,8 +1,6 @@
 import { expect, it } from "vitest";
-import {
-  isPublishedDemoFilename,
-  readGamePresentationUpdate,
-} from "./gamePresentation.js";
+import { isPublishedDemoKey } from "./demoKeys.js";
+import { readGamePresentationUpdate } from "./gamePresentation.js";
 
 const legacyTarget = {
   filename: "Community Final (2002).rec",
@@ -16,7 +14,7 @@ const presentation = {
 };
 
 it("accepts historical filenames and legacy game fingerprints without requiring a recent ID", () => {
-  expect(isPublishedDemoFilename(legacyTarget.filename)).toBe(true);
+  expect(isPublishedDemoKey(legacyTarget.filename)).toBe(true);
   expect(
     readGamePresentationUpdate({
       demo: legacyTarget,
@@ -51,7 +49,7 @@ it.each([
   ".rec",
   "",
 ])("rejects a non-published filename %j", (filename) => {
-  expect(isPublishedDemoFilename(filename)).toBe(false);
+  expect(isPublishedDemoKey(filename)).toBe(false);
   expect(
     readGamePresentationUpdate({
       demo: { ...legacyTarget, filename },

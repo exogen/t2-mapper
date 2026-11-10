@@ -7,7 +7,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { DiscordProfile } from "better-auth/social-providers";
 import { openAccountDatabase, setAccountRole } from "./accountDatabase.js";
 
-import type { AccountUser } from "./accountTypes.js";
+import type { AccountPublicProfile, AccountUser } from "./accountTypes.js";
 import {
   GAME_PRESENTATION_PATH,
   GamePresentationError,
@@ -353,6 +353,131 @@ it("allows the production frontend origin with the default auth configuration", 
   );
   expect(response.headers.get("access-control-allow-credentials")).toBe("true");
   expect(await response.json()).toEqual({ enabled: true, user: null });
+});
+
+it("returns only a cached public Discord profile without requiring a session", async () => {
+  const app = await fixture();
+  await app.login();
+  setAccountRole(app.database, USER_ID, "admin");
+  const account = (await app.account())!;
+  const prepare = vi.spyOn(app.database, "prepare");
+  await app.restart();
+  const statementIndex = prepare.mock.calls.findIndex(([sql]) =>
+    sql.includes('AS "discordId"'),
+  );
+  const statement = prepare.mock.results[statementIndex].value;
+  const query = vi.spyOn(statement, "all");
+  expect(statement.source).not.toContain(USER_ID);
+  expect(statement.source.match(/\?/g)).toHaveLength(2);
+  const providerRequestCount = app.providerRequests.length;
+  const response = await app.request(`/api/users/${USER_ID}`, {
+    headers: { Cookie: "" },
+  });
+  expect(response.status).toBe(200);
+  expect(response.headers.getSetCookie()).toEqual([]);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(response.headers.get("access-control-allow-origin")).toBe(APP_ORIGIN);
+  const profile = (await response.json()) as AccountPublicProfile;
+  expect(profile).toEqual({
+    discordId: USER_ID,
+    name: "Player display name",
+    discordUsername: "chosen_handle",
+    image: account.image,
+  });
+  expect(query).toHaveBeenCalledExactlyOnceWith("discord", USER_ID);
+  expect(Object.keys(profile).sort()).toEqual([
+    "discordId",
+    "discordUsername",
+    "image",
+    "name",
+  ]);
+  expect(app.providerRequests).toHaveLength(providerRequestCount);
+
+  app.setProfile({ username: "new_handle", global_name: "New display name" });
+  const cached = await app.request(`/api/users/${USER_ID}`, {
+    headers: { Cookie: "" },
+  });
+  expect(await cached.json()).toEqual(profile);
+  expect(app.providerRequests).toHaveLength(providerRequestCount);
+
+  await app.login();
+  const updated = await app.request(`/api/users/${USER_ID}`, {
+    headers: { Cookie: "" },
+  });
+  expect(await updated.json()).toEqual({
+    ...profile,
+    name: "New display name",
+    discordUsername: "new_handle",
+  });
+});
+
+it("rejects malformed public IDs and looks up only linked Discord identities", async () => {
+  const app = await fixture();
+  await app.login();
+  for (const id of [
+    "",
+    "chosen_handle",
+    "1234",
+    "123456789012345678901",
+    `${USER_ID}%27%20OR%201%3D1--`,
+    `${USER_ID}/extra`,
+    `${USER_ID}%2fextra`,
+  ]) {
+    const response = await app.request(`/api/users/${id}`);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Invalid Discord user ID" });
+  }
+  const missing = await app.request(`/api/users/${ADMIN_ID}`);
+  expect(missing.status).toBe(404);
+  expect(await missing.json()).toEqual({ error: "User not found" });
+  app.database
+    .prepare('UPDATE "account" SET "providerId" = ? WHERE "accountId" = ?')
+    .run("another-provider", USER_ID);
+  const unlinked = await app.request(`/api/users/${USER_ID}`);
+  expect(unlinked.status).toBe(404);
+  expect(await unlinked.json()).toEqual({ error: "User not found" });
+  expect(
+    app.database.prepare('SELECT COUNT(*) AS count FROM "user"').get(),
+  ).toEqual({ count: 1 });
+});
+
+it("keeps public profiles read-only and applies the account API's CORS policy", async () => {
+  const app = await fixture();
+  const route = `/api/users/${USER_ID}`;
+  const forbidden = await app.request(route, {
+    headers: { Origin: "https://attacker.example" },
+  });
+  expect(forbidden.status).toBe(403);
+  expect(forbidden.headers.get("access-control-allow-origin")).toBeNull();
+  const preflight = await app.request(route, { method: "OPTIONS" });
+  expect(preflight.status).toBe(204);
+  expect(preflight.headers.get("access-control-allow-origin")).toBe(APP_ORIGIN);
+  expect(preflight.headers.get("access-control-allow-methods")).toContain(
+    "GET",
+  );
+  const noOrigin = await app.request(route, { headers: { Origin: "" } });
+  expect(noOrigin.status).toBe(404);
+  expect(noOrigin.headers.get("access-control-allow-origin")).toBeNull();
+  for (const method of ["POST", "PUT", "DELETE"]) {
+    const response = await app.request(route, { method });
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("GET, OPTIONS");
+    expect(await response.json()).toEqual({ error: "Method not allowed" });
+  }
+});
+
+it("returns a CORS-readable unavailable response for public profiles when login is disabled", async () => {
+  const app = await fixture({ disabled: true });
+  const response = await app.request(`/api/users/${USER_ID}`);
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({
+    error: "User profiles are unavailable",
+  });
+  expect(response.headers.get("access-control-allow-origin")).toBe(APP_ORIGIN);
+  expect(await (await app.request("/api/account")).json()).toEqual({
+    enabled: false,
+    user: null,
+  });
 });
 
 const oldDemo: DemoMetadata = {

@@ -1,0 +1,89 @@
+.Page {
+  composes: DropZone from "./DemoDropZone.module.css";
+  padding-bottom: 40px;
+}
+
+.Section {
+  composes: Featured from "./DemoDropScreen.module.css";
+}
+
+.Header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.Title {
+  composes: FeaturedTitle from "./DemoDropScreen.module.css";
+}
+
+.Grid {
+  composes: FeaturedGrid from "./DemoDropScreen.module.css";
+}
+
+.Message,
+.Error {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.Error {
+  color: #ffb7ad;
+}
+
+.Spinner {
+  flex-shrink: 0;
+  font-size: 14px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .Spinner {
+    animation: none;
+  }
+}
+
+.UploadFeedback {
+  width: min(480px, 100%);
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.UploadStatus {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 36px;
+  color: #b0d5c9;
+}
+
+.UploadStatus[role="alert"] {
+  color: #ffb7ad;
+}
+
+.StatusText {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.Profile {
+  display: flex;
+  align-items: center;
+  min-height: 64px;
+  margin-bottom: 16px;
+  color: #b0d5c9;
+  font-size: 13px;
+}

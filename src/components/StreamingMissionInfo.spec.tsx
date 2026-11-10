@@ -238,6 +238,43 @@ it("shows the indexed recording date without header attribution", () => {
   expect(markup).not.toContain("Recorded by");
 });
 
+it.each(["Flyers", "MapGenius"])(
+  "keeps an uploaded demo's timezone-free indexed date authoritative for %s",
+  (recorder) => {
+    const recordedAt = "2002-10-03T04:05:00.000Z";
+    state.sourceUrl = demoDownloadUrl("uploaded.rec");
+    state.recorderName = recorder;
+    state.recordingDate = "Oct-2-2002 9:05PM";
+    state.demos = [
+      {
+        ...indexedDemo("uploaded.rec"),
+        recordedAt,
+        recordedAtTimezone: "unknown",
+      },
+    ];
+    expect(render()).toContain(
+      `${recordedDayLabel(recordedAt, "unknown")} ${formatRecordedTime(recordedAt, "unknown")}`,
+    );
+  },
+);
+
+it("shows a timezone-free indexed date before header attribution is available", () => {
+  const recordedAt = "2002-10-03T04:05:00.000Z";
+  state.sourceUrl = demoDownloadUrl("uploaded.rec");
+  state.demos = [
+    {
+      ...indexedDemo("uploaded.rec"),
+      recordedAt,
+      recordedAtTimezone: "unknown",
+    },
+  ];
+  const markup = render();
+  expect(markup).toContain("Recorded on");
+  expect(markup).toContain(
+    `${recordedDayLabel(recordedAt, "unknown")} ${formatRecordedTime(recordedAt, "unknown")}`,
+  );
+});
+
 it("keeps live player attribution separate from demo attribution", () => {
   state.dataSource = "live";
   state.recorderName = "Flyers";

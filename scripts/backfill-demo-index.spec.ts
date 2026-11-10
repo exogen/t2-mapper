@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import type { DemoMetadata } from "../relay/demoMetadata";
 
@@ -44,6 +47,7 @@ const added = { ...original, filename: "new.rec" };
 const late = { ...original, filename: "late.rec" };
 let index: DemoMetadata[];
 let sidecar: DemoMetadata;
+let sidecarKey: string;
 let version: number;
 let sidecarVersion: number;
 let beforeIndexPut: (() => void) | undefined;
@@ -58,6 +62,7 @@ beforeEach(() => {
   process.exitCode = undefined;
   index = [original, added];
   sidecar = original;
+  sidecarKey = "demos/old.rec.json";
   version = 1;
   sidecarVersion = 1;
   beforeIndexPut = undefined;
@@ -100,7 +105,7 @@ beforeEach(() => {
     }
     if (
       command instanceof PutObjectCommand &&
-      command.input.Key === "demos/old.rec.json"
+      command.input.Key === sidecarKey
     ) {
       beforeSidecarPut?.();
       beforeSidecarPut = undefined;
@@ -446,6 +451,7 @@ it("leaves nested source recordings and their provenance sidecars out of the pub
   expect(mocks.analyze).toHaveBeenCalledExactlyOnceWith(
     expect.any(Uint8Array),
     "old.rec",
+    { strict: false },
   );
   const touchedKeys = mocks.send.mock.calls.map(
     ([command]) => command.input.Key,
@@ -502,6 +508,243 @@ it("preserves saved game details during a forced full analysis", async () => {
   expect(
     index.find((entry) => entry.filename === original.filename)?.games,
   ).toEqual([savedGame]);
+});
+
+it("keeps a managed user's full key and saved details during a forced backfill", async () => {
+  const filename = `users/126767979894407168/server_20260901T2000_katabatic_aaaaaa.rec`;
+  sidecarKey = `demos/${filename}.json`;
+  const recordedAtRaw = "Sep-1-2026 8:00PM";
+  sidecar = {
+    ...repaired,
+    filename,
+    recorder: "Player",
+    recordedAt: "2026-09-01T20:00:12.345Z",
+    recordedAtRaw,
+    recordedAtTimezone: "unknown",
+    games: [savedGame],
+  };
+  const saved = sidecar;
+  index = [sidecar, added];
+  mocks.list.mockResolvedValue([
+    { key: `demos/${filename}`, size: 1 },
+    { key: sidecarKey, size: 1 },
+  ]);
+  mocks.analyze.mockImplementation(
+    async (_bytes, analyzedFilename, options) => ({
+      ...repaired,
+      filename: analyzedFilename,
+      recorder: "Player",
+      recordedAt: "2026-09-01T20:00:00.000Z",
+      ...(options?.strict && {
+        recordedAtRaw,
+        recordedAtTimezone: "unknown",
+      }),
+    }),
+  );
+
+  await import("./backfill-demo-index");
+
+  expect(mocks.analyze).toHaveBeenCalledExactlyOnceWith(
+    expect.any(Uint8Array),
+    filename,
+    { strict: true },
+  );
+  expect(sidecar).toMatchObject({
+    filename,
+    recordedAt: saved.recordedAt,
+    recordedAtRaw,
+    recordedAtTimezone: "unknown",
+    games: [savedGame],
+  });
+  expect(index.find((entry) => entry.filename === filename)).toEqual(sidecar);
+  expect(index).toHaveLength(2);
+  expect(
+    index.some(
+      (entry) => entry.filename === `server_20260901T2000_katabatic_aaaaaa.rec`,
+    ),
+  ).toBe(false);
+  expect(process.exitCode).toBeUndefined();
+});
+
+it("skips a user recording without a sidecar and still writes other repairs", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const filename = `users/126767979894407168/server_20260901T2000_katabatic_bbbbbb.rec`;
+  mocks.list.mockResolvedValue([
+    { key: "demos/old.rec", size: 1 },
+    { key: "demos/old.rec.json", size: 1 },
+    { key: `demos/${filename}`, size: 1 },
+  ]);
+
+  await import("./backfill-demo-index");
+
+  expect(mocks.analyze).toHaveBeenCalledExactlyOnceWith(
+    expect.any(Uint8Array),
+    "old.rec",
+    { strict: false },
+  );
+  const touchedKeys = mocks.send.mock.calls.map(
+    ([command]) => command.input.Key,
+  );
+  expect(touchedKeys).not.toContain(`demos/${filename}`);
+  expect(touchedKeys).not.toContain(`demos/${filename}.json`);
+  expect(warn).toHaveBeenCalledWith(
+    expect.stringContaining(`SKIP ${filename}`),
+  );
+  expect(index).toContainEqual(repaired);
+  expect(index).toContainEqual(added);
+  expect(index).toHaveLength(2);
+  expect(process.exitCode).toBeUndefined();
+});
+
+function managedUserDemo() {
+  const filename = `users/126767979894407168/server_20260901T2000_katabatic_bbbbbb.rec`;
+  sidecarKey = `demos/${filename}.json`;
+  sidecar = { ...repaired, filename };
+  index = [sidecar, added];
+  mocks.list.mockResolvedValue([
+    { key: `demos/${filename}`, size: 1 },
+    { key: sidecarKey, size: 1 },
+  ]);
+  mocks.analyze.mockResolvedValue({ ...repaired, filename });
+  return filename;
+}
+
+it("does not recreate a user sidecar deleted during analysis", async () => {
+  managedUserDemo();
+  let deleted = false;
+  beforeSidecarPut = () => {
+    deleted = true;
+    sidecarVersion++;
+    index = [added];
+  };
+  const send = mocks.send.getMockImplementation()!;
+  mocks.send.mockImplementation(async (command) => {
+    if (
+      deleted &&
+      command instanceof GetObjectCommand &&
+      command.input.Key === sidecarKey
+    )
+      throw Object.assign(new Error("missing"), { name: "NoSuchKey" });
+    return send(command);
+  });
+
+  await import("./backfill-demo-index");
+
+  const writes = mocks.send.mock.calls.flatMap(([command]) =>
+    command instanceof PutObjectCommand ? [command.input] : [],
+  );
+  expect(writes).toHaveLength(1);
+  expect(writes[0]).toMatchObject({ Key: sidecarKey, IfMatch: '"1"' });
+  expect(index).toEqual([added]);
+  expect(process.exitCode).toBe(1);
+});
+
+it.each([false, true])(
+  "never re-adds a user index entry removed during the scan (CAS retry: %s)",
+  async (retry) => {
+    managedUserDemo();
+    if (retry)
+      beforeIndexPut = () => {
+        index = [added];
+        version++;
+      };
+    else index = [added];
+
+    await import("./backfill-demo-index");
+
+    expect(index).toEqual([added]);
+    expect(process.exitCode).toBeUndefined();
+  },
+);
+
+it("requires restoring a missing index before backfilling user records", async () => {
+  managedUserDemo();
+  const send = mocks.send.getMockImplementation()!;
+  mocks.send.mockImplementation(async (command) => {
+    if (
+      command instanceof GetObjectCommand &&
+      command.input.Key === "demos/index.json"
+    )
+      throw Object.assign(new Error("missing"), { name: "NoSuchKey" });
+    return send(command);
+  });
+
+  await expect(import("./backfill-demo-index")).rejects.toThrow(
+    "Cannot update user demos in a missing demo index; restore the index from backup first",
+  );
+  expect(
+    mocks.send.mock.calls.some(
+      ([command]) =>
+        command instanceof PutObjectCommand &&
+        command.input.Key === "demos/index.json",
+    ),
+  ).toBe(false);
+});
+
+it("backs up identical basenames separately for different owners", async () => {
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "t2-backfill-user-backups-"),
+  );
+  process.argv.push("--backup-dir", directory);
+  const filenames = ["126767979894407168", "123456789012345678"].map(
+    (owner) => `users/${owner}/server_20260901T2000_katabatic_aaaaaa.rec`,
+  );
+  const originals = filenames.map((filename, i) => ({
+    ...repaired,
+    filename,
+    games: [{ ...savedGame, title: `Owner ${i}'s title` }],
+  }));
+  index = [...originals];
+  const records = new Map(originals.map((record) => [record.filename, record]));
+  mocks.list.mockResolvedValue(
+    filenames.flatMap((filename) => [
+      { key: `demos/${filename}`, size: 1 },
+      { key: `demos/${filename}.json`, size: 1 },
+    ]),
+  );
+  mocks.analyze.mockImplementation(async (_bytes, filename) => ({
+    ...repaired,
+    filename,
+  }));
+  const send = mocks.send.getMockImplementation()!;
+  mocks.send.mockImplementation(async (command) => {
+    const key = command.input.Key as string;
+    const filename = key.slice("demos/".length).replace(/\.json$/, "");
+    const record = records.get(filename);
+    if (record && command instanceof GetObjectCommand) {
+      const body = JSON.stringify(record);
+      return {
+        ETag: '"1"',
+        Body: {
+          transformToString: async () => body,
+          transformToByteArray: async () => Buffer.from(body),
+        },
+      };
+    }
+    if (record && command instanceof PutObjectCommand) {
+      records.set(filename, JSON.parse(command.input.Body as string));
+      return {};
+    }
+    return send(command);
+  });
+
+  try {
+    await import("./backfill-demo-index");
+
+    for (const original of originals)
+      expect(
+        JSON.parse(
+          await fs.readFile(
+            path.join(directory, `${original.filename}.json`),
+            "utf8",
+          ),
+        ),
+      ).toEqual(original);
+    expect(index).toHaveLength(2);
+    expect(process.exitCode).toBeUndefined();
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
 });
 
 it("leaves saved details untouched if analysis cannot identify their game", async () => {
@@ -621,4 +864,115 @@ it("does not overwrite a concurrent saved edit while reconciling commentary", as
   expect(
     index.find((entry) => entry.filename === original.filename),
   ).toMatchObject({ games: [newer], hasCommentary: true });
+});
+
+const uploadIdentity = {
+  discordHandleAtUploadTime: "original_handle",
+  discordDisplayNameAtUploadTime: "Original Display Name",
+};
+
+it.each(["full", "players-only", "commentary"])(
+  "preserves frozen upload attribution through a %s metadata backfill",
+  async (mode) => {
+    sidecar = { ...repaired, ...uploadIdentity };
+    index = [sidecar, added];
+    if (mode === "players-only") process.argv.push("--players-only");
+    if (mode === "commentary") {
+      process.argv = ["node", "backfill-demo-index.ts"];
+      mocks.list.mockResolvedValue([
+        { key: "demos/old.rec", size: 1 },
+        { key: "demos/old.rec.json", size: 1 },
+        { key: "demos/old.rec.commentary.m4a", size: 1 },
+      ]);
+    }
+    mocks.analyze.mockResolvedValue({
+      ...repaired,
+      players: ["Alice"],
+      playerCount: 1,
+      discordHandleAtUploadTime: "changed_handle",
+      discordDisplayNameAtUploadTime: "Changed Display Name",
+    });
+
+    await import("./backfill-demo-index");
+
+    expect(sidecar).toMatchObject(uploadIdentity);
+    expect(
+      index.find((entry) => entry.filename === sidecar.filename),
+    ).toMatchObject(uploadIdentity);
+    if (mode === "commentary") expect(mocks.analyze).not.toHaveBeenCalled();
+    expect(process.exitCode).toBeUndefined();
+  },
+);
+
+it("preserves snapshot provenance added concurrently before a sidecar retry", async () => {
+  sidecar = { ...repaired };
+  index = [sidecar, added];
+  beforeSidecarPut = () => {
+    sidecar = { ...sidecar, ...uploadIdentity };
+    sidecarVersion++;
+  };
+
+  await import("./backfill-demo-index");
+
+  expect(sidecar).toMatchObject(uploadIdentity);
+  expect(
+    index.find((entry) => entry.filename === sidecar.filename),
+  ).toMatchObject(uploadIdentity);
+  expect(process.exitCode).toBeUndefined();
+});
+
+it("keeps canonical upload snapshots when an index update retries against a conflicting copy", async () => {
+  sidecar = { ...repaired, ...uploadIdentity };
+  index = [sidecar, added];
+  beforeIndexPut = () => {
+    index = [
+      {
+        ...sidecar,
+        discordHandleAtUploadTime: "stale_handle",
+        discordDisplayNameAtUploadTime: "Stale Display Name",
+      },
+      added,
+      late,
+    ];
+    version++;
+  };
+
+  await import("./backfill-demo-index");
+
+  expect(sidecar).toMatchObject(uploadIdentity);
+  expect(
+    index.find((entry) => entry.filename === sidecar.filename),
+  ).toMatchObject(uploadIdentity);
+  expect(index).toContainEqual(late);
+  expect(process.exitCode).toBeUndefined();
+});
+
+it("does not infer Discord upload snapshots for an older recording", async () => {
+  await import("./backfill-demo-index");
+  expect(sidecar).not.toHaveProperty("discordHandleAtUploadTime");
+  expect(sidecar).not.toHaveProperty("discordDisplayNameAtUploadTime");
+  expect(
+    index.find((entry) => entry.filename === sidecar.filename),
+  ).not.toHaveProperty("discordHandleAtUploadTime");
+  expect(process.exitCode).toBeUndefined();
+});
+
+it("does not propagate malformed saved uploader snapshots through a forced backfill", async () => {
+  sidecar = JSON.parse(
+    JSON.stringify({
+      ...repaired,
+      discordHandleAtUploadTime: 123,
+      discordDisplayNameAtUploadTime: { name: "invalid" },
+    }),
+  ) as DemoMetadata;
+  index = [sidecar, added];
+
+  await import("./backfill-demo-index");
+
+  expect(sidecar).not.toHaveProperty("discordHandleAtUploadTime");
+  expect(sidecar).not.toHaveProperty("discordDisplayNameAtUploadTime");
+  expect(
+    index.find((entry) => entry.filename === sidecar.filename),
+  ).not.toHaveProperty("discordHandleAtUploadTime");
+  expect(process.exitCode).toBeUndefined();
 });

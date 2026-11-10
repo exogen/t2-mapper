@@ -28,6 +28,8 @@ import {
   handleDisabledAppAuth,
   loadAppAuthConfig,
 } from "./appAuth.js";
+import { UserDemoUploads } from "./userDemoUploads.js";
+import { createRelayDemoProcessing } from "./demoProcessing.js";
 import { openAccountDatabase } from "./accountDatabase.js";
 import {
   loadAccountBackupConfig,
@@ -83,10 +85,16 @@ const TRUST_FLY_PROXY = /^(1|true)$/i.test(
   process.env.RELAY_TRUST_FLY_PROXY?.trim() ?? "",
 );
 const demoUploadConfig = loadUploadConfig();
+const demoProcessing = createRelayDemoProcessing();
 const demoCheckpointPublisher =
   demoUploadConfig &&
   !/^(0|false)$/i.test(process.env.DEMO_CHECKPOINTS_ENABLED ?? "")
-    ? new DemoCheckpointPublisher(demoUploadConfig, GAME_BASE_PATH)
+    ? new DemoCheckpointPublisher(
+        demoUploadConfig,
+        GAME_BASE_PATH,
+        undefined,
+        demoProcessing.generateCheckpoints,
+      )
     : null;
 const demoSourceCache = demoUploadConfig
   ? new DemoSourceCache(
@@ -128,7 +136,7 @@ const DEMO_RECORD_ENABLED =
   process.env.DEMO_RECORD_ENABLED === "true";
 const DEMO_DIR = path.resolve(process.env.DEMO_DIR || "/data/demos");
 const DEMO_MIN_FREE_BYTES = parseInt(
-  process.env.DEMO_MIN_FREE_BYTES || `${1024 ** 3}`,
+  process.env.DEMO_MIN_FREE_BYTES || `${512 * 1024 ** 2}`,
   10,
 );
 const DEMO_MAX_BYTES = parseInt(
@@ -265,6 +273,7 @@ const httpServer = http.createServer(async (req, res) => {
     appAuth ? await appAuth.handle(req, res) : handleDisabledAppAuth(req, res)
   )
     return;
+  if (await userDemoUploads?.handle(req, res)) return;
   if (await handleReplayUpload(req, res, replaySessions)) return;
   if (await handleDemoDownload(req, res, TRUST_FLY_PROXY, demoSourceCache))
     return;
@@ -501,7 +510,10 @@ const demoUploader: DemoUploader = new DemoUploader(
     isLive: (filePath) => demoCoordinator.isLivePath(filePath),
     salvageMinLengthMs: DEMO_MIN_LENGTH_MS,
     publishCheckpoints: demoCheckpointPublisher
-      ? (localFile, key) => demoCheckpointPublisher.publish(key, { localFile })
+      ? (localFile, key, prepared) =>
+          prepared
+            ? demoCheckpointPublisher.publishPrepared(key, localFile, prepared)
+            : demoCheckpointPublisher.publish(key, { localFile })
       : undefined,
   },
 );
@@ -518,6 +530,33 @@ const demoCoordinator: DemoCoordinator = new DemoCoordinator({
   onGamePresentationSaved: (filePath, game) =>
     demoUploader.saveGamePresentation(filePath, game),
 });
+const userDemoUploads =
+  appAuth && appAuthConfig && accountDatabase && demoUploader.enabled
+    ? new UserDemoUploads({
+        database: accountDatabase,
+        directory: path.join(path.dirname(DEMO_DIR), "user-demo-uploads"),
+        assetRoot: GAME_BASE_PATH,
+        getAccount: (headers) => appAuth.getAccount(headers),
+        trustedOrigins: [
+          ...appAuthConfig.trustedOrigins,
+          appAuthConfig.baseURL,
+        ],
+        trustFlyProxy: TRUST_FLY_PROXY,
+        // Uploads share the volume with live recordings, which check free
+        // space only when they start; stop uploads well before that floor.
+        minFreeDiskBytes: DEMO_MIN_FREE_BYTES + 256_000_000,
+        processDemo: demoProcessing.processUpload,
+        publishDemo: (key, localFile, metadata, checkpoints) =>
+          demoUploader.publishPreparedDemo(
+            key,
+            localFile,
+            metadata,
+            checkpoints,
+          ),
+        deleteDemo: (key) => demoUploader.deleteUserDemo(key),
+      })
+    : null;
+await userDemoUploads?.start();
 if (DEMO_RECORD_ENABLED || demoUploader.enabled) {
   relayLog.info(
     {
@@ -716,6 +755,7 @@ function drainSessions(timeoutMs: number): Promise<unknown> {
   shuttingDown = true;
   eventLoopMonitor.stop();
   appAuth?.close();
+  const userDemosClosing = userDemoUploads?.close();
   patroller?.stop();
   watchSessions.shutdown();
   replaySessions.shutdown();
@@ -724,6 +764,7 @@ function drainSessions(timeoutMs: number): Promise<unknown> {
       demoCoordinator.shutdown(timeoutMs),
       watchStateWriteChain,
       accountBackups?.stop(),
+      userDemosClosing,
     ]),
     new Promise((resolve) => setTimeout(resolve, timeoutMs).unref()),
   ]);

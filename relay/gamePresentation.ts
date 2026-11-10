@@ -1,3 +1,5 @@
+import { isPublishedDemoKey } from "./demoKeys.js";
+
 /** Public, per-game labels, separate from protocol names and personal overrides. */
 export interface GamePresentation {
   title?: string;
@@ -34,17 +36,6 @@ export interface DemoGamePresentationUpdate {
 
 export type GamePresentationUpdate =
   LiveGamePresentationUpdate | DemoGamePresentationUpdate;
-
-/** A bucket filename, never a URL, path, or qualified external-source reference. */
-export function isPublishedDemoFilename(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.length > 4 &&
-    value.length <= 512 &&
-    /\.rec$/i.test(value) &&
-    !/[/\\:\u0000-\u001f\u007f]/.test(value)
-  );
-}
 
 export const MAX_GAME_TITLE_LENGTH = 128;
 export const MAX_TEAM_NAME_LENGTH = 64;
@@ -92,7 +83,7 @@ export function readGamePresentationUpdate(
     return null;
   const target = input.demo as Record<string, unknown>;
   if (
-    !isPublishedDemoFilename(target.filename) ||
+    !isPublishedDemoKey(target.filename) ||
     !Number.isSafeInteger(target.gameIndex) ||
     Number(target.gameIndex) < 0 ||
     typeof target.mission !== "string" ||
