@@ -47,6 +47,8 @@ interface DemoMissionInfo {
   serverAddress: string | null;
   /** Mod name from readplayerinfo row 3 (e.g. "classic"). */
   mod: string | null;
+  /** PJ's recorded 0/1 mode flag; zero can also be an older recorder's default. */
+  tournamentMode: boolean | null;
   /** Name of the player who recorded the demo (from readplayerinfo row 1). */
   recorderName: string | null;
   /** Recording date string from readplayerinfo row 2 (e.g. "May-4-2025 10:37PM"). */
@@ -62,6 +64,7 @@ export function extractMissionInfo(demoValues: string[]): DemoMissionInfo {
   let serverDisplayName: string | null = null;
   let serverAddress: string | null = null;
   let mod: string | null = null;
+  let tournamentMode: boolean | null = null;
   let recorderName: string | null = null;
   let recorderClientId: number = NaN;
   let recordingDate: string | null = null;
@@ -98,10 +101,12 @@ export function extractMissionInfo(demoValues: string[]): DemoMissionInfo {
     }
 
     if (value.startsWith("3\t")) {
-      // Row 3: "3\tmod\tmissionTypeDisplayName\t..."
+      // Row 3: "3\tmod\tmissionTypeDisplayName\ttourneymode\t..."
       const fields = value.split("\t");
       if (fields[1]) mod = fields[1];
       if (fields[2]) missionType = fields[2];
+      tournamentMode =
+        fields[3] === "1" ? true : fields[3] === "0" ? false : null;
     }
   }
 
@@ -112,6 +117,7 @@ export function extractMissionInfo(demoValues: string[]): DemoMissionInfo {
     serverDisplayName,
     serverAddress,
     mod,
+    tournamentMode,
     recorderName,
     recorderClientId: Number.isFinite(recorderClientId)
       ? recorderClientId

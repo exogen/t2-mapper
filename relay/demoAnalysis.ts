@@ -191,6 +191,7 @@ function parseDemoHeader(demoValues: string[]) {
     mission: info.missionDisplayName ?? "",
     mod: info.mod ?? "",
     gameType: info.missionType ?? "",
+    tournamentMode: info.tournamentMode,
   };
 }
 
@@ -280,7 +281,14 @@ export async function analyzeDemoRecording(
   // fills it when the initial block's phase-2 parse succeeds.
   const firstMission = initialBlock.missionName || info.mission;
   let pending: DemoGame | null = firstMission
-    ? { ...pendingGame(firstMission, 0), gameType: info.gameType }
+    ? {
+        ...pendingGame(firstMission, 0),
+        gameType: info.gameType,
+        // The recording header can retain mode learned before recording began.
+        // Zero is also a legacy writer default; only a positive flag is evidence.
+        // Keep it on this initial game, rather than leaking it into later maps.
+        tournament: info.tournamentMode === true,
+      }
     : null;
   const unstarted: DemoGame[] = [];
   // The most recent promoted game, patchable while its mission is still
@@ -304,8 +312,7 @@ export async function analyzeDemoRecording(
     if (pending && watchState.matchStarted) {
       lastGame = {
         ...pending,
-        gameType: watchState.missionType ?? "",
-        tournament: watchState.tournamentMode ?? false,
+        tournament: watchState.tournamentMode ?? pending.tournament,
       };
       games.push(lastGame);
       pending = null;

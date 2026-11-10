@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ParsedData } from "t2-demo-parser";
-import { DemoStreamAdapter } from "./demoStreaming";
+import { DemoStreamAdapter, extractMissionInfo } from "./demoStreaming";
 import { fakeDemoParser } from "./streamTestFixtures";
 
 const dataBlocks: [number, string, ParsedData][] = [
@@ -8,6 +8,29 @@ const dataBlocks: [number, string, ParsedData][] = [
   [11, "ExplosionData", { dtsFileName: "effect_plasma_explosion.dts" }],
   [12, "StaticShapeData", { debrisShapeName: "debris_generic.dts" }],
 ];
+
+describe("recorded tournament metadata", () => {
+  it.each([
+    ["1", true],
+    ["0", false],
+    [undefined, null],
+    ["", null],
+    ["<BLANK>", null],
+    ["true", null],
+    ["1garbage", null],
+    ["2", null],
+  ])("reads only explicit PJ mode flags (%s)", (flag, expected) => {
+    const row = ["3", "classic", "Capture the Flag"];
+    if (flag !== undefined) row.push(flag as string);
+    expect(
+      extractMissionInfo(["readplayerinfo", row.join("\t")]).tournamentMode,
+    ).toBe(expected);
+  });
+
+  it("leaves recordings without PJ metadata unresolved", () => {
+    expect(extractMissionInfo([]).tournamentMode).toBeNull();
+  });
+});
 
 /**
  * A demo with no packets; the packet parser's datablock map is `packetMap`.

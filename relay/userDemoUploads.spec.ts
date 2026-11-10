@@ -747,25 +747,47 @@ describe("user demo publication and ownership", () => {
 
   it("limits deletion to the owner and releases quota after remote cleanup completes", async () => {
     const f = await fixture();
-    const { demo } = (await f.upload()).json<UserDemoUploadResponse>();
-    await vi.waitFor(() => expect(f.rows()[0].state).toBe("ready"));
-    f.getAccount.mockResolvedValue({ ...account, discordId: OTHER });
-    expect((await f.list()).demos).toEqual([]);
-    expect((await f.request("DELETE", `/${demo.id}`)).statusCode).toBe(404);
-    f.getAccount.mockResolvedValue(account);
-    let removed!: () => void;
-    f.deleteDemo.mockImplementation(
-      () =>
-        new Promise<void>((resolve) => {
-          removed = resolve;
-        }),
-    );
-    expect((await f.request("DELETE", `/${demo.id}`)).statusCode).toBe(202);
-    expect((await f.list()).usage.count).toBe(1);
-    expect((await f.list()).demos[0].state).toBe("deleting");
-    removed();
-    await vi.waitFor(() => expect(f.rows()).toHaveLength(0));
-    expect((await f.list()).usage).toEqual({ bytes: 0, count: 0 });
+    let finishLocalCleanup!: () => void;
+    const localCleanup = new Promise<void>((resolve) => {
+      finishLocalCleanup = resolve;
+    });
+    let finishRemoteCleanup!: () => void;
+    const remoteCleanup = new Promise<void>((resolve) => {
+      finishRemoteCleanup = resolve;
+    });
+    const rm = fs.rm;
+    // A ready upload can still be finishing its local publication cleanup.
+    const removeLocal = vi
+      .spyOn(fs, "rm")
+      .mockImplementationOnce(async (...args) => {
+        await localCleanup;
+        await rm(...args);
+      });
+    f.deleteDemo.mockReturnValue(remoteCleanup);
+    try {
+      const { demo } = (await f.upload()).json<UserDemoUploadResponse>();
+      await vi.waitFor(() => expect(f.rows()[0].state).toBe("ready"));
+      f.getAccount.mockResolvedValue({ ...account, discordId: OTHER });
+      expect((await f.list()).demos).toEqual([]);
+      expect((await f.request("DELETE", `/${demo.id}`)).statusCode).toBe(404);
+      f.getAccount.mockResolvedValue(account);
+      const usage = (await f.list()).usage;
+      expect((await f.request("DELETE", `/${demo.id}`)).statusCode).toBe(202);
+      expect(f.deleteDemo).not.toHaveBeenCalled();
+      expect((await f.list()).usage).toEqual(usage);
+      expect((await f.list()).demos[0].state).toBe("deleting");
+      finishLocalCleanup();
+      await vi.waitFor(() => expect(f.deleteDemo).toHaveBeenCalledOnce());
+      expect(f.deleteDemo).toHaveBeenCalledWith(f.rows()[0].object_key);
+      expect((await f.list()).usage).toEqual(usage);
+      finishRemoteCleanup();
+      await vi.waitFor(() => expect(f.rows()).toHaveLength(0));
+      expect((await f.list()).usage).toEqual({ bytes: 0, count: 0 });
+    } finally {
+      finishLocalCleanup();
+      finishRemoteCleanup();
+      removeLocal.mockRestore();
+    }
   });
 
   it("deleting during processing aborts the job and cannot publish a late result", async () => {

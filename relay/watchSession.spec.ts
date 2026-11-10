@@ -1560,7 +1560,7 @@ describe("watch mission controls", () => {
     expect(session.controls.recording).toBe(false);
   });
 
-  it("detects mode without stream delay and reselects on a new server mode report", () => {
+  it("detects ordinary menu mode changes without stream delay", () => {
     manager.shutdown();
     start({
       adminVotePolicies: [
@@ -1578,18 +1578,12 @@ describe("watch mission controls", () => {
     expect(session.controls.recording).toBe(true);
     expect(replies().at(-1)).toContain("-record 1/2");
     events(
-      remote(
-        "ServerMessage",
-        "MsgVoteItem",
-        "",
-        "TourneyQuery",
-        "VoteTournamentMode",
-      ),
+      remote("ServerMessage", "MsgVoteItem", "", "7", "VoteTournamentMode"),
       chat("-rec"),
     );
     expect(session.controls.recording).toBe(false);
     events(
-      remote("ServerMessage", "MsgVoteItem", "", "TourneyQuery", "VoteFFAMode"),
+      remote("ServerMessage", "MsgVoteItem", "", "6", "VoteFFAMode"),
       chat("+rec"),
     );
     expect(session.controls.recording).toBe(false);

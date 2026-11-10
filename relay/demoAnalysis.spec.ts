@@ -1,6 +1,11 @@
 import zlib from "node:zlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BlockTypeMove, DemoParser } from "t2-demo-parser";
+import {
+  BlockTypeMove,
+  BlockTypePacket,
+  DemoParser,
+  type DemoBlock,
+} from "t2-demo-parser";
 import {
   DEMO_LENGTH_MS_OFFSET,
   buildDemoValues,
@@ -9,12 +14,14 @@ import {
   ZERO_MOVE,
 } from "./demoWriter";
 import { analyzeDemo, validateDemoUploadBytes } from "./demoAnalysis";
+import { decodedPacket, remoteCommandEvent } from "./serverPacketFixtures";
 
 function demo(
   stream = frame(BlockTypeMove, ZERO_MOVE),
   date = "Nov-1-2026 12:00AM",
   mission = "Test",
   initialMission = mission,
+  tournamentFlag: string | null = "0",
 ) {
   const rows = buildDemoValues({
     recorderName: "Recorder",
@@ -29,6 +36,11 @@ function demo(
   const fields = rows[index].split("\t");
   fields[3] = date;
   rows[index] = fields.join("\t");
+  const modeIndex = rows.findIndex((row) => row.startsWith("3\t"));
+  const modeFields = rows[modeIndex].split("\t");
+  if (tournamentFlag === null) modeFields.length = 3;
+  else modeFields[3] = tournamentFlag;
+  rows[modeIndex] = modeFields.join("\t");
   const initial = buildInitialBlock({
     connectSequence: 0,
     missionName: initialMission,
@@ -48,6 +60,111 @@ function frame(type: number, body: Uint8Array) {
 }
 
 afterEach(() => vi.restoreAllMocks());
+
+function replayCommands(commands: Array<[string, ...string[]]>) {
+  const blocks = commands.map(([funcName, ...args], index): DemoBlock => ({
+    index,
+    type: BlockTypePacket,
+    size: 0,
+    data: new Uint8Array(),
+    parsed: decodedPacket(remoteCommandEvent(funcName, ...args)),
+  }));
+  let index = 0;
+  vi.spyOn(DemoParser.prototype, "nextBlock").mockImplementation(
+    () => blocks[index++],
+  );
+}
+
+describe("recorded tournament metadata", () => {
+  it.each([false, true])(
+    "recognizes tournament mode from the saved header without a join banner (strict: %s)",
+    async (strict) => {
+      const bytes = demo(undefined, undefined, undefined, undefined, "1");
+      const record = await analyzeDemo(bytes, "mid-game.rec", { strict });
+      expect(record.games).toMatchObject([
+        { mission: "Test", tournament: true },
+      ]);
+    },
+  );
+
+  it.each([null, "0", "", "<BLANK>", "true", "1garbage", "2"])(
+    "does not infer tournament mode from an absent, zero, or invalid header flag (%s)",
+    async (flag) => {
+      const record = await analyzeDemo(
+        demo(undefined, undefined, undefined, undefined, flag),
+        "unknown-mode.rec",
+        { strict: true },
+      );
+      expect(record.games[0].tournament).toBe(false);
+    },
+  );
+
+  it.each([false, true])(
+    "preserves the initial header mode when a game starts without applying it to later maps (explicit FFA: %s)",
+    async (explicitFFA) => {
+      replayCommands([
+        ["ServerMessage", "MsgMissionStart", "Match started"],
+        ["MissionStartPhase1", "42", "Raindance"],
+        ...(explicitFFA
+          ? ([
+              [
+                "ServerMessage",
+                "MsgVoteItem",
+                "",
+                "TourneyQuery",
+                "VoteTournamentMode",
+              ],
+            ] as Array<[string, ...string[]]>)
+          : []),
+        ["ServerMessage", "MsgMissionStart", "Match started"],
+      ]);
+      const record = await analyzeDemo(
+        demo(undefined, undefined, undefined, undefined, "1"),
+        "multiple-maps.rec",
+      );
+      expect(record.games).toMatchObject([
+        { mission: "Test", gameType: "CTF", tournament: true },
+        { mission: "Raindance", tournament: false },
+      ]);
+    },
+  );
+
+  it.each(["header", "banner"])(
+    "honors an explicit FFA report before match start over an earlier %s hint",
+    async (hint) => {
+      const commands: Array<[string, ...string[]]> = [];
+      if (hint === "banner")
+        commands.push(["BottomPrint", "Server is Running in Tournament Mode"]);
+      commands.push(
+        ["ServerMessage", "MsgVoteItem", "", "7", "VoteTournamentMode"],
+        ["ServerMessage", "MsgMissionStart", "Match started"],
+      );
+      replayCommands(commands);
+      const record = await analyzeDemo(
+        demo(
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          hint === "header" ? "1" : "0",
+        ),
+        "mode-changed-before-start.rec",
+      );
+      expect(record.games).toMatchObject([
+        { mission: "Test", gameType: "CTF", tournament: false },
+      ]);
+    },
+  );
+
+  it("lets recorded server evidence establish tournament mode despite a legacy zero header", async () => {
+    replayCommands([
+      ["BottomPrint", "Server is Running in Tournament Mode"],
+      ["ServerMessage", "MsgMissionStart", "Match started"],
+    ]);
+    const record = await analyzeDemo(demo(), "legacy-zero.rec");
+    expect(record.games[0].tournament).toBe(true);
+  });
+});
 
 describe("strict user recording validation", () => {
   it("uses measured move time for uploads without changing backfill header timing", async () => {

@@ -91,9 +91,8 @@ export class WatchStateAccumulator {
   selfClientId: number | null = null;
   /**
    * Tournament mode, as told by the server; null until determined. The
-   * authoritative answer is the vote-menu query the session sends on
-   * connect (GetVoteMenu "TourneyQuery" — the same probe the community
-   * "TournyMode Query Support" script uses): sendGameVoteMenu offers
+   * vote menu answers queries sent by the session on connect or by a
+   * player's ordinary in-game menu: sendGameVoteMenu offers
    * VoteFFAMode while in tournament mode and VoteTournamentMode
    * otherwise. The stock join banner ("Server is Running in Tournament
    * Mode" BottomPrint) corroborates the positive case.
@@ -399,12 +398,11 @@ export class WatchStateAccumulator {
 
     const msgType = this.resolveNetString(args[0]);
     if (msgType === "MsgVoteItem" && args.length >= 4) {
-      // Wire: args[2]=key (echo of our GetVoteMenu key), args[3]=voteName.
-      if (this.resolveNetString(args[2]) === "TourneyQuery") {
-        const voteName = this.resolveNetString(args[3]);
-        if (voteName === "VoteFFAMode") this.tournamentMode = true;
-        else if (voteName === "VoteTournamentMode") this.tournamentMode = false;
-      }
+      // Wire: args[2] echoes the query key (ordinary menus use numbers).
+      // The offered mode switch identifies the current mode, regardless of key.
+      const voteName = this.resolveNetString(args[3]);
+      if (voteName === "VoteFFAMode") this.tournamentMode = true;
+      else if (voteName === "VoteTournamentMode") this.tournamentMode = false;
     }
   }
 
