@@ -18,8 +18,11 @@ import {
   LuUser,
   LuUsers,
 } from "react-icons/lu";
+import { MdVerified } from "react-icons/md";
 import { PiCassetteTapeFill, PiGlobe } from "react-icons/pi";
 import { useDemoLoad } from "../state/demoLoadStore";
+import { publishedDemoFilename } from "../state/editableGame";
+import { isMapGeniusDemo } from "../stream/demoIndex";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { useCaster } from "../state/casterStore";
 import { WifiSignalIcon } from "./WifiSignalIcon";
@@ -121,6 +124,11 @@ export function StreamingMissionInfo({
 
   // Demo recording attribution pieces, shown on the server line.
   const hasRecorder = !isLive && !!playerName;
+  const demoFilename = publishedDemoFilename(demoSourceUrl);
+  const mapGeniusRecorder =
+    hasRecorder &&
+    !!demoFilename &&
+    isMapGeniusDemo({ filename: demoFilename, recorder: playerName });
   const hasRecordingDate =
     (!isLive || replay !== null) && !!(recordedIso || dateString);
 
@@ -182,23 +190,27 @@ export function StreamingMissionInfo({
         (replay && showSpectatorCount) ? (
           <div className={styles.ServerInfo}>
             {hasRecorder ? (
-              <>
-                <LuUser
-                  className={styles.RecorderIcon}
-                  title="Recorded by"
-                  aria-hidden
-                />
+              <span className={styles.MetaItem}>
+                {mapGeniusRecorder ? (
+                  <MdVerified
+                    className={styles.VerifiedRecorderIcon}
+                    title="Recorded by MapGenius"
+                    aria-hidden
+                  />
+                ) : (
+                  <LuUser
+                    className={styles.RecorderIcon}
+                    title="Recorded by"
+                    aria-hidden
+                  />
+                )}
                 <span className={styles.PlayerName}>{playerName}</span>
-              </>
+              </span>
             ) : null}
             {serverName ? (
-              <>
+              <span className={styles.ServerItem}>
                 <ServerIcon
-                  className={
-                    hasRecorder
-                      ? `${styles.ServerIcon} ${styles.MetaGap}`
-                      : styles.ServerIcon
-                  }
+                  className={styles.ServerIcon}
                   data-quality={isLiveServer ? pingQuality : undefined}
                   title={
                     isLiveServer && isLiveConnected && ping != null
@@ -208,7 +220,7 @@ export function StreamingMissionInfo({
                   aria-hidden
                 />
                 <span className={styles.ServerName}>{serverName}</span>
-              </>
+              </span>
             ) : null}
             {/* Live and demo both count the roster at the CURRENT stream
                 time (the demo's roster tracks joins/drops through playback
@@ -225,18 +237,18 @@ export function StreamingMissionInfo({
               </button>
             ) : null}
             {showSpectatorCount ? (
-              <>
+              <span className={styles.MetaItem}>
                 <LuEye
-                  className={`${styles.SpectatorIcon} ${styles.MetaGap}`}
+                  className={styles.SpectatorIcon}
                   aria-label="Spectators"
                   title={`${watcherCount} spectating`}
                 />
                 <span className={styles.SpectatorCount}>{watcherCount}</span>
-              </>
+              </span>
             ) : null}
             {isLive && isLiveConnected && relayRecording ? (
               <span
-                className={`${styles.RecBadge} ${styles.MetaGap}`}
+                className={styles.RecBadge}
                 title="Demo saving is enabled for this mission"
               >
                 <span className={styles.RecDot} aria-hidden /> REC
@@ -244,7 +256,7 @@ export function StreamingMissionInfo({
             ) : null}
             {isLive && isLiveConnected && streamDelayMs > 0 ? (
               <span
-                className={`${styles.DelayBadge} ${styles.MetaGap}`}
+                className={styles.DelayBadge}
                 title="Tournament mode – this stream is delayed"
               >
                 <LuClock className={styles.DelayIcon} aria-hidden />{" "}
@@ -252,16 +264,9 @@ export function StreamingMissionInfo({
               </span>
             ) : null}
             {hasRecordingDate ? (
-              <>
+              <span className={styles.RecordingDateItem}>
                 <IoCalendarNumberOutline
-                  className={
-                    hasRecorder ||
-                    serverName ||
-                    showPlayerCount ||
-                    showSpectatorCount
-                      ? `${styles.CalendarIcon} ${styles.MetaGap}`
-                      : styles.CalendarIcon
-                  }
+                  className={styles.CalendarIcon}
                   title="Recorded on"
                   aria-hidden
                 />
@@ -270,7 +275,7 @@ export function StreamingMissionInfo({
                     ? `${recordedDayLabel(recordedIso, indexedDemo?.recordedAtTimezone)} ${formatRecordedTime(recordedIso, indexedDemo?.recordedAtTimezone)}`
                     : `${datePart!.replace(/-/g, " ")} ${(timePart ?? "").replace(/(AM|PM)$/, " $1")}`}
                 </span>
-              </>
+              </span>
             ) : null}
           </div>
         ) : null}

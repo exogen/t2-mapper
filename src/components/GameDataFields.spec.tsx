@@ -69,8 +69,17 @@ it("shows mission/time only when a recording needs a game selector", () => {
     <GameDataSelector games={games} selectedIndex={null} onSelect={() => {}} />,
   );
   expect(html).toContain("Choose a game…");
-  expect(html).toContain("Katabatic");
-  expect(html).toContain("2:00");
+  expect(html).toContain('aria-labelledby="');
+  expect(
+    renderToStaticMarkup(
+      <GameDataSelector games={games} selectedIndex={0} onSelect={() => {}} />,
+    ),
+  ).toContain("Katabatic");
+  expect(
+    renderToStaticMarkup(
+      <GameDataSelector games={games} selectedIndex={1} onSelect={() => {}} />,
+    ),
+  ).toContain("Raindance · 2:00");
 });
 
 it("keeps personal name presence separate from the saved and server names", () => {

@@ -649,7 +649,11 @@ it.each([1, 2])(
     const html = renderToStaticMarkup(<CastPanel />);
     expect(html).toContain("Play audio commentary");
     expect(html).toContain("Show commentary subtitles");
-    expect(html.includes("<select")).toBe(count > 1);
+    expect(html.includes('role="combobox"')).toBe(count > 1);
+    if (count > 1) {
+      expect(html).toContain('aria-labelledby="commentaryTrackLabel"');
+      expect(html).toContain("Track 0");
+    }
     expect(html).not.toContain("Save camera");
     expect(html).not.toContain("Rename team");
     expect(html).not.toContain("Quick cam HUD");

@@ -673,7 +673,12 @@ function startTimelineScan(
     .then((result) => {
       if (!result || !isCurrentScan()) return;
       const s = demoTimelineStore.getState();
-      s.setEvents(result.events);
+      s.setEvents(
+        result.events,
+        result.players,
+        result.recorderNames,
+        result.playerRawNames,
+      );
       s.setScanProgress(null);
     })
     .catch((err: unknown) => {

@@ -1,3 +1,4 @@
+import { Checkbox } from "./Checkbox";
 import { Dialog, DialogHeading } from "@ariakit/react";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
@@ -214,8 +215,7 @@ export function TeamNamesDialog({
           <div className={styles.Buttons}>
             {game && (
               <label className={dialogStyles.SaveToDemo}>
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={saveToDemo}
                   disabled={pending}
                   onChange={(event) => {

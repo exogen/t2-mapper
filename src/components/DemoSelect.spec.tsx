@@ -280,6 +280,21 @@ it("shows the map, saved match title, teams, recording details, and source in ca
   expect(labels).not.toContain("·");
 });
 
+it.each([
+  ["a MapGenius recording", demo, true],
+  ["another recorder", { ...demo, recorder: "Flyers" }, false],
+  [
+    "a user upload naming MapGenius",
+    { ...demo, filename: "users/123456789012345678/match.rec" },
+    false,
+  ],
+])("marks %s as verified: %s", (_label, entry, verified) => {
+  fixture.demos = [entry];
+  const item = renderItem();
+  expect(item.includes("Recorded by MapGenius")).toBe(verified);
+  expect(item.includes("<title>Recorded by</title>")).toBe(!verified);
+});
+
 it("omits default teams, missing titles, and unavailable source fields", () => {
   fixture.demos = [
     {

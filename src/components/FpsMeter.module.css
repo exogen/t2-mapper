@@ -1,6 +1,11 @@
-.StatsPanel {
-  left: auto !important;
-  top: auto !important;
+.Container {
+  position: absolute;
   right: 0;
   bottom: 0;
+  z-index: 1;
+}
+
+.StatsPanel {
+  /* Stats.js sets fixed positioning inline; the canvas owns its placement. */
+  position: static !important;
 }

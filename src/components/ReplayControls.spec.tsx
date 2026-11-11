@@ -251,6 +251,54 @@ it("uses the owner's displayed tick for pause and ignores Space in fields", () =
   expect(preventDefault).toHaveBeenCalledOnce();
 });
 
+it.each(["option", "slider"])(
+  "does not toggle replay when an ARIA %s owns Space",
+  (role) => {
+    render();
+    const preventDefault = vi.fn();
+    fire("keydown", {
+      code: "Space",
+      target: {
+        closest: (selector: string) =>
+          selector.includes(`[role="${role}"]`) ? {} : null,
+      },
+      preventDefault,
+    });
+    expect(test.control).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
+  },
+);
+
+it("leaves a canceled Space event to the control that handled it", () => {
+  render();
+  const preventDefault = vi.fn();
+  fire("keydown", {
+    code: "Space",
+    defaultPrevented: true,
+    target: { closest: () => null },
+    preventDefault,
+  });
+  expect(test.control).not.toHaveBeenCalled();
+  expect(preventDefault).not.toHaveBeenCalled();
+});
+
+it("keeps Space available on the playback scrubber", () => {
+  render();
+  const preventDefault = vi.fn();
+  fire("keydown", {
+    code: "Space",
+    target: {
+      closest: (selector: string) =>
+        selector === '[role="slider"]' || selector === "[data-playback-seek]"
+          ? {}
+          : null,
+    },
+    preventDefault,
+  });
+  expect(test.control).toHaveBeenCalledExactlyOnceWith("play", undefined);
+  expect(preventDefault).toHaveBeenCalledOnce();
+});
+
 it("keeps upload progress and Cancel on the loading card", () => {
   test.state = null;
   test.ready = false;

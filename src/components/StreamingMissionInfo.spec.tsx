@@ -69,6 +69,10 @@ vi.mock("./useDemoIndex", () => ({
   useDemoIndex: () => ({ data: state.demos }),
 }));
 vi.mock("../manifest", () => ({ findMissionInfo: () => null }));
+vi.mock("../stream/demoIndex", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../stream/demoIndex")>()),
+  DEMOS_BASE_URL: "https://example.com/demos",
+}));
 
 beforeEach(() => {
   state.dataSource = "demo";
@@ -176,6 +180,29 @@ it("shows the recorder when the demo has no date or server", () => {
   expect(markup).toContain("Flyers");
   expect(markup).toContain("Recorded by");
   expect(markup).not.toContain("Recorded on");
+});
+
+it.each([
+  ["a published MapGenius recording", "match.rec", "MapGenius", true],
+  ["another recorder", "match.rec", "Flyers", false],
+  [
+    "a user upload naming MapGenius",
+    "users/123456789012345678/match.rec",
+    "MapGenius",
+    false,
+  ],
+])("marks %s as verified: %s", (_label, filename, recorder, verified) => {
+  state.sourceUrl = `https://example.com/demos/${filename}`;
+  state.recorderName = recorder;
+  const markup = render();
+  expect(markup.includes("Recorded by MapGenius")).toBe(verified);
+  expect(markup.includes("<title>Recorded by</title>")).toBe(!verified);
+});
+
+it("does not verify a MapGenius header outside the published demos", () => {
+  state.sourceUrl = "blob:https://example.com/local";
+  state.recorderName = "MapGenius";
+  expect(render()).toContain("<title>Recorded by</title>");
 });
 
 it("shows the date when the demo has no recorder or server", () => {

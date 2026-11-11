@@ -89,6 +89,9 @@ describe("demo loads during navigation", () => {
     mocks.readCheckpoints.mockResolvedValue([]);
     mocks.scan.mockResolvedValue({
       events: [],
+      players: [],
+      recorderNames: [],
+      playerRawNames: {},
     });
     vi.stubEnv("RELAY_URL", "wss://relay.example");
     mocks.install.mockImplementation((recording) => {
@@ -162,6 +165,36 @@ describe("demo loads during navigation", () => {
     expect(mocks.setMissionInfo).toHaveBeenCalledWith({
       serverDisplayName: "Rapture Competition East",
     });
+  });
+
+  it("publishes the full scanned player list and clears it when unloading", async () => {
+    mocks.scan.mockResolvedValueOnce({
+      events: [],
+      players: ["Alice", "Departed player"],
+      recorderNames: ["Alice", "Previously Alice"],
+      playerRawNames: { alice: "\x08Alice" },
+    });
+    mocks.parse.mockResolvedValueOnce(recording("demo"));
+
+    await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+    await vi.waitFor(() =>
+      expect(demoTimelineStore.getState().players).toEqual([
+        "Alice",
+        "Departed player",
+      ]),
+    );
+
+    expect(demoTimelineStore.getState().recorderNames).toEqual([
+      "Alice",
+      "Previously Alice",
+    ]);
+    expect(demoTimelineStore.getState().playerRawNames).toEqual({
+      alice: "\x08Alice",
+    });
+    unloadDemo();
+    expect(demoTimelineStore.getState().players).toEqual([]);
+    expect(demoTimelineStore.getState().recorderNames).toEqual([]);
+    expect(demoTimelineStore.getState().playerRawNames).toEqual({});
   });
 
   it.each([

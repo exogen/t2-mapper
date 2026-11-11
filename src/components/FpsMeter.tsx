@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import Stats from "three/examples/jsm/libs/stats.module.js";
 import { useDebug } from "./SettingsProvider";
 import { useEngine } from "./useEngine";
@@ -12,12 +12,14 @@ import styles from "./FpsMeter.module.css";
 export function FpsMeter() {
   const engine = useEngine();
   const { showFpsMeter } = useDebug();
+  const containerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!showFpsMeter) return;
+    const container = containerRef.current;
+    if (!showFpsMeter || !container) return;
     const stats = new Stats();
     stats.showPanel(0);
     stats.dom.classList.add(styles.StatsPanel);
-    document.body.appendChild(stats.dom);
+    container.appendChild(stats.dom);
     const stopStart = engine.onFrameStart(() => stats.begin());
     const stopEnd = engine.onFrameEnd(() => stats.end());
     return () => {
@@ -26,5 +28,7 @@ export function FpsMeter() {
       stats.dom.remove();
     };
   }, [engine, showFpsMeter]);
-  return null;
+  return showFpsMeter ? (
+    <div ref={containerRef} className={styles.Container} />
+  ) : null;
 }

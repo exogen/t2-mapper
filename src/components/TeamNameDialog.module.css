@@ -25,7 +25,6 @@
 
 .SaveToDemo input {
   margin: 0;
-  accent-color: #6acfc9;
 }
 
 .SharedOptions {
@@ -37,5 +36,11 @@
   .SaveToDemo {
     flex-basis: 100%;
     margin-right: 0;
+  }
+}
+
+@media (pointer: coarse) {
+  .SaveToDemo {
+    min-height: 44px;
   }
 }

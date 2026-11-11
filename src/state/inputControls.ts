@@ -1,5 +1,6 @@
 import { createStore } from "zustand/vanilla";
 import { subscribeWithSelector } from "zustand/middleware";
+import { isTypingOrSelecting } from "../keyboard";
 
 // ── Types ──
 
@@ -260,22 +261,6 @@ export function notifySubscribers(action: string) {
 // InputBindings instances subscribe to key changes to derive actions,
 // instead of each attaching their own keyboard listeners.
 
-// Input types that accept text entry — all keys should be ignored.
-const TEXT_INPUT_TYPES = new Set([
-  "text",
-  "search",
-  "url",
-  "tel",
-  "email",
-  "password",
-  "number",
-  "date",
-  "datetime-local",
-  "month",
-  "week",
-  "time",
-]);
-
 // Keys that interactive (non-text) elements use natively.
 const INTERACTIVE_KEYS = new Set([
   "Space",
@@ -298,23 +283,20 @@ function shouldIgnoreForFocus(e: KeyboardEvent): boolean {
     return true;
   }
 
+  // A widget may move focus before this window listener runs. Check where
+  // the key started as well as the element that currently has focus.
+  if (
+    isTypingOrSelecting(e.target) ||
+    isTypingOrSelecting(document.activeElement)
+  ) {
+    return true;
+  }
+
   const el = document.activeElement;
   if (!el || el === document.body) return false;
 
   const tag = el.tagName;
-  if ((el as HTMLElement).isContentEditable) return true;
-  if (tag === "TEXTAREA") return true;
-  if (tag === "INPUT") {
-    const type = (el as HTMLInputElement).type.toLowerCase();
-    if (TEXT_INPUT_TYPES.has(type)) return true;
-    return INTERACTIVE_KEYS.has(e.code);
-  }
-  if (
-    tag === "BUTTON" ||
-    tag === "SELECT" ||
-    tag === "A" ||
-    tag === "SUMMARY"
-  ) {
+  if (tag === "INPUT" || tag === "BUTTON" || tag === "A" || tag === "SUMMARY") {
     return INTERACTIVE_KEYS.has(e.code);
   }
   return false;

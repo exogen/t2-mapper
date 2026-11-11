@@ -4,6 +4,7 @@ import {
   MAX_CHEST_SIZE_PERCENT,
   useJiggle,
 } from "../state/jiggleStore";
+import { RangeSlider } from "./RangeSlider";
 import styles from "./InspectorControls.module.css";
 
 export function JigglePhysicsPanel() {
@@ -18,40 +19,46 @@ export function JigglePhysicsPanel() {
         ] as const
       ).map(([bodyType, label]) => (
         <div key={bodyType} className={styles.Field}>
-          <label htmlFor={`${bodyType}ChestSizeInput`}>{label}</label>
+          <label
+            id={`${bodyType}ChestSizeInput-label`}
+            htmlFor={`${bodyType}ChestSizeInput`}
+          >
+            {label}
+          </label>
           <div className={styles.Control}>
             <output htmlFor={`${bodyType}ChestSizeInput`}>
               {chestSizeToPercent(sizes[bodyType])}%
             </output>
-            <input
+            <RangeSlider
               id={`${bodyType}ChestSizeInput`}
-              type="range"
+              aria-labelledby={`${bodyType}ChestSizeInput-label`}
+              aria-valuetext={`${chestSizeToPercent(sizes[bodyType])} percent`}
               min={0}
               max={MAX_CHEST_SIZE_PERCENT}
               step={5}
               value={chestSizeToPercent(sizes[bodyType])}
-              onChange={(event) =>
-                setSize(
-                  bodyType,
-                  chestSizeFromPercent(Number(event.target.value)),
-                )
+              onValueChange={(value) =>
+                setSize(bodyType, chestSizeFromPercent(value))
               }
             />
           </div>
         </div>
       ))}
       <div className={styles.Field}>
-        <label htmlFor="chestFirmnessInput">Firmness</label>
+        <label id="chestFirmnessInput-label" htmlFor="chestFirmnessInput">
+          Firmness
+        </label>
         <div className={styles.Control}>
           <output htmlFor="chestFirmnessInput">{firmness}%</output>
-          <input
+          <RangeSlider
             id="chestFirmnessInput"
-            type="range"
+            aria-labelledby="chestFirmnessInput-label"
+            aria-valuetext={`${firmness} percent`}
             min={0}
             max={100}
             step={10}
             value={firmness}
-            onChange={(event) => setFirmness(Number(event.target.value))}
+            onValueChange={setFirmness}
           />
         </div>
       </div>

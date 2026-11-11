@@ -9,11 +9,22 @@ import {
   isUserDemoKey,
   publishedDemoKeyFromUrl,
 } from "../../relay/demoKeys";
+import { isRelayRecording } from "./demoDate";
 
 import type { CastCommentaryTrack } from "../director/castSidecar";
 
 /** Index entries use the same metadata contract as demo sidecars. */
 export type DemoIndexEntry = DemoMetadata;
+
+/**
+ * Whether MapGenius recorded a published demo. User uploads never qualify,
+ * even when their header names MapGenius as the recorder.
+ */
+export function isMapGeniusDemo(
+  demo: Pick<DemoIndexEntry, "filename" | "recorder">,
+): boolean {
+  return !isUserDemoKey(demo.filename) && isRelayRecording(demo.recorder);
+}
 
 /** Legacy sidecars only have full names; new counts deduplicate tag-less names. */
 export function demoPlayerCount(

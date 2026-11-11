@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isTypingOrSelecting } from "../keyboard";
 import {
   liveConnectionStore,
   selectCanChat,
@@ -24,16 +25,22 @@ function ChatComposer({ hudStyle }: { hudStyle: HudStyle }) {
   const streamDelayMs = useLiveSelector((s) => s.streamDelayMs);
 
   // Y focuses the chat input; preventDefault keeps the "y" itself out
-  // of it. Typing in another text field (or here) is left alone.
+  // of it. Typing or navigating another form control is left alone.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.code !== "KeyY" || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (
+        e.defaultPrevented ||
+        e.code !== "KeyY" ||
+        e.metaKey ||
+        e.ctrlKey ||
+        e.altKey
+      )
+        return;
       const el = document.activeElement;
       if (
-        el instanceof HTMLElement &&
-        (el.isContentEditable ||
-          el.tagName === "INPUT" ||
-          el.tagName === "TEXTAREA")
+        el?.tagName === "INPUT" ||
+        isTypingOrSelecting(el) ||
+        isTypingOrSelecting(e.target)
       ) {
         return;
       }

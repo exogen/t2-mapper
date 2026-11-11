@@ -8,6 +8,7 @@ import {
 import type { HeatmapScheme } from "../stats/colormap";
 import { useRecording } from "./usePlayback";
 import { ScanProgress } from "./ScanProgress";
+import { Select } from "./Select";
 import accordionStyles from "./Accordion.module.css";
 import buttonStyles from "./Button.module.css";
 import styles from "./InspectorControls.module.css";
@@ -73,27 +74,31 @@ export function StatsPanel() {
   return (
     <div className={accordionStyles.Body}>
       <div className={styles.Field}>
-        <label htmlFor="heatmapPlayerInput">Player heatmap</label>
+        <label id="heatmapPlayerLabel" htmlFor="heatmapPlayerInput">
+          Player heatmap
+        </label>
         <div className={styles.Control}>
-          <select
+          <Select
             id="heatmapPlayerInput"
+            aria-labelledby="heatmapPlayerLabel"
             aria-describedby="heatmapDescription"
-            value={selectedPlayerId ?? ""}
-            onChange={(event) => {
-              const id =
-                event.target.value === "" ? null : Number(event.target.value);
+            value={selectedPlayerId == null ? "" : String(selectedPlayerId)}
+            onChange={(value) => {
+              const id = value === "" ? null : Number(value);
               statsStore.getState().selectPlayer(id);
               if (id != null) commandCircuitStore.getState().activate();
             }}
-          >
-            <option value="">Disabled</option>
-            <hr />
-            {data.players.map((player) => (
-              <option key={player.id} value={player.id}>
-                {player.name}
-              </option>
-            ))}
-          </select>
+            options={[
+              { value: "", label: "Disabled" },
+              {
+                label: "Players",
+                options: data.players.map((player) => ({
+                  value: String(player.id),
+                  label: player.name,
+                })),
+              },
+            ]}
+          />
         </div>
         <p id="heatmapDescription" className={styles.Description}>
           {matchCount > 1 ? `Match ${data.id + 1}. ` : ""}
@@ -110,23 +115,19 @@ export function StatsPanel() {
       {selectedPlayerId != null && (
         <>
           <div className={styles.Field}>
-            <label htmlFor="heatmapSchemeInput">Color scheme</label>
+            <label id="heatmapSchemeLabel" htmlFor="heatmapSchemeInput">
+              Color scheme
+            </label>
             <div className={styles.Control}>
-              <select
+              <Select
                 id="heatmapSchemeInput"
+                aria-labelledby="heatmapSchemeLabel"
                 value={heatmapScheme}
-                onChange={(event) =>
-                  statsStore
-                    .getState()
-                    .setHeatmapScheme(event.target.value as HeatmapScheme)
+                onChange={(value) =>
+                  statsStore.getState().setHeatmapScheme(value as HeatmapScheme)
                 }
-              >
-                {SCHEMES.map(({ value, label }) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+                options={SCHEMES}
+              />
             </div>
           </div>
           {!commandCircuitActive && (

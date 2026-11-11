@@ -57,8 +57,34 @@ function mount(map: readonly InputMapEntry[] = DEMO_MODE_INPUT) {
   }
 }
 
-function key(type: "keydown" | "keyup", code: string) {
-  window.dispatchEvent(Object.assign(new Event(type), { code }));
+function key(
+  type: "keydown" | "keyup",
+  code: string,
+  {
+    target,
+    preventDefault = false,
+  }: {
+    target?: EventTarget;
+    preventDefault?: boolean;
+  } = {},
+) {
+  const event = Object.assign(new Event(type, { cancelable: true }), { code });
+  if (target) Object.defineProperty(event, "target", { value: target });
+  if (preventDefault) event.preventDefault();
+  window.dispatchEvent(event);
+}
+
+function keyboardElement(tagName: string, role?: string, playbackSeek = false) {
+  const element = Object.assign(new EventTarget(), {
+    tagName,
+    closest(selector: string): EventTarget | null {
+      if (selector === "[data-playback-seek]") {
+        return playbackSeek ? element : null;
+      }
+      return role && selector.includes(`[role="${role}"]`) ? element : null;
+    },
+  });
+  return element;
 }
 
 function watch(action: string) {
@@ -276,6 +302,88 @@ it("ignores cycling keys while typing into a text field", () => {
   key("keydown", "KeyN");
   expect(next).not.toHaveBeenCalled();
   expect(previous).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["SELECT", undefined],
+  ["BUTTON", "combobox"],
+  ["DIV", "listbox"],
+  ["DIV", "option"],
+] as const)(
+  "keeps typeahead in a focused %s/%s out of game shortcuts",
+  (tag, role) => {
+    mount(FOLLOW_KEYBOARD_INPUT);
+    Object.assign(document, { activeElement: keyboardElement(tag, role) });
+    const next = watch("nextPlayerKey");
+    key("keydown", "KeyN");
+    expect(next).not.toHaveBeenCalled();
+    expect(inputControlsStore.getState().keys.has("KeyN")).toBe(false);
+  },
+);
+
+it("keeps settings slider adjustments and letter keys out of camera controls", () => {
+  mount(MOVABLE_CAMERA_INPUT.slice(0, 4));
+  mount(FOLLOW_KEYBOARD_INPUT);
+  Object.assign(document, {
+    activeElement: keyboardElement("BUTTON", "slider"),
+  });
+  const look = watch("lookUp");
+  const next = watch("nextPlayerKey");
+  key("keydown", "ArrowUp");
+  key("keydown", "KeyN");
+  expect(look).not.toHaveBeenCalled();
+  expect(next).not.toHaveBeenCalled();
+  expect(inputControlsStore.getState().keys.size).toBe(0);
+});
+
+it("ignores the original widget target after its handler has moved focus to the page", () => {
+  mount(FOLLOW_KEYBOARD_INPUT);
+  const body = keyboardElement("BODY");
+  Object.assign(document, { body, activeElement: body });
+  const next = watch("nextPlayerKey");
+  key("keydown", "KeyN", { target: keyboardElement("DIV", "option") });
+  expect(next).not.toHaveBeenCalled();
+  expect(inputControlsStore.getState().keys.has("KeyN")).toBe(false);
+});
+
+it("preserves camera arrows on the playback scrubber even when Radix stepping was prevented", () => {
+  mount(MOVABLE_CAMERA_INPUT.slice(0, 4));
+  const thumb = keyboardElement("SPAN", "slider", true);
+  Object.assign(document, { activeElement: thumb });
+  const look = watch("lookUp");
+  key("keydown", "ArrowUp", { target: thumb, preventDefault: true });
+  expect(look).toHaveBeenCalledOnce();
+  expect(inputControlsStore.getState().actions.lookUp).toEqual({
+    pressed: true,
+  });
+});
+
+it("preserves letter shortcuts on ordinary buttons while reserving their native arrow keys", () => {
+  mount(MOVABLE_CAMERA_INPUT.slice(0, 4));
+  mount(FOLLOW_KEYBOARD_INPUT);
+  Object.assign(document, { activeElement: keyboardElement("BUTTON") });
+  const next = watch("nextPlayerKey");
+  const look = watch("lookUp");
+  key("keydown", "KeyN");
+  expect(next).toHaveBeenCalledOnce();
+  key("keyup", "KeyN");
+  key("keydown", "ArrowUp");
+  expect(look).not.toHaveBeenCalled();
+});
+
+it("releases a held game key after focus moves into a keyboard widget", () => {
+  mount(FREE_FLY_INPUT.slice(0, -1));
+  key("keydown", "KeyW");
+  expect(inputControlsStore.getState().actions.moveForward).toEqual({
+    pressed: true,
+  });
+  const widget = keyboardElement("BUTTON", "combobox");
+  Object.assign(document, { activeElement: widget });
+  key("keyup", "KeyW", { target: widget, preventDefault: true });
+  expect(inputControlsStore.getState().actions.moveForward).toEqual({
+    pressed: false,
+  });
+  expect(inputControlsStore.getState().keys.has("KeyW")).toBe(false);
 });
 
 it("starts with fresh gesture state when the listener effect is reattached", () => {

@@ -1,11 +1,6 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ChangeEvent,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isPlaybackControl } from "../keyboard";
+import { Select } from "./Select";
 import { useInputAction } from "./InputControls";
 import {
   usePlaybackActions,
@@ -91,14 +86,10 @@ export function DemoPlaybackControls() {
   useEffect(() => {
     if (!recording) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code !== "Space") return;
-      const target = e.target as HTMLElement;
       if (
-        target.tagName === "INPUT" ||
-        target.tagName === "TEXTAREA" ||
-        target.tagName === "SELECT" ||
-        target.tagName === "BUTTON" ||
-        target.isContentEditable
+        e.defaultPrevented ||
+        e.code !== "Space" ||
+        isPlaybackControl(e.target)
       ) {
         return;
       }
@@ -207,8 +198,8 @@ export function DemoPlaybackControls() {
   }, [directorQueued, downloadComplete, isSeeking, recording]);
 
   const handleSpeedChange = useCallback(
-    (e: ChangeEvent<HTMLSelectElement>) => {
-      setSpeed(parseFloat(e.target.value));
+    (value: string) => {
+      setSpeed(parseFloat(value));
     },
     [setSpeed],
   );
@@ -422,20 +413,21 @@ export function DemoPlaybackControls() {
         className={styles.Field}
         title="Playback speed (< slows down, > speeds up)"
       >
-        <label htmlFor="playbackSpeed">Speed</label>
-        <select
+        <label id="playbackSpeed-label" htmlFor="playbackSpeed">
+          Speed
+        </label>
+        <Select
           id="playbackSpeed"
+          aria-labelledby="playbackSpeed-label"
           className={styles.Speed}
-          value={speed}
+          value={String(speed)}
           onChange={handleSpeedChange}
           title="Playback speed (< slows down, > speeds up)"
-        >
-          {SPEED_OPTIONS.map((s) => (
-            <option key={s} value={s}>
-              {s}&times;
-            </option>
-          ))}
-        </select>
+          options={SPEED_OPTIONS.map((s) => ({
+            value: String(s),
+            label: `${s}×`,
+          }))}
+        />
       </div>
     </div>
   );

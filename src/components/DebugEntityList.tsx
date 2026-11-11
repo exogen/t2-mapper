@@ -1,3 +1,4 @@
+import { Checkbox } from "./Checkbox";
 import {
   memo,
   useMemo,
@@ -112,11 +113,11 @@ function EntityRow({ entity }: { entity: GameEntity }) {
 
   return (
     <div className={styles.EntityRow} data-disabled={disabled || undefined}>
-      <input
-        type="checkbox"
+      <Checkbox
         checked={!hidden}
         onChange={handleToggle}
         disabled={disabled}
+        aria-label={`Show ${label} ${entity.id}`}
         title={hidden ? "Show entity" : "Hide entity"}
       />
       <div className={styles.EntityInfo}>

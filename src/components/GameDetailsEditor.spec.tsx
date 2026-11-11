@@ -74,7 +74,8 @@ vi.mock("react-dom", async (original) => ({
   ...(await original<typeof import("react-dom")>()),
   createPortal: (children: ReactNode) => children,
 }));
-vi.mock("@ariakit/react", () => ({
+vi.mock("@ariakit/react", async (original) => ({
+  ...(await original<typeof import("@ariakit/react")>()),
   VisuallyHidden: ({ children }: { children: ReactNode }) => (
     <span style={{ position: "absolute" }}>{children}</span>
   ),
@@ -339,7 +340,9 @@ it("allows game selection in a listed multi-game demo before enabling fields", (
     />,
   );
   expect(html).toContain("Choose a game…");
-  expect(html).not.toMatch(/<select[^>]*disabled=""/);
+  const picker = html.match(/<button[^>]*role="combobox"[^>]*>/)?.[0];
+  expect(picker).toBeDefined();
+  expect(picker).not.toContain('disabled=""');
   expect(html).toMatch(/<fieldset[^>]*disabled=""/);
   expect(html).not.toContain("Editing is unavailable");
 });

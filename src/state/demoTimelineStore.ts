@@ -31,7 +31,7 @@ export interface TimelineEvent {
   /** The actor/navigation target is the recorder: killer for kills, victim for deaths.
    * Resolved at scan time so renames during the seek lead-in don't matter. */
   isRecorder?: boolean;
-  /** The victim of a player-vs-player kill is the recorder. Used by Mine + Deaths. */
+  /** The victim of a player-vs-player kill is the recorder. Used by their Deaths filter. */
   victimIsRecorder?: boolean;
   /** Whether the recorder's team or enemy team was involved. */
   teamAffinity?: TeamAffinity;
@@ -75,8 +75,9 @@ export interface TimelineEvent {
   previousName?: string;
   /**
    * The same names as sent, color codes included — the official clan
-   * tag is the color-7 segment. For display only; matching uses the
-   * stripped fields above.
+   * tag is the color-7 segment. These also identify the base player name
+   * when grouping/filtering clan-tag variants; the stripped fields above
+   * remain the full display names.
    */
   raw?: {
     killer?: string;
@@ -89,9 +90,20 @@ export interface TimelineEvent {
 
 export interface DemoTimelineState {
   events: TimelineEvent[] | null;
+  /** Everyone seen in the recording, even after they leave the server. */
+  players: string[];
+  /** Recorder name history, starting with the full initial roster name. */
+  recorderNames: string[];
+  /** Markup-preserving names keyed by stripped, trimmed, lowercase names. */
+  playerRawNames: Record<string, string>;
   scanProgress: number | null;
   error: string | null;
-  setEvents(events: TimelineEvent[]): void;
+  setEvents(
+    events: TimelineEvent[],
+    players?: string[],
+    recorderNames?: string[],
+    playerRawNames?: Record<string, string>,
+  ): void;
   setScanProgress(progress: number | null): void;
   setError(error: string): void;
   reset(): void;
@@ -99,20 +111,33 @@ export interface DemoTimelineState {
 
 export const demoTimelineStore = createStore<DemoTimelineState>((set) => ({
   events: null,
+  players: [],
+  recorderNames: [],
+  playerRawNames: {},
   scanProgress: null,
   error: null,
-  setEvents(events) {
-    set({ events, error: null });
+  setEvents(events, players = [], recorderNames = [], playerRawNames = {}) {
+    set({ events, players, recorderNames, playerRawNames, error: null });
   },
   setScanProgress(progress) {
     set({ scanProgress: progress });
   },
   setError(error) {
-    set({ error, scanProgress: null, events: null });
+    set({
+      error,
+      scanProgress: null,
+      events: null,
+      players: [],
+      recorderNames: [],
+      playerRawNames: {},
+    });
   },
   reset() {
     set({
       events: null,
+      players: [],
+      recorderNames: [],
+      playerRawNames: {},
       scanProgress: null,
       error: null,
     });

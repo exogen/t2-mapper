@@ -3,10 +3,20 @@ import { isValidElement, type ReactNode, type ReactElement } from "react";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { TimelineEvent } from "../state/demoTimelineStore";
 import { DemoTimeline } from "./DemoTimeline";
+import { useDemoTimelineFilters } from "./useDemoTimelineFilters";
+import { Select } from "./Select";
+import {
+  TIMELINE_ANYONE,
+  TIMELINE_RECORDER,
+  timelinePlayerValue,
+} from "./demoTimelineFilters";
 import type { TeamColorScheme } from "../iffTheme";
 
 const state = vi.hoisted(() => ({
   events: [] as TimelineEvent[],
+  players: [] as string[],
+  recorderNames: [] as string[],
+  playerRawNames: {} as Record<string, string>,
   scanProgress: null,
   error: null,
   recording: { recorderName: "MapGenius" },
@@ -16,9 +26,11 @@ const state = vi.hoisted(() => ({
 const hooks = vi.hoisted(() => ({
   states: [] as { value: unknown; set: (value: unknown) => void }[],
   effects: [] as (readonly unknown[])[],
+  refs: [] as { current: unknown }[],
   pending: [] as (() => void)[],
   stateIndex: 0,
   effectIndex: 0,
+  refIndex: 0,
 }));
 
 vi.mock("react", async (original) => ({
@@ -34,6 +46,11 @@ vi.mock("react", async (original) => ({
     return [slot.value, slot.set];
   },
   useCallback: (callback: unknown) => callback,
+  useId: () => "timeline-player",
+  useRef: (initial: unknown) => {
+    const index = hooks.refIndex++;
+    return (hooks.refs[index] ??= { current: initial });
+  },
   useEffect: (effect: () => void, deps: readonly unknown[]) => {
     const index = hooks.effectIndex++;
     const previous = hooks.effects[index];
@@ -59,19 +76,37 @@ vi.mock("./SettingsProvider", () => ({
   }),
 }));
 vi.mock("./useMediaQuery", () => ({ useMediaQuery: () => false }));
+vi.mock("./Select", () => ({
+  Select: (props: {
+    value: string;
+    options: { value?: string; label?: string }[];
+  }) => (
+    <span role="combobox">
+      {props.options.find((option) => option.value === props.value)?.label}
+    </span>
+  ),
+}));
 
 beforeEach(() => {
   hooks.states = [];
   hooks.effects = [];
   hooks.pending = [];
+  hooks.refs = [];
   state.recording = { recorderName: "MapGenius" };
   state.observerTeamColors = "blueOrange";
   state.events = [];
+  state.players = [];
+  state.recorderNames = [];
+  state.playerRawNames = {};
 });
 
+function TimelineWithFilters() {
+  return DemoTimeline({ filters: useDemoTimelineFilters() });
+}
+
 function tree() {
-  hooks.stateIndex = hooks.effectIndex = 0;
-  const result = DemoTimeline();
+  hooks.stateIndex = hooks.effectIndex = hooks.refIndex = 0;
+  const result = TimelineWithFilters();
   if (hooks.pending.length) {
     for (const effect of hooks.pending.splice(0)) effect();
     return tree();
@@ -95,11 +130,69 @@ function category(label: string) {
   )!;
 }
 
-function mine() {
-  return elements(tree()).find(
-    (node) => node.type === "input" && node.props.type === "checkbox",
-  )!;
+function playerFilter() {
+  return elements(tree()).find((node) => node.type === Select)!;
 }
+
+it("shows only base names and filters events across each player's tagged forms", () => {
+  state.recording = { recorderName: "Recorder" };
+  state.players = ["TAG|Recorder", "Old|Player", "Player|Clan"];
+  state.recorderNames = ["TAG|Recorder"];
+  state.playerRawNames = {
+    "tag|recorder": "\x10\x0bTAG|\x08Recorder\x11",
+    "old|player": "\x10\x0bOld|\x08Player\x11",
+    "player|clan": "\x10\x08Player\x0b|Clan\x11",
+  };
+  state.events = [
+    {
+      type: "kill",
+      timeSec: 1,
+      description: "Kill",
+      killer: "Old|Player",
+      victim: "Opponent",
+      raw: { killer: "Old|Player" },
+    },
+    {
+      type: "kill",
+      timeSec: 2,
+      description: "Death",
+      killer: "Opponent",
+      victim: "Player|Clan",
+      raw: { victim: state.playerRawNames["player|clan"] },
+    },
+    {
+      type: "generator-online",
+      timeSec: 3,
+      description: "Repair",
+      actor: "Old|Player",
+    },
+    {
+      type: "generator-online",
+      timeSec: 4,
+      description: "Unrelated repair",
+      actor: "Other",
+    },
+  ];
+  const filter = playerFilter();
+  expect(filter.props.options).toEqual([
+    { value: TIMELINE_ANYONE, label: "anyone" },
+    { separator: true },
+    { value: TIMELINE_RECORDER, label: "Recorder" },
+    { separator: true },
+    { value: timelinePlayerValue("Opponent"), label: "Opponent" },
+    { value: timelinePlayerValue("Other"), label: "Other" },
+    { value: timelinePlayerValue("Player"), label: "Player" },
+  ]);
+  filter.props.onChange(timelinePlayerValue("Player"));
+  expect(renderToStaticMarkup(category("All"))).toContain("All (3)");
+  expect(renderToStaticMarkup(category("Kills"))).toContain("Kills (1)");
+  expect(renderToStaticMarkup(category("Deaths"))).toContain("Deaths (1)");
+  expect(renderToStaticMarkup(category("Gens"))).toContain("Gens (1)");
+  category("All").props.onClick();
+  expect(markup().match(/data-type="kill"/g)).toHaveLength(1);
+  expect(markup().match(/data-type="death"/g)).toHaveLength(1);
+  expect(markup().match(/data-type="generator-online"/g)).toHaveLength(1);
+});
 
 const markup = () => renderToStaticMarkup(tree());
 
@@ -413,15 +506,15 @@ it("keeps empty categories available", () => {
 });
 
 it.each([
-  ["MapGenius", false],
-  ["mapgenius", false],
-  ["Player", true],
-  ["Spectator", true],
+  ["MapGenius", TIMELINE_ANYONE],
+  ["mapgenius", TIMELINE_ANYONE],
+  ["Player", TIMELINE_RECORDER],
+  ["Spectator", TIMELINE_RECORDER],
 ])(
-  "defaults Mine to %s's recording type, independently of categories",
-  (recorderName, checked) => {
+  "defaults the player filter to %s's recording type, independently of categories",
+  (recorderName, value) => {
     state.recording = { recorderName: recorderName as string };
-    expect(mine().props.checked).toBe(checked);
+    expect(playerFilter().props.value).toBe(value);
     for (const label of ["All", "Kills", "Deaths"])
       expect(category(label).props["aria-pressed"]).toBe(false);
     for (const label of [
@@ -435,10 +528,10 @@ it.each([
       expect(category(label).props["aria-pressed"]).toBe(true);
     expect(category("Match")).toBeUndefined();
     const controls = elements(tree()).filter(
-      (node) => node.type === "input" || node.type === "button",
+      (node) => node.type === Select || node.type === "button",
     );
-    expect(controls[0].type).toBe("input");
-    expect(markup()).toContain("Only the recorder’s events");
+    expect(controls[0].type).toBe(Select);
+    expect(markup()).toContain("Show events involving");
   },
 );
 
@@ -490,7 +583,7 @@ it("toggles categories independently and shows each combat incident once", () =>
   expect(markup()).toContain("No events found.");
 });
 
-it("uses the killer for Mine + Kills and the victim for Mine + Deaths", () => {
+it("uses the killer for the recorder + Kills and the victim for the recorder + Deaths", () => {
   state.recording = { recorderName: "Player" };
   state.events = [
     combat("Player", "Victim", true),
@@ -522,9 +615,43 @@ it("uses the killer for Mine + Kills and the victim for Mine + Deaths", () => {
   expect(markup().replace(/<[^>]*>/g, "")).toContain("Killer killed you");
   expect(markup()).toContain("cratered");
   expect(markup().replace(/<[^>]*>/g, "")).not.toContain("You killed Victim");
-  mine().props.onChange({ target: { checked: false } });
+  playerFilter().props.onChange(TIMELINE_ANYONE);
   expect(markup()).toContain("Bystander");
   expect(markup()).toContain("suicided");
+});
+
+it("filters a selected player's kills and deaths with independent counts and icons", () => {
+  state.events = [
+    combat("Alice", "Bob"),
+    combat("Carol", "Alice"),
+    combat("Bob", "Carol"),
+    {
+      timeSec: 2,
+      type: "death",
+      victim: "Alice",
+      description: "Alice cratered",
+      weapon: "ground",
+    },
+    { timeSec: 3, type: "flag-grab", actor: "Alice", description: "Grab" },
+    { timeSec: 4, type: "flag-grab", actor: "Bob", description: "Grab" },
+    { timeSec: 5, type: "match-end", description: "Match ended" },
+  ];
+  playerFilter().props.onChange(timelinePlayerValue("Alice"));
+  expect(renderToStaticMarkup(category("All"))).toContain("All (5)");
+  expect(renderToStaticMarkup(category("Kills"))).toContain("Kills (1)");
+  expect(renderToStaticMarkup(category("Deaths"))).toContain("Deaths (2)");
+  expect(renderToStaticMarkup(category("Grabs"))).toContain("Grabs (1)");
+  category("Kills").props.onClick();
+  category("Deaths").props.onClick();
+  expect(markup().match(/data-type="kill"/g)).toHaveLength(1);
+  expect(markup().match(/data-type="death"/g)).toHaveLength(2);
+  expect(markup().replace(/<[^>]*>/g, "")).toContain("Alice killed Bob");
+  expect(markup().replace(/<[^>]*>/g, "")).toContain("Carol killed Alice");
+  expect(markup().replace(/<[^>]*>/g, "")).not.toContain("Bob killed Carol");
+  category("Kills").props.onClick();
+  expect(markup().replace(/<[^>]*>/g, "")).not.toContain("Alice killed Bob");
+  expect(markup().replace(/<[^>]*>/g, "")).toContain("Carol killed Alice");
+  expect(markup()).toContain("Match ended");
 });
 
 it("always shows match events while filtering generators by ownership", () => {
@@ -549,7 +676,7 @@ it("always shows match events while filtering generators by ownership", () => {
     { timeSec: 6, type: "match-end", description: "Match ended" },
   ];
   expect(markup().match(/data-type=/g)).toHaveLength(6);
-  mine().props.onChange({ target: { checked: true } });
+  playerFilter().props.onChange(TIMELINE_RECORDER);
   expect(markup().match(/data-type=/g)).toHaveLength(4);
   expect(renderToStaticMarkup(category("Gens"))).toContain("Gens (1)");
   expect(category("Gens").props["aria-pressed"]).toBe(true);
@@ -558,20 +685,20 @@ it("always shows match events while filtering generators by ownership", () => {
   category("All").props.onClick();
   expect(markup().match(/data-type="match-[^"]+"/g)).toHaveLength(3);
   expect(markup().match(/data-type=/g)).toHaveLength(3);
-  mine().props.onChange({ target: { checked: false } });
+  playerFilter().props.onChange(TIMELINE_ANYONE);
   expect(markup().match(/data-type=/g)).toHaveLength(3);
 });
 
-it("resets categories and Mine when another demo's events arrive", () => {
+it("resets categories and player when another demo's events arrive", () => {
   category("All").props.onClick();
-  mine().props.onChange({ target: { checked: true } });
+  playerFilter().props.onChange(TIMELINE_RECORDER);
   state.events = [];
-  expect(mine().props.checked).toBe(false);
+  expect(playerFilter().props.value).toBe(TIMELINE_ANYONE);
   expect(category("Kills").props["aria-pressed"]).toBe(false);
   expect(category("Grabs").props["aria-pressed"]).toBe(true);
   state.recording = { recorderName: "Player" };
   state.events = [];
-  expect(mine().props.checked).toBe(true);
+  expect(playerFilter().props.value).toBe(TIMELINE_RECORDER);
 });
 
 it.each(["flag-grab", "flag-drop", "flag-return"] as const)(

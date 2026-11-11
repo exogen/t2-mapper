@@ -1,0 +1,104 @@
+.Root {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 1 112px;
+  width: 112px;
+  min-width: 64px;
+  height: 30px;
+  cursor: pointer;
+  user-select: none;
+  /* Claim gestures before pointerdown: dragging anywhere in this hit area
+     adjusts the value, even if the finger moves vertically or off the track.
+     The surrounding sidebar remains scrollable. Radix captures the pointer. */
+  touch-action: none;
+}
+
+.Track {
+  position: relative;
+  flex: 1;
+  height: 6px;
+  overflow: hidden;
+  border: 1px solid var(--control-border);
+  border-radius: 999px;
+  background: var(--control-background);
+}
+
+.Range {
+  position: absolute;
+  height: 100%;
+  background: var(--control-accent);
+}
+
+.Thumb {
+  appearance: none;
+  display: block;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  margin: 0;
+  border: 2px solid var(--control-focus);
+  border-radius: 50%;
+  background: var(--control-text);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 50%);
+  cursor: grab;
+}
+
+@media (forced-colors: none) {
+  .Root:hover:not([data-disabled]) .Range,
+  .Root:has(.Thumb:focus-visible) .Range {
+    background: var(--control-focus);
+  }
+}
+
+.Thumb:focus-visible {
+  outline: 2px solid var(--control-focus);
+  outline-offset: 3px;
+}
+
+.Thumb:active:not(:disabled) {
+  cursor: grabbing;
+  background: var(--control-focus);
+}
+
+.Root[data-disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.Thumb:disabled {
+  cursor: default;
+}
+
+@media (pointer: coarse) {
+  .Root {
+    flex: 1 1 112px;
+    height: 44px;
+  }
+
+  .Thumb {
+    width: 22px;
+    height: 22px;
+  }
+}
+
+@media (forced-colors: active) {
+  .Track {
+    border-color: CanvasText;
+    background: Canvas;
+  }
+
+  .Range {
+    background: Highlight;
+    forced-color-adjust: none;
+  }
+
+  .Thumb {
+    border-color: ButtonText;
+    background: ButtonFace;
+  }
+
+  .Thumb:focus-visible {
+    outline-color: Highlight;
+  }
+}

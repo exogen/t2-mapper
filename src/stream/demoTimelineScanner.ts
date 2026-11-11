@@ -13,6 +13,7 @@ import {
   resolveNetString,
   formatServerMessageText,
   stripTaggedStringMarkup,
+  parseColorSegments,
 } from "./streamHelpers";
 import { KILL_MSG_TYPES, SELF_INFLICTED_MSG_TYPES } from "./serverMessages";
 import type { TeamAffinity, TimelineEvent } from "../state/demoTimelineStore";
@@ -81,6 +82,12 @@ function isCountdownForced(rawBody: string): boolean {
 
 export interface TimelineScanResult {
   events: TimelineEvent[];
+  /** Full recording roster, including players who left or had no timeline events. */
+  players: string[];
+  /** Recorder aliases, with the canonical initial roster name first when known. */
+  recorderNames: string[];
+  /** Raw names keyed by the exact stripped, trimmed, lowercase display name. */
+  playerRawNames: Record<string, string>;
 }
 
 /**
@@ -124,6 +131,39 @@ export async function scanDemoTimelineParser(
 
   const registry = parser.getRegistry();
   const parsedDemoValues = parseDemoValues(initialBlock.demoValues);
+  const seenPlayers = new Map<string, string>();
+  const recorderNames = new Map<string, string>();
+  const playerRawNames = new Map<string, { raw: string; markup: number }>();
+  function rememberName(
+    names: Map<string, string>,
+    name: string | null | undefined,
+    rawName?: string,
+  ) {
+    const stripped = name && stripTaggedStringMarkup(name).trim();
+    if (!stripped) return;
+    const key = stripped.toLowerCase();
+    if (!names.has(key)) names.set(key, stripped);
+    // A raw name must describe this exact label; never borrow clan tags
+    // from a player who happens to share a base name.
+    const raw =
+      rawName && stripTaggedStringMarkup(rawName).trim().toLowerCase() === key
+        ? rawName
+        : (name ?? stripped);
+    const previous = playerRawNames.get(key);
+    if (previous?.raw === raw) return;
+    const segments = parseColorSegments(raw, { taggedColors: true });
+    const markup = segments.some((segment) => segment.colorCode === 7)
+      ? 2
+      : segments.some((segment) => segment.colorCode !== 0)
+        ? 1
+        : 0;
+    if (!previous || markup > previous.markup) {
+      playerRawNames.set(key, { raw, markup });
+    }
+  }
+  for (const player of parsedDemoValues.playerRoster.values()) {
+    rememberName(seenPlayers, player.name, player.rawName);
+  }
   const rosterState = {
     flags: new Map(parsedDemoValues.flags.map((flag) => [flag.teamId, flag])),
     playerIdentity: { scope: "demo", generations: new Map<number, number>() },
@@ -182,10 +222,14 @@ export async function scanDemoTimelineParser(
       if (entry.name) {
         normalizedRecorder = entry.name.toLowerCase();
         recorderRawName = entry.rawName;
+        rememberName(recorderNames, entry.name, entry.rawName);
       }
       recorderTeamId = entry.teamId;
     }
   }
+  // The metadata can omit a clan tag. Once the initial client ID supplies
+  // its full name, the base name may belong to a different player.
+  if (!recorderNames.size) rememberName(recorderNames, recorderName);
 
   let events: TimelineEvent[] = [];
   // Generator credit may arrive later; match against the recorder's name
@@ -376,12 +420,44 @@ export async function scanDemoTimelineParser(
         if (args.length < 2 && msgTypeLower !== "msgctfflagcapped") continue;
         const metadataMessage = METADATA_MESSAGE_TYPES[msgTypeLower];
         if (metadataMessage) {
-          applyServerMessageState(
+          const changes = applyServerMessageState(
             metadataMessage,
             args,
             (arg) => resolveNetString(arg, netStrings),
             rosterState,
           );
+          if (changes?.rosterMetadataChanged) {
+            for (const player of rosterState.playerRoster.values()) {
+              rememberName(seenPlayers, player.name, player.rawName);
+            }
+          }
+          // Old/partial recordings can mention players before their join
+          // rows exist. Team joins keep an unnamed roster placeholder and
+          // drops remove it, but both messages still carry the player's name.
+          const isJoinOrDrop =
+            metadataMessage === "MsgClientJoin" ||
+            metadataMessage === "MsgClientDrop";
+          const isJoinTeam = metadataMessage === "MsgClientJoinTeam";
+          const isRename = metadataMessage === "MsgClientNameChanged";
+          const clientIdArg = isJoinOrDrop ? 3 : 4;
+          const minimumArgs = isJoinOrDrop ? 4 : isJoinTeam ? 6 : 5;
+          if (
+            (isJoinOrDrop || isJoinTeam || isRename) &&
+            args.length >= minimumArgs &&
+            /^\d+$/.test(
+              resolveNetString(args[clientIdArg], netStrings).trim(),
+            ) &&
+            (!isJoinTeam ||
+              /^-?\d+$/.test(resolveNetString(args[5], netStrings).trim()))
+          ) {
+            for (const index of isRename ? [2, 3] : [2]) {
+              const raw = resolveNetString(args[index], netStrings);
+              const name = flagMessageName(raw);
+              if (!raw.startsWith("\x01") && name) {
+                rememberName(seenPlayers, name, raw);
+              }
+            }
+          }
         }
         if (
           onServerName &&
@@ -460,6 +536,7 @@ export async function scanDemoTimelineParser(
             if (name) {
               normalizedRecorder = name.toLowerCase();
               recorderRawName = rawName;
+              rememberName(recorderNames, name, rawName);
             }
           }
         }
@@ -694,7 +771,27 @@ export async function scanDemoTimelineParser(
   }
 
   log.info("Scanned %d blocks, found %d events", blockCount, events.length);
+  // Old recordings can omit roster rows. Event names also cover late
+  // generator credit, which is finalized only once the scan is complete.
+  for (const event of events) {
+    for (const field of [
+      "killer",
+      "victim",
+      "actor",
+      "capturer",
+      "previousName",
+    ] as const) {
+      rememberName(seenPlayers, event[field], event.raw?.[field]);
+    }
+  }
   return {
     events,
+    players: [...seenPlayers.values()].sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" }),
+    ),
+    recorderNames: [...recorderNames.values()],
+    playerRawNames: Object.fromEntries(
+      [...playerRawNames].map(([key, { raw }]) => [key, raw]),
+    ),
   };
 }

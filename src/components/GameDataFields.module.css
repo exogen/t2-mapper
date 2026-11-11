@@ -155,6 +155,11 @@
 .Field input {
   font-weight: 400;
 }
+
+.GameSelect {
+  width: 100%;
+  font-weight: 400;
+}
 .Error {
   margin: 12px 0 0;
   color: #ffb0a0;

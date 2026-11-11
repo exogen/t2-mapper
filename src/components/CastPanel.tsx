@@ -1,5 +1,7 @@
+import { Checkbox } from "./Checkbox";
 import { useSettings } from "./SettingsProvider";
 import { trackKey, useCommentaryTracks } from "../state/commentaryTracksStore";
+import { Select } from "./Select";
 import styles from "./InspectorControls.module.css";
 
 /**
@@ -14,19 +16,20 @@ function CommentaryTrackPicker() {
   if (tracks.length < 2) return null;
   return (
     <div className={styles.Field}>
-      <label htmlFor="commentaryTrackInput">Commentary track</label>
+      <label id="commentaryTrackLabel" htmlFor="commentaryTrackInput">
+        Commentary track
+      </label>
       <div className={styles.Control}>
-        <select
+        <Select
           id="commentaryTrackInput"
+          aria-labelledby="commentaryTrackLabel"
           value={selected ? trackKey(selected) : ""}
-          onChange={(event) => select(event.target.value)}
-        >
-          {tracks.map((track) => (
-            <option key={trackKey(track)} value={trackKey(track)}>
-              {track.label}
-            </option>
-          ))}
-        </select>
+          onChange={select}
+          options={tracks.map((track) => ({
+            value: trackKey(track),
+            label: track.label,
+          }))}
+        />
       </div>
     </div>
   );
@@ -46,9 +49,8 @@ function CommentaryPanel() {
   return (
     <>
       <div className={styles.CheckboxField}>
-        <input
+        <Checkbox
           id="commentaryInput"
-          type="checkbox"
           checked={commentaryEnabled}
           onChange={(event) => {
             setCommentaryEnabled(event.target.checked);
@@ -59,9 +61,8 @@ function CommentaryPanel() {
         </label>
       </div>
       <div className={styles.CheckboxField}>
-        <input
+        <Checkbox
           id="commentarySubtitlesInput"
-          type="checkbox"
           checked={commentarySubtitles}
           onChange={(event) => {
             setCommentarySubtitles(event.target.checked);

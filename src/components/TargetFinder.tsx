@@ -183,7 +183,11 @@ function TargetFinderDialog({ onClose }: { onClose: () => void }) {
             <IoMdCloseCircle aria-hidden />
           </DialogDismiss>
         </div>
-        <ComboboxList className={styles.List} alwaysVisible>
+        <ComboboxList
+          className={styles.List}
+          aria-label="Players and flags"
+          alwaysVisible
+        >
           {matches.map((target) => (
             <ComboboxItem
               key={target.key}

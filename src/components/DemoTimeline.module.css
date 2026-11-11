@@ -11,18 +11,16 @@
   padding: 10px;
 }
 
-.Mine {
+.PlayerFilter {
   display: flex;
-  align-self: flex-start;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   padding: 10px 10px 0;
   font-size: 11px;
-  cursor: pointer;
 }
 
-.Mine input {
-  margin: 0;
+.PlayerFilter label {
+  flex-shrink: 0;
 }
 
 .FilterButton {
@@ -85,7 +83,7 @@
 }
 
 @media (pointer: coarse) {
-  .Mine {
+  .PlayerFilter {
     font-size: 13px;
   }
 

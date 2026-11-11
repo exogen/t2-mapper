@@ -252,6 +252,151 @@ describe("server metadata discovered during the timeline scan", () => {
   });
 });
 
+describe("players seen during the timeline scan", () => {
+  const message = (...args: string[]) => ({
+    type: BlockTypePacket,
+    parsed: remoteCommandPacket("ServerMessage", ...args),
+  });
+
+  it("retains initial and late players who leave without timeline events", async () => {
+    scan.demoValues = [
+      "",
+      "2",
+      "Zed\t123\t100\t32\t1\t0\t50\t0",
+      "Quiet\t456\t200\t33\t2\t0\t50\t0",
+    ];
+    scan.blocks = [
+      message("MsgClientDrop", "", "Zed", "100"),
+      message("MsgClientJoin", "", "Alice", "300"),
+      message("MsgClientDrop", "", "Alice", "300"),
+    ];
+
+    const result = await scanDemoTimeline(new ArrayBuffer(0), null);
+
+    expect(result.events).toEqual([]);
+    expect(result.players).toEqual(["Alice", "Quiet", "Zed"]);
+  });
+
+  it("retains raw names from team joins and drops without earlier roster rows", async () => {
+    const quiet = "\x10\x0bTAG|\x08Quiet\x11";
+    const departed = "\x10\x08Departed\x0b|TAG\x11";
+    scan.demoValues = ["", "0"];
+    scan.taggedStrings = new Map([
+      [10, quiet],
+      [11, "100"],
+    ]);
+    scan.blocks = [
+      message("MsgClientJoinTeam", "", "\x0110", "Storm", "\x0111", "1"),
+      message("MsgClientDrop", "", departed, "200"),
+    ];
+
+    const result = await scanDemoTimeline(new ArrayBuffer(0), null);
+
+    expect(result.events).toEqual([]);
+    expect(result.players).toEqual(["Departed|TAG", "TAG|Quiet"]);
+    expect(result.playerRawNames).toEqual({
+      "departed|tag": departed,
+      "tag|quiet": quiet,
+    });
+  });
+
+  it("ignores unusable fallback metadata fields and team labels", async () => {
+    scan.demoValues = ["", "0"];
+    scan.blocks = [
+      message("MsgClientJoinTeam", "", "Bad ID", "Storm", "not-a-client", "1"),
+      message("MsgClientDrop", "", "Partial ID", "100bad"),
+      message(
+        "MsgClientJoinTeam",
+        "",
+        "Bad team",
+        "Storm",
+        "100",
+        "not-a-team",
+      ),
+      message("MsgClientJoinTeam", "", "Short packet", "Storm", "100"),
+      message("MsgClientDrop", "", "0", "101"),
+      message("MsgClientDrop", "", " \x0b ", "102"),
+      message("MsgClientDrop", "", "\x01999", "103"),
+      message("MsgCTFAddTeam", "", "1", "Storm", "<At Base>", "0"),
+    ];
+
+    const result = await scanDemoTimeline(new ArrayBuffer(0), null);
+
+    expect(result.events).toEqual([]);
+    expect(result.players).toEqual([]);
+    expect(result.playerRawNames).toEqual({});
+  });
+
+  it("normalizes duplicate names and includes renames and missing-roster participants", async () => {
+    scan.demoValues = ["", "1", "  \x0bAlpha  \t123\t100\t32\t1\t0\t50\t0"];
+    scan.blocks = [
+      message("MsgClientJoin", "", "ALPHA", "200"),
+      message("MsgClientJoin", "", " \x0b ", "300"),
+      message("MsgClientNameChanged", "", "Old", "New", "400"),
+      message("MsgLegitKill", "", "Victim", "", "", "Killer"),
+    ];
+
+    const result = await scanDemoTimeline(new ArrayBuffer(0), null);
+
+    expect(result.players).toEqual(["Alpha", "Killer", "New", "Old", "Victim"]);
+  });
+
+  it("preserves clan markup from joins and renames over plain name fallbacks", async () => {
+    const alpha = "\x10\x0bTAG|\x08Alpha\x11";
+    const renamed = "\x10\x0bNEW|\x08Alpha\x11";
+    scan.demoValues = ["", "1", "TAG|Alpha\t123\t100\t32\t1\t0\t50\t0"];
+    scan.blocks = [
+      message("MsgClientJoin", "", alpha, "100"),
+      message("MsgClientNameChanged", "", alpha, renamed, "100"),
+      message("MsgLegitKill", "", "Victim", "", "", "TAG|Alpha"),
+    ];
+
+    const result = await scanDemoTimeline(new ArrayBuffer(0), null);
+
+    expect(result.playerRawNames).toEqual({
+      "tag|alpha": alpha,
+      "new|alpha": renamed,
+      victim: "Victim",
+    });
+  });
+
+  it("retains event-only raw names when the recording omits roster rows", async () => {
+    const killer = "\x10\x0bK|\x08Killer\x11";
+    const victim = "\x10\x0bV|\x08Victim\x11";
+    const capturer = "\x10\x0bC|\x08Capturer\x11";
+    scan.blocks = [
+      message("MsgLegitKill", "", victim, "", "", killer),
+      message("MsgCTFFlagCapped", "", capturer, "Storm", "1", "2"),
+    ];
+
+    const result = await scanDemoTimeline(new ArrayBuffer(0), null);
+
+    expect(result.playerRawNames).toEqual({
+      "k|killer": killer,
+      "v|victim": victim,
+      "c|capturer": capturer,
+    });
+  });
+
+  it("stores names matching object prototype keys as ordinary raw names", async () => {
+    scan.demoValues = [
+      "",
+      "2",
+      "\x08__proto__\t123\t100\t32\t1\t0\t50\t0",
+      "\x08constructor\t456\t200\t33\t2\t0\t50\t0",
+    ];
+    scan.blocks = [];
+
+    const result = await scanDemoTimeline(new ArrayBuffer(0), null);
+
+    expect(Object.hasOwn(result.playerRawNames, "__proto__")).toBe(true);
+    expect(result.playerRawNames["__proto__"]).toBe("\x08__proto__");
+    expect(Object.hasOwn(result.playerRawNames, "constructor")).toBe(true);
+    expect(result.playerRawNames["constructor"]).toBe("\x08constructor");
+    expect(Object.getPrototypeOf(result.playerRawNames)).toBe(Object.prototype);
+  });
+});
+
 describe("original timeline messages", () => {
   const message = (...args: string[]) => ({
     type: BlockTypePacket,
@@ -2540,6 +2685,38 @@ describe("recorder identity", () => {
       "1\t100\tRunner\tStorm\t123",
     ];
     scan.blocks = [];
+  });
+
+  it("returns the recorder's full roster name even without timeline events", async () => {
+    scan.demoValues = [
+      "",
+      "2",
+      `${tagged}\t123\t100\t32\t1\t0\t50\t0`,
+      "Runner\t456\t200\t33\t2\t0\t50\t0",
+      "readplayerinfo",
+      "1\t100\tRunner\tStorm\t123",
+    ];
+    const result = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
+
+    expect(result.events).toEqual([]);
+    expect(result.players).toEqual(["Runner", "TAG|Runner"]);
+    expect(result.recorderNames).toEqual(["TAG|Runner"]);
+    expect(result.playerRawNames).toEqual({
+      "tag|runner": tagged,
+      runner: "Runner",
+    });
+  });
+
+  it("retains recorder name history without adopting other clients' names", async () => {
+    scan.blocks = [
+      packet("MsgClientNameChanged", "", tagged, "NEW|Runner", "100"),
+      packet("MsgClientNameChanged", "", "Opponent", "OTHER|Runner", "200"),
+      packet("MsgClientJoin", "", "Late player", "300"),
+    ];
+
+    const result = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
+
+    expect(result.recorderNames).toEqual(["TAG|Runner", "NEW|Runner"]);
   });
 
   it.each(["missing", "invalid"])(

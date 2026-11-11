@@ -10,10 +10,15 @@ import {
   LuUser,
   LuUsers,
 } from "react-icons/lu";
+import { MdVerified } from "react-icons/md";
 import { TbLaurelWreathFilled } from "react-icons/tb";
 import { useAppAccount } from "../state/appAccountStore";
 import { editableDemoGame } from "../state/editableGame";
-import { demoPlayerCount, type DemoIndexEntry } from "../stream/demoIndex";
+import {
+  demoPlayerCount,
+  isMapGeniusDemo,
+  type DemoIndexEntry,
+} from "../stream/demoIndex";
 import {
   demoSummary,
   demoTitle,
@@ -257,11 +262,19 @@ export function DemoCard({
             <span className={tileStyles.TileSource}>
               {demo.recorder ? (
                 <span className={tileStyles.TileMetaItem}>
-                  <LuUser
-                    className={tileStyles.TileRecorderIcon}
-                    title="Recorded by"
-                    aria-hidden
-                  />
+                  {isMapGeniusDemo(demo) ? (
+                    <MdVerified
+                      className={tileStyles.TileMetaIcon}
+                      title="Recorded by MapGenius"
+                      aria-hidden
+                    />
+                  ) : (
+                    <LuUser
+                      className={tileStyles.TileRecorderIcon}
+                      title="Recorded by"
+                      aria-hidden
+                    />
+                  )}
                   <span
                     className={tileStyles.TileMetaText}
                     title={demo.recorder}

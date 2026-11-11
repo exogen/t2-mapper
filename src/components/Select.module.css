@@ -1,0 +1,187 @@
+.Surface {
+  border: 1px solid var(--control-border);
+  border-radius: 5px;
+  background-color: var(--control-background);
+  color: var(--control-text);
+  color-scheme: dark;
+}
+
+.Trigger {
+  composes: Surface;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 4px 5px 4px 7px;
+  font: inherit;
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+
+.Trigger:hover:not(:disabled),
+.Trigger[aria-expanded="true"] {
+  border-color: var(--control-hover-border);
+  background-color: var(--control-hover-background);
+}
+
+.Trigger:focus-visible {
+  outline: 2px solid var(--control-focus);
+  outline-offset: 2px;
+}
+
+.Trigger:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.Value {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.Arrow {
+  flex: 0 0 auto;
+  color: var(--control-muted);
+}
+
+.Native {
+  appearance: none;
+  padding-right: 20px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%23aac9f2' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5'%3E%3Cpath d='m3 4.5 3 3 3-3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 5px center;
+  text-overflow: ellipsis;
+}
+
+.Popover {
+  composes: Surface;
+  z-index: 100;
+  min-width: var(--popover-anchor-width);
+  max-width: min(28rem, calc(100vw - 16px));
+  max-height: min(360px, var(--popover-available-height, 360px));
+  padding: 4px;
+  background-color: var(--control-popover-background);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 50%);
+  font-size: 13px;
+  line-height: 1.4;
+  outline: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--control-border) var(--control-popover-background);
+  scroll-padding-block: 4px;
+}
+
+.Group + .Group,
+.Item + .Group {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--control-border);
+}
+
+.GroupLabel {
+  padding: 6px 9px;
+  color: var(--control-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.Separator {
+  margin: 4px 0;
+  border: 0;
+  border-top: 1px solid var(--control-border);
+}
+
+.Item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 6px 9px;
+  border-radius: 3px;
+  scroll-margin-block: 4px;
+  overflow-wrap: anywhere;
+  outline: none;
+  cursor: pointer;
+}
+
+.Item[data-active-item] {
+  background: var(--control-active-background);
+  color: #fff;
+}
+
+.Item[aria-selected="true"] {
+  color: var(--control-focus);
+}
+
+.Item[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.Check {
+  display: grid;
+  place-items: center;
+  flex: 0 0 12px;
+}
+
+.Trigger[data-size="small"] {
+  min-height: 22px;
+  padding: 2px 4px 2px 5px;
+  gap: 3px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.Trigger[data-size="small"] .Arrow {
+  font-size: 10px;
+}
+
+.Native[data-size="small"] {
+  padding-right: 17px;
+  background-position: right 4px center;
+  background-size: 10px 10px;
+}
+
+.Popover[data-size="small"] {
+  padding: 3px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.Popover[data-size="small"] .Item {
+  min-height: 28px;
+  padding: 4px 7px;
+  gap: 6px;
+}
+
+@media (pointer: coarse) {
+  .Trigger,
+  .Trigger[data-size="small"] {
+    min-height: 44px;
+    font-size: 16px;
+  }
+}
+
+@media (forced-colors: active) {
+  .Trigger:focus-visible {
+    outline-color: Highlight;
+  }
+
+  .Item[data-active-item] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  .Native {
+    appearance: auto;
+    background-image: none;
+  }
+}

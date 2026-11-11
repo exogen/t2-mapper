@@ -46,6 +46,7 @@ export function PlaybackSeekBar({
   return (
     <Slider.Root
       className={styles.SeekRoot}
+      data-playback-seek=""
       min={0}
       max={duration > 0 ? duration : step}
       step={step}

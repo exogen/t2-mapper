@@ -44,8 +44,8 @@ const MAX_PENDING_UPLOADS = 8;
 const TRANSFER_TIMEOUT_MS = 5 * 60_000;
 const RETRY_INTERVAL_MS = 30_000;
 const RATE_WINDOW_MS = 60 * 60_000;
-const MAX_ACCOUNT_ATTEMPTS = 10;
-const MAX_IP_ATTEMPTS = 40;
+const MAX_ACCOUNT_ATTEMPTS = 100;
+const MAX_IP_ATTEMPTS = MAX_ACCOUNT_ATTEMPTS * 2;
 const MAX_PUBLISH_ATTEMPTS = 3;
 const UUID =
   /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -393,7 +393,7 @@ export class UserDemoUploads {
         if (usage.count >= MAX_USER_DEMOS)
           throw new UploadError(
             409,
-            "Your demo library has reached its 100-demo limit",
+            `Your demo library has reached its ${MAX_USER_DEMOS.toLocaleString("en-US")}-demo limit`,
           );
         const outstanding = this.database
           .prepare(

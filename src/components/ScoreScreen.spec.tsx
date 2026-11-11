@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { casterStore } from "../state/casterStore";
 import { ScoreScreen } from "./ScoreScreen";
 import { ScoreHUD } from "./ScoreHUD";
+import type { PlayerRosterEntry, TeamScore } from "../stream/types";
 
 const fixture = vi.hoisted(() => ({
   effects: [] as (() => void | (() => void))[],
@@ -11,13 +12,9 @@ const fixture = vi.hoisted(() => ({
   role: "watcher",
   liveReady: true,
   snapshot: {
-    playerRoster: [],
+    playerRoster: [] as PlayerRosterEntry[],
     connectedClientId: null,
-    teamScores: [
-      { teamId: 1, name: "Storm", score: 1, playerCount: 0 },
-      { teamId: 2, name: "Inferno", score: 2, playerCount: 0 },
-      { teamId: 3, name: "Starwolf", score: 3, playerCount: 0 },
-    ],
+    teamScores: [] as TeamScore[],
   },
 }));
 
@@ -54,6 +51,12 @@ beforeEach(() => {
   fixture.source = "demo";
   fixture.role = "watcher";
   fixture.liveReady = true;
+  fixture.snapshot.playerRoster = [];
+  fixture.snapshot.teamScores = [
+    { teamId: 1, name: "Storm", score: 1, playerCount: 0 },
+    { teamId: 2, name: "Inferno", score: 2, playerCount: 0 },
+    { teamId: 3, name: "Starwolf", score: 3, playerCount: 0 },
+  ];
   casterStore.getState().activate("test:28000", "1", "Katabatic");
 });
 afterEach(() => {
@@ -62,6 +65,92 @@ afterEach(() => {
   casterStore.getState().suspend();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+function player(
+  name: string,
+  teamId: number,
+  clientId: number,
+): PlayerRosterEntry {
+  return {
+    name,
+    rawName: name,
+    teamId,
+    clientId,
+    score: 0,
+    ping: 45,
+    packetLoss: 0,
+  };
+}
+
+function scoreTables() {
+  return [
+    ...renderToStaticMarkup(<ScoreScreen onClose={() => {}} />).matchAll(
+      /<table\b[^>]*>[\s\S]*?<\/table>/g,
+    ),
+  ].map(([table]) => table);
+}
+
+it("names the split score tables and supplies observer column headers", () => {
+  fixture.snapshot.teamScores = fixture.snapshot.teamScores.slice(0, 2);
+  fixture.snapshot.playerRoster = [
+    player("Alice", 1, 1),
+    player("Bob", 1, 2),
+    player("Carol", 2, 3),
+    player("Watcher 1", 0, 4),
+    player("Watcher 2", 0, 5),
+    player("Watcher 3", 0, 6),
+  ];
+  const tables = scoreTables();
+  expect(tables).toHaveLength(4);
+  for (const [index, label] of [
+    "Storm players",
+    "Inferno players",
+    "Observers, left column",
+    "Observers, right column",
+  ].entries()) {
+    expect(tables[index].match(/<table[^>]*>/)?.[0]).toContain(
+      `aria-label="${label}"`,
+    );
+    expect(tables[index].match(/<th[^>]*scope="col"[^>]*>/g)).toHaveLength(2);
+  }
+  for (const table of tables.slice(2)) {
+    expect(table).toContain('<th scope="col">Player</th>');
+    expect(table).toContain('<th scope="col">Score</th>');
+  }
+  // Empty rows still align the two halves visually, but are not extra players.
+  expect(tables[1].match(/<tr aria-hidden="true">/g)).toHaveLength(1);
+  expect(tables[3].match(/<tr aria-hidden="true">/g)).toHaveLength(1);
+});
+
+it("keeps empty real teams accessible while hiding an odd team's absent half", () => {
+  fixture.snapshot.playerRoster = [player("Alice", 1, 1), player("Bob", 1, 2)];
+  const tables = scoreTables();
+  expect(tables).toHaveLength(4);
+  expect(tables[1].match(/<table[^>]*>/)?.[0]).toContain(
+    'aria-label="Inferno players"',
+  );
+  expect(tables[1].match(/<table[^>]*>/)?.[0]).not.toContain("aria-hidden");
+  expect(tables[1]).toContain("Players (0)");
+  expect(tables[2]).toContain('aria-label="Starwolf players"');
+  expect(tables[3].match(/<table[^>]*>/)?.[0]).toContain('aria-hidden="true"');
+});
+
+it("gives the second free-for-all table a player header and hides its padding row", () => {
+  fixture.snapshot.teamScores = [];
+  fixture.snapshot.playerRoster = [
+    player("Alice", 1, 1),
+    player("Bob", 2, 2),
+    player("Carol", 3, 3),
+  ];
+  const tables = scoreTables();
+  expect(tables).toHaveLength(2);
+  expect(tables[1].match(/<table[^>]*>/)?.[0]).toContain(
+    'aria-label="Players, right column"',
+  );
+  expect(tables[1]).toContain(">Player</span>");
+  expect(tables[1].match(/<th[^>]*scope="col"[^>]*>/g)).toHaveLength(2);
+  expect(tables[1].match(/<tr aria-hidden="true">/g)).toHaveLength(1);
 });
 
 it.each(["F2", "Escape"])(

@@ -137,10 +137,10 @@ const fixtures: Array<{
   root: string;
 }> = [];
 
-async function fixture(start = true) {
+async function fixture(start = true, databaseOverride?: Database.Database) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "user-demo-uploads-"));
   const directory = path.join(root, "uploads");
-  const database = new Database(path.join(root, "app.sqlite"));
+  const database = databaseOverride ?? new Database(":memory:");
   const getAccount = vi.fn(async () => account as AccountUser | null);
   const processDemo = vi.fn(
     async (file: string, _assets: string, signal?: AbortSignal) => {
@@ -518,23 +518,78 @@ describe("user demo upload admission", () => {
   });
 
   it.each(["count", "bytes"])(
-    "enforces the per-owner %s cap transactionally",
+    "rejects uploads at the per-owner %s cap using the owner's quota query",
     async (kind) => {
-      const f = await fixture();
-      const insert = f.database.prepare(
-        "INSERT INTO user_demo_uploads(id, owner_discord_id, original_filename, state, raw_bytes, charged_bytes, created_at, updated_at) VALUES (?, ?, 'saved.rec', 'ready', 1, ?, 1, 1)",
-      );
-      const count = kind === "count" ? MAX_USER_DEMOS : 1;
-      for (let i = 0; i < count; i++)
-        insert.run(
-          randomUUID(),
-          OWNER,
-          kind === "bytes" ? MAX_USER_DEMO_STORAGE_BYTES : 1,
-        );
-      expect((await f.upload()).statusCode).toBe(409);
-      expect(f.rows()).toHaveLength(count);
+      const quotaSql =
+        "SELECT COALESCE(SUM(reserved_bytes + charged_bytes), 0) AS bytes, COUNT(*) AS count FROM user_demo_uploads WHERE owner_discord_id = ? AND state != 'failed'";
+      const quota = {
+        get: vi.fn().mockReturnValue({
+          count: kind === "count" ? MAX_USER_DEMOS : 1,
+          bytes: kind === "bytes" ? MAX_USER_DEMO_STORAGE_BYTES : 1,
+        }),
+      };
+      const statement = {
+        all: vi.fn().mockReturnValue([]),
+        get: vi.fn(),
+        run: vi.fn(),
+        pluck: vi.fn().mockReturnThis(),
+      };
+      const pending = { get: vi.fn().mockReturnValue({ count: 0, bytes: 0 }) };
+      const database = {
+        exec: vi.fn(),
+        close: vi.fn(),
+        prepare: vi.fn((sql: string) =>
+          sql === quotaSql
+            ? quota
+            : sql.startsWith("SELECT COUNT(*) AS count,")
+              ? pending
+              : statement,
+        ),
+        transaction: vi.fn((callback: () => unknown) => ({
+          immediate: callback,
+        })),
+      };
+      const f = await fixture(true, database as unknown as Database.Database);
+      const rejected = await f.upload();
+      expect(rejected.statusCode).toBe(409);
+      expect(rejected.json()).toEqual({
+        error:
+          kind === "count"
+            ? "Your demo library has reached its 1,000-demo limit"
+            : "Your demo library does not have enough storage available",
+      });
+      expect(database.prepare).toHaveBeenCalledWith(quotaSql);
+      expect(quota.get).toHaveBeenCalledExactlyOnceWith(OWNER);
+      expect(
+        database.prepare.mock.calls.some(([sql]) =>
+          sql.startsWith("INSERT INTO user_demo_uploads("),
+        ),
+      ).toBe(false);
+      expect(f.processDemo).not.toHaveBeenCalled();
     },
   );
+
+  it("accepts the 1,000th demo and rejects the next upload", async () => {
+    const f = await fixture();
+    const insert = f.database.prepare(
+      "INSERT INTO user_demo_uploads(id, owner_discord_id, original_filename, state, raw_bytes, charged_bytes, created_at, updated_at) VALUES (?, ?, 'saved.rec', 'ready', 1, 1, 1, 1)",
+    );
+    f.database.transaction(() => {
+      for (let index = 0; index < 999; index++) insert.run(randomUUID(), OWNER);
+    })();
+
+    expect((await f.list()).limits.maxDemos).toBe(1_000);
+    expect((await f.upload()).statusCode).toBe(202);
+    await vi.waitFor(() => expect(f.publishDemo).toHaveBeenCalledTimes(1));
+    expect((await f.list()).usage.count).toBe(1_000);
+
+    const rejected = await f.upload();
+    expect(rejected.statusCode).toBe(409);
+    expect(rejected.json()).toEqual({
+      error: "Your demo library has reached its 1,000-demo limit",
+    });
+    expect(f.rows()).toHaveLength(1_000);
+  });
 
   it("bounds outstanding uploads globally across different owners", async () => {
     const f = await fixture();
@@ -559,15 +614,52 @@ describe("user demo upload admission", () => {
     await vi.waitFor(() => expect(f.processDemo).toHaveBeenCalledTimes(8));
   });
 
-  it("does not let rejected files reset the account upload-attempt budget", async () => {
+  it("allows 100 attempts per account per hour, including rejected files", async () => {
     const f = await fixture();
-    for (let index = 0; index < 10; index++)
+    for (let index = 0; index < 100; index++)
       expect((await f.upload(Buffer.from("not a recording"))).statusCode).toBe(
         422,
       );
-    expect((await f.upload()).statusCode).toBe(429);
+    const rejected = await f.upload();
+    expect(rejected.statusCode).toBe(429);
+    expect(rejected.headers["retry-after"]).toBe("3600");
     expect((await f.list()).usage.count).toBe(0);
     expect(f.processDemo).not.toHaveBeenCalled();
+
+    const resetAt = Date.now() + 3_600_001;
+    const now = vi.spyOn(Date, "now").mockReturnValue(resetAt);
+    try {
+      expect((await f.upload(Buffer.from("not a recording"))).statusCode).toBe(
+        422,
+      );
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("allows 200 attempts per IP per hour across accounts", async () => {
+    const f = await fixture();
+    const startedAt = Date.now();
+    f.database
+      .prepare(
+        "INSERT INTO user_demo_upload_rates(key, started_at, attempts) VALUES (?, ?, ?)",
+      )
+      .run("ip:127.0.0.1", startedAt, 199);
+
+    expect((await f.upload(Buffer.from("not a recording"))).statusCode).toBe(
+      422,
+    );
+    f.getAccount.mockResolvedValue({ ...account, discordId: OTHER });
+    expect((await f.upload()).statusCode).toBe(429);
+
+    const now = vi.spyOn(Date, "now").mockReturnValue(startedAt + 3_600_001);
+    try {
+      expect((await f.upload(Buffer.from("not a recording"))).statusCode).toBe(
+        422,
+      );
+    } finally {
+      now.mockRestore();
+    }
   });
 });
 

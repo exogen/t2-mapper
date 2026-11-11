@@ -1,4 +1,5 @@
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef, useMemo, type ReactNode } from "react";
+import { VisuallyHidden } from "@ariakit/react";
 import { LuUsers } from "react-icons/lu";
 import { IoMdStopwatch } from "react-icons/io";
 import { formatHudClock, useMatchClockMs } from "./useMatchClock";
@@ -6,7 +7,7 @@ import type { PlayerRosterEntry, TeamScore } from "../stream/types";
 import { ScorePlayerName } from "./ScorePlayerName";
 import { useFollowCamera } from "./useFollowCamera";
 import styles from "./ScoreScreen.module.css";
-import { useScoreboard } from "./useScoreboard";
+import { getScoreboardTeamName, useScoreboard } from "./useScoreboard";
 import { EditableTeamName } from "./TeamNameDialog";
 
 function computePingStats(players: PlayerRosterEntry[]): {
@@ -31,53 +32,41 @@ function MatchClock({ clockMs }: { clockMs: number }) {
   );
 }
 
-/** Paired left/right player rows for the 4-column table layout. */
-function PairedPlayerRows({
-  left,
-  right,
+function PlayerRows({
+  players,
+  rowCount,
   connectedClientId,
   onFollow,
 }: {
-  left: PlayerRosterEntry[];
-  right: PlayerRosterEntry[];
+  players: PlayerRosterEntry[];
+  rowCount: number;
   connectedClientId: number | null | undefined;
   onFollow?: (player: PlayerRosterEntry) => void;
 }) {
-  const maxRows = Math.max(left.length, right.length);
   return (
     <>
-      {Array.from({ length: maxRows }, (_, i) => {
-        const p1 = left[i];
-        const p2 = right[i];
-        const p1IsLocal =
-          connectedClientId != null && p1?.clientId === connectedClientId;
-        const p2IsLocal =
-          connectedClientId != null && p2?.clientId === connectedClientId;
+      {Array.from({ length: rowCount }, (_, i) => {
+        const player = players[i];
+        const isLocal =
+          connectedClientId != null && player?.clientId === connectedClientId;
         return (
-          <tr key={`${p1?.clientId ?? ""}-${p2?.clientId ?? ""}`}>
+          <tr
+            key={player?.clientId ?? `empty-${i}`}
+            aria-hidden={player ? undefined : true}
+          >
             <td
-              className={p1IsLocal ? styles.PlayerNameLocal : styles.PlayerName}
+              className={isLocal ? styles.PlayerNameLocal : styles.PlayerName}
             >
-              <ScorePlayerName player={p1} onFollow={onFollow} />
+              {player ? (
+                <ScorePlayerName player={player} onFollow={onFollow} />
+              ) : (
+                "\u00a0"
+              )}
             </td>
             <td
-              className={
-                p1IsLocal ? styles.PlayerScoreLocal : styles.PlayerScore
-              }
+              className={isLocal ? styles.PlayerScoreLocal : styles.PlayerScore}
             >
-              {p1 != null ? p1.score : ""}
-            </td>
-            <td
-              className={p2IsLocal ? styles.PlayerNameLocal : styles.PlayerName}
-            >
-              <ScorePlayerName player={p2} onFollow={onFollow} />
-            </td>
-            <td
-              className={
-                p2IsLocal ? styles.PlayerScoreLocal : styles.PlayerScore
-              }
-            >
-              {p2 != null ? p2.score : ""}
+              {player?.score ?? ""}
             </td>
           </tr>
         );
@@ -86,10 +75,70 @@ function PairedPlayerRows({
   );
 }
 
+/** Equal halves, each with an independently content-sized score column. */
+function PlayerPairTables({
+  left,
+  right,
+  leftLabel,
+  rightLabel,
+  leftHeader,
+  rightHeader,
+  observers = false,
+  connectedClientId,
+  onFollow,
+}: {
+  left: PlayerRosterEntry[];
+  right: PlayerRosterEntry[];
+  leftLabel: string;
+  rightLabel?: string;
+  leftHeader?: ReactNode;
+  rightHeader?: ReactNode;
+  observers?: boolean;
+  connectedClientId: number | null | undefined;
+  onFollow?: (player: PlayerRosterEntry) => void;
+}) {
+  const rowCount = Math.max(left.length, right.length);
+  return (
+    <div className={styles.TablePair}>
+      {[left, right].map((players, side) => (
+        <table
+          key={side}
+          className={styles.Table}
+          aria-label={side === 0 ? leftLabel : rightLabel}
+          aria-hidden={side === 1 && !rightLabel ? true : undefined}
+        >
+          {observers ? (
+            <VisuallyHidden render={<thead />}>
+              <tr>
+                <th scope="col">Player</th>
+                <th scope="col">Score</th>
+              </tr>
+            </VisuallyHidden>
+          ) : side === 0 ? (
+            leftHeader
+          ) : (
+            rightHeader
+          )}
+          <tbody
+            className={observers ? styles.ObserverBody : styles.PlayerBody}
+          >
+            <PlayerRows
+              players={players}
+              rowCount={rowCount}
+              connectedClientId={connectedClientId}
+              onFollow={onFollow}
+            />
+          </tbody>
+        </table>
+      ))}
+    </div>
+  );
+}
+
 function PlayersColumnHeader({ players }: { players: PlayerRosterEntry[] }) {
   const ping = computePingStats(players);
   return (
-    <th className={styles.ColumnHeader}>
+    <th className={styles.ColumnHeader} scope="col">
       <span>Players ({players.length})</span>
       {players.length > 0 && (
         <span className={styles.ColumnPing}>
@@ -122,44 +171,44 @@ function TeamPairSection({
   connectedClientId: number | null | undefined;
   onFollow?: (player: PlayerRosterEntry) => void;
 }) {
-  return (
-    <tbody className={styles.PlayerBody}>
+  const header = (
+    team: TeamScore | undefined,
+    players: PlayerRosterEntry[],
+  ) => (
+    <thead>
       <tr className={styles.TeamHeaderRow}>
         <th className={styles.TeamName}>
-          <EditableTeamName teamId={teamA.teamId} teams={teams} />
-        </th>
-        <th className={styles.TeamScore}>{teamA.score}</th>
-        <th className={styles.TeamName}>
-          {teamB ? (
-            <EditableTeamName teamId={teamB.teamId} teams={teams} />
+          {team ? (
+            <EditableTeamName teamId={team.teamId} teams={teams} />
           ) : (
-            " "
+            "\u00a0"
           )}
         </th>
-        <th className={styles.TeamScore}>{teamB ? teamB.score : " "}</th>
+        <th className={styles.TeamScore}>{team?.score ?? "\u00a0"}</th>
       </tr>
       <tr className={styles.ColumnHeaderRow}>
-        <PlayersColumnHeader players={playersA} />
-        <th className={styles.ColumnHeaderScore}>Score</th>
-        {teamB ? (
-          <>
-            <PlayersColumnHeader players={playersB} />
-            <th className={styles.ColumnHeaderScore}>Score</th>
-          </>
+        {team ? (
+          <PlayersColumnHeader players={players} />
         ) : (
-          <>
-            <th className={styles.ColumnHeader}>&nbsp;</th>
-            <th className={styles.ColumnHeaderScore}>&nbsp;</th>
-          </>
+          <th className={styles.ColumnHeader}>&nbsp;</th>
         )}
+        <th className={styles.ColumnHeaderScore} scope="col">
+          {team ? "Score" : "\u00a0"}
+        </th>
       </tr>
-      <PairedPlayerRows
-        left={playersA}
-        right={playersB}
-        connectedClientId={connectedClientId}
-        onFollow={onFollow}
-      />
-    </tbody>
+    </thead>
+  );
+  return (
+    <PlayerPairTables
+      left={playersA}
+      right={playersB}
+      leftLabel={`${getScoreboardTeamName(teamA)} players`}
+      rightLabel={teamB ? `${getScoreboardTeamName(teamB)} players` : undefined}
+      leftHeader={header(teamA, playersA)}
+      rightHeader={header(teamB, playersB)}
+      connectedClientId={connectedClientId}
+      onFollow={onFollow}
+    />
   );
 }
 
@@ -250,55 +299,76 @@ export function ScoreScreen({ onClose }: { onClose: () => void }) {
         </header>
 
         {teamPairs.length > 0 || ffaPlayers ? (
-          <div className={styles.TableWrapper}>
-            <table className={styles.Table}>
-              {teamPairs.map(([teamA, teamB]) => (
-                <TeamPairSection
-                  key={teamA.teamId}
-                  teamA={teamA}
-                  teamB={teamB}
-                  teams={teamScores ?? []}
-                  playersA={teamPlayers.get(teamA.teamId) ?? []}
-                  playersB={teamB ? (teamPlayers.get(teamB.teamId) ?? []) : []}
+          <div
+            className={styles.TableWrapper}
+            role="region"
+            aria-label="Player scores"
+            tabIndex={0}
+          >
+            {teamPairs.map(([teamA, teamB]) => (
+              <TeamPairSection
+                key={teamA.teamId}
+                teamA={teamA}
+                teamB={teamB}
+                teams={teamScores ?? []}
+                playersA={teamPlayers.get(teamA.teamId) ?? []}
+                playersB={teamB ? (teamPlayers.get(teamB.teamId) ?? []) : []}
+                connectedClientId={connectedClientId}
+                onFollow={onFollow}
+              />
+            ))}
+            {ffaPlayers ? (
+              <PlayerPairTables
+                left={ffaPlayers.slice(0, ffaHalf)}
+                right={ffaPlayers.slice(ffaHalf)}
+                leftLabel="Players, left column"
+                rightLabel={
+                  ffaPlayers.length > 1 ? "Players, right column" : undefined
+                }
+                leftHeader={
+                  <thead>
+                    <tr className={styles.ColumnHeaderRow}>
+                      <PlayersColumnHeader players={ffaPlayers} />
+                      <th className={styles.ColumnHeaderScore} scope="col">
+                        Score
+                      </th>
+                    </tr>
+                  </thead>
+                }
+                rightHeader={
+                  <thead>
+                    <tr className={styles.ColumnHeaderRow}>
+                      <th className={styles.ColumnHeader} scope="col">
+                        <VisuallyHidden>Player</VisuallyHidden>
+                      </th>
+                      <th className={styles.ColumnHeaderScore} scope="col">
+                        Score
+                      </th>
+                    </tr>
+                  </thead>
+                }
+                connectedClientId={connectedClientId}
+                onFollow={onFollow}
+              />
+            ) : null}
+            {observers.length > 0 ? (
+              <section>
+                <h3 className={styles.ObserversHeader}>
+                  Observers ({observers.length})
+                </h3>
+                <PlayerPairTables
+                  left={observers.slice(0, Math.ceil(observers.length / 2))}
+                  right={observers.slice(Math.ceil(observers.length / 2))}
+                  leftLabel="Observers, left column"
+                  rightLabel={
+                    observers.length > 1 ? "Observers, right column" : undefined
+                  }
+                  observers
                   connectedClientId={connectedClientId}
                   onFollow={onFollow}
                 />
-              ))}
-              {ffaPlayers ? (
-                <tbody className={styles.PlayerBody}>
-                  <tr className={styles.ColumnHeaderRow}>
-                    <PlayersColumnHeader players={ffaPlayers} />
-                    <th className={styles.ColumnHeaderScore}>Score</th>
-                    <th className={styles.ColumnHeader}>&nbsp;</th>
-                    <th className={styles.ColumnHeaderScore}>Score</th>
-                  </tr>
-                  <PairedPlayerRows
-                    left={ffaPlayers.slice(0, ffaHalf)}
-                    right={ffaPlayers.slice(ffaHalf)}
-                    connectedClientId={connectedClientId}
-                    onFollow={onFollow}
-                  />
-                </tbody>
-              ) : null}
-              {observers.length > 0 ? (
-                <tbody className={styles.ObserverBody}>
-                  <tr className={styles.ColumnHeaderRow}>
-                    <th colSpan={2} className={styles.ColumnHeader}>
-                      Observers ({observers.length})
-                    </th>
-                    <th colSpan={2} className={styles.ColumnHeader}>
-                      &nbsp;
-                    </th>
-                  </tr>
-                  <PairedPlayerRows
-                    left={observers.slice(0, Math.ceil(observers.length / 2))}
-                    right={observers.slice(Math.ceil(observers.length / 2))}
-                    connectedClientId={connectedClientId}
-                    onFollow={onFollow}
-                  />
-                </tbody>
-              ) : null}
-            </table>
+              </section>
+            ) : null}
           </div>
         ) : (
           <div className={styles.Empty}>Waiting for player data&hellip;</div>

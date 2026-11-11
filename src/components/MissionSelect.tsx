@@ -3,6 +3,7 @@ import {
   Fragment,
   useDeferredValue,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -179,6 +180,7 @@ export function MissionSelect({
   const [latestSearchValue, setSearchValue] = useState("");
   const searchValue = useDeferredValue(latestSearchValue);
   const inputRef = useRef<HTMLInputElement>(null);
+  const selectedValueId = useId();
   const missionTypeRef = useRef<string | null>(missionType);
 
   const combobox = useComboboxStore({
@@ -295,6 +297,8 @@ export function MissionSelect({
           autoSelect
           autoFocus={autoFocus}
           disabled={disabled}
+          aria-label="Choose a map"
+          aria-describedby={selectedMission ? selectedValueId : undefined}
           placeholder={selectedMission ? undefined : "Choose a map…"}
           className={styles.Input}
           onFocus={() => {
@@ -312,7 +316,11 @@ export function MissionSelect({
           }}
         />
         {selectedMission && (
-          <div className={styles.SelectedValue}>
+          <div
+            id={selectedValueId}
+            className={styles.SelectedValue}
+            aria-hidden
+          >
             <span className={styles.SelectedName}>{displayValue}</span>
             {missionType && (
               <span className={styles.ItemType} data-mission-type={missionType}>
@@ -326,13 +334,14 @@ export function MissionSelect({
       <button
         type="button"
         className={styles.CloseButton}
+        aria-label="Close map picker"
         data-open={isOpen}
         onClick={() => {
           combobox.hide();
           onCancel?.();
         }}
       >
-        <IoMdCloseCircle />
+        <IoMdCloseCircle aria-hidden />
       </button>
       <ComboboxPopover
         gutter={4}
@@ -350,7 +359,7 @@ export function MissionSelect({
           }
         }}
       >
-        <ComboboxList className={styles.List}>
+        <ComboboxList className={styles.List} aria-label="Maps">
           {filteredResults.type === "flat"
             ? filteredResults.missions.map(renderItem)
             : filteredResults.groups.map(([groupName, missions]) =>
@@ -368,7 +377,9 @@ export function MissionSelect({
                 ),
               )}
           {noResults && (
-            <div className={styles.NoResults}>No missions found</div>
+            <div className={styles.NoResults} role="status">
+              No missions found
+            </div>
           )}
         </ComboboxList>
       </ComboboxPopover>

@@ -161,7 +161,7 @@ function ledger(state: "ready" | "deleting" = "ready"): UserDemoUploadList {
       maxDemoBytes: 50_000_000,
       maxExpandedBytes: 128_000_000,
       maxStorageBytes: 8_000_000_000,
-      maxDemos: 100,
+      maxDemos: 1_000,
     },
   };
 }
@@ -486,7 +486,7 @@ it("offers the public-upload drop surface only on the verified owner's page", ()
     "It will be made public and appear in the demo browser.",
   );
   expect(markup).toContain("Drop a .rec file here");
-  expect(markup).not.toMatch(/50 MB|1 \/ 100 demos|8\.00 GB/);
+  expect(markup).not.toMatch(/50 MB|\d+ \/ \d+ demos|8\.00 GB/);
   expect(markup).not.toContain('aria-label="Load demo (.rec)"');
   const input = markup.match(/<input\b[^>]*>/)?.[0];
   expect(input).toContain('accept=".rec"');
@@ -576,14 +576,15 @@ it.each(["count", "storage"])(
   (limit) => {
     signIn();
     fixture.uploads = ledger();
-    if (limit === "count") fixture.uploads.usage.count = 100;
+    if (limit === "count")
+      fixture.uploads.usage.count = fixture.uploads.limits.maxDemos;
     else fixture.uploads.usage.bytes = 8_000_000_000;
     const markup = render();
     const button = markup.match(
       /<button\b[^>]*aria-label="Upload demo \(\.rec\)"[^>]*>/,
     )?.[0];
     expect(button).not.toContain("disabled");
-    expect(markup).not.toMatch(/50 MB|100 demos|8\.00 GB|upload limit/);
+    expect(markup).not.toMatch(/50 MB|\d+ demos|8\.00 GB|upload limit/);
   },
 );
 

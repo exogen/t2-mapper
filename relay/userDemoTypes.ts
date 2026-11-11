@@ -5,7 +5,7 @@ export const MAX_USER_DEMO_DECOMPRESSED_BYTES = 128_000_000;
 export const MAX_USER_DEMO_SIDECAR_BYTES = 128_000_000;
 export const MAX_USER_DEMO_METADATA_BYTES = 1_000_000;
 export const MAX_USER_DEMO_STORAGE_BYTES = 8_000_000_000;
-export const MAX_USER_DEMOS = 100;
+export const MAX_USER_DEMOS = 1_000;
 
 export type UserDemoUploadState =
   | "receiving"

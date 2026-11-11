@@ -1,7 +1,10 @@
 import { CastPanel } from "./CastPanel";
 import { QuickCamPanel } from "./QuickCamPanel";
+import { Select } from "./Select";
+import { RangeSlider } from "./RangeSlider";
+import { Checkbox } from "./Checkbox";
 import { useCommentaryTracks } from "../state/commentaryTracksStore";
-import { useEffect, useState, useRef, memo } from "react";
+import { memo } from "react";
 import { FaRotateRight } from "react-icons/fa6";
 import {
   MAX_JOYSTICK_OPACITY,
@@ -31,6 +34,7 @@ import { JoinServerButton } from "./JoinServerButton";
 import { Accordion, AccordionGroup } from "./Accordion";
 import { useTouchDevice } from "./useTouchDevice";
 import { DemoTimeline } from "./DemoTimeline";
+import { useDemoTimelineFilters } from "./useDemoTimelineFilters";
 import { MapTourPanel } from "./MapTourPanel";
 import { CommandCircuitButton } from "./CommandCircuitButton";
 import { showNewAddressDialog } from "./NewAddressDialog";
@@ -97,6 +101,7 @@ export const InspectorControls = memo(function InspectorControls({
   const isTouch = useTouchDevice();
   const dataSource = useDataSource();
   const recording = useRecording();
+  const timelineFilters = useDemoTimelineFilters();
   const demoSourceUrl = useDemoLoad((s) => s.sourceUrl);
   const features = useFeatures();
   const storeMissionName = useMissionName();
@@ -206,42 +211,10 @@ export const InspectorControls = memo(function InspectorControls({
   const watching = useIsWatchSpectator();
   const showCasterControls =
     (dataSource === "live" && watching) || recording?.source === "demo";
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const focusAreaRef = useRef<HTMLDivElement>(null);
-  // Focus the panel when it opens.
-  useEffect(() => {
-    if (settingsOpen) {
-      dropdownRef.current?.focus();
-    }
-  }, [settingsOpen]);
-  const handleDropdownBlur = (e: React.FocusEvent) => {
-    const relatedTarget = e.relatedTarget as Node | null;
-    if (relatedTarget && focusAreaRef.current?.contains(relatedTarget)) {
-      return;
-    }
-    setSettingsOpen(false);
-  };
-  // Close on Escape and return focus to the gear button.
-  const handlePanelKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
-      setSettingsOpen(false);
-      buttonRef.current?.focus();
-    }
-  };
   return (
     <div id="controls" className={styles.InspectorControls}>
-      <div ref={focusAreaRef}>
-        <div
-          className={styles.Dropdown}
-          ref={dropdownRef}
-          id="settingsPanel"
-          tabIndex={-1}
-          onKeyDown={handlePanelKeyDown}
-          onBlur={handleDropdownBlur}
-          data-open={settingsOpen}
-        >
+      <div>
+        <div className={styles.Dropdown} id="settingsPanel">
           <div className={styles.Tools}>
             <div className={buttonStyles.ButtonGroup}>
               <ChooseMapButton
@@ -316,7 +289,7 @@ export const InspectorControls = memo(function InspectorControls({
               )}
               {recording?.source === "demo" && (
                 <Accordion value="timeline" label="Timeline" noPadding>
-                  <DemoTimeline />
+                  <DemoTimeline filters={timelineFilters} />
                 </Accordion>
               )}
               {dataSource === "map" && !recording && (
@@ -326,26 +299,28 @@ export const InspectorControls = memo(function InspectorControls({
               )}
               <Accordion value="preferences" label="Preferences">
                 <div className={styles.Field}>
-                  <label htmlFor="fovInput">FOV</label>
+                  <label id="fovInput-label" htmlFor="fovInput">
+                    FOV
+                  </label>
                   <div className={styles.Control}>
                     <output htmlFor="fovInput">{fov}&deg;</output>
-                    <input
+                    <RangeSlider
                       id="fovInput"
-                      type="range"
+                      aria-labelledby="fovInput-label"
+                      aria-valuetext={`${fov} degrees`}
                       min={75}
                       max={120}
                       step={5}
                       value={fov}
-                      onChange={(event) => setFov(parseInt(event.target.value))}
+                      onValueChange={setFov}
                     />
                   </div>
                 </div>
                 {hasStreamData && (
                   <>
                     <div className={styles.CheckboxField}>
-                      <input
+                      <Checkbox
                         id="showChatInput"
-                        type="checkbox"
                         checked={showChat}
                         onChange={(event) => {
                           setShowChat(event.target.checked);
@@ -355,23 +330,23 @@ export const InspectorControls = memo(function InspectorControls({
                         Chat HUD
                       </label>
                       <div className={styles.Control}>
-                        <select
+                        <Select
                           id="chatHudStyleInput"
                           aria-label="Chat HUD style"
                           value={chatHudStyle}
-                          onChange={(event) =>
-                            setChatHudStyle(event.target.value as HudStyle)
+                          onChange={(value) =>
+                            setChatHudStyle(value as HudStyle)
                           }
-                        >
-                          <option value="solid">Solid</option>
-                          <option value="transparent">Transparent</option>
-                        </select>
+                          options={[
+                            { value: "solid", label: "Solid" },
+                            { value: "transparent", label: "Transparent" },
+                          ]}
+                        />
                       </div>
                     </div>
                     <div className={styles.CheckboxField}>
-                      <input
+                      <Checkbox
                         id="showScoreHudInput"
-                        type="checkbox"
                         checked={showScoreHud}
                         onChange={(event) =>
                           setShowScoreHud(event.target.checked)
@@ -384,36 +359,35 @@ export const InspectorControls = memo(function InspectorControls({
                         Mini score HUD
                       </label>
                       <div className={styles.Control}>
-                        <select
+                        <Select
                           id="scoreHudPositionInput"
                           aria-label="Mini score HUD position"
                           value={scoreHudPosition}
-                          onChange={(event) =>
-                            setScoreHudPosition(
-                              event.target.value as HudPosition,
-                            )
+                          onChange={(value) =>
+                            setScoreHudPosition(value as HudPosition)
                           }
-                        >
-                          <option value="left">Left</option>
-                          <option value="right">Right</option>
-                        </select>
-                        <select
+                          options={[
+                            { value: "left", label: "Left" },
+                            { value: "right", label: "Right" },
+                          ]}
+                        />
+                        <Select
                           id="scoreHudStyleInput"
                           aria-label="Player scores HUD style"
                           value={scoreHudStyle}
-                          onChange={(event) =>
-                            setScoreHudStyle(event.target.value as HudStyle)
+                          onChange={(value) =>
+                            setScoreHudStyle(value as HudStyle)
                           }
-                        >
-                          <option value="solid">Solid</option>
-                          <option value="transparent">Transparent</option>
-                        </select>
+                          options={[
+                            { value: "solid", label: "Solid" },
+                            { value: "transparent", label: "Transparent" },
+                          ]}
+                        />
                       </div>
                     </div>
                     <div className={styles.CheckboxField}>
-                      <input
+                      <Checkbox
                         id="showMatchHudInput"
-                        type="checkbox"
                         checked={showMatchHud}
                         onChange={(event) =>
                           setShowMatchHud(event.target.checked)
@@ -426,35 +400,41 @@ export const InspectorControls = memo(function InspectorControls({
                         Match HUD
                       </label>
                       <div className={styles.Control}>
-                        <select
+                        <Select
                           id="matchHudStyleInput"
                           aria-label="Match HUD style"
                           value={matchHudStyle}
-                          onChange={(event) =>
-                            setMatchHudStyle(
-                              event.target.value as MatchHudStyle,
-                            )
+                          onChange={(value) =>
+                            setMatchHudStyle(value as MatchHudStyle)
                           }
-                        >
-                          <option value="classic">Classic</option>
-                          <option value="broadcast">Broadcast</option>
-                        </select>
+                          options={[
+                            { value: "classic", label: "Classic" },
+                            { value: "broadcast", label: "Broadcast" },
+                          ]}
+                        />
                       </div>
                     </div>
                     <div className={styles.Field}>
-                      <label htmlFor="scoreStyleInput">Score style</label>
+                      <label
+                        id="scoreStyleInput-label"
+                        htmlFor="scoreStyleInput"
+                      >
+                        Score style
+                      </label>
                       <div className={styles.Control}>
-                        <select
+                        <Select
                           id="scoreStyleInput"
-                          value={scoreStyle}
+                          aria-labelledby="scoreStyleInput-label"
                           title="Competition shows captures only in CTF games."
-                          onChange={(event) =>
-                            setScoreStyle(event.target.value as ScoreStyle)
+                          value={scoreStyle}
+                          onChange={(value) =>
+                            setScoreStyle(value as ScoreStyle)
                           }
-                        >
-                          <option value="classic">100, 200, 300</option>
-                          <option value="competition">1, 2, 3</option>
-                        </select>
+                          options={[
+                            { value: "classic", label: "100, 200, 300" },
+                            { value: "competition", label: "1, 2, 3" },
+                          ]}
+                        />
                       </div>
                       <p className={styles.Description}>
                         How team scores are displayed for CTF games: 100 points
@@ -464,9 +444,8 @@ export const InspectorControls = memo(function InspectorControls({
                   </>
                 )}
                 <div className={styles.CheckboxField}>
-                  <input
+                  <Checkbox
                     id="showCompassInput"
-                    type="checkbox"
                     checked={showCompass}
                     onChange={(event) => {
                       setShowCompass(event.target.checked);
@@ -478,9 +457,8 @@ export const InspectorControls = memo(function InspectorControls({
                 </div>
                 {hasStreamData && (
                   <div className={styles.CheckboxField}>
-                    <input
+                    <Checkbox
                       id="showReticleInput"
-                      type="checkbox"
                       checked={showReticle}
                       onChange={(event) => {
                         setShowReticle(event.target.checked);
@@ -492,9 +470,8 @@ export const InspectorControls = memo(function InspectorControls({
                   </div>
                 )}
                 <div className={styles.CheckboxField}>
-                  <input
+                  <Checkbox
                     id="showInputOverlayInput"
-                    type="checkbox"
                     checked={showInputOverlay}
                     onChange={(event) => {
                       setShowInputOverlay(event.target.checked);
@@ -508,9 +485,8 @@ export const InspectorControls = memo(function InspectorControls({
                   </label>
                 </div>
                 <div className={styles.CheckboxField}>
-                  <input
+                  <Checkbox
                     id="followBehindPlayerInput"
-                    type="checkbox"
                     checked={followBehindPlayer}
                     onChange={(event) => {
                       setFollowBehindPlayer(event.target.checked);
@@ -524,64 +500,69 @@ export const InspectorControls = memo(function InspectorControls({
                   </label>
                 </div>
                 <div className={styles.Field}>
-                  <label htmlFor="showIffsInput">IFFs &amp; nameplates</label>
+                  <label id="showIffsInput-label" htmlFor="showIffsInput">
+                    IFFs &amp; nameplates
+                  </label>
                   <div className={styles.Control}>
-                    <select
+                    <Select
                       id="showIffsInput"
+                      aria-labelledby="showIffsInput-label"
                       value={showIffs}
-                      onChange={(event) => {
-                        setShowIffs(event.target.value as IffVisibility);
-                      }}
-                    >
-                      <option value="always">Always</option>
-                      <option value="followed">Only followed player</option>
-                      <option value="exceptFollowed">
-                        Except followed player
-                      </option>
-                      <option value="never">Never</option>
-                    </select>
+                      onChange={(value) => setShowIffs(value as IffVisibility)}
+                      options={[
+                        { value: "always", label: "Always" },
+                        { value: "followed", label: "Only followed player" },
+                        {
+                          value: "exceptFollowed",
+                          label: "Except followed player",
+                        },
+                        { value: "never", label: "Never" },
+                      ]}
+                    />
                   </div>
                 </div>
                 <div className={styles.Field}>
-                  <label htmlFor="ccPlayerNamesInput">
+                  <label
+                    id="ccPlayerNamesInput-label"
+                    htmlFor="ccPlayerNamesInput"
+                  >
                     Names in command circuit
                   </label>
                   <div className={styles.Control}>
-                    <select
+                    <Select
                       id="ccPlayerNamesInput"
+                      aria-labelledby="ccPlayerNamesInput-label"
                       value={ccPlayerNames}
-                      onChange={(event) => {
-                        setCcPlayerNames(event.target.value as CcPlayerNames);
-                      }}
-                    >
-                      <option value="always">Always</option>
-                      <option value="hover">On hover</option>
-                      <option value="never">Never</option>
-                    </select>
+                      onChange={(value) =>
+                        setCcPlayerNames(value as CcPlayerNames)
+                      }
+                      options={[
+                        { value: "always", label: "Always" },
+                        { value: "hover", label: "On hover" },
+                        { value: "never", label: "Never" },
+                      ]}
+                    />
                   </div>
                 </div>
                 <div className={styles.Field}>
-                  <label htmlFor="observerTeamColorsInput">
+                  <label
+                    id="observerTeamColorsInput-label"
+                    htmlFor="observerTeamColorsInput"
+                  >
                     Observer team colors
                   </label>
                   <div className={styles.Control}>
-                    <select
+                    <Select
                       id="observerTeamColorsInput"
+                      aria-labelledby="observerTeamColorsInput-label"
                       value={observerTeamColors}
-                      onChange={(event) => {
-                        setObserverTeamColors(
-                          event.target.value as TeamColorScheme,
-                        );
-                      }}
-                    >
-                      {Object.entries(TEAM_COLOR_SCHEMES).map(
-                        ([value, scheme]) => (
-                          <option key={value} value={value}>
-                            {scheme.label}
-                          </option>
-                        ),
+                      onChange={(value) =>
+                        setObserverTeamColors(value as TeamColorScheme)
+                      }
+                      options={Object.entries(TEAM_COLOR_SCHEMES).map(
+                        ([value, scheme]) => ({ value, label: scheme.label }),
                       )}
-                    </select>
+                    />
                   </div>
                   <p className={styles.Description}>
                     Colors that will be used to distinguish teams
@@ -596,21 +577,23 @@ export const InspectorControls = memo(function InspectorControls({
               )}
               <Accordion value="controls" label="Controls">
                 <div className={styles.Field}>
-                  <label htmlFor="speedInput">Fly speed</label>
+                  <label id="speedInput-label" htmlFor="speedInput">
+                    Fly speed
+                  </label>
                   <div className={styles.Control}>
-                    <input
+                    <RangeSlider
                       id="speedInput"
-                      type="range"
+                      aria-labelledby="speedInput-label"
+                      aria-describedby="speedInput-description"
+                      aria-valuetext={`${Math.round(speedMultiplier * 100)} percent`}
                       min={MIN_SPEED_MULTIPLIER * 100}
                       max={MAX_SPEED_MULTIPLIER * 100}
                       step={1}
                       value={Math.round(speedMultiplier * 100)}
-                      onChange={(event) =>
-                        setSpeedMultiplier(Number(event.target.value) / 100)
-                      }
+                      onValueChange={(value) => setSpeedMultiplier(value / 100)}
                     />
                   </div>
-                  <p className={styles.Description}>
+                  <p id="speedInput-description" className={styles.Description}>
                     How fast you move in free-flying mode.
                     {isTouch === false
                       ? " Use your scroll wheel or trackpad to adjust while flying."
@@ -619,18 +602,20 @@ export const InspectorControls = memo(function InspectorControls({
                 </div>
                 {isTouch ? (
                   <div className={styles.Field}>
-                    <label htmlFor="touchModeInput">Joystick</label>{" "}
+                    <label id="touchModeInput-label" htmlFor="touchModeInput">
+                      Joystick
+                    </label>{" "}
                     <div className={styles.Control}>
-                      <select
+                      <Select
                         id="touchModeInput"
+                        aria-labelledby="touchModeInput-label"
                         value={touchMode}
-                        onChange={(e) =>
-                          setTouchMode(e.target.value as TouchMode)
-                        }
-                      >
-                        <option value="dualStick">Dual stick</option>
-                        <option value="moveLookStick">Single stick</option>
-                      </select>
+                        onChange={(value) => setTouchMode(value as TouchMode)}
+                        options={[
+                          { value: "dualStick", label: "Dual stick" },
+                          { value: "moveLookStick", label: "Single stick" },
+                        ]}
+                      />
                     </div>
                     <p className={styles.Description}>
                       Single stick has a unified move + look control. Dual stick
@@ -640,22 +625,26 @@ export const InspectorControls = memo(function InspectorControls({
                 ) : null}
                 {isTouch ? (
                   <div className={styles.Field}>
-                    <label htmlFor="joystickOpacityInput">
+                    <label
+                      id="joystickOpacityInput-label"
+                      htmlFor="joystickOpacityInput"
+                    >
                       Joystick opacity
                     </label>
                     <div className={styles.Control}>
                       <output htmlFor="joystickOpacityInput">
                         {Math.round(joystickOpacity * 100)}%
                       </output>
-                      <input
+                      <RangeSlider
                         id="joystickOpacityInput"
-                        type="range"
+                        aria-labelledby="joystickOpacityInput-label"
+                        aria-valuetext={`${Math.round(joystickOpacity * 100)} percent`}
                         min={MIN_JOYSTICK_OPACITY * 100}
                         max={MAX_JOYSTICK_OPACITY * 100}
                         step={5}
                         value={Math.round(joystickOpacity * 100)}
-                        onChange={(event) =>
-                          setJoystickOpacity(Number(event.target.value) / 100)
+                        onValueChange={(value) =>
+                          setJoystickOpacity(value / 100)
                         }
                       />
                     </div>
@@ -663,9 +652,9 @@ export const InspectorControls = memo(function InspectorControls({
                 ) : null}
                 {isTouch === false ? (
                   <div className={styles.CheckboxField}>
-                    <input
+                    <Checkbox
                       id="invertScroll"
-                      type="checkbox"
+                      aria-describedby="invertScroll-description"
                       checked={invertScroll}
                       onChange={(event) => {
                         setInvertScroll(event.target.checked);
@@ -674,7 +663,10 @@ export const InspectorControls = memo(function InspectorControls({
                     <label className={styles.Label} htmlFor="invertScroll">
                       Invert scroll direction
                     </label>
-                    <p className={styles.Description}>
+                    <p
+                      id="invertScroll-description"
+                      className={styles.Description}
+                    >
                       Reverse which scroll direction increases and decreases fly
                       speed.
                     </p>
@@ -682,9 +674,9 @@ export const InspectorControls = memo(function InspectorControls({
                 ) : null}
                 {isTouch ? (
                   <div className={styles.CheckboxField}>
-                    <input
+                    <Checkbox
                       id="invertJoystick"
-                      type="checkbox"
+                      aria-describedby="invertJoystick-description"
                       checked={invertJoystick}
                       onChange={(event) => {
                         setInvertJoystick(event.target.checked);
@@ -693,15 +685,18 @@ export const InspectorControls = memo(function InspectorControls({
                     <label className={styles.Label} htmlFor="invertJoystick">
                       Invert joystick direction
                     </label>
-                    <p className={styles.Description}>
+                    <p
+                      id="invertJoystick-description"
+                      className={styles.Description}
+                    >
                       Reverse joystick look direction.
                     </p>
                   </div>
                 ) : null}
                 <div className={styles.CheckboxField}>
-                  <input
+                  <Checkbox
                     id="invertDrag"
-                    type="checkbox"
+                    aria-describedby="invertDrag-description"
                     checked={invertDrag}
                     onChange={(event) => {
                       setInvertDrag(event.target.checked);
@@ -710,37 +705,38 @@ export const InspectorControls = memo(function InspectorControls({
                   <label className={styles.Label} htmlFor="invertDrag">
                     Invert drag direction
                   </label>
-                  <p className={styles.Description}>
+                  <p id="invertDrag-description" className={styles.Description}>
                     Reverse how dragging the viewport aims the camera.
                   </p>
                 </div>
                 {isTouch === false && (
                   <div className={styles.Field}>
-                    <label htmlFor="mouseSensitivityInput">
+                    <label
+                      id="mouseSensitivityInput-label"
+                      htmlFor="mouseSensitivityInput"
+                    >
                       Mouse sensitivity
                     </label>
                     <div className={styles.Control}>
-                      <input
+                      <RangeSlider
                         id="mouseSensitivityInput"
-                        type="range"
+                        aria-labelledby="mouseSensitivityInput-label"
                         min={1}
                         max={256}
                         step={2}
                         value={Math.round(mouseSensitivity * 16000)}
-                        onChange={(event) => {
-                          const value = parseInt(event.target.value);
-                          const sens = value / 16000;
-                          setMouseSensitivity(sens);
-                        }}
+                        onValueChange={(value) =>
+                          setMouseSensitivity(value / 16000)
+                        }
                       />
                     </div>
                   </div>
                 )}
                 {isTouch === false && (
                   <div className={styles.CheckboxField}>
-                    <input
+                    <Checkbox
                       id="clickToCycleInput"
-                      type="checkbox"
+                      aria-describedby="clickToCycleInput-description"
                       checked={clickToCycle}
                       onChange={(event) =>
                         setClickToCycle(event.target.checked)
@@ -749,7 +745,10 @@ export const InspectorControls = memo(function InspectorControls({
                     <label className={styles.Label} htmlFor="clickToCycleInput">
                       Enable click to cycle
                     </label>
-                    <p className={styles.Description}>
+                    <p
+                      id="clickToCycleInput-description"
+                      className={styles.Description}
+                    >
                       With the mouse captured, use left and right mouse buttons
                       to cycle the followed player.
                     </p>
@@ -758,9 +757,8 @@ export const InspectorControls = memo(function InspectorControls({
               </Accordion>
               <Accordion value="audio" label="Audio">
                 <div className={styles.CheckboxField}>
-                  <input
+                  <Checkbox
                     id="audioInput"
-                    type="checkbox"
                     checked={audioEnabled}
                     onChange={(event) => {
                       setAudioEnabled(event.target.checked);
@@ -771,28 +769,28 @@ export const InspectorControls = memo(function InspectorControls({
                   </label>
                 </div>
                 <div className={styles.Field}>
-                  <label htmlFor="volumeInput">Master volume</label>
+                  <label id="volumeInput-label" htmlFor="volumeInput">
+                    Master volume
+                  </label>
                   <div className={styles.Control}>
                     <output htmlFor="volumeInput">
                       {Math.round(audioVolume * 100)}%
                     </output>
-                    <input
+                    <RangeSlider
                       id="volumeInput"
-                      type="range"
+                      aria-labelledby="volumeInput-label"
+                      aria-valuetext={`${Math.round(audioVolume * 100)} percent`}
                       min={0}
                       max={1}
                       step={0.05}
                       value={audioVolume}
-                      onChange={(event) =>
-                        setAudioVolume(parseFloat(event.target.value))
-                      }
+                      onValueChange={setAudioVolume}
                     />
                   </div>
                 </div>
                 <div className={styles.CheckboxField}>
-                  <input
+                  <Checkbox
                     id="adjustAudioSpeedInput"
-                    type="checkbox"
                     checked={adjustAudioSpeed}
                     onChange={(event) => {
                       setAdjustAudioSpeed(event.target.checked);
@@ -809,9 +807,8 @@ export const InspectorControls = memo(function InspectorControls({
               <Accordion value="graphics" label="Graphics">
                 {canDisableFog && (
                   <div className={styles.CheckboxField}>
-                    <input
+                    <Checkbox
                       id="fogInput"
-                      type="checkbox"
                       checked={fogEnabled}
                       onChange={(event) => {
                         setFogEnabled(event.target.checked);
@@ -823,9 +820,8 @@ export const InspectorControls = memo(function InspectorControls({
                   </div>
                 )}
                 <div className={styles.CheckboxField}>
-                  <input
+                  <Checkbox
                     id="animationInput"
-                    type="checkbox"
                     checked={animationEnabled}
                     onChange={(event) => {
                       setAnimationEnabled(event.target.checked);
@@ -836,9 +832,8 @@ export const InspectorControls = memo(function InspectorControls({
                   </label>
                 </div>
                 <div className={styles.CheckboxField}>
-                  <input
+                  <Checkbox
                     id="shadowsInput"
-                    type="checkbox"
                     checked={shadowsEnabled}
                     onChange={(event) => {
                       setShadowsEnabled(event.target.checked);
@@ -849,21 +844,20 @@ export const InspectorControls = memo(function InspectorControls({
                   </label>
                 </div>
                 <div className={styles.Field}>
-                  <label htmlFor="renderScaleInput">Render scale</label>
+                  <label id="renderScaleInput-label" htmlFor="renderScaleInput">
+                    Render scale
+                  </label>
                   <div className={styles.Control}>
-                    <select
+                    <Select
                       id="renderScaleInput"
-                      value={renderScale}
-                      onChange={(e) => {
-                        setRenderScale(parseFloat(e.target.value));
-                      }}
-                    >
-                      {RENDER_SCALE_OPTIONS.map((value) => (
-                        <option key={value} value={value}>
-                          {Math.round(value * 100)}%
-                        </option>
-                      ))}
-                    </select>
+                      aria-labelledby="renderScaleInput-label"
+                      value={String(renderScale)}
+                      onChange={(value) => setRenderScale(parseFloat(value))}
+                      options={RENDER_SCALE_OPTIONS.map((value) => ({
+                        value: String(value),
+                        label: `${Math.round(value * 100)}%`,
+                      }))}
+                    />
                   </div>
                   <p className={styles.Description}>
                     Resolution of the 3D view. Lower percentages render fewer
@@ -871,26 +865,28 @@ export const InspectorControls = memo(function InspectorControls({
                   </p>
                 </div>
                 <div className={styles.Field}>
-                  <label htmlFor="fpsLimitInput">FPS limit</label>
+                  <label id="fpsLimitInput-label" htmlFor="fpsLimitInput">
+                    FPS limit
+                  </label>
                   <div className={styles.Control}>
-                    <select
+                    <Select
                       id="fpsLimitInput"
-                      value={fpsLimit ?? ""}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setFpsLimit(val === "" ? null : parseInt(val));
-                      }}
-                    >
-                      {import.meta.env.DEV ? (
-                        <option value="1">1</option>
-                      ) : null}
-                      <option value="20">20</option>
-                      <option value="30">30</option>
-                      <option value="60">60</option>
-                      <option value="120">120</option>
-                      <option value="144">144</option>
-                      <option value="">No limit</option>
-                    </select>
+                      aria-labelledby="fpsLimitInput-label"
+                      value={fpsLimit == null ? "" : String(fpsLimit)}
+                      onChange={(value) =>
+                        setFpsLimit(value === "" ? null : parseInt(value))
+                      }
+                      options={[
+                        ...(import.meta.env.DEV
+                          ? [{ value: "1", label: "1" }]
+                          : []),
+                        ...[20, 30, 60, 120, 144].map((value) => ({
+                          value: String(value),
+                          label: String(value),
+                        })),
+                        { value: "", label: "No limit" },
+                      ]}
+                    />
                   </div>
                   <p className={styles.Description}>
                     Give your device a break by capping the framerate.
@@ -899,9 +895,9 @@ export const InspectorControls = memo(function InspectorControls({
               </Accordion>
               <Accordion value="debug" label="Debug">
                 <div className={styles.CheckboxField}>
-                  <input
+                  <Checkbox
                     id="lodInput"
-                    type="checkbox"
+                    aria-describedby="lodInput-description"
                     checked={lodEnabled}
                     onChange={(event) => {
                       setLodEnabled(event.target.checked);
@@ -910,15 +906,14 @@ export const InspectorControls = memo(function InspectorControls({
                   <label className={styles.Label} htmlFor="lodInput">
                     Enable LOD
                   </label>
-                  <p className={styles.Description}>
+                  <p id="lodInput-description" className={styles.Description}>
                     Level of detail selection: render simpler shapes when far
                     away. Turn off to always use full detail.
                   </p>
                 </div>
                 <div className={styles.CheckboxField}>
-                  <input
+                  <Checkbox
                     id="fpsMeterInput"
-                    type="checkbox"
                     checked={showFpsMeter}
                     onChange={(event) => {
                       setShowFpsMeter(event.target.checked);
@@ -929,9 +924,9 @@ export const InspectorControls = memo(function InspectorControls({
                   </label>
                 </div>
                 <div className={styles.CheckboxField}>
-                  <input
+                  <Checkbox
                     id="aimCorrectionInput"
-                    type="checkbox"
+                    aria-describedby="aimCorrectionInput-description"
                     checked={aimCorrection}
                     onChange={(event) => {
                       setAimCorrection(event.target.checked);
@@ -940,7 +935,10 @@ export const InspectorControls = memo(function InspectorControls({
                   <label className={styles.Label} htmlFor="aimCorrectionInput">
                     Aim correction
                   </label>
-                  <p className={styles.Description}>
+                  <p
+                    id="aimCorrectionInput-description"
+                    className={styles.Description}
+                  >
                     Other players’ angles arrive rounded down in steps of about
                     3°, causing minor discrepancies in aiming. When enabled,
                     this attempts to compensate by rounding differently,
@@ -950,9 +948,8 @@ export const InspectorControls = memo(function InspectorControls({
                 </div>
                 {canShowDebugVisuals && (
                   <div className={styles.CheckboxField}>
-                    <input
+                    <Checkbox
                       id="debugInput"
-                      type="checkbox"
                       checked={debugMode}
                       onChange={(event) => {
                         setDebugMode(event.target.checked);
@@ -964,9 +961,9 @@ export const InspectorControls = memo(function InspectorControls({
                   </div>
                 )}
                 <div className={styles.CheckboxField}>
-                  <input
+                  <Checkbox
                     id="onDemandInput"
-                    type="checkbox"
+                    aria-describedby="onDemandInput-description"
                     checked={renderOnDemand}
                     onChange={(event) => {
                       setRenderOnDemand(event.target.checked);
@@ -984,7 +981,10 @@ export const InspectorControls = memo(function InspectorControls({
                       <FaRotateRight />
                     </button>
                   </div>
-                  <p className={styles.Description}>
+                  <p
+                    id="onDemandInput-description"
+                    className={styles.Description}
+                  >
                     Significantly decreases CPU and GPU usage by only rendering
                     frames when requested. Helpful when developing parts of the
                     app unrelated to rendering.

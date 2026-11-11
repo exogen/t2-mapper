@@ -1,3 +1,4 @@
+import { Checkbox } from "./Checkbox";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { getPlayerResolver } from "../state/playerResolver";
 import { BsShiftFill } from "react-icons/bs";
@@ -9,6 +10,7 @@ import { quickCamDisplay } from "./quickCamDisplay";
 import { QuickCamIcon } from "./QuickCamIcon";
 import { useQuickCams } from "./useQuickCams";
 import { useSettings, type HudPosition } from "./SettingsProvider";
+import { Select } from "./Select";
 import styles from "./InspectorControls.module.css";
 import cameraStyles from "./QuickCamPanel.module.css";
 
@@ -24,9 +26,8 @@ export function QuickCamPanel({ watching }: { watching: boolean }) {
   return (
     <>
       <div className={styles.CheckboxField}>
-        <input
+        <Checkbox
           id="showQuickCamHudInput"
-          type="checkbox"
           checked={showQuickCamHud}
           onChange={(event) => setShowQuickCamHud(event.target.checked)}
         />
@@ -34,23 +35,21 @@ export function QuickCamPanel({ watching }: { watching: boolean }) {
           Quick cam HUD
         </label>
         <div className={styles.Control}>
-          <select
+          <Select
             id="quickCamHudPositionInput"
             aria-label="Quick cam HUD position"
             value={quickCamHudPosition}
-            onChange={(event) =>
-              setQuickCamHudPosition(event.target.value as HudPosition)
-            }
-          >
-            <option value="left">Left</option>
-            <option value="right">Right</option>
-          </select>
+            onChange={(value) => setQuickCamHudPosition(value as HudPosition)}
+            options={[
+              { value: "left", label: "Left" },
+              { value: "right", label: "Right" },
+            ]}
+          />
         </div>
       </div>
       <div className={styles.CheckboxField}>
-        <input
+        <Checkbox
           id="quickCamHideUnassignedSlotsInput"
-          type="checkbox"
           checked={quickCamHideUnassignedSlots}
           onChange={(event) =>
             setQuickCamHideUnassignedSlots(event.target.checked)

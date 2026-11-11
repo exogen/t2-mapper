@@ -8,6 +8,7 @@ import {
   demoPlayerCount,
   fetchDemoIndex,
   demoDownloadUrl,
+  isMapGeniusDemo,
 } from "./demoIndex";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -54,6 +55,29 @@ describe("demo player count", () => {
   });
   it("keeps old metadata usable before backfill", () => {
     expect(demoPlayerCount({ players: ["Alice", "Bob"] })).toBe(2);
+  });
+});
+
+describe("isMapGeniusDemo", () => {
+  it("recognizes published recordings made by MapGenius", () => {
+    expect(
+      isMapGeniusDemo({ filename: "match.rec", recorder: "MapGenius" }),
+    ).toBe(true);
+    expect(
+      isMapGeniusDemo({ filename: "match.rec", recorder: "mapgenius" }),
+    ).toBe(true);
+    expect(isMapGeniusDemo({ filename: "match.rec", recorder: "Flyers" })).toBe(
+      false,
+    );
+  });
+
+  it("never trusts a user upload's header recorder name", () => {
+    expect(
+      isMapGeniusDemo({
+        filename: "users/123456789012345678/match.rec",
+        recorder: "MapGenius",
+      }),
+    ).toBe(false);
   });
 });
 

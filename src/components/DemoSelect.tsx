@@ -1,8 +1,10 @@
+import { Checkbox } from "./Checkbox";
 import {
   Activity,
   Fragment,
   useDeferredValue,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -22,11 +24,13 @@ import { FaMicrophoneAlt } from "react-icons/fa";
 import { IoMdCloseCircle } from "react-icons/io";
 import { IoCalendarNumberOutline } from "react-icons/io5";
 import { LuClock, LuUser, LuUsers } from "react-icons/lu";
+import { MdVerified } from "react-icons/md";
 import { PiGlobe } from "react-icons/pi";
 import { TbLaurelWreathFilled } from "react-icons/tb";
 import {
   DEMOS_BASE_URL,
   demoPlayerCount,
+  isMapGeniusDemo,
   type DemoIndexEntry,
 } from "../stream/demoIndex";
 import { useDemoIndex } from "./useDemoIndex";
@@ -128,11 +132,19 @@ function DemoItemContent({ demo }: { demo: DemoIndexEntry }) {
       <span className={`${demoStyles.Details} ${demoStyles.Source}`}>
         {demo.recorder ? (
           <span className={demoStyles.MetaItem}>
-            <LuUser
-              className={`${demoStyles.MetaIcon} ${demoStyles.RecorderIcon}`}
-              title="Recorded by"
-              aria-hidden
-            />
+            {isMapGeniusDemo(demo) ? (
+              <MdVerified
+                className={demoStyles.MetaIcon}
+                title="Recorded by MapGenius"
+                aria-hidden
+              />
+            ) : (
+              <LuUser
+                className={`${demoStyles.MetaIcon} ${demoStyles.RecorderIcon}`}
+                title="Recorded by"
+                aria-hidden
+              />
+            )}
             <span className={demoStyles.MetaText} title={demo.recorder}>
               {demo.recorder}
             </span>
@@ -191,6 +203,7 @@ export function DemoSelect() {
   const [tournamentOnly, setTournamentOnly] = useState(false);
   const [commentaryOnly, setCommentaryOnly] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const selectedValueId = useId();
 
   const enabled = DEMOS_BASE_URL !== "";
 
@@ -284,6 +297,8 @@ export function DemoSelect() {
         <Combobox
           ref={inputRef}
           autoSelect
+          aria-label="Choose a demo"
+          aria-describedby={selectedDemo ? selectedValueId : undefined}
           placeholder={selectedDemo ? undefined : "Choose a demo…"}
           className={styles.Input}
           onFocus={() => {
@@ -301,7 +316,11 @@ export function DemoSelect() {
           }}
         />
         {selectedDemo && (
-          <div className={styles.SelectedValue}>
+          <div
+            id={selectedValueId}
+            className={styles.SelectedValue}
+            aria-hidden
+          >
             <span className={styles.SelectedName}>
               {demoTitle(selectedDemo)}
             </span>
@@ -312,12 +331,13 @@ export function DemoSelect() {
       <button
         type="button"
         className={styles.CloseButton}
+        aria-label="Close demo picker"
         data-open={isOpen}
         onClick={() => {
           combobox.hide();
         }}
       >
-        <IoMdCloseCircle />
+        <IoMdCloseCircle aria-hidden />
       </button>
       <ComboboxPopover
         gutter={4}
@@ -343,8 +363,7 @@ export function DemoSelect() {
             onMouseDown={(event) => event.preventDefault()}
           >
             <label className={styles.Filter}>
-              <input
-                type="checkbox"
+              <Checkbox
                 className={styles.FilterCheckbox}
                 checked={tournamentOnly}
                 onChange={(event) => setTournamentOnly(event.target.checked)}
@@ -353,8 +372,7 @@ export function DemoSelect() {
               <span className={styles.FilterLabel}>Tournament mode only</span>
             </label>
             <label className={styles.Filter}>
-              <input
-                type="checkbox"
+              <Checkbox
                 className={styles.FilterCheckbox}
                 checked={commentaryOnly}
                 onChange={(event) => setCommentaryOnly(event.target.checked)}
@@ -364,9 +382,11 @@ export function DemoSelect() {
             </label>
           </div>
         )}
-        <ComboboxList className={styles.List}>
+        <ComboboxList className={styles.List} aria-label="Demos">
           {emptyMessage != null ? (
-            <div className={styles.NoResults}>{emptyMessage}</div>
+            <div className={styles.NoResults} role="status">
+              {emptyMessage}
+            </div>
           ) : (
             filteredGroups.map(([day, dayDemos]) => (
               <ComboboxGroup key={day} className={styles.Group}>
@@ -377,7 +397,11 @@ export function DemoSelect() {
               </ComboboxGroup>
             ))
           )}
-          {noResults && <div className={styles.NoResults}>No demos found</div>}
+          {noResults && (
+            <div className={styles.NoResults} role="status">
+              No demos found
+            </div>
+          )}
         </ComboboxList>
       </ComboboxPopover>
     </ComboboxProvider>

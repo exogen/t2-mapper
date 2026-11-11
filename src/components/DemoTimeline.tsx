@@ -1,4 +1,5 @@
-import { useState, useCallback, useEffect } from "react";
+import { useCallback, useId } from "react";
+import { Select } from "./Select";
 import { PiFlagBanner, PiFlagBannerFill } from "react-icons/pi";
 import { IoSkullSharp } from "react-icons/io5";
 import { useDemoTimeline } from "../state/demoTimelineStore";
@@ -19,17 +20,18 @@ import { useSettings } from "./SettingsProvider";
 import { useMediaQuery } from "./useMediaQuery";
 import { ImSad2 } from "react-icons/im";
 import { timelineFlagColor } from "./demoTimelineColors";
-import { isRelayRecording } from "../stream/demoDate";
 import {
   timelineDeathAction,
   timelineKillVerb,
 } from "../stream/demoTimelineCombatText";
 import {
   TIMELINE_CATEGORIES,
-  defaultTimelineCategories,
+  involvesTimelinePlayer,
   isMatchTimelineEvent,
   matchesTimelineCategory,
 } from "./demoTimelineFilters";
+import { timelinePlayerOptions } from "./demoTimelinePlayers";
+import type { DemoTimelineFilters } from "./useDemoTimelineFilters";
 import accordionStyles from "./Accordion.module.css";
 import controlStyles from "./InspectorControls.module.css";
 import styles from "./DemoTimeline.module.css";
@@ -171,30 +173,30 @@ function renderEventDescription(event: TimelineEvent): React.ReactNode {
   return event.description;
 }
 
-export function DemoTimeline() {
+export function DemoTimeline({ filters }: { filters: DemoTimelineFilters }) {
   const events = useDemoTimeline((s) => s.events);
+  const players = useDemoTimeline((s) => s.players);
+  const recorderNames = useDemoTimeline((s) => s.recorderNames);
+  const playerRawNames = useDemoTimeline((s) => s.playerRawNames);
   const scanProgress = useDemoTimeline((s) => s.scanProgress);
   const error = useDemoTimeline((s) => s.error);
   const recording = useRecording();
   const { setSidebarOpen, observerTeamColors } = useSettings();
   // Match the overlay layout and navigation actions in MapInspector.
   const sidebarOverlayMode = useMediaQuery("(max-width: 899px)") ?? false;
-  const [categories, setCategories] = useState(defaultTimelineCategories);
-  const defaultMine = !isRelayRecording(recording?.recorderName ?? null);
-  const [mine, setMine] = useState(defaultMine);
-
-  useEffect(() => {
-    setCategories(defaultTimelineCategories());
-    setMine(defaultMine);
-  }, [events, defaultMine]);
+  const { categories, setCategories, player, setPlayer } = filters;
+  const playerFilterId = useId();
+  const playerOptions = timelinePlayerOptions(
+    players,
+    events ?? [],
+    recording?.recorderName ?? null,
+    recorderNames,
+    playerRawNames,
+  );
 
   const scopedEvents =
-    events?.filter(
-      (event) =>
-        isMatchTimelineEvent(event) ||
-        !mine ||
-        event.isRecorder ||
-        event.victimIsRecorder,
+    events?.filter((event) =>
+      involvesTimelinePlayer(event, player, playerRawNames),
     ) ?? [];
   const filtered = scopedEvents.filter(
     (event) =>
@@ -202,7 +204,7 @@ export function DemoTimeline() {
       TIMELINE_CATEGORIES.some(
         (category) =>
           categories.has(category.value) &&
-          matchesTimelineCategory(event, category, mine),
+          matchesTimelineCategory(event, category, player, playerRawNames),
       ),
   );
   const allSelected = categories.size === TIMELINE_CATEGORIES.length;
@@ -240,14 +242,19 @@ export function DemoTimeline() {
 
   return (
     <div className={styles.Root}>
-      <label className={styles.Mine}>
-        <input
-          type="checkbox"
-          checked={mine}
-          onChange={(event) => setMine(event.target.checked)}
+      <div className={styles.PlayerFilter}>
+        <label id={`${playerFilterId}-label`} htmlFor={playerFilterId}>
+          Show events involving
+        </label>
+        <Select
+          id={playerFilterId}
+          size="small"
+          aria-labelledby={`${playerFilterId}-label`}
+          value={player}
+          onChange={setPlayer}
+          options={playerOptions}
         />
-        Only the recorder’s events
-      </label>
+      </div>
       <div className={styles.Filters}>
         <button
           type="button"
@@ -269,7 +276,7 @@ export function DemoTimeline() {
         {TIMELINE_CATEGORIES.map((category) => {
           const active = categories.has(category.value);
           const count = scopedEvents.filter((event) =>
-            matchesTimelineCategory(event, category, mine),
+            matchesTimelineCategory(event, category, player, playerRawNames),
           ).length;
           return (
             <button
@@ -299,7 +306,13 @@ export function DemoTimeline() {
           {filtered.map((event, i) => {
             const displayType =
               event.type === "kill" &&
-              (!categories.has("kill") || (mine && !event.isRecorder))
+              (!categories.has("kill") ||
+                !matchesTimelineCategory(
+                  event,
+                  TIMELINE_CATEGORIES[0],
+                  player,
+                  playerRawNames,
+                ))
                 ? "death"
                 : event.type;
             return (

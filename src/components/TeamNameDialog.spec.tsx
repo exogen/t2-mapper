@@ -38,7 +38,8 @@ vi.mock("react-dom", async (original) => ({
   ...(await original<typeof import("react-dom")>()),
   createPortal: (children: ReactNode) => children,
 }));
-vi.mock("@ariakit/react", () => ({
+vi.mock("@ariakit/react", async (original) => ({
+  ...(await original<typeof import("@ariakit/react")>()),
   Dialog: ({
     children,
     className,

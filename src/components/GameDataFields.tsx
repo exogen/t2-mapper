@@ -9,6 +9,7 @@ import type { TeamScore } from "../stream/types";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import { formatPlayheadTime, missionDisplayName } from "./demoFormat";
 import { LoadingIndicator } from "./LoadingIndicator";
+import { Select } from "./Select";
 import styles from "./GameDataFields.module.css";
 
 export type NamedTeam = Pick<TeamScore, "teamId" | "name">;
@@ -132,27 +133,29 @@ export function GameDataSelector({
   onSelect: (index: number) => void;
   disabled?: boolean;
 }) {
+  const id = useId();
   if (!games || games.length < 2) return null;
   return (
-    <label className={styles.Field}>
-      Game
-      <select
-        className={styles.Input}
-        value={selectedIndex ?? ""}
+    <div className={styles.Field}>
+      <label id={`${id}-label`} htmlFor={id}>
+        Game
+      </label>
+      <Select
+        id={id}
+        aria-labelledby={`${id}-label`}
+        className={styles.GameSelect}
+        value={selectedIndex == null ? "" : String(selectedIndex)}
         disabled={disabled}
-        onChange={(event) => onSelect(Number(event.target.value))}
-      >
-        <option value="" disabled>
-          Choose a game…
-        </option>
-        {games.map((entry, index) => (
-          <option value={index} key={index}>
-            {missionDisplayName(entry.mission)} ·{" "}
-            {formatPlayheadTime(entry.startMs / 1000)}
-          </option>
-        ))}
-      </select>
-    </label>
+        onChange={(value) => onSelect(Number(value))}
+        options={[
+          { value: "", label: "Choose a game…", disabled: true },
+          ...games.map((entry, index) => ({
+            value: String(index),
+            label: `${missionDisplayName(entry.mission)} · ${formatPlayheadTime(entry.startMs / 1000)}`,
+          })),
+        ]}
+      />
+    </div>
   );
 }
 

@@ -107,19 +107,6 @@
 
 .Speed {
   flex-shrink: 0;
-  padding: 3px 4px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 3px;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
-  font-size: 13px;
-}
-
-@media (pointer: coarse) {
-  .Speed {
-    font-size: 14px;
-    padding: 8px;
-  }
 }
 
 .Field {

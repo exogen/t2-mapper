@@ -31,6 +31,18 @@
 :root {
   --game-title-color: #ddc27c;
 
+  /* Application chrome uses blue; game content keeps its teal palette. */
+  --control-background: #142f4c;
+  --control-popover-background: #10243b;
+  --control-border: #527ca8;
+  --control-hover-border: #7db9ff;
+  --control-hover-background: #1d426b;
+  --control-text: #e1edff;
+  --control-muted: #aac9f2;
+  --control-focus: #a8d0ff;
+  --control-accent: #5b9fff;
+  --control-active-background: #25578b;
+
   --monospace-font:
     ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
     monospace;

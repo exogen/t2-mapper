@@ -34,7 +34,7 @@
 .MissionInfo .ServerInfo {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 10px;
   font-size: 11px;
   line-height: calc(14 / 11);
   white-space: nowrap;
@@ -42,7 +42,24 @@
   max-width: 100%;
 }
 
+/* One icon and its value; each item sets its own inner gap. */
+.MetaItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 /* Long values on the line shrink and ellipsize. */
+.ServerItem {
+  composes: MetaItem;
+  min-width: 0;
+}
+
+.RecordingDateItem {
+  composes: MetaItem;
+  min-width: 0;
+}
+
 .MissionInfo .ServerInfo .ServerName,
 .MissionInfo .ServerInfo .RecordingDate {
   overflow: hidden;
@@ -50,8 +67,7 @@
 }
 
 @media (max-width: 599px) {
-  .CalendarIcon,
-  .RecordingDate {
+  .RecordingDateItem {
     display: none;
   }
 }
@@ -60,11 +76,6 @@
 .MetaIcon {
   flex: 0 0 auto;
   font-size: 16px;
-}
-
-/* Extra spacing before a new group of info on the line. */
-.MetaGap {
-  margin-left: 4px;
 }
 
 .ServerIcon {
@@ -108,6 +119,11 @@
 .RecorderIcon {
   composes: MetaIcon;
   margin-left: -2px;
+}
+
+.VerifiedRecorderIcon {
+  composes: MetaIcon;
+  margin-left: -1px;
 }
 
 /* Download button for the source .rec of a URL-loaded demo — sits
@@ -247,10 +263,8 @@
 
 /* Reads like the rest of the line, but clickable. */
 .PlayersButton {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin: 0 0 0 4px;
+  composes: MetaItem;
+  margin: 0;
   padding: 0;
   border: 0;
   background: none;

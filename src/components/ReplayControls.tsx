@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isPlaybackControl } from "../keyboard";
 import { GrPauseFill, GrPlayFill } from "react-icons/gr";
 import {
   replayConnectionStore,
@@ -170,15 +171,14 @@ export function ReplayControls() {
   useEffect(() => {
     if (!canPlay) return;
     const onKey = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
       if (
+        event.defaultPrevented ||
         event.code !== "Space" ||
         event.repeat ||
         event.altKey ||
         event.ctrlKey ||
         event.metaKey ||
-        target?.isContentEditable ||
-        target?.closest("input, textarea, select, button")
+        isPlaybackControl(event.target)
       )
         return;
       event.preventDefault();

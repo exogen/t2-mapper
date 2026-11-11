@@ -120,6 +120,17 @@
   margin: 0;
 }
 
+.Filter .FilterCheckbox {
+  width: calc(1.25em - 1px);
+  height: calc(1.25em - 1px);
+}
+
+@media (pointer: coarse) {
+  .Filter {
+    min-height: 24px;
+  }
+}
+
 /* Filter-bar laurel: one size smaller than the list-item laurel.
    Centered by the row's align-items; -1px trims the gap to the label. */
 .FilterIcon {

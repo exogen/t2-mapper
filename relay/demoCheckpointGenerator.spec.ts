@@ -317,6 +317,9 @@ describe("offline checkpoint generation", () => {
     async (lastTick, checkpointPlan, ticks) => {
       // Keep the replay real while supplying a deterministic kickoff marker.
       vi.spyOn(timelineScanner, "scanDemoTimelineParser").mockResolvedValue({
+        players: [],
+        recorderNames: [],
+        playerRawNames: {},
         events: [
           {
             type: "match-start",
