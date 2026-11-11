@@ -12,7 +12,8 @@ import {
 import { useStore } from "zustand";
 import { matchSorter } from "match-sorter";
 import { FaSearch } from "react-icons/fa";
-import { LuUser, LuX } from "react-icons/lu";
+import { IoMdCloseCircle } from "react-icons/io";
+import { LuUser } from "react-icons/lu";
 import { PiFlagBannerFill } from "react-icons/pi";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
@@ -179,7 +180,7 @@ function TargetFinderDialog({ onClose }: { onClose: () => void }) {
             className={styles.Close}
             aria-label="Close target finder"
           >
-            <LuX aria-hidden />
+            <IoMdCloseCircle aria-hidden />
           </DialogDismiss>
         </div>
         <ComboboxList className={styles.List} alwaysVisible>

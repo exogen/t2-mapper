@@ -127,7 +127,11 @@
     justify-self: center;
     grid-area: content;
     grid-row: content-start / footer-end;
-    width: auto;
+    /* A definite width, not auto: with justify-self: center, auto shrinks
+       to fit the content, so unwrappable content (nowrap timeline rows)
+       would push it past the viewport. The extra 2px offsets the -1px
+       side margins that hide the borders at phone widths. */
+    width: calc(100% + 2px);
     max-width: 500px;
     height: calc(100% + 1px);
     margin: 0 -1px 0 -1px;

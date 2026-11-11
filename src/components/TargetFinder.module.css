@@ -58,6 +58,7 @@
   display: grid;
   place-items: center;
   padding: 4px;
+  font-size: 24px;
   border: 0;
   color: #99adac;
   background: transparent;
@@ -122,6 +123,28 @@
   flex-wrap: wrap;
   gap: 8px 16px;
   margin-left: auto;
+}
+
+@media (max-width: 499px) {
+  .Search {
+    padding-block: 12px;
+  }
+
+  .Input {
+    font-size: 18px;
+  }
+
+  .Item {
+    padding-block: 8px;
+  }
+
+  .Name {
+    font-size: calc(1em - 1px);
+  }
+
+  .Hint {
+    display: none;
+  }
 }
 
 .PlayerCount,
