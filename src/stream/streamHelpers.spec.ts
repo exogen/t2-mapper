@@ -12,7 +12,64 @@ import {
   formatRemoteArgs,
   formatRemoteArgsColored,
   formatServerMessageText,
+  parseWeaponImageStates,
 } from "./streamHelpers";
+
+describe("weapon image state slots", () => {
+  it("retains native indices when the parser omits unnamed states", () => {
+    const raw = {
+      states: [
+        { index: 0, name: "Activate", transitionOnLoaded: 4 },
+        { index: 3, name: "Ready", transitionOnTriggerDown: 10 },
+        { index: 9, name: "Fire", fire: true, transitionOnTimeout: 4 },
+      ],
+    };
+    const original = structuredClone(raw);
+    const states = parseWeaponImageStates(raw)!;
+    expect(states).toHaveLength(31);
+    expect(states[0]).toMatchObject({
+      name: "Activate",
+      transitionOnLoaded: 3,
+    });
+    expect(states[3]).toMatchObject({
+      name: "Ready",
+      transitionOnTriggerDown: 9,
+    });
+    expect(states[9]).toMatchObject({
+      name: "Fire",
+      fire: true,
+      transitionOnTimeout: 3,
+    });
+    for (const index of [1, 2, 4, 8, 10, 30]) {
+      expect(states[index]).toMatchObject({
+        name: "",
+        transitionOnLoaded: -1,
+        transitionOnTimeout: -1,
+        waitForTimeout: true,
+        fire: false,
+        soundDataBlockId: -1,
+      });
+      expect(states[index].sequence).toBeUndefined();
+    }
+    expect(raw).toEqual(original);
+  });
+
+  it("retains dense legacy state positions and the wire's no-transition sentinel", () => {
+    const states = parseWeaponImageStates({
+      states: [
+        { name: "Activate", transitionOnLoaded: 2 },
+        { name: "Ready", transitionOnLoaded: 0 },
+      ],
+    })!;
+    expect(states).toHaveLength(31);
+    expect(states[0]).toMatchObject({
+      name: "Activate",
+      transitionOnLoaded: 1,
+    });
+    expect(states[1]).toMatchObject({ name: "Ready", transitionOnLoaded: -1 });
+    expect(states[30].name).toBe("");
+  });
+});
 
 describe.each([
   ["plain", formatRemoteArgs],

@@ -7,6 +7,8 @@ import { resetStreamPlayback, streamClock } from "../state/streamPlaybackStore";
 import { DirectorTrackers } from "../director/directorTrackers";
 import { groupScoreboard } from "../state/scoreboard";
 import { matchClockAt } from "../state/matchClock";
+import { updateShapeThread } from "./shapeThreads";
+import type { ThreadState } from "./types";
 
 class MatchStream extends TestLiveStream {
   constructor() {
@@ -240,6 +242,102 @@ describe("match-end world pause", () => {
     expect(rewound.matchEnded).toBe(false);
     expect(rewound.matchEndedAtSec).toBeNull();
     expect(rewound.entities[0].position?.[0]).toBeCloseTo(0.32);
+  });
+
+  it("freezes a long animation history without cloning its immutable graph", () => {
+    const stream = new MatchStream();
+    const shape = stream.mutable("shape");
+    const historyLength = 12_000;
+    let thread: ThreadState | undefined;
+    for (let index = 0; index < historyLength; index++)
+      thread = updateShapeThread(
+        thread,
+        {
+          index: 0,
+          sequence: 1,
+          state: 0,
+          forward: index % 2 === 0,
+          atEnd: false,
+        },
+        index * STREAM_TICK_SEC,
+      );
+    shape.threads = [thread!];
+    shape.clientAnimation = { flare: thread };
+    shape.imageSlots = [
+      { shapeName: "weapon_disc.dts", mountPoint: 0, dataBlockId: 40 },
+    ];
+    shape.sceneData = {
+      className: "TSStatic",
+      ghostIndex: 3,
+      shapeName: "shape.dts",
+      transform: {
+        elements: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 100, 0, 0, 0, 1],
+        position: { x: 0, y: 0, z: 100 },
+      },
+      scale: { x: 1, y: 1, z: 1 },
+    };
+    const { threads, clientAnimation, imageSlots, sceneData } = shape;
+    stream.tick(historyLength);
+
+    // Reversals retain previous ThreadStates, including the client's flare.
+    // A deep clone of either history exhausts the stack on a long recording.
+    expect(() => stream.command("MissionEnd", "1")).not.toThrow();
+    const stopped = stream.tick();
+    const frozen = stopped.entities.find((entity) => entity.ghostIndex === 3)!;
+    expect(frozen.threads).toBe(threads);
+    expect(frozen.clientAnimation).toBe(clientAnimation);
+    expect(frozen.imageSlots).toBe(imageSlots);
+    expect(frozen.sceneData).toBe(sceneData);
+    expect(frozen.position).not.toBe(shape.position);
+    expect(frozen.rotation).not.toBe(shape.rotation);
+
+    // Late packets replace immutable values, while simulation fields can be
+    // mutated in place. Neither path may change the held final scene.
+    shape.threads = [];
+    shape.clientAnimation = {};
+    shape.imageSlots = [];
+    shape.sceneData = { ...sceneData, shapeName: "replacement.dts" };
+    shape.position![0] = 999;
+    shape.rotation[0] = 0.5;
+    stream.mutable("projectile").position![0] = -999;
+    stream.remove("shape");
+    const checkpoint = stream.checkpoint();
+    expect(stream.tick(20).entities).toBe(stopped.entities);
+    expect(frozen.position).toEqual([0, 0, 100]);
+    expect(frozen.rotation).toEqual([0, 0, 0, 1]);
+    expect(frozen.threads).toBe(threads);
+    expect(frozen.clientAnimation).toBe(clientAnimation);
+    expect(frozen.imageSlots).toBe(imageSlots);
+    expect(frozen.sceneData).toBe(sceneData);
+
+    stream.restore(checkpoint);
+    const restored = stream.tick();
+    const restoredShape = restored.entities.find(
+      (entity) => entity.ghostIndex === 3,
+    )!;
+    expect(restored.matchEndedAtSec).toBe(stopped.matchEndedAtSec);
+    expect(restoredShape.id).not.toBe(frozen.id);
+    expect(restoredShape.position).toEqual([0, 0, 100]);
+    expect(restoredShape.threads).toBe(threads);
+    expect(restoredShape.clientAnimation).toBe(clientAnimation);
+    expect(restoredShape.imageSlots).toBe(imageSlots);
+    expect(restoredShape.sceneData).toBe(sceneData);
+
+    // Persisting and restoring an ended checkpoint must also retain the
+    // complete history and its shared references without recursive walking.
+    expect(() => stream.roundTripCheckpoint()).not.toThrow();
+    const decoded = stream
+      .tick()
+      .entities.find((entity) => entity.ghostIndex === 3)!;
+    expect(decoded.position).toEqual([0, 0, 100]);
+    expect(decoded.threads![0]).toBe(decoded.clientAnimation!.flare);
+    let length = 0;
+    let current: ThreadState | undefined = decoded.threads![0];
+    while (current) {
+      length++;
+      current = current.timeline?.previous;
+    }
+    expect(length).toBe(historyLength);
   });
 
   it.each(["before", "after"])(

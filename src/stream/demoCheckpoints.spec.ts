@@ -193,6 +193,7 @@ describe("checkpoint sidecar loading", () => {
     17, // May contain incorrect weather radii and irrecoverable strike rates.
     18, // May restore an outdated fade or static Sky state after a seek.
     19, // Before displayed mission identity survived debrief and map loading.
+    20, // Compacted weapon-image states lost their native indices irreversibly.
     DEMO_CHECKPOINT_VERSION + 1,
     DEMO_CHECKPOINT_VERSION - 0.5,
     String(DEMO_CHECKPOINT_VERSION),

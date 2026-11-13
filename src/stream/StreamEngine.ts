@@ -183,6 +183,21 @@ type DerivedEntityField =
   | "projectileActivateDelayMS"
   | "forceFieldAlpha";
 
+/** Persistent animation histories and assets use copy-on-write updates. */
+type SharedEntityFields = Pick<
+  StreamEntity,
+  "threads" | "clientAnimation" | "imageSlots" | "sceneData"
+>;
+
+function splitEntityData<T extends SharedEntityFields>(entity: T) {
+  const { threads, clientAnimation, imageSlots, sceneData, ...mutable } =
+    entity;
+  return {
+    mutable,
+    shared: { threads, clientAnimation, imageSlots, sceneData },
+  };
+}
+
 /**
  * The simulation's entity: the StreamEntity fields it shares with snapshots,
  * plus state the simulation keeps to itself.
@@ -689,7 +704,14 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (!this.conn.endMatch()) return;
     // Keep receiving protocol/HUD updates, but preserve the final world even
     // if late ghost updates or deletes arrive during the debrief.
-    this.endedEntities = cloneData(this.buildEntityList());
+    // Histories can be thousands of links deep. Share their immutable data,
+    // just as checkpoints do, and detach only the mutable scene fields.
+    const entities = this.buildEntityList().map(splitEntityData);
+    const mutable = cloneData(entities.map((entity) => entity.mutable));
+    this.endedEntities = mutable.map((entity, index) => ({
+      ...entity,
+      ...entities[index].shared,
+    }));
   }
 
   /**
@@ -865,21 +887,10 @@ export abstract class StreamEngine implements StreamingPlayback {
       string,
       Omit<
         MutableEntity,
-        | "playerPrediction"
-        | "threads"
-        | "clientAnimation"
-        | "imageSlots"
-        | "sceneData"
-        | "particleEmitter"
+        "playerPrediction" | keyof SharedEntityFields | "particleEmitter"
       >
     >();
-    const shared = new Map<
-      string,
-      Pick<
-        MutableEntity,
-        "threads" | "clientAnimation" | "imageSlots" | "sceneData"
-      >
-    >();
+    const shared = new Map<string, SharedEntityFields>();
     const players = new Map<
       string,
       ReturnType<PlayerPrediction["saveState"]>
@@ -887,17 +898,14 @@ export abstract class StreamEngine implements StreamingPlayback {
     for (const [id, entity] of this.entities) {
       const {
         playerPrediction,
-        threads,
-        clientAnimation,
-        imageSlots,
-        sceneData,
         // Derived from particleEmitterDataBlockId on restore, so checkpoints
         // need neither a redundant copy nor stale resolved datablock values.
         particleEmitter: _particleEmitter,
-        ...mutable
+        ...fields
       } = entity;
-      entities.set(id, mutable);
-      shared.set(id, { threads, clientAnimation, imageSlots, sceneData });
+      const snapshot = splitEntityData(fields);
+      entities.set(id, snapshot.mutable);
+      shared.set(id, snapshot.shared);
       if (playerPrediction) players.set(id, playerPrediction.saveState());
     }
     return {

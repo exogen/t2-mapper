@@ -81,3 +81,77 @@ it("restores the image timer, spin phase and random flash generator repeatedly",
     expect(checkpoint).toEqual(before);
   }
 });
+
+it("follows original state slots through gaps in a mod's named image states", () => {
+  const states = parseWeaponImageStates({
+    states: [
+      { index: 0, name: "Activate", sequence: 0, transitionOnLoaded: 4 },
+      { index: 3, name: "Ready", sequence: 1, transitionOnTriggerDown: 10 },
+      {
+        index: 9,
+        name: "Fire",
+        sequence: 2,
+        fire: true,
+        timeoutValue: 0.1,
+        transitionOnTimeout: 4,
+      },
+    ],
+  })!;
+  const image = new ImageAnimation(states, 0, 42);
+  const ready = image.advance(0, flags);
+  expect(ready.state.stateIndex).toBe(3);
+  expect(ready.anim?.sequence).toBe(1);
+
+  const firing = image.advance(0.032, {
+    ...flags,
+    triggerDown: true,
+    fireCount: 1,
+  });
+  expect(firing.state.stateIndex).toBe(9);
+  expect(firing.state.isFiring).toBe(true);
+  expect(firing.anim?.sequence).toBe(2);
+  const reloaded = image.advance(0.2, { ...flags, fireCount: 1 });
+  expect(reloaded.state.stateIndex).toBe(3);
+  expect(reloaded.anim?.sequence).toBe(1);
+});
+
+it.each([1, 30])(
+  "enters a valid unnamed native image slot %i without losing the finishing pose",
+  (target) => {
+    const states = parseWeaponImageStates({
+      states: [
+        {
+          index: 0,
+          name: "Activate",
+          sequence: 0,
+          transitionOnLoaded: target + 1,
+        },
+        { index: 3, name: "UnusedReady" },
+      ],
+    })!;
+    const image = new ImageAnimation(states, 0, 42);
+    const blank = image.advance(0, flags);
+    expect(blank.state.stateIndex).toBe(target);
+    expect(blank.state.sequenceName).toBeNull();
+    expect(blank.state.isFiring).toBe(false);
+    expect(blank.state.soundDataBlockIds).toEqual([]);
+    expect(blank.anim?.sequence).toBe(0);
+    expect(image.advance(1, flags).state.stateIndex).toBe(target);
+  },
+);
+
+it("starts at native slot zero when the first named image state is later", () => {
+  const states = parseWeaponImageStates({
+    states: [{ index: 3, name: "Fire", fire: true, sequence: 0 }],
+  })!;
+  const image = new ImageAnimation(states, 0, 42);
+  const idle = image.advance(0, flags);
+  expect(idle.state.stateIndex).toBe(0);
+  expect(idle.state.sequenceName).toBeNull();
+  expect(idle.state.isFiring).toBe(false);
+  expect(idle.anim).toBeUndefined();
+  const firing = image.advance(0.032, { ...flags, fireCount: 1 });
+  expect(firing.state.stateIndex).toBe(3);
+  expect(firing.state.isFiring).toBe(true);
+  expect(firing.anim?.sequence).toBe(0);
+});

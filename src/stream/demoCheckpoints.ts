@@ -13,9 +13,11 @@ import { TICK_DURATION_MS } from "./streamHelpers";
 // precipitation transitions, lightning storm configuration and strike history;
 // 18 corrects the wire types of precipitation radius and lightning rate;
 // 19 retains dynamic Sky state and fixes how precipitation fades are built;
-// 20 retains the displayed mission's identity through debrief and map loading).
-export const DEMO_CHECKPOINT_VERSION = 20;
-const MIN_SUPPORTED_CHECKPOINT_VERSION = 20;
+// 20 retains the displayed mission's identity through debrief and map loading;
+// 21 preserves all native weapon-image state slots instead of compacting named
+// states. Earlier cached state tables lost their indices and cannot be repaired).
+export const DEMO_CHECKPOINT_VERSION = 21;
+const MIN_SUPPORTED_CHECKPOINT_VERSION = 21;
 export const DEMO_CHECKPOINT_SUFFIX = ".checkpoints.json";
 /**
  * The generator's default spacing, and the spacing of sidecars written

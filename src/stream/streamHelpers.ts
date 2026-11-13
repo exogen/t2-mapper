@@ -624,9 +624,8 @@ export function resolveSpriteVisual(
 
 /**
  * Parse weapon image state machine from a ShapeBaseImageData datablock.
- * The parser (2.0.1+) decodes transitions under their true engine
- * names, so this is a straight read — the wire's 1-based state indices
- * (0 = none) become 0-based with -1 = none.
+ * Named states retain their wire slot; gaps use Torque's default StateData.
+ * Transitions are 1-based on the wire (0 = none), 0-based here (-1 = none).
  */
 export function parseWeaponImageStates(
   blockData: ParsedData,
@@ -634,7 +633,7 @@ export function parseWeaponImageStates(
   const rawStates = blockData.states as Array<ParsedData> | undefined;
   if (!Array.isArray(rawStates) || rawStates.length === 0) return undefined;
 
-  return rawStates.map((s) => {
+  const parseState = (s: ParsedData): WeaponImageDataBlockState => {
     const toIndex = (v: unknown): number => {
       const n = v as number;
       if (n == null) return -1;
@@ -655,7 +654,7 @@ export function parseWeaponImageStates(
       transitionOnTriggerDown: toIndex(s.transitionOnTriggerDown),
       transitionOnTimeout: toIndex(s.transitionOnTimeout),
       timeoutValue: s.timeoutValue as number | undefined,
-      waitForTimeout: (s.waitForTimeout as boolean) ?? false,
+      waitForTimeout: (s.waitForTimeout as boolean) ?? true,
       fire: (s.fire as boolean) ?? false,
       sequence: s.sequence as number | undefined,
       flashSequence: (s.flashSequence as boolean) ?? false,
@@ -666,7 +665,16 @@ export function parseWeaponImageStates(
       loaded: (s.loaded as number) ?? 0,
       soundDataBlockId: (s.sound as number) ?? -1,
     };
+  };
+
+  // ShapeBaseImageData::MaxStates is 31, including unnamed slots. A packed
+  // list changes transition targets when a mod leaves gaps in its state table.
+  const states = Array.from({ length: 31 }, () => parseState({}));
+  rawStates.forEach((state, i) => {
+    // Older serialized parser states did not include the original slot index.
+    states[(state.index as number | undefined) ?? i] = parseState(state);
   });
+  return states;
 }
 
 // ── Chat / text helpers ──
