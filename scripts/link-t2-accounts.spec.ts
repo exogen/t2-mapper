@@ -208,7 +208,9 @@ it("reprompts invalid IDs, links before Discord login, and stores the displayed 
     "101": ["Player.1", "Player", "Old Alias"],
     "202": ["Skipped Player"],
   });
-  const result = run(`not-an-id\n1234\n${DISCORD_ID}\n\n`);
+  const result = run(
+    `not-an-id\n1234\n00000000000000000\n0126767979894407168\n${DISCORD_ID}\n\n`,
+  );
   expect(result.status, result.stderr).toBe(0);
   expect(result.stdout).toContain("[1/2] GUID 101 — Player");
   expect(result.stdout).toContain("Old Alias");
@@ -241,6 +243,47 @@ it("skips an empty response without creating an account or link", () => {
   expect(result.stdout).toContain("Linked: 0; skipped: 1.");
   expect(accountCount()).toBe(0);
   expect(links()).toEqual([]);
+});
+
+it("prompts by demo frequency, counting aliases once per demo and breaking ties by GUID", async () => {
+  const storage = await fakeS3({
+    "guid-data/a.rec.guids.json": {
+      namesByGuid: {
+        "101": ["Rare", "Rare Alias", "Another Alias", "Fourth Alias"],
+        "202": ["Tie First"],
+        "303": ["Tie Second"],
+        "404": ["Frequent"],
+      },
+    },
+    "guid-data/b.rec.guids.json": {
+      namesByGuid: {
+        "202": ["Tie First"],
+        "303": ["Tie Second"],
+        "404": ["Frequent"],
+      },
+    },
+    "guid-data/c.rec.guids.json": {
+      namesByGuid: { "404": ["Frequent", "Frequent Alias"] },
+    },
+  });
+  try {
+    const result = await runFromR2(storage.endpoint, `${DISCORD_ID}\n\n\n\n`);
+    expect(result.status, result.stderr).toBe(0);
+    expect(
+      [...result.stdout.matchAll(/\[\d\/4\] GUID (\d+)/g)].map((m) => m[1]),
+    ).toEqual(["404", "202", "303", "101"]);
+    expect(result.stdout).toContain("Seen in 3 demos.");
+    expect(result.stdout).toContain("Seen in 1 demo.");
+    expect(links()).toEqual([
+      expect.objectContaining({
+        discordId: DISCORD_ID,
+        guid: "404",
+        name: "Frequent",
+      }),
+    ]);
+  } finally {
+    await storage.close();
+  }
 });
 
 it("collects and merges private R2 GUID sidecars before prompting for unlinked players", async () => {

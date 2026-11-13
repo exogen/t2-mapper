@@ -41,12 +41,13 @@ async function main(): Promise<void> {
         "Usage: npm run accounts:link-t2:interactive -- [options]",
         "",
         "Prompts for a Discord user ID for each unlinked player GUID.",
+        "Players seen in the most demos come first, with GUID order breaking ties.",
         "Enter skips a player. Invalid IDs prompt again. Ctrl-C or EOF stops.",
         "Each link and its displayed player name are saved immediately.",
         "Discord users do not need to have signed in yet.",
         "",
         "  --database=FILE       SQLite file (default: AUTH_DATABASE_PATH or .relay/accounts/app.sqlite)",
-        "  --guids=FILE          Read a demos:merge-guids JSON export instead of R2",
+        "  --guids=FILE          Read a demos:merge-guids JSON export instead of R2 (GUID order; counts unavailable)",
         "  --concurrency=N       GUID sidecars fetched at once (default: 16)",
         "",
         "Uses private GUID sidecars configured by DEMO_R2_* and DEMO_PRIVATE_R2_BUCKET.",
@@ -83,6 +84,7 @@ async function main(): Promise<void> {
       );
 
     let namesByGuid: Record<string, string[]>;
+    const demoCounts = new Map<string, number>();
     if (values.guids) {
       namesByGuid = readDemoGuidSidecar(
         JSON.parse(await fs.readFile(values.guids, "utf8")),
@@ -106,12 +108,20 @@ async function main(): Promise<void> {
           `Could not read ${inventory.failed} GUID sidecars; no links were written.`,
         );
       namesByGuid = inventory.namesByGuid;
+      for (const sidecar of inventory.sidecars.values())
+        for (const guid of Object.keys(sidecar.namesByGuid))
+          demoCounts.set(guid, (demoCounts.get(guid) ?? 0) + 1);
     }
 
     const linkedGuids = getLinkedT2Guids(database);
     const candidates = Object.entries(withoutReconnectNames(namesByGuid))
       .filter(([guid]) => !linkedGuids.has(guid))
-      .sort(([a], [b]) => a.length - b.length || a.localeCompare(b));
+      .sort(
+        ([a], [b]) =>
+          (demoCounts.get(b) ?? 0) - (demoCounts.get(a) ?? 0) ||
+          a.length - b.length ||
+          a.localeCompare(b),
+      );
     console.log(`Database: ${filename}`);
     console.log(`${candidates.length} unlinked GUIDs.`);
     if (!candidates.length) return;
@@ -160,6 +170,9 @@ async function main(): Promise<void> {
         console.log(
           `\n[${index + 1}/${candidates.length}] GUID ${guid} — ${displayName(name)}`,
         );
+        const demos = demoCounts.get(guid);
+        if (demos != null)
+          console.log(`Seen in ${demos} demo${demos === 1 ? "" : "s"}.`);
         const otherNames = aliases.filter((alias) => alias && alias !== name);
         if (otherNames.length)
           console.log(`Aliases: ${otherNames.map(displayName).join(", ")}`);

@@ -353,17 +353,13 @@ export function unlinkT2Account(
     throw new Error("--discord-id must be a numeric Discord user ID");
   }
   const normalized = requireT2Guid(guid);
-  return database
-    .transaction(() => {
-      return (
-        database
-          .prepare(
-            'DELETE FROM "t2AccountLink" WHERE "discordId" = ? AND "guid" = ?',
-          )
-          .run(discordId, normalized).changes > 0
-      );
-    })
-    .immediate();
+  return (
+    database
+      .prepare(
+        'DELETE FROM "t2AccountLink" WHERE "discordId" = ? AND "guid" = ?',
+      )
+      .run(discordId, normalized).changes > 0
+  );
 }
 
 /** Store a profile unless a newer data snapshot already won the write. */
