@@ -230,6 +230,7 @@ describe("relay browser input", () => {
     vi.stubEnv("T2_SERVER_PASSWORDS", "{}");
     vi.stubEnv("RELAY_TRUST_FLY_PROXY", "false");
     vi.stubEnv("RELAY_ADMIN_VOTE_POLICIES", undefined);
+    vi.stubEnv("RELAY_SUPERADMIN_GUIDS", undefined);
     vi.stubEnv("ALWAYS_ADMIN_PLAYERS", undefined);
     vi.stubEnv("DEMO_DIR", undefined);
     vi.stubEnv("DEMO_UPLOAD_RETRY_MS", "300000");
@@ -666,6 +667,14 @@ describe("relay browser input", () => {
     );
   });
 
+  it("passes normalized MapGenius superadmin GUIDs to watch sessions", async () => {
+    vi.stubEnv("RELAY_SUPERADMIN_GUIDS", '[" 00123 ","456","123"]');
+    await connect("watcher", "false");
+    expect(harness.watchOptions?.superadminGuids).toEqual(
+      new Set(["123", "456"]),
+    );
+  });
+
   it("coalesces a burst of control changes while a disk write is in flight and saves the latest state", async () => {
     const dir = await fs.mkdtemp(
       path.join(os.tmpdir(), "watch-control-burst-"),
@@ -731,6 +740,7 @@ describe("relay browser input", () => {
   it("defaults admin controls to disabled when no policies are configured", async () => {
     await connect("watcher", "false");
     expect(harness.watchOptions?.adminVotePolicies).toEqual([]);
+    expect(harness.watchOptions?.superadminGuids).toEqual(new Set());
   });
 
   it("logs the player retry policy and whether another attempt is scheduled", async () => {

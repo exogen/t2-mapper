@@ -703,7 +703,7 @@ describe("watch mission controls", () => {
       recording: true,
       watching: true,
     });
-    expect(replies().at(-1)).toContain("Admin controls: OFF.");
+    expect(replies().at(-1)).toContain("Admin voting: OFF.");
   });
 
   it("logs every command with its authenticated actor, vote outcome and policy context", () => {
@@ -896,6 +896,249 @@ describe("watch mission controls", () => {
     expect(saved[address]).toMatchObject({ recording: true, watching: false });
   });
 
+  it.each([
+    ["disabled voting", []],
+    ["multiple admin votes", rolePolicies(5, 3)],
+    ["server-superadmin-only voting", rolePolicies(0, 3)],
+    [
+      "unresolved tournament policy",
+      [{ tournament: true, minPlayerCount: 0, adminVotes: 2 }],
+    ],
+  ])(
+    "applies GUID superadmin commands immediately with %s",
+    (_label, adminVotePolicies) => {
+      manager.shutdown();
+      const coordinator = policyCoordinator();
+      start({
+        adminVotePolicies,
+        superadminGuids: new Set(["123"]),
+        demoCoordinator: coordinator,
+      });
+      const info = vi.spyOn(relayLog, "info").mockImplementation(() => {});
+      events(
+        join(8, "0", "0", "000123", "Any alias", "1"),
+        chat("-rec -watch", 8),
+      );
+      expect(session.resolvedTournamentMode).toBeNull();
+      expect(session.controls.snapshot()).toEqual({
+        mission: ["1", "Katabatic"],
+        recording: false,
+        watching: false,
+      });
+      expect(saved[address]).toMatchObject({
+        recording: false,
+        watching: false,
+      });
+      expect(session.watcherCount).toBe(0);
+      expect(coordinator.updateMission).toHaveBeenLastCalledWith(
+        address,
+        session.controls.snapshot(),
+      );
+      expect(replies().at(-1)).not.toContain("Nothing changed.");
+      const player = session.watchState.getPlayerRoster().get(8);
+      expect(player.isAdmin).toBeUndefined();
+      expect(player.isSuperAdmin).toBeUndefined();
+      expect(info).toHaveBeenCalledWith(
+        expect.objectContaining({
+          guid: "123",
+          isMapGeniusSuperadmin: true,
+          results: { recording: "applied", watching: "applied" },
+        }),
+        "Mission control command processed",
+      );
+      events(chat("+rec +watch", 8));
+      expect(session.controls.recording).toBe(true);
+      expect(session.controls.watching).toBe(true);
+      expect(saved).toEqual({});
+    },
+  );
+
+  it.each([13, 14])(
+    "lets one GUID god-mode admin satisfy production's tournament policy with %i players",
+    (playerCount) => {
+      manager.shutdown();
+      start({
+        superadminGuids: new Set(["123"]),
+        adminVotePolicies: [
+          { tournament: true, minPlayerCount: 0, superAdminVotes: 2 },
+          { tournament: false, minPlayerCount: 0, superAdminVotes: 1 },
+          { tournament: true, minPlayerCount: 14, superAdminVotes: 3 },
+        ],
+      });
+      session.setTournamentMode(true);
+      events(
+        join(8, "0", "1", "456"),
+        join(9, "0", "0", "123"),
+        ...Array.from({ length: playerCount - 3 }, (_, i) => join(10 + i)),
+        chat("-rec -watch", 8),
+      );
+      const required = playerCount >= 14 ? 3 : 2;
+      expect(replies().at(-1)).toContain(`-record 1/${required} SA`);
+      expect(session.controls.recording).toBe(true);
+      expect(session.controls.watching).toBe(true);
+      events(chat("-rec -watch", 9));
+      expect(session.controls.recording).toBe(false);
+      expect(session.controls.watching).toBe(false);
+      expect(session.controls.snapshot()).not.toHaveProperty("votes");
+    },
+  );
+
+  it("uses GUID identity rather than names and leaves game-superadmin votes subject to policy", () => {
+    manager.shutdown();
+    start({
+      superadminGuids: new Set(["123"]),
+      adminVotePolicies: twoAdminPolicies,
+    });
+    events(
+      join(8, "0", "0", "0", "Alice"),
+      chat("-rec -watch", 8),
+      join(8, "0", "0", "456", "Alice"),
+      chat("-rec -watch", 8),
+    );
+    expect(session.controls.snapshot()).not.toHaveProperty("votes");
+    expect(replies().at(-1)).toContain("Only server admins");
+    events(join(8, "0", "1", "456", "Alice"), chat("-rec -watch", 8));
+    expect(session.controls.recording).toBe(true);
+    expect(session.controls.watching).toBe(true);
+    expect(session.controls.voteCount("recording")).toBe(1);
+    expect(session.controls.voteCount("watching")).toBe(1);
+  });
+
+  it.each([false, true])(
+    "does not grant GUID overrides to shared browser chat (name allowlisted: %s)",
+    (allowlisted) => {
+      manager.shutdown();
+      start({
+        superadminGuids: new Set(["123"]),
+        adminVotePolicies: twoAdminPolicies,
+        alwaysAdminPlayers: new Set(allowlisted ? ["MapGenius"] : []),
+      });
+      events(join(99, "1", "1", "123", "MapGenius"), chat("-rec -watch", 99));
+      expect(session.controls.recording).toBe(true);
+      expect(session.controls.watching).toBe(true);
+      expect(session.controls.voteCount("recording")).toBe(allowlisted ? 1 : 0);
+      expect(session.controls.voteCount("watching")).toBe(allowlisted ? 1 : 0);
+    },
+  );
+
+  it("revokes GUID command authority when a new roster entry hides or changes that account", () => {
+    manager.shutdown();
+    start({ superadminGuids: new Set(["123"]), adminVotePolicies: [] });
+    events(join(8, "0", "0", "123"), chat("-rec", 8));
+    for (const guid of ["0", "456"]) {
+      events(join(8, "0", "0", guid), chat("+rec -watch", 8));
+      expect(session.controls.recording).toBe(false);
+      expect(session.controls.watching).toBe(true);
+    }
+    events(join(8, "0", "0", "123", "New alias", "1"), chat("+rec", 8));
+    expect(session.controls.recording).toBe(true);
+  });
+
+  it("clears pending votes when a GUID superadmin confirms the current settings", () => {
+    manager.shutdown();
+    start({
+      superadminGuids: new Set(["123"]),
+      adminVotePolicies: twoAdminPolicies,
+    });
+    events(chat("-rec -watch"));
+    expect(session.controls.voteCount("recording")).toBe(1);
+    expect(session.controls.voteCount("watching")).toBe(1);
+    replies();
+    events(join(8, "0", "0", "123"), chat("+rec +watch", 8));
+    expect(saved).toEqual({});
+    expect(session.controls.snapshot()).not.toHaveProperty("votes");
+    expect(replies().at(-1)).toBe("Recording: ON. Watching: ON.");
+    events(chat("-rec -watch"));
+    expect(session.controls.recording).toBe(true);
+    expect(session.controls.watching).toBe(true);
+  });
+
+  it("waits for the relay's client identity before granting GUID overrides", () => {
+    manager.shutdown();
+    start({ superadminGuids: new Set(["123"]), adminVotePolicies: [] });
+    connections[0].selfClientId = null;
+    events(join(8, "0", "0", "123"), chat("-rec -watch", 8));
+    expect(session.controls.recording).toBe(true);
+    expect(session.controls.watching).toBe(true);
+    connections[0].selfClientId = 99;
+    events(chat("-rec -watch", 8));
+    expect(session.controls.recording).toBe(false);
+    expect(session.controls.watching).toBe(false);
+  });
+
+  it.each([false, true])(
+    "preserves finalized recording decisions for GUID superadmins (keep: %s)",
+    (keep) => {
+      manager.shutdown();
+      start({
+        superadminGuids: new Set(["123"]),
+        adminVotePolicies: [],
+        initialMissionControls: {
+          [address]: {
+            mission: ["1", "Katabatic"],
+            recording: keep,
+            recordingDecision: keep,
+            watching: true,
+          },
+        },
+      });
+      events(
+        join(8, "0", "0", "123"),
+        chat(`${keep ? "-" : "+"}rec -watch`, 8),
+      );
+      expect(session.controls.recording).toBe(keep);
+      expect(session.controls.recordingDecision).toBe(keep);
+      expect(session.controls.watching).toBe(false);
+    },
+  );
+
+  it.each(["unconfigured", "disabled"] as const)(
+    "cannot override relay recording being %s using a GUID superadmin",
+    (configuration) => {
+      manager.shutdown();
+      start({
+        superadminGuids: new Set(["123"]),
+        adminVotePolicies: [],
+        demoCoordinator:
+          configuration === "disabled"
+            ? ({
+                ...policyCoordinator(),
+                enabled: false,
+              } as unknown as DemoCoordinator)
+            : undefined,
+      });
+      events(join(8, "0", "0", "123"), chat("-rec -watch", 8));
+      expect(session.controls.recording).toBe(true);
+      expect(session.controls.watching).toBe(false);
+      events(chat("+rec +watch", 8));
+      expect(session.controls.recording).toBe(true);
+      expect(session.recording).toBe(false);
+      expect(session.controls.watching).toBe(true);
+    },
+  );
+
+  it("restores GUID superadmin restrictions after restart and resets them next mission", () => {
+    manager.shutdown();
+    const options = {
+      superadminGuids: new Set(["123"]),
+      adminVotePolicies: [],
+    };
+    start(options);
+    events(join(8, "0", "0", "123"), chat("-rec -watch", 8));
+    const initialMissionControls = structuredClone(saved);
+    manager.shutdown();
+    start({ ...options, initialMissionControls });
+    expect(session.controls.recording).toBe(false);
+    expect(session.controls.watching).toBe(false);
+    expect(viewer.jsonMessages()[0]).toMatchObject({ status: "ended" });
+    session.reconnect("Mission changing");
+    connections.at(-1)!.setStatus("connected");
+    events(remote("MissionStartPhase1", "2", "Katabatic"));
+    expect(session.controls.recording).toBe(true);
+    expect(session.controls.watching).toBe(true);
+    expect(saved).toEqual({});
+  });
+
   it("accepts an exact non-smurf base name for both controls without granting roster admin flags", () => {
     manager.shutdown();
     start({ alwaysAdminPlayers: new Set(["Alice"]) });
@@ -1017,7 +1260,7 @@ describe("watch mission controls", () => {
       recording: true,
       watching: true,
     });
-    expect(replies().at(-1)).toContain("Admin controls: OFF.");
+    expect(replies().at(-1)).toContain("Admin voting: OFF.");
   });
 
   it("ends all viewers immediately, rejects new viewers, and keeps recording independently", () => {
@@ -1600,7 +1843,7 @@ describe("watch mission controls", () => {
     });
     events(chat("-rec"));
     expect(session.controls.recording).toBe(true);
-    expect(replies().at(-1)).toContain("Admin controls: OFF");
+    expect(replies().at(-1)).toContain("Admin voting: OFF");
     events(remote("ServerMessage", "MsgClientReady", "", "CTFGame"));
     vi.advanceTimersByTime(4_000);
     events(chat("-rec"));
@@ -1675,7 +1918,7 @@ describe("watch mission controls", () => {
     expect(session.watcherCount).toBe(1);
     expect(replies()).toHaveLength(2);
     expect(
-      replies().every((reply) => reply.includes("Admin controls: OFF.")),
+      replies().every((reply) => reply.includes("Admin voting: OFF.")),
     ).toBe(true);
     expect(replies()[0]).toMatch(/^Nothing changed\./);
     expect(replies().at(-1)).not.toContain("Nothing changed.");

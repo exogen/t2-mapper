@@ -1,4 +1,4 @@
-import { taglessPlayerName } from "./shared.js";
+import { normalizePlayerGuid, taglessPlayerName } from "./shared.js";
 import type { ServerMessageRosterEntry } from "./serverMessageState.js";
 
 /** Exact base names; JSON preserves commas, spaces, and letter casing. */
@@ -22,6 +22,30 @@ export function loadAlwaysAdminPlayers(
       "ALWAYS_ADMIN_PLAYERS must be a JSON array of nonempty player names",
     );
   return new Set(parsed);
+}
+
+/** Explicit account GUIDs; keep them as strings to avoid numeric precision loss. */
+export function loadSuperadminGuids(
+  value: string | undefined,
+): ReadonlySet<string> {
+  if (!value?.trim()) return new Set();
+  const message =
+    "RELAY_SUPERADMIN_GUIDS must be a JSON array of nonzero GUID strings";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error(message);
+  }
+  if (!Array.isArray(parsed)) throw new Error(message);
+  const guids = new Set<string>();
+  for (const value of parsed) {
+    const guid =
+      typeof value === "string" ? normalizePlayerGuid(value) : undefined;
+    if (!guid) throw new Error(message);
+    guids.add(guid);
+  }
+  return guids;
 }
 
 export function isAlwaysAdminPlayer(
@@ -328,6 +352,15 @@ export class MissionControls {
     return true;
   }
 
+  /** Applies an authorized override without reopening a finalized recording. */
+  override(setting: MissionControlSetting, enabled: boolean): boolean {
+    if (setting === "recording" && this.recordingDecision !== undefined)
+      return false;
+    const changed = this[setting] !== enabled;
+    this[setting] = enabled;
+    return this.clearVotes(setting) || changed;
+  }
+
   /** Returns whether the ballot or applied setting changed. */
   vote(
     setting: MissionControlSetting,
@@ -348,11 +381,8 @@ export class MissionControls {
       (required.adminVotes > 0 && votes.size >= required.adminVotes) ||
       (required.superAdminVotes > 0 &&
         this.voteCount(setting, "superadmin") >= required.superAdminVotes)
-    ) {
-      this[setting] = enabled;
-      votes.clear();
-      return true;
-    }
+    )
+      return this.override(setting, enabled);
     return votes.size !== previousCount;
   }
 

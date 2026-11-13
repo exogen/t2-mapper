@@ -130,10 +130,12 @@ function sendJson(ws: WebSocket, message: ServerMessage): void {
 export interface WatchSessionManagerOptions {
   /** Allow browser chat through the shared identity (default: true). */
   chatEnabled?: boolean;
-  /** Select by tournament mode and connected players excluding the relay. No match disables controls. */
+  /** Select by tournament mode and connected players excluding the relay. No match disables voting. */
   adminVotePolicies?: readonly AdminVotePolicy[];
   /** Extra command voters: exact, tagless names of non-smurf players. */
   alwaysAdminPlayers?: ReadonlySet<string>;
+  /** God-mode T2 GUIDs: one in-game command always satisfies the vote. */
+  superadminGuids?: ReadonlySet<string>;
   gameBasePath: string;
   getCachedServer: (address: string) => ServerInfo | undefined;
   /** When present and enabled, sessions auto-record each mission to a .rec. */
@@ -1729,6 +1731,7 @@ export class WatchSession {
         player,
         this.options.alwaysAdminPlayers,
       ),
+      isMapGeniusSuperadmin: this.isControlSuperadmin(player, chat.clientId),
       command: chat.text,
     };
     relayLog.info(
@@ -1783,15 +1786,25 @@ export class WatchSession {
         results[setting] = "ignored-missing-guid";
       } else if (setting === "recording" && !this.recordingConfigured) {
         results[setting] = "ignored-recording-disabled";
-      } else if (requirements === null) {
-        results[setting] = "ignored-policy-disabled";
-      } else if (requirements.adminVotes === 0 && !player.isSuperAdmin) {
-        results[setting] = "ignored-superadmin-required";
       } else if (
         setting === "recording" &&
         this.controls.recordingDecision !== undefined
       ) {
         results[setting] = "ignored-final-decision";
+      } else if (actor.isMapGeniusSuperadmin) {
+        const before = this.controls[setting];
+        const overridden = this.controls.override(setting, command[setting]);
+        changed = overridden || changed;
+        results[setting] =
+          before !== this.controls[setting]
+            ? "applied"
+            : overridden
+              ? "votes-cleared"
+              : "unchanged";
+      } else if (requirements === null) {
+        results[setting] = "ignored-policy-disabled";
+      } else if (requirements.adminVotes === 0 && !player.isSuperAdmin) {
+        results[setting] = "ignored-superadmin-required";
       } else {
         const before = this.controls[setting];
         const votesBefore = this.controls.voteCount(setting);
@@ -1846,7 +1859,7 @@ export class WatchSession {
           tournamentMode: tournament,
           playerCount,
         },
-        "Mission controls changed by server admin",
+        "Mission controls changed by admin",
       );
       this.fanOutSessionStatus();
       // Administrative retention policy is current even for delayed viewers.
@@ -1878,7 +1891,8 @@ export class WatchSession {
       (result) =>
         result === "applied" ||
         result === "vote-added" ||
-        result === "vote-withdrawn",
+        result === "vote-withdrawn" ||
+        result === "votes-cleared",
     );
     this.replyToControl((maxLength) => this.controlStatus(maxLength), {
       nothingChanged: changesSetting && !commandChanged,
@@ -1940,6 +1954,20 @@ export class WatchSession {
     return changed;
   }
 
+  private isControlSuperadmin(
+    player: ServerMessageRosterEntry | undefined,
+    clientId: number,
+  ): boolean {
+    // Every browser viewer shares the relay's identity; its GUID must not
+    // grant them the in-game account owner's unrestricted command access.
+    return (
+      this.watchState.selfClientId != null &&
+      clientId !== this.watchState.selfClientId &&
+      !!player?.guid &&
+      this.options.superadminGuids?.has(player.guid) === true
+    );
+  }
+
   private isControlAdmin(
     player: ServerMessageRosterEntry | undefined,
     clientId: number,
@@ -1948,7 +1976,8 @@ export class WatchSession {
     // allowlist entry, even when that game client has admin privileges.
     return (
       !!player &&
-      (isAlwaysAdminPlayer(player, this.options.alwaysAdminPlayers) ||
+      (this.isControlSuperadmin(player, clientId) ||
+        isAlwaysAdminPlayer(player, this.options.alwaysAdminPlayers) ||
         (clientId !== this.watchState.selfClientId &&
           (player.isAdmin === true || player.isSuperAdmin === true)))
     );
@@ -2043,7 +2072,7 @@ export class WatchSession {
     // the reset reminder. The prefix and voice tag already have space reserved.
     const details = [
       pending.length ? `Votes: ${pending.join(", ")}.` : "",
-      requirements === null ? "Admin controls: OFF." : "",
+      requirements === null ? "Admin voting: OFF." : "",
       this.controls.restricted ? "Settings reset next map." : "",
     ];
     for (const detail of details) {

@@ -40,6 +40,7 @@ import { WatchRequest } from "./watchRequest.js";
 import {
   loadAdminVotePolicies,
   loadAlwaysAdminPlayers,
+  loadSuperadminGuids,
   type MissionControlState,
 } from "./missionControls.js";
 import { DemoCoordinator } from "./demoCoordinator.js";
@@ -88,6 +89,9 @@ const ADMIN_VOTE_POLICIES = loadAdminVotePolicies(
 );
 const ALWAYS_ADMIN_PLAYERS = loadAlwaysAdminPlayers(
   process.env.ALWAYS_ADMIN_PLAYERS,
+);
+const SUPERADMIN_GUIDS = loadSuperadminGuids(
+  process.env.RELAY_SUPERADMIN_GUIDS,
 );
 const TRUST_FLY_PROXY = /^(1|true)$/i.test(
   process.env.RELAY_TRUST_FLY_PROXY?.trim() ?? "",
@@ -716,6 +720,7 @@ const watchSessions = new WatchSessionManager({
   chatEnabled: CHAT_ENABLED,
   adminVotePolicies: ADMIN_VOTE_POLICIES,
   alwaysAdminPlayers: ALWAYS_ADMIN_PLAYERS,
+  superadminGuids: SUPERADMIN_GUIDS,
   gameBasePath: GAME_BASE_PATH,
   getCachedServer: findKnownServer,
   createConnection: createGameConnection,

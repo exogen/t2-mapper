@@ -4,6 +4,7 @@ import {
   isAlwaysAdminPlayer,
   loadAdminVotePolicies,
   loadAlwaysAdminPlayers,
+  loadSuperadminGuids,
   MissionControls,
   parseMissionControlCommand,
   selectAdminVoteRequirements,
@@ -59,6 +60,43 @@ describe("always-admin players", () => {
     expect(
       isAlwaysAdminPlayer({ rawName: "Alice", isSmurf: false }, undefined),
     ).toBe(false);
+  });
+});
+
+describe("MapGenius superadmin GUIDs", () => {
+  it.each([undefined, "", "  ", "[]"])("defaults to nobody for %j", (value) => {
+    expect([...loadSuperadminGuids(value)]).toEqual([]);
+  });
+
+  it("normalizes and deduplicates GUID strings without losing precision", () => {
+    expect([
+      ...loadSuperadminGuids(
+        '[" 00123 ","123","000456","99999999999999999999"]',
+      ),
+    ]).toEqual(["123", "456", "99999999999999999999"]);
+  });
+
+  it.each([
+    "123,456",
+    '"123"',
+    "{}",
+    "null",
+    "[null]",
+    "[123]",
+    '["123",456]',
+    "[[]]",
+    '[""]',
+    '["   "]',
+    '["0"]',
+    '["000"]',
+    '["-123"]',
+    '["+123"]',
+    '["1.23"]',
+    '["1e3"]',
+    '["123abc"]',
+    '["12 3"]',
+  ])("rejects invalid configuration %s", (value) => {
+    expect(() => loadSuperadminGuids(value)).toThrow("RELAY_SUPERADMIN_GUIDS");
   });
 });
 
@@ -490,6 +528,88 @@ describe("mission control votes", () => {
         votes,
       }),
     ).toBeNull();
+  });
+});
+
+describe("mission control overrides", () => {
+  it.each(["recording", "watching"] as const)(
+    "changes %s immediately without a ballot",
+    (setting) => {
+      const controls = new MissionControls();
+      expect(controls.override(setting, false)).toBe(true);
+      expect(controls[setting]).toBe(false);
+      expect(controls.override(setting, false)).toBe(false);
+      expect(controls.override(setting, true)).toBe(true);
+      expect(controls[setting]).toBe(true);
+      expect(controls.needsPersistence).toBe(false);
+    },
+  );
+
+  it.each([
+    ["recording", false],
+    ["recording", true],
+    ["watching", false],
+    ["watching", true],
+  ] as const)(
+    "clears all %s votes when overriding to %s",
+    (setting, enabled) => {
+      const controls = new MissionControls();
+      const other = setting === "recording" ? "watching" : "recording";
+      const requirements = { adminVotes: 4, superAdminVotes: 3 };
+      controls.vote(setting, false, "guid:1", requirements);
+      controls.vote(setting, false, "guid:2", requirements, "superadmin");
+      controls.vote(other, false, "guid:3", requirements);
+
+      expect(controls.override(setting, enabled)).toBe(true);
+      expect(controls[setting]).toBe(enabled);
+      expect(controls.voteCount(setting)).toBe(0);
+      expect(controls.voteCount(other)).toBe(1);
+      expect(controls.override(setting, enabled)).toBe(false);
+    },
+  );
+
+  it.each([false, true])(
+    "preserves a finalized recording decision of %s",
+    (decision) => {
+      const controls = new MissionControls();
+      controls.override("recording", decision);
+      controls.finishRecording();
+
+      expect(controls.override("recording", !decision)).toBe(false);
+      expect(controls.override("recording", decision)).toBe(false);
+      expect(controls.recording).toBe(decision);
+      expect(controls.recordingDecision).toBe(decision);
+      expect(controls.override("watching", false)).toBe(true);
+
+      const restored = MissionControls.restore(controls.snapshot())!;
+      expect(restored.override("recording", !decision)).toBe(false);
+      expect(restored.recording).toBe(decision);
+      expect(restored.recordingDecision).toBe(decision);
+    },
+  );
+
+  it("persists overridden settings and cleared ballots until the next mission", () => {
+    const controls = new MissionControls();
+    controls.observeMission("1", "Katabatic");
+    controls.vote("recording", false, "guid:1", twoAdminVotes);
+    controls.vote("watching", false, "guid:2", twoAdminVotes);
+    controls.override("recording", false);
+    controls.override("watching", true);
+    expect(controls.needsPersistence).toBe(true);
+
+    const restored = MissionControls.restore(
+      JSON.parse(JSON.stringify(controls.snapshot())),
+    )!;
+    expect(restored.snapshot()).toEqual({
+      mission: ["1", "Katabatic"],
+      recording: false,
+      watching: true,
+    });
+    expect(restored.observeMission("1", "Katabatic")).toBe(false);
+    expect(restored.recording).toBe(false);
+    expect(restored.observeMission("2", "Katabatic")).toBe(true);
+    expect(restored.recording).toBe(true);
+    expect(restored.needsPersistence).toBe(false);
   });
 });
 
