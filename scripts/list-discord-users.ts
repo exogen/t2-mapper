@@ -75,18 +75,21 @@ function main(): void {
         "Account tables not found. Start the relay with Discord sign-in enabled first.",
       );
     // Databases from before the first app-owned migration have no links.
-    const hasT2Accounts = !!database
-      .prepare(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 't2AccountLink'",
-      )
-      .get();
+    const linkColumns = database.pragma(
+      'table_info("t2AccountLink")',
+    ) as Array<{ name: string }>;
+    const linkIdentity = linkColumns.some(({ name }) => name === "discordId")
+      ? "l.discordId = a.accountId"
+      : linkColumns.some(({ name }) => name === "userId")
+        ? "l.userId = u.id"
+        : null;
     const users = database
       .prepare(
         `SELECT DISTINCT
           u.id, a.accountId AS discordId, u.name, u.discordUsername, u.role, u.createdAt,
           ${
-            hasT2Accounts
-              ? `(SELECT group_concat(l.guid, ', ') FROM "t2AccountLink" l WHERE l.userId = u.id)`
+            linkIdentity
+              ? `(SELECT group_concat(l.guid, ', ') FROM "t2AccountLink" l WHERE ${linkIdentity})`
               : "NULL"
           } AS t2Guids
         FROM "user" u JOIN "account" a ON a.userId = u.id

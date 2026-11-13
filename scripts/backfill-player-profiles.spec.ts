@@ -141,7 +141,9 @@ beforeEach(() => {
   directory = fs.mkdtempSync(path.join(os.tmpdir(), "profile-backfill-test-"));
   filename = path.join(directory, "accounts.sqlite");
   const database = openAccountDatabase(filename);
-  database.exec('CREATE TABLE "user" ("id" TEXT PRIMARY KEY)');
+  database.exec(
+    'CREATE TABLE "user" ("id" TEXT PRIMARY KEY); CREATE TABLE "account" ("userId" TEXT, "providerId" TEXT, "accountId" TEXT)',
+  );
   database.transaction(() => migrateAccountSchema(database))();
   database.close();
   vi.stubEnv("AUTH_DATABASE_PATH", filename);
@@ -485,7 +487,9 @@ it("refuses to create a missing account database", async () => {
 it("rejects an unmigrated database and closes it before returning", async () => {
   filename = path.join(directory, "unmigrated.sqlite");
   const database = openAccountDatabase(filename);
-  database.exec('CREATE TABLE "user" ("id" TEXT PRIMARY KEY)');
+  database.exec(
+    'CREATE TABLE "user" ("id" TEXT PRIMARY KEY); CREATE TABLE "account" ("userId" TEXT, "providerId" TEXT, "accountId" TEXT)',
+  );
   database.close();
   vi.stubEnv("AUTH_DATABASE_PATH", filename);
   await import("./backfill-player-profiles");

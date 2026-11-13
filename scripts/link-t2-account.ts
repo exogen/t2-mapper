@@ -26,7 +26,7 @@ function main(): void {
       "       npm run accounts:link-t2 -- --unlink --discord-id <Discord user ID> --guid <GUID>",
     );
     console.log(
-      "Reads AUTH_DATABASE_PATH. The account must have signed in with Discord once.",
+      "Reads AUTH_DATABASE_PATH. Discord accounts can be linked before their first sign-in.",
     );
     if (!values.help) process.exitCode = 1;
     return;
@@ -41,7 +41,7 @@ function main(): void {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       throw new Error(
-        "Account database not found. Start the relay and sign in with Discord first.",
+        "Account database not found. Start the relay with Discord sign-in enabled first.",
       );
     }
     throw error;

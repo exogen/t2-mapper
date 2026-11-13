@@ -10,6 +10,7 @@
   "scripts": {
     "accounts:backup": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/backup-account-database.ts",
     "accounts:link-t2": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/link-t2-account.ts",
+    "accounts:link-t2:interactive": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/link-t2-accounts.ts",
     "accounts:list": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/list-discord-users.ts",
     "accounts:set-role": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/set-account-role.ts",
     "demos:checkpoints": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/generate-demo-checkpoints.ts",

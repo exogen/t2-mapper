@@ -182,7 +182,9 @@ it("stores affected players' profiles after stats, then recovers a profile retry
       now: () => Date.parse(newest.recordedAt),
     });
   try {
-    database.exec('CREATE TABLE "user" ("id" TEXT PRIMARY KEY)');
+    database.exec(
+      'CREATE TABLE "user" ("id" TEXT PRIMARY KEY); CREATE TABLE "account" ("userId" TEXT, "providerId" TEXT, "accountId" TEXT)',
+    );
     database.transaction(() => migrateAccountSchema(database))();
     const scheduler = makeScheduler();
     scheduler.enqueue("new.rec");

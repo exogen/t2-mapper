@@ -74,6 +74,23 @@ const ACCOUNT_SCHEMA_MIGRATIONS: readonly string[] = [
     "mission" TEXT NOT NULL CHECK (length(trim("mission")) > 0),
     "score" REAL NOT NULL
   ) STRICT;`,
+  // Discord IDs exist before an app user signs in. Keep their permanent
+  // account links independent of Better Auth's local user lifecycle.
+  `ALTER TABLE "t2AccountLink" RENAME TO "t2AccountLink_legacy";
+  CREATE TABLE "t2AccountLink" (
+    "discordId" TEXT NOT NULL
+      CHECK (length("discordId") BETWEEN 17 AND 20 AND "discordId" NOT GLOB '*[^0-9]*'),
+    "guid" TEXT NOT NULL REFERENCES "t2Account" ("guid") ON DELETE CASCADE,
+    "createdAt" INTEGER NOT NULL,
+    PRIMARY KEY ("discordId", "guid")
+  ) STRICT, WITHOUT ROWID;
+  INSERT INTO "t2AccountLink" ("discordId", "guid", "createdAt")
+    SELECT a."accountId", l."guid", min(l."createdAt")
+    FROM "t2AccountLink_legacy" l
+    LEFT JOIN "account" a ON a."userId" = l."userId" AND a."providerId" = 'discord'
+    GROUP BY a."accountId", l."guid";
+  DROP TABLE "t2AccountLink_legacy";
+  CREATE INDEX "t2AccountLink_guid" ON "t2AccountLink" ("guid");`,
 ];
 
 function accountSchemaVersion(database: Database.Database): number {
@@ -274,17 +291,27 @@ function requireT2Guid(guid: string): string {
 
 function linkedT2Accounts(
   database: Database.Database,
-  userId: string,
+  discordId: string,
 ): LinkedT2Account[] {
   return database
     .prepare(
-      'SELECT t."guid", t."name", l."createdAt" AS "linkedAt" FROM "t2AccountLink" l JOIN "t2Account" t ON t."guid" = l."guid" WHERE l."userId" = ? ORDER BY l."createdAt", t."guid"',
+      'SELECT t."guid", t."name", l."createdAt" AS "linkedAt" FROM "t2AccountLink" l JOIN "t2Account" t ON t."guid" = l."guid" WHERE l."discordId" = ? ORDER BY l."createdAt", t."guid"',
     )
-    .all(userId) as LinkedT2Account[];
+    .all(discordId) as LinkedT2Account[];
+}
+
+/** GUIDs linked to any Discord identity, including identities that have not signed in. */
+export function getLinkedT2Guids(database: Database.Database): Set<string> {
+  return new Set(
+    database
+      .prepare('SELECT DISTINCT "guid" FROM "t2AccountLink"')
+      .pluck()
+      .all() as string[],
+  );
 }
 
 /**
- * Link a Tribes 2 GUID to an OAuth-linked Discord identity from a trusted
+ * Link a Tribes 2 GUID to a Discord identity from a trusted
  * operator. A given name replaces the account's label; linking again without
  * one keeps it.
  */
@@ -300,11 +327,6 @@ export function linkT2Account(
   const normalized = requireT2Guid(guid);
   return database
     .transaction(() => {
-      const userId = discordUserId(
-        database,
-        discordId,
-        "linking a Tribes 2 account",
-      );
       const now = Date.now();
       database
         .prepare(
@@ -313,10 +335,10 @@ export function linkT2Account(
         .run(normalized, name, now);
       database
         .prepare(
-          'INSERT INTO "t2AccountLink" ("userId", "guid", "createdAt") VALUES (?, ?, ?) ON CONFLICT DO NOTHING',
+          'INSERT INTO "t2AccountLink" ("discordId", "guid", "createdAt") VALUES (?, ?, ?) ON CONFLICT DO NOTHING',
         )
-        .run(userId, normalized, now);
-      return { discordId, accounts: linkedT2Accounts(database, userId) };
+        .run(discordId, normalized, now);
+      return { discordId, accounts: linkedT2Accounts(database, discordId) };
     })
     .immediate();
 }
@@ -333,17 +355,12 @@ export function unlinkT2Account(
   const normalized = requireT2Guid(guid);
   return database
     .transaction(() => {
-      const userId = discordUserId(
-        database,
-        discordId,
-        "unlinking a Tribes 2 account",
-      );
       return (
         database
           .prepare(
-            'DELETE FROM "t2AccountLink" WHERE "userId" = ? AND "guid" = ?',
+            'DELETE FROM "t2AccountLink" WHERE "discordId" = ? AND "guid" = ?',
           )
-          .run(userId, normalized).changes > 0
+          .run(discordId, normalized).changes > 0
       );
     })
     .immediate();
@@ -410,9 +427,11 @@ export function t2ProfileReader(
     `SELECT p."bodyType", p."skin", p."armor", p."pack", p."weapon",
       p."loadoutSource", p."lastSeenAt",
       b."mission" AS "bestMapMission", b."score" AS "bestMapScore"
-    FROM "t2AccountLink" l JOIN "t2PlayerProfile" p ON p."guid" = l."guid"
+    FROM "account" a
+    JOIN "t2AccountLink" l ON l."discordId" = a."accountId"
+    JOIN "t2PlayerProfile" p ON p."guid" = l."guid"
     LEFT JOIN "t2PlayerBestMap" b ON b."guid" = p."guid" AND b."score" > 0
-    WHERE l."userId" = ?
+    WHERE a."providerId" = 'discord' AND a."userId" = ?
     ORDER BY p."lastSeenAt" IS NULL, p."lastSeenAt" DESC, p."guid"
     LIMIT 1`,
   );

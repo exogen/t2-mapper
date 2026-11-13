@@ -8,12 +8,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createAccountDatabaseBackup,
   hasPendingAccountSchemaMigrations,
+  getLinkedT2Guids,
   linkT2Account,
   migrateAccountSchema,
   openAccountDatabase,
   saveT2PlayerBestMaps,
   saveT2PlayerProfile,
   setAccountRole,
+  t2ProfileReader,
   unlinkT2Account,
 } from "./accountDatabase.js";
 
@@ -31,6 +33,8 @@ function setup() {
   database.exec(`
     CREATE TABLE users (id TEXT PRIMARY KEY);
     CREATE TABLE sessions (id TEXT PRIMARY KEY, userId TEXT NOT NULL REFERENCES users(id));
+    CREATE TABLE "user" (id TEXT PRIMARY KEY);
+    CREATE TABLE "account" (userId TEXT REFERENCES "user"(id), providerId TEXT, accountId TEXT);
     INSERT INTO users VALUES ('alice');
   `);
   return { directory, filename, database };
@@ -44,6 +48,19 @@ afterEach(() => {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+function restoreLegacyT2Links(database: Database.Database): void {
+  database.exec(`
+    DROP TABLE "t2AccountLink";
+    CREATE TABLE "t2AccountLink" (
+      "userId" TEXT NOT NULL REFERENCES "user" ("id") ON DELETE CASCADE,
+      "guid" TEXT NOT NULL REFERENCES "t2Account" ("guid") ON DELETE CASCADE,
+      "createdAt" INTEGER NOT NULL,
+      PRIMARY KEY ("userId", "guid")
+    ) STRICT, WITHOUT ROWID;
+    CREATE INDEX "t2AccountLink_guid" ON "t2AccountLink" ("guid");
+  `);
+}
 
 it("keeps account data private, durable, and protected by foreign keys", () => {
   const { filename, database } = setup();
@@ -210,6 +227,7 @@ it("adds best-map storage to an existing profile database without changing its p
     computedAt: 1,
   };
   saveT2PlayerProfile(database, profile);
+  restoreLegacyT2Links(database);
   database.exec('DROP TABLE "t2PlayerBestMap"; PRAGMA user_version = 2');
   expect(hasPendingAccountSchemaMigrations(database)).toBe(true);
   database.transaction(() => migrateAccountSchema(database))();
@@ -417,13 +435,13 @@ describe("Tribes 2 accounts", () => {
     return { directory, filename, database };
   }
 
-  const guids = (database: Database.Database, userId: string) =>
+  const guids = (database: Database.Database, discordId: string) =>
     database
       .prepare(
-        'SELECT guid FROM "t2AccountLink" WHERE userId = ? ORDER BY guid',
+        'SELECT guid FROM "t2AccountLink" WHERE discordId = ? ORDER BY guid',
       )
       .pluck()
-      .all(userId);
+      .all(discordId);
 
   it("migrates once, only inside a transaction", () => {
     const { database } = fixture();
@@ -450,8 +468,131 @@ describe("Tribes 2 accounts", () => {
     expect(shared.accounts.map(({ guid, name }) => ({ guid, name }))).toEqual([
       { guid: "12345", name: "Smurfy" },
     ]);
-    expect(guids(database, "alice")).toEqual(["12345", "67890"]);
-    expect(guids(database, "bob")).toEqual(["12345"]);
+    expect(guids(database, DISCORD_ID)).toEqual(["12345", "67890"]);
+    expect(guids(database, OTHER_ID)).toEqual(["12345"]);
+  });
+
+  it("links and unlinks Discord identities before their first sign-in without creating app users", () => {
+    const { database } = fixture();
+    const newDiscord = "456789012345678901";
+    expect(getLinkedT2Guids(database)).toEqual(new Set());
+    const first = linkT2Account(database, newDiscord, "0012345", "Smurfy");
+    expect(first.accounts).toHaveLength(1);
+    expect(linkT2Account(database, newDiscord, "12345").accounts).toEqual(
+      first.accounts,
+    );
+    expect(database.prepare('SELECT count(*) FROM "user"').pluck().get()).toBe(
+      2,
+    );
+    expect(
+      database.prepare('SELECT count(*) FROM "account"').pluck().get(),
+    ).toBe(2);
+    expect(getLinkedT2Guids(database)).toEqual(new Set(["12345"]));
+    linkT2Account(database, DISCORD_ID, "12345");
+    expect(unlinkT2Account(database, newDiscord, "12345")).toBe(true);
+    expect(unlinkT2Account(database, newDiscord, "12345")).toBe(false);
+    expect(getLinkedT2Guids(database)).toEqual(new Set(["12345"]));
+    expect(unlinkT2Account(database, DISCORD_ID, "12345")).toBe(true);
+    expect(getLinkedT2Guids(database)).toEqual(new Set());
+    expect(
+      database
+        .prepare('SELECT name FROM "t2Account" WHERE guid = ?')
+        .pluck()
+        .get("12345"),
+    ).toBe("Smurfy");
+  });
+
+  it("migrates legacy user links to Discord IDs, preserving account labels, timestamps and profiles", () => {
+    const { database } = fixture();
+    restoreLegacyT2Links(database);
+    const secondDiscord = "456789012345678901";
+    database
+      .prepare('INSERT INTO "account" VALUES (?, ?, ?, ?)')
+      .run("alice-second", "alice", "discord", secondDiscord);
+    // Duplicate OAuth mappings collapse to the earliest existing link.
+    database
+      .prepare('INSERT INTO "account" VALUES (?, ?, ?, ?)')
+      .run("bob-also-discord", "bob", "discord", DISCORD_ID);
+    database.exec(`
+      INSERT INTO "t2Account" VALUES ('12345', 'Smurfy', 1), ('67890', 'Other', 2);
+      INSERT INTO "t2AccountLink" VALUES ('alice', '12345', 10), ('alice', '67890', 20), ('bob', '12345', 5);
+      PRAGMA user_version = 3;
+    `);
+    const profile: T2PlayerProfile = {
+      guid: "12345",
+      bodyType: "male",
+      skin: "Custom",
+      armor: "Light",
+      pack: "pack_upgrade_energy",
+      weapon: "weapon_disc",
+      loadoutSource: "inv",
+      suitUps: 7,
+      demoCount: 3,
+      lastSeenAt: 100_000,
+      computedAt: 200_000,
+    };
+    saveT2PlayerProfile(database, profile);
+    saveT2PlayerBestMaps(database, [
+      { guid: "12345", mission: "Katabatic", score: 42 },
+    ]);
+    database.transaction(() => migrateAccountSchema(database))();
+    expect(
+      database
+        .prepare('SELECT * FROM "t2AccountLink" ORDER BY discordId, guid')
+        .all(),
+    ).toEqual([
+      { discordId: DISCORD_ID, guid: "12345", createdAt: 5 },
+      { discordId: DISCORD_ID, guid: "67890", createdAt: 20 },
+      { discordId: OTHER_ID, guid: "12345", createdAt: 5 },
+      { discordId: secondDiscord, guid: "12345", createdAt: 10 },
+      { discordId: secondDiscord, guid: "67890", createdAt: 20 },
+    ]);
+    expect(database.prepare('SELECT * FROM "t2PlayerProfile"').get()).toEqual(
+      profile,
+    );
+    expect(
+      database.prepare('SELECT * FROM "t2Account" ORDER BY guid').all(),
+    ).toEqual([
+      { guid: "12345", name: "Smurfy", createdAt: 1 },
+      { guid: "67890", name: "Other", createdAt: 2 },
+    ]);
+    expect(t2ProfileReader(database)("alice")).toEqual({
+      bodyType: "male",
+      skin: "Custom",
+      armor: "Light",
+      pack: "pack_upgrade_energy",
+      weapon: "weapon_disc",
+      loadoutSource: "inv",
+      lastSeenAt: new Date(100_000).toISOString(),
+      bestMap: { mission: "Katabatic", score: 42 },
+    });
+    expect(database.pragma("foreign_key_check")).toEqual([]);
+    expect(hasPendingAccountSchemaMigrations(database)).toBe(false);
+  });
+
+  it("rolls back a legacy link migration when a Discord identity cannot be recovered", () => {
+    const { database } = fixture();
+    restoreLegacyT2Links(database);
+    database.exec(`
+      INSERT INTO "t2Account" VALUES ('12345', 'Smurfy', 1);
+      INSERT INTO "t2AccountLink" VALUES ('alice', '12345', 10);
+      DELETE FROM "account" WHERE userId = 'alice';
+      PRAGMA user_version = 3;
+    `);
+    expect(() =>
+      database.transaction(() => migrateAccountSchema(database))(),
+    ).toThrow(/discordId|NOT NULL/);
+    expect(database.pragma("user_version", { simple: true })).toBe(3);
+    expect(database.prepare('SELECT * FROM "t2AccountLink"').all()).toEqual([
+      { userId: "alice", guid: "12345", createdAt: 10 },
+    ]);
+    expect(
+      database
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE name = 't2AccountLink_legacy'",
+        )
+        .get(),
+    ).toBeUndefined();
   });
 
   it("relinks idempotently, replacing the label only when one is given", () => {
@@ -473,26 +614,26 @@ describe("Tribes 2 accounts", () => {
     linkT2Account(database, OTHER_ID, "12345");
     expect(unlinkT2Account(database, DISCORD_ID, "012345")).toBe(true);
     expect(unlinkT2Account(database, DISCORD_ID, "12345")).toBe(false);
-    expect(guids(database, "alice")).toEqual([]);
-    expect(guids(database, "bob")).toEqual(["12345"]);
+    expect(guids(database, DISCORD_ID)).toEqual([]);
+    expect(guids(database, OTHER_ID)).toEqual(["12345"]);
     expect(unlinkT2Account(database, OTHER_ID, "12345")).toBe(true);
     expect(
       database.prepare('SELECT guid, name FROM "t2Account"').all(),
     ).toEqual([{ guid: "12345", name: "Smurfy" }]);
   });
 
-  it("rejects GUIDs that cannot identify a player and unknown identities", () => {
+  it("rejects invalid GUIDs and Discord IDs while retaining the GUID foreign key", () => {
     const { database } = fixture();
     for (const guid of ["0", "000", "", "12a", "-5"]) {
       expect(() => linkT2Account(database, DISCORD_ID, guid)).toThrow(/--guid/);
+      expect(() => unlinkT2Account(database, DISCORD_ID, guid)).toThrow(
+        /--guid/,
+      );
     }
     expect(() => linkT2Account(database, "alice", "12345")).toThrow(/numeric/);
-    expect(() =>
-      linkT2Account(database, "456789012345678901", "12345"),
-    ).toThrow(/Sign in with Discord once/);
-    expect(() =>
-      unlinkT2Account(database, "456789012345678901", "12345"),
-    ).toThrow(/Sign in with Discord once/);
+    expect(() => unlinkT2Account(database, "alice", "12345")).toThrow(
+      /numeric/,
+    );
     expect(
       database.prepare('SELECT COUNT(*) FROM "t2Account"').pluck().get(),
     ).toBe(0);
@@ -504,13 +645,13 @@ describe("Tribes 2 accounts", () => {
     }
     account.run("12345", 1);
     const link = database.prepare(
-      'INSERT INTO "t2AccountLink" (userId, guid, createdAt) VALUES (?, ?, ?)',
+      'INSERT INTO "t2AccountLink" (discordId, guid, createdAt) VALUES (?, ?, ?)',
     );
-    expect(() => link.run("nobody", "12345", 1)).toThrow(/FOREIGN KEY/);
-    expect(() => link.run("alice", "67890", 1)).toThrow(/FOREIGN KEY/);
+    expect(() => link.run("nobody", "12345", 1)).toThrow(/CHECK/);
+    expect(() => link.run(DISCORD_ID, "67890", 1)).toThrow(/FOREIGN KEY/);
   });
 
-  it("drops only a deleted identity's links", () => {
+  it("retains permanent Discord links when an app user is deleted", () => {
     const { database } = fixture();
     linkT2Account(database, DISCORD_ID, "12345");
     linkT2Account(database, OTHER_ID, "12345");
@@ -518,9 +659,52 @@ describe("Tribes 2 accounts", () => {
       `DELETE FROM "account" WHERE userId = 'alice'; DELETE FROM "user" WHERE id = 'alice';`,
     );
     expect(
-      database.prepare('SELECT userId FROM "t2AccountLink"').pluck().all(),
-    ).toEqual(["bob"]);
+      database
+        .prepare('SELECT discordId FROM "t2AccountLink" ORDER BY discordId')
+        .pluck()
+        .all(),
+    ).toEqual([DISCORD_ID, OTHER_ID]);
   });
+
+  it.each([false, true])(
+    "lists registered Discord users with links from a legacy schema: %s",
+    (legacy) => {
+      const { filename, database } = fixture();
+      database.exec(`
+      ALTER TABLE "user" ADD COLUMN "name" TEXT;
+      ALTER TABLE "user" ADD COLUMN "discordUsername" TEXT;
+      ALTER TABLE "user" ADD COLUMN "role" TEXT;
+      ALTER TABLE "user" ADD COLUMN "createdAt" INTEGER;
+      UPDATE "user" SET name = 'Alice', discordUsername = 'alice', role = 'user', createdAt = 1 WHERE id = 'alice';
+    `);
+      linkT2Account(database, DISCORD_ID, "12345", "Smurfy");
+      if (legacy) {
+        restoreLegacyT2Links(database);
+        database.exec(
+          `INSERT INTO "t2AccountLink" VALUES ('alice', '12345', 1); PRAGMA user_version = 3;`,
+        );
+      }
+      const version = database.pragma("user_version", { simple: true });
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import=tsx/esm",
+          "scripts/list-discord-users.ts",
+          "--database",
+          filename,
+        ],
+        {
+          cwd: path.resolve(import.meta.dirname, ".."),
+          encoding: "utf8",
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain(DISCORD_ID);
+      expect(result.stdout).toContain("12345");
+      expect(result.stdout).toContain("Alice");
+      expect(database.pragma("user_version", { simple: true })).toBe(version);
+    },
+  );
 
   it("runs the operator command to link and unlink", () => {
     const { filename, database } = fixture();
@@ -546,8 +730,16 @@ describe("Tribes 2 accounts", () => {
     expect(linked.stdout).toContain("Smurfy");
     const shared = run("--discord-id", OTHER_ID, "--guid", "12345");
     expect(shared.status, shared.stderr).toBe(0);
-    expect(guids(database, "alice")).toEqual(["12345"]);
-    expect(guids(database, "bob")).toEqual(["12345"]);
+    expect(guids(database, DISCORD_ID)).toEqual(["12345"]);
+    expect(guids(database, OTHER_ID)).toEqual(["12345"]);
+    const prelinked = run(
+      "--discord-id",
+      "456789012345678901",
+      "--guid",
+      "12345",
+    );
+    expect(prelinked.status, prelinked.stderr).toBe(0);
+    expect(guids(database, "456789012345678901")).toEqual(["12345"]);
     const missingIdentity = run("--unlink", "--guid", "12345");
     expect(missingIdentity.status).toBe(1);
     expect(missingIdentity.stdout).toContain("Usage");
@@ -560,7 +752,7 @@ describe("Tribes 2 accounts", () => {
     );
     expect(unlinked.status, unlinked.stderr).toBe(0);
     expect(unlinked.stdout).toContain("Unlinked");
-    expect(guids(database, "alice")).toEqual([]);
-    expect(guids(database, "bob")).toEqual(["12345"]);
+    expect(guids(database, DISCORD_ID)).toEqual([]);
+    expect(guids(database, OTHER_ID)).toEqual(["12345"]);
   });
 });

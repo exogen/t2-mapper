@@ -11,6 +11,7 @@
 scripts/*
 !scripts/backup-account-database.ts
 !scripts/link-t2-account.ts
+!scripts/link-t2-accounts.ts
 !scripts/list-discord-users.ts
 !scripts/set-account-role.ts
 !scripts/backfill-demo-guids.ts

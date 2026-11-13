@@ -1366,11 +1366,60 @@ it("backs up and adds Tribes 2 accounts to a database from before app-owned migr
   linkT2Account(app.database, USER_ID, "12345");
   expect(
     app.database
-      .prepare('SELECT "userId" FROM "t2AccountLink" WHERE "guid" = ?')
+      .prepare('SELECT "discordId" FROM "t2AccountLink" WHERE "guid" = ?')
       .pluck()
       .get("12345"),
-  ).toBe(user.id);
+  ).toBe(USER_ID);
   expect((await app.account())?.id).toBe(user.id);
+});
+
+it("resolves a prelinked Tribes 2 account on the first Discord sign-in", async () => {
+  const app = await fixture();
+  expect(
+    app.database.prepare('SELECT count(*) FROM "user"').pluck().get(),
+  ).toBe(0);
+  linkT2Account(app.database, USER_ID, "0012345", "Prelinked player");
+  saveT2PlayerProfile(app.database, {
+    guid: "12345",
+    bodyType: "female",
+    skin: "Custom",
+    armor: "Light",
+    pack: "pack_upgrade_energy",
+    weapon: "weapon_disc",
+    loadoutSource: "inv",
+    suitUps: 10,
+    demoCount: 4,
+    lastSeenAt: Date.UTC(2026, 10, 1),
+    computedAt: 1,
+  });
+  saveT2PlayerBestMaps(app.database, [
+    { guid: "12345", mission: "Katabatic", score: 42 },
+  ]);
+  expect(
+    app.database.prepare('SELECT count(*) FROM "user"').pluck().get(),
+  ).toBe(0);
+  expect(
+    (await app.request(`/api/users/${USER_ID}`, { headers: { Cookie: "" } }))
+      .status,
+  ).toBe(404);
+  await app.login();
+  const expected = {
+    bodyType: "female",
+    skin: "Custom",
+    armor: "Light",
+    pack: "pack_upgrade_energy",
+    weapon: "weapon_disc",
+    loadoutSource: "inv",
+    lastSeenAt: "2026-11-01T00:00:00.000Z",
+    bestMap: { mission: "Katabatic", score: 42 },
+  };
+  expect((await app.account())?.t2Profile).toEqual(expected);
+  const response = await app.request(`/api/users/${USER_ID}`, {
+    headers: { Cookie: "" },
+  });
+  expect(((await response.json()) as AccountPublicProfile).t2Profile).toEqual(
+    expected,
+  );
 });
 
 it("shows the most recently seen linked Tribes 2 profile, without its GUID", async () => {
