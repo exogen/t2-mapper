@@ -1,8 +1,11 @@
 .Page {
   composes: DropZone from "./DemoDropZone.module.css";
   overflow-x: hidden;
-  padding-top: 0;
   padding-bottom: 40px;
+}
+
+.Page:has(.Profile[data-has-portrait]) {
+  padding-top: 0;
 }
 
 .Section {

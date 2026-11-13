@@ -13,3 +13,13 @@ scripts/*
 !scripts/link-t2-account.ts
 !scripts/list-discord-users.ts
 !scripts/set-account-role.ts
+!scripts/backfill-demo-guids.ts
+!scripts/backfill-demo-stats.ts
+!scripts/backfill-player-profiles.ts
+!scripts/merge-demo-guids.ts
+!scripts/player-loadouts.ts
+!scripts/lib/
+scripts/lib/*
+!scripts/lib/r2.ts
+!scripts/lib/demoGuidInventory.ts
+!scripts/lib/playerProfiles.ts
