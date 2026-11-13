@@ -4,8 +4,8 @@
  * bought at full and deployable inventory stations.
  *
  * The demo is replayed in full; its state is observed at a fixed step.
- * Server messages (kills) are exact. Everything but skins counts only while
- * the match is live, not during warmup or the end-of-match screen.
+ * Server messages (kills and scores) are exact. Kills and loadout time count
+ * only during play; final scores include the following debrief awards.
  *
  * A station visit is a player in its trigger with their weapon unmounted
  * (`stationTrigger::onEnterTrigger`) while its activate thread plays. The
@@ -33,62 +33,19 @@ import {
   winningSourcePath,
   type ResourceEntry,
 } from "../src/resourcePaths";
-
-export const DEMO_STATS_VERSION = 4;
-
-/**
- * `raceGender` as clients choose it on connect (`GameConnection::onConnect`).
- * It is not sent to other clients; the armor datablock a player wears shows it.
- */
-export type RaceGender = "Human Male" | "Human Female" | "Bioderm";
-
-export interface PlayerDemoStats {
-  /**
-   * Chosen skins (`base` included), most recently used first; race/gender is
-   * null for a connection never seen in play.
-   */
-  skins: { raceGender: RaceGender | null; skin: string }[];
-  /**
-   * By `$DamageTypeText`, except that `grenade` is split into
-   * `grenade launcher` and `hand grenade`; teamkills and self-inflicted
-   * deaths excluded.
-   */
-  killsByWeapon: Record<string, number>;
-  /** Seconds seen holding each weapon-slot image. */
-  weaponsHeldSec: Record<string, number>;
-  /**
-   * Outfit key (`outfitKey`) → seconds seen wearing it, in any game type,
-   * inventory stations or not.
-   */
-  wornSec: Record<string, number>;
-  /** Loadout key (`loadoutKey`) → purchases at full stations (base and MPB). */
-  invLoadouts: Record<string, number>;
-  /** Loadout key → purchases at deployable inventory stations. */
-  deployInvLoadouts: Record<string, number>;
-}
-
-export interface DemoStatsSidecar {
-  version: number;
-  /** Identity of the published recording used to compute these stats. */
-  sourceETag?: string;
-  statsByGuid: Record<string, PlayerDemoStats>;
-}
-
-export interface Outfit {
-  /** `Light`, `Medium` or `Heavy`; an unknown armor shape's name otherwise. */
-  armor: string;
-  /** Backpack image shape, or null without a pack. */
-  pack: string | null;
-}
-
-export interface Loadout {
-  /** `Light`, `Medium` or `Heavy`; an unknown armor shape's name otherwise. */
-  armor: string;
-  /** Backpack image shape, or null without a pack. */
-  pack: string | null;
-  /** Weapon images seen held, in inventory order. */
-  weapons: string[];
-}
+import {
+  DEMO_STATS_VERSION,
+  NON_LOADOUT_WEAPONS,
+  loadoutKey,
+  outfitKey,
+  type DemoStatsSidecar,
+  type PlayerDemoStats,
+  type RaceGender,
+} from "./demoPlayerStatsModel";
+import {
+  DemoMapScoreTracker,
+  type InitialMapScoreState,
+} from "./demoMapScores";
 
 type InventoryKind = "inventory" | "deployable";
 
@@ -132,86 +89,6 @@ const GRENADE_MATCH_RANGE = 25;
 const LAUNCHER_IMAGE = "weapon_grenade_launcher";
 const LAUNCHER_KILL_WINDOW_SEC = 1;
 
-/** Weapon images and their inventory names, in the inventory screen's order. */
-export const WEAPON_NAMES = new Map([
-  ["weapon_energy", "Blaster"],
-  ["weapon_plasma", "Plasma Rifle"],
-  ["weapon_chaingun", "Chaingun"],
-  ["weapon_disc", "Spinfusor"],
-  ["weapon_grenade_launcher", "Grenade Launcher"],
-  ["weapon_sniper", "Laser Rifle"],
-  ["weapon_elf", "ELF Projector"],
-  ["weapon_mortar", "Fusion Mortar"],
-  ["weapon_missile", "Missile Launcher"],
-  ["weapon_shocklance", "Shocklance"],
-  ["weapon_targeting", "Targeting Laser"],
-  ["weapon_repair", "Repair Gun"],
-]);
-const WEAPON_ORDER = new Map(
-  [...WEAPON_NAMES.keys()].map((shape, index) => [shape, index]),
-);
-/** Every loadout carries a targeting laser; the repair gun belongs to its pack. */
-export const NON_LOADOUT_WEAPONS: ReadonlySet<string> = new Set([
-  "weapon_targeting",
-  "weapon_repair",
-]);
-
-export const PACK_NAMES = new Map([
-  ["pack_upgrade_energy", "Energy Pack"],
-  ["pack_upgrade_repair", "Repair Pack"],
-  ["pack_upgrade_shield", "Shield Pack"],
-  ["pack_upgrade_cloaking", "Cloak Pack"],
-  ["pack_upgrade_sensorjammer", "Sensor Jammer Pack"],
-  ["pack_upgrade_ammo", "Ammunition Pack"],
-  ["pack_upgrade_satchel", "Satchel Charge"],
-  ["pack_deploy_sensor_motion", "Motion Sensor Pack"],
-  ["pack_deploy_sensor_pulse", "Pulse Sensor Pack"],
-  ["pack_deploy_inventory", "Inventory Station"],
-  ["pack_deploy_turreto", "Landspike Turret"],
-  ["pack_deploy_turreti", "Spider Clamp Turret"],
-  ["pack_barrel_elf", "ELF Turret Barrel"],
-  ["pack_barrel_mortar", "Mortar Turret Barrel"],
-  ["pack_barrel_fusion", "Plasma Turret Barrel"],
-  ["pack_barrel_aa", "AA Turret Barrel"],
-  ["pack_barrel_missile", "Missile Turret Barrel"],
-]);
-
-/**
- * Kill weapons (`killsByWeapon` keys) → the inventory name of what dealt
- * them; other damage types keep the server's wording.
- */
-export const KILL_WEAPON_NAMES = new Map([
-  ["blaster", "Blaster"],
-  ["plasma", "Plasma Rifle"],
-  ["chaingun", "Chaingun"],
-  ["disc", "Spinfusor"],
-  ["grenade launcher", "Grenade Launcher"],
-  ["hand grenade", "Hand Grenade"],
-  ["laser", "Laser Rifle"],
-  ["elf", "ELF Projector"],
-  ["mortar", "Fusion Mortar"],
-  ["missile", "Missile Launcher"],
-  ["shocklance", "Shocklance"],
-  ["mine", "Mine"],
-  ["satchel charge", "Satchel Charge"],
-  ["spike turret", "Landspike Turret"],
-  ["clamp turret", "Spider Clamp Turret"],
-]);
-
-/** Kill weapons that are held weapons → their weapon image. */
-export const KILL_WEAPON_IMAGES = new Map([
-  ["blaster", "weapon_energy"],
-  ["plasma", "weapon_plasma"],
-  ["chaingun", "weapon_chaingun"],
-  ["disc", "weapon_disc"],
-  ["grenade launcher", "weapon_grenade_launcher"],
-  ["laser", "weapon_sniper"],
-  ["elf", "weapon_elf"],
-  ["mortar", "weapon_mortar"],
-  ["missile", "weapon_missile"],
-  ["shocklance", "weapon_shocklance"],
-]);
-
 const RACE_GENDERS: Record<PlayerBodyType, RaceGender> = {
   male: "Human Male",
   female: "Human Female",
@@ -237,42 +114,6 @@ function armorOf(shape: string | null): string {
   if (shape.includes("medium")) return "Medium";
   if (shape.includes("heavy")) return "Heavy";
   return shape;
-}
-
-/** Canonical JSON with a fixed key order. */
-export function outfitKey({ armor, pack }: Outfit): string {
-  return JSON.stringify({ armor, pack });
-}
-
-/** Canonical JSON: fixed key order, weapons in inventory order. */
-export function loadoutKey({ armor, pack, weapons }: Loadout): string {
-  const ordered = [...new Set(weapons)].sort(
-    (a, b) =>
-      (WEAPON_ORDER.get(a) ?? WEAPON_ORDER.size) -
-        (WEAPON_ORDER.get(b) ?? WEAPON_ORDER.size) || a.localeCompare(b),
-  );
-  return JSON.stringify({ armor, pack, weapons: ordered });
-}
-
-function describePack(pack: string | null): string {
-  return pack ? (PACK_NAMES.get(pack) ?? pack) : "No Pack";
-}
-
-/** `Light · Energy Pack` for an outfit key. */
-export function describeOutfit(key: string): string {
-  const { armor, pack } = JSON.parse(key) as Outfit;
-  return `${armor} · ${describePack(pack)}`;
-}
-
-/** `Heavy · Shield Pack · Chaingun, Spinfusor` for a loadout key. */
-export function describeLoadout(key: string): string {
-  const { armor, pack, weapons } = JSON.parse(key) as Loadout;
-  return [
-    armor,
-    describePack(pack),
-    weapons.map((shape) => WEAPON_NAMES.get(shape) ?? shape).join(", ") ||
-      "No Weapon Seen",
-  ].join(" · ");
 }
 
 /**
@@ -397,16 +238,20 @@ export class DemoPlayerStatsTracker {
   private grenades = new Map<string, Grenade>();
   private live = false;
   private lastTimeSec: number | null = null;
+  private readonly mapScores: DemoMapScoreTracker;
 
   constructor(
     purchaseSequences: ReadonlyMap<string, number>,
     lookups: PlayerStatsLookups = {},
+    initialScores: InitialMapScoreState = {},
   ) {
     this.purchaseSequences = purchaseSequences;
     this.lookups = lookups;
+    this.mapScores = new DemoMapScoreTracker(initialScores);
   }
 
   step(snapshot: StreamSnapshot): void {
+    this.mapScores.step(snapshot);
     const live = snapshot.matchStarted && !snapshot.matchEnded;
     if (this.live && !live)
       // Lives still open when the match ends are complete.
@@ -485,6 +330,8 @@ export class DemoPlayerStatsTracker {
 
   /** Every GUID seen in the roster, with this demo's stats. */
   finish(): DemoStatsSidecar {
+    const mapScores = this.mapScores.finish();
+    for (const guid of mapScores.keys()) this.totals(guid);
     for (const connection of this.connections.values())
       this.endSegment(connection);
     const skins = new Map<
@@ -512,6 +359,7 @@ export class DemoPlayerStatsTracker {
         wornSec: roundedSeconds(totals.worn),
         invLoadouts: Object.fromEntries(totals.loadouts.inventory),
         deployInvLoadouts: Object.fromEntries(totals.loadouts.deployable),
+        mapScores: mapScores.get(guid) ?? [],
       };
     return { version: DEMO_STATS_VERSION, statsByGuid };
   }
@@ -850,21 +698,47 @@ export async function computeDemoPlayerStats(
   purchaseSequences: ReadonlyMap<string, number>,
   stepSec = 0.25,
 ): Promise<DemoStatsSidecar> {
-  const { createDemoStreamingRecording } =
-    await import("../src/stream/demoStreaming");
-  const recording = await createDemoStreamingRecording(
-    bytes.buffer.slice(
-      bytes.byteOffset,
-      bytes.byteOffset + bytes.byteLength,
-    ) as ArrayBuffer,
-    { checkpoints: false, groundEffects: false },
-  );
+  if (!Number.isFinite(stepSec) || stepSec <= 0)
+    throw new Error("Player stats step must be a positive finite number");
+  const [{ createRecordingFromParser, parseDemoValues }, { loadDemoParser }] =
+    await Promise.all([
+      import("../src/stream/demoStreaming"),
+      import("../src/stream/loadDemoParser"),
+    ]);
+  const data = bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  ) as ArrayBuffer;
+  const parser = await loadDemoParser(new Uint8Array(data));
+  const recording = createRecordingFromParser(parser, {
+    checkpoints: false,
+    groundEffects: false,
+  });
+  if (!Number.isFinite(recording.duration) || recording.duration < 0)
+    throw new Error("Recording duration must be finite and nonnegative");
   const playback = recording.streamingPlayback;
-  const tracker = new DemoPlayerStatsTracker(purchaseSequences, playback);
-  for (let t = 0; t <= recording.duration; t += stepSec) {
+  const values = parser.initialBlock.demoValues;
+  const initialRoster = parseDemoValues(values).playerRoster;
+  // parseDemoValues intentionally defaults absent/malformed HUD numbers to 0.
+  // A best score needs a recorded number, so retain only actual saved values.
+  const knownScores = new Set<number>();
+  const count = parseInt(values[1], 10) || 0;
+  for (const row of values.slice(2, 2 + count)) {
+    const fields = row.split("\t");
+    if (Number.isFinite(parseInt(fields[5], 10)))
+      knownScores.add(parseInt(fields[2], 10));
+  }
+  for (const id of initialRoster.keys())
+    if (!knownScores.has(id)) initialRoster.delete(id);
+  const tracker = new DemoPlayerStatsTracker(purchaseSequences, playback, {
+    mission: recording.missionName,
+    roster: initialRoster,
+  });
+  for (let step = 0; ; step++) {
+    const t = Math.min(step * stepSec, recording.duration);
     const snapshot = playback.stepToTime(t);
     tracker.step(snapshot);
-    if (snapshot.exhausted) break;
+    if (snapshot.exhausted || t >= recording.duration) break;
   }
   return tracker.finish();
 }

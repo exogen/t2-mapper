@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import {
   isDiscordId,
   type AccountRole,
+  type T2PlayerBestMapUpdate,
   type T2PlayerProfile,
   type T2ProfileView,
 } from "./accountTypes.js";
@@ -64,6 +65,14 @@ const ACCOUNT_SCHEMA_MIGRATIONS: readonly string[] = [
     "demoCount" INTEGER NOT NULL,
     "lastSeenAt" INTEGER,
     "computedAt" INTEGER NOT NULL
+  ) STRICT;`,
+  // All-time scores are independent of recent appearance snapshots, allowing
+  // each new demo to compare its scores without rereading historical demos.
+  `CREATE TABLE "t2PlayerBestMap" (
+    "guid" TEXT NOT NULL PRIMARY KEY
+      CHECK ("guid" GLOB '[1-9]*' AND "guid" NOT GLOB '*[^0-9]*'),
+    "mission" TEXT NOT NULL CHECK (length(trim("mission")) > 0),
+    "score" REAL NOT NULL
   ) STRICT;`,
 ];
 
@@ -364,6 +373,32 @@ export function saveT2PlayerProfile(
     .run(profile);
 }
 
+/** Compare positive final scores atomically; retries and older jobs cannot lower a best. */
+export function saveT2PlayerBestMaps(
+  database: Database.Database,
+  entries: readonly T2PlayerBestMapUpdate[],
+): void {
+  if (!entries.length) return;
+  const save = database.prepare(
+    `INSERT INTO "t2PlayerBestMap" ("guid", "mission", "score") VALUES (?, ?, ?)
+      ON CONFLICT ("guid") DO UPDATE SET
+        "mission" = excluded."mission", "score" = excluded."score"
+      WHERE excluded."score" > "t2PlayerBestMap"."score"`,
+  );
+  database
+    .transaction(() => {
+      for (const entry of entries) {
+        const guid = requireT2Guid(entry.guid);
+        const mission = entry.mission.trim();
+        if (!mission || !Number.isFinite(entry.score))
+          throw new Error("A best map requires a mission and finite score");
+        if (entry.score <= 0) continue;
+        save.run(guid, mission, entry.score);
+      }
+    })
+    .immediate();
+}
+
 /**
  * Reads the public profile of a user's most recently seen linked Tribes 2
  * account, or null without one.
@@ -373,24 +408,32 @@ export function t2ProfileReader(
 ): (userId: string) => T2ProfileView | null {
   const query = database.prepare(
     `SELECT p."bodyType", p."skin", p."armor", p."pack", p."weapon",
-      p."loadoutSource", p."lastSeenAt"
+      p."loadoutSource", p."lastSeenAt",
+      b."mission" AS "bestMapMission", b."score" AS "bestMapScore"
     FROM "t2AccountLink" l JOIN "t2PlayerProfile" p ON p."guid" = l."guid"
+    LEFT JOIN "t2PlayerBestMap" b ON b."guid" = p."guid" AND b."score" > 0
     WHERE l."userId" = ?
     ORDER BY p."lastSeenAt" IS NULL, p."lastSeenAt" DESC, p."guid"
     LIMIT 1`,
   );
   return (userId) => {
     const row = query.get(userId) as
-      | (Omit<T2ProfileView, "lastSeenAt"> & { lastSeenAt: number | null })
+      | (Omit<T2ProfileView, "lastSeenAt" | "bestMap"> & {
+          lastSeenAt: number | null;
+          bestMapMission: string | null;
+          bestMapScore: number | null;
+        })
       | undefined;
-    return row
-      ? {
-          ...row,
-          lastSeenAt:
-            row.lastSeenAt == null
-              ? null
-              : new Date(row.lastSeenAt).toISOString(),
-        }
-      : null;
+    if (!row) return null;
+    const { bestMapMission, bestMapScore, ...profile } = row;
+    return {
+      ...profile,
+      lastSeenAt:
+        row.lastSeenAt == null ? null : new Date(row.lastSeenAt).toISOString(),
+      bestMap:
+        bestMapMission != null && bestMapScore != null
+          ? { mission: bestMapMission, score: bestMapScore }
+          : null,
+    };
   };
 }

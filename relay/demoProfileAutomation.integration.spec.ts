@@ -14,6 +14,7 @@ import { expect, it, vi } from "vitest";
 import {
   migrateAccountSchema,
   openAccountDatabase,
+  saveT2PlayerBestMaps,
   saveT2PlayerProfile,
 } from "./accountDatabase";
 import type { T2PlayerProfile } from "./accountTypes";
@@ -23,11 +24,11 @@ import {
   DEMO_STATS_VERSION,
   loadoutKey,
   type PlayerDemoStats,
-} from "./demoPlayerStats";
+} from "./demoPlayerStatsModel";
 import { createRelayDemoProcessing } from "./demoProcessing";
 import { DEMO_PROFILES_SUFFIX, DEMO_STATS_SUFFIX } from "./demoStats";
 import { DemoStatsScheduler } from "./demoStatsScheduler";
-import { createDemoPlayerProfileUpdater } from "./playerProfileStore";
+import { createDemoPlayerProfileUpdater } from "./playerProfileService";
 import { PrivateDemoStore } from "./privateDemoStore";
 
 it("stores affected players' profiles after stats, then recovers a profile retry without replaying", async () => {
@@ -86,6 +87,10 @@ it("stores affected players' profiles after stats, then recovers a profile retry
       "202": stats("base", "Medium", 1),
     },
   };
+  currentStats.statsByGuid["101"].mapScores = [
+    { mission: "Katabatic", score: 80 },
+  ];
+  currentStats.statsByGuid["202"].mapScores = [{ mission: "DX", score: 40 }];
   const putJSON = (bucket: string, key: string, value: unknown) =>
     objects.set(`${bucket}/demos/${key}`, JSON.stringify(value));
   objects.set("public/demos/new.rec", "rec");
@@ -147,10 +152,15 @@ it("stores affected players' profiles after stats, then recovers a profile retry
   const compute = vi.fn(async () => currentStats);
   const processing = createRelayDemoProcessing();
   const saved: T2PlayerProfile[] = [];
+  let failBestMapWrites = false;
   const update = createDemoPlayerProfileUpdater({
     config,
     store,
     client,
+    saveBestMaps: (entries) => {
+      if (failBestMapWrites) throw new Error("SQLite busy");
+      saveT2PlayerBestMaps(database, entries);
+    },
     saveProfile: (profile) => {
       expect(objects.has(`private/demos/new.rec${DEMO_STATS_SUFFIX}`)).toBe(
         true,
@@ -191,6 +201,12 @@ it("stores affected players' profiles after stats, then recovers a profile retry
     expect(
       database.prepare('SELECT COUNT(*) AS n FROM "t2AccountLink"').get(),
     ).toEqual({ n: 0 });
+    expect(
+      database.prepare('SELECT * FROM "t2PlayerBestMap" ORDER BY "guid"').all(),
+    ).toEqual([
+      { guid: "101", mission: "Katabatic", score: 80 },
+      { guid: "202", mission: "DX", score: 40 },
+    ]);
     expect(objects.has(`private/demos/new.rec${DEMO_PROFILES_SUFFIX}`)).toBe(
       true,
     );
@@ -198,8 +214,16 @@ it("stores affected players' profiles after stats, then recovers a profile retry
     // A missing completion marker models a restart after the stats upload but
     // before the profile task committed its durable completion record.
     objects.delete(`private/demos/new.rec${DEMO_PROFILES_SUFFIX}`);
+    failBestMapWrites = true;
     const restarted = makeScheduler();
     expect(await restarted.sweep()).toBe(1);
+    await restarted.idle();
+    expect(objects.has(`private/demos/new.rec${DEMO_PROFILES_SUFFIX}`)).toBe(
+      false,
+    );
+    expect(saved).toHaveLength(2);
+    failBestMapWrites = false;
+    restarted.enqueue("new.rec");
     await restarted.idle();
     expect(compute).toHaveBeenCalledOnce();
     expect(saved.map(({ guid }) => guid)).toEqual(["101", "202", "101", "202"]);

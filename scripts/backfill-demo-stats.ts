@@ -8,13 +8,10 @@ import { pipeline } from "node:stream/promises";
 import { parseArgs } from "node:util";
 import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { isPublishedDemoKey } from "../relay/demoKeys.js";
-import {
-  DEMO_STATS_VERSION,
-  type DemoStatsSidecar,
-} from "../relay/demoPlayerStats.js";
+import { DEMO_STATS_VERSION } from "../relay/demoPlayerStatsModel.js";
 import {
   DEMO_STATS_SUFFIX,
-  demoStatsVersion,
+  readCurrentDemoStats,
   runDemoStatsProcess,
 } from "../relay/demoStats.js";
 import type { DemoUploadConfig } from "../relay/demoUpload.js";
@@ -108,12 +105,8 @@ if (!values.force) {
         const value = await store
           .read(demoKey, DEMO_STATS_SUFFIX)
           .catch(() => null);
-        if (demoStatsVersion(value) === DEMO_STATS_VERSION) {
-          const sourceETag = sourceETags.get(demoKey);
-          const statsETag = (value as DemoStatsSidecar).sourceETag;
-          if (!sourceETag || !statsETag || sourceETag === statsETag)
-            current.add(demoKey);
-        }
+        if (readCurrentDemoStats(value, sourceETags.get(demoKey)))
+          current.add(demoKey);
       }
     }),
   );

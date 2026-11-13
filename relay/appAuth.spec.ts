@@ -9,6 +9,7 @@ import {
   hasPendingAccountSchemaMigrations,
   linkT2Account,
   openAccountDatabase,
+  saveT2PlayerBestMaps,
   saveT2PlayerProfile,
   setAccountRole,
 } from "./accountDatabase.js";
@@ -1356,7 +1357,7 @@ it("backs up and adds Tribes 2 accounts to a database from before app-owned migr
   const backup = path.join(app.directory, "app.sqlite.pre-migration.sqlite");
   expect(fs.existsSync(backup)).toBe(false);
   app.database.exec(
-    'DROP TABLE "t2PlayerProfile"; DROP TABLE "t2AccountLink"; DROP TABLE "t2Account"; PRAGMA user_version = 0;',
+    'DROP TABLE "t2PlayerBestMap"; DROP TABLE "t2PlayerProfile"; DROP TABLE "t2AccountLink"; DROP TABLE "t2Account"; PRAGMA user_version = 0;',
   );
   await app.restart();
   expect(fs.existsSync(backup)).toBe(true);
@@ -1410,6 +1411,7 @@ it("shows the most recently seen linked Tribes 2 profile, without its GUID", asy
     weapon: "weapon_disc",
     loadoutSource: "inv",
     lastSeenAt: "2026-11-01T00:00:00.000Z",
+    bestMap: null,
   };
   const response = await app.request(`/api/users/${USER_ID}`, {
     headers: { Cookie: "" },
@@ -1418,6 +1420,37 @@ it("shows the most recently seen linked Tribes 2 profile, without its GUID", asy
     expected,
   );
   expect((await app.account())?.t2Profile).toEqual(expected);
+  // Older computations could store a zero or penalty-only best map.
+  for (const score of [0, -3]) {
+    app.database
+      .prepare(
+        'INSERT INTO "t2PlayerBestMap" (guid, mission, score) VALUES (?, ?, ?) ON CONFLICT (guid) DO UPDATE SET score = excluded.score',
+      )
+      .run("222", "Never played", score);
+    const withoutBest = await app.request(`/api/users/${USER_ID}`, {
+      headers: { Cookie: "" },
+    });
+    expect(
+      ((await withoutBest.json()) as AccountPublicProfile).t2Profile,
+    ).toEqual(expected);
+    expect((await app.account())?.t2Profile).toEqual(expected);
+  }
+  saveT2PlayerBestMaps(app.database, [
+    { guid: "111", mission: "Older account's map", score: 100 },
+    { guid: "222", mission: "Katabatic", score: 42 },
+    { guid: "444", mission: "Unlinked account's map", score: 1000 },
+  ]);
+  const withBestMap = {
+    ...expected,
+    bestMap: { mission: "Katabatic", score: 42 },
+  };
+  const updated = await app.request(`/api/users/${USER_ID}`, {
+    headers: { Cookie: "" },
+  });
+  expect(((await updated.json()) as AccountPublicProfile).t2Profile).toEqual(
+    withBestMap,
+  );
+  expect((await app.account())?.t2Profile).toEqual(withBestMap);
 });
 
 it("removes expired sessions and abandoned OAuth state while retaining active data", async () => {

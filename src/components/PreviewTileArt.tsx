@@ -1,9 +1,6 @@
 import type { ReactNode } from "react";
-import {
-  RawPreviewImage,
-  TILE_FALLBACK_ART_URL,
-  useFirstAvailableImage,
-} from "./missionPreview";
+import { RawPreviewImage, useFirstAvailableImage } from "./missionPreview";
+import { TILE_FALLBACK_ART_URL } from "./missionArt";
 import tileStyles from "./PreviewTile.module.css";
 
 /**

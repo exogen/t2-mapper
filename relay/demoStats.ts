@@ -5,8 +5,9 @@
 import {
   DEMO_STATS_VERSION,
   type DemoStatsSidecar,
-} from "./demoPlayerStats.js";
+} from "./demoPlayerStatsModel.js";
 import { runDemoWorker } from "./demoWorkerProcess.js";
+import { normalizePlayerGuid } from "./shared.js";
 
 export const DEMO_STATS_SUFFIX = ".stats.json";
 /** Written only after a published demo's players have had profiles refreshed. */
@@ -36,17 +37,45 @@ export function isCurrentProfileRefresh(
   );
 }
 
-/** The stored version, or null when the value is not a stats sidecar. */
-export function demoStatsVersion(value: unknown): number | null {
+/** Read usable current stats; legacy fingerprints remain optional. */
+export function readCurrentDemoStats(
+  value: unknown,
+  sourceETag?: string,
+): DemoStatsSidecar | null {
   const sidecar = value as Partial<DemoStatsSidecar> | null;
-  return typeof sidecar?.version === "number" &&
-    sidecar.statsByGuid &&
-    typeof sidecar.statsByGuid === "object" &&
-    !Array.isArray(sidecar.statsByGuid) &&
-    (sidecar.sourceETag === undefined ||
-      (typeof sidecar.sourceETag === "string" && sidecar.sourceETag.length > 0))
-    ? sidecar.version
-    : null;
+  if (
+    sidecar?.version !== DEMO_STATS_VERSION ||
+    !sidecar.statsByGuid ||
+    typeof sidecar.statsByGuid !== "object" ||
+    Array.isArray(sidecar.statsByGuid) ||
+    (sidecar.sourceETag !== undefined &&
+      (typeof sidecar.sourceETag !== "string" || !sidecar.sourceETag.length)) ||
+    (sourceETag && sidecar.sourceETag && sourceETag !== sidecar.sourceETag)
+  )
+    return null;
+  // A malformed score must trigger recomputation, rather than keeping an
+  // otherwise current sidecar that poisons every best-map write on retry.
+  for (const [guid, player] of Object.entries(sidecar.statsByGuid)) {
+    if (!player || typeof player !== "object" || Array.isArray(player))
+      return null;
+    const mapScores: unknown = player.mapScores;
+    if (
+      mapScores !== undefined &&
+      (!Array.isArray(mapScores) ||
+        (mapScores.length > 0 && !normalizePlayerGuid(guid)) ||
+        mapScores.some(
+          (entry) =>
+            !entry ||
+            typeof entry !== "object" ||
+            typeof entry.mission !== "string" ||
+            !entry.mission.trim() ||
+            typeof entry.score !== "number" ||
+            !Number.isFinite(entry.score),
+        ))
+    )
+      return null;
+  }
+  return sidecar as DemoStatsSidecar;
 }
 
 /** Compute a local recording's player stats in a worker (see `runDemoWorker`). */

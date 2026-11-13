@@ -6,6 +6,7 @@ import { GetObjectCommand } from "@aws-sdk/client-s3";
 import {
   hasPendingAccountSchemaMigrations,
   openAccountDatabase,
+  saveT2PlayerBestMaps,
   saveT2PlayerProfile,
 } from "../relay/accountDatabase.js";
 import type { DemoMetadata } from "../relay/demoMetadata.js";
@@ -13,8 +14,8 @@ import {
   PrivateDemoStore,
   loadPrivateDemoStorageConfig,
 } from "../relay/privateDemoStore.js";
-import { collectDemoGuidInventory } from "./lib/demoGuidInventory.js";
-import { updatePlayerProfiles } from "../relay/playerProfileStore.js";
+import { collectDemoGuidInventory } from "../relay/demoGuidInventory.js";
+import { updatePlayerProfiles } from "../relay/playerProfileService.js";
 import { r2Client } from "./lib/r2.js";
 
 async function main(): Promise<void> {
@@ -36,8 +37,11 @@ async function main(): Promise<void> {
         "then inserts or updates its representative profile in AUTH_DATABASE_PATH.",
         "Uses the same recent-demo selection and profile computation as",
         "demos:player-loadouts --store, including GUIDs without a linked account.",
+        "Best maps use final scores from every non-user-uploaded demo, regardless",
+        "of the recent appearance sample. Existing higher scores are preserved.",
+        "A best map requires a score above zero; zero and negative scores are skipped.",
         "GUIDs without usable current stats are skipped; their existing profiles remain.",
-        "Each needed stats sidecar is read once for all its selected players.",
+        "Each needed stats sidecar is read once for appearance and best-map updates.",
         "",
         "  --dry-run              Compute and report profiles without opening or writing SQLite",
         "  --concurrency=N        Sidecars fetched at once (default: 16)",
@@ -132,6 +136,10 @@ async function main(): Promise<void> {
       saveProfile: database
         ? (profile) => saveT2PlayerProfile(database!, profile)
         : undefined,
+      saveBestMaps: database
+        ? (entries) => saveT2PlayerBestMaps(database!, entries)
+        : undefined,
+      bestMapDemos: "all",
       onResult: (result) => console.log(JSON.stringify(result)),
       onError: (key, error) => console.error(key, error),
       computedAt,
@@ -141,7 +149,7 @@ async function main(): Promise<void> {
         `${counts.missingStats} demos have no current player stats yet; run npm run demos:backfill-stats.`,
       );
     console.log(JSON.stringify({ guids: guids.length, ...counts }));
-    if (counts.failed) process.exitCode = 1;
+    if (counts.failed || counts.bestMapDemosFailed) process.exitCode = 1;
   } finally {
     database?.close();
   }

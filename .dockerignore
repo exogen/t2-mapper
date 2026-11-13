@@ -21,5 +21,3 @@ scripts/*
 !scripts/lib/
 scripts/lib/*
 !scripts/lib/r2.ts
-!scripts/lib/demoGuidInventory.ts
-!scripts/lib/playerProfiles.ts

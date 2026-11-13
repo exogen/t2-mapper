@@ -1,16 +1,13 @@
-/** Recompute representative profiles from the same recent-demo sample for
- * manual backfills and the relay's post-publication background work. */
+/** Refresh appearance profiles and best maps from published demo stats.
+ * Appearance uses a recent sample; best-map work has an explicit demo scope. */
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { setImmediate } from "node:timers/promises";
-import type { T2PlayerProfile } from "./accountTypes.js";
+import type { T2PlayerBestMapUpdate, T2PlayerProfile } from "./accountTypes.js";
 import { collectDemoGuidInventory } from "./demoGuidInventory.js";
 import type { DemoGuidSidecar } from "./demoGuids.js";
 import type { DemoMetadata } from "./demoMetadata.js";
-import {
-  DEMO_STATS_VERSION,
-  type DemoStatsSidecar,
-} from "./demoPlayerStats.js";
-import { DEMO_STATS_SUFFIX, demoStatsVersion } from "./demoStats.js";
+import type { DemoStatsSidecar } from "./demoPlayerStatsModel.js";
+import { DEMO_STATS_SUFFIX, readCurrentDemoStats } from "./demoStats.js";
 import type { DemoUploadConfig } from "./demoUpload.js";
 import {
   createProfileDemoSelector,
@@ -27,6 +24,10 @@ export interface PlayerProfileUpdateCounts {
   failed: number;
   statsRead: number;
   missingStats: number;
+  /** Distinct GUIDs with a positive final map score in the requested demo scope. */
+  bestMapsConsidered: number;
+  /** Stats reads that prevented a complete historical best-map calculation. */
+  bestMapDemosFailed: number;
 }
 
 export interface PlayerProfileUpdateResult {
@@ -41,8 +42,12 @@ export interface UpdatePlayerProfilesOptions {
   index: readonly DemoMetadata[];
   guids: readonly string[];
   guidSidecars: ReadonlyMap<string, DemoGuidSidecar>;
-  /** Omit to compute a dry run without writing profiles. */
+  /** Omit to compute appearance profiles without writing them. */
   saveProfile?: (profile: T2PlayerProfile) => void;
+  /** Atomic max-only writes, independent of appearance snapshot timestamps. */
+  saveBestMaps?: (entries: readonly T2PlayerBestMapUpdate[]) => void;
+  /** Omit to skip scores; all official demos for backfill, or specific demo keys. */
+  bestMapDemos?: "all" | ReadonlySet<string>;
   demoCount?: number;
   suitUps?: number;
   concurrency?: number;
@@ -61,6 +66,8 @@ export async function updatePlayerProfiles({
   guids,
   guidSidecars,
   saveProfile,
+  saveBestMaps,
+  bestMapDemos,
   demoCount = 10,
   suitUps = 100,
   concurrency = 16,
@@ -73,7 +80,10 @@ export async function updatePlayerProfiles({
   signal?.throwIfAborted();
   const select = createProfileDemoSelector(index);
   const selections = new Map<string, PlayerProfileSelection>();
-  const byDemo = new Map<string, { record: DemoMetadata; guids: string[] }>();
+  const byDemo = new Map<
+    string,
+    { record: DemoMetadata; guids: string[]; bestMaps?: boolean }
+  >();
   for (const guid of new Set(guids)) {
     const selection = await select(async (candidates, wanted) => {
       const found: DemoMetadata[] = [];
@@ -93,9 +103,25 @@ export async function updatePlayerProfiles({
     }
   }
 
+  // Appearance uses a recent sample; best maps use all official history only
+  // during backfill. Automatic jobs explicitly request just the new demo.
+  if (bestMapDemos) {
+    for (const record of index) {
+      if (
+        record.filename.startsWith("users/") ||
+        (bestMapDemos !== "all" && !bestMapDemos.has(record.filename))
+      )
+        continue;
+      let entry = byDemo.get(record.filename);
+      if (!entry) byDemo.set(record.filename, (entry = { record, guids: [] }));
+      entry.bestMaps = true;
+    }
+  }
+
   // Retain only selected players' entries rather than every complete sidecar.
   const playerDemos = new Map<string, Map<string, PlayerProfileDemo>>();
   const failedGuids = new Set<string>();
+  const bestMaps = new Map<string, T2PlayerBestMapUpdate>();
   const statsJobs = [...byDemo.values()];
   const counts: PlayerProfileUpdateCounts = {
     stored: 0,
@@ -104,6 +130,8 @@ export async function updatePlayerProfiles({
     failed: 0,
     statsRead: 0,
     missingStats: 0,
+    bestMapsConsidered: 0,
+    bestMapDemosFailed: 0,
   };
   let next = 0;
   await Promise.all(
@@ -112,7 +140,11 @@ export async function updatePlayerProfiles({
       async () => {
         while (next < statsJobs.length) {
           signal?.throwIfAborted();
-          const { record, guids: players } = statsJobs[next++];
+          const {
+            record,
+            guids: players,
+            bestMaps: includeBestMaps,
+          } = statsJobs[next++];
           try {
             let value: unknown = statsSidecars?.get(record.filename);
             if (!value) {
@@ -122,11 +154,25 @@ export async function updatePlayerProfiles({
                 : store.read(record.filename, DEMO_STATS_SUFFIX));
               signal?.throwIfAborted();
             }
-            if (demoStatsVersion(value) !== DEMO_STATS_VERSION) {
+            const sidecar = readCurrentDemoStats(value);
+            if (!sidecar) {
               counts.missingStats++;
               continue;
             }
-            const sidecar = value as DemoStatsSidecar;
+            if (includeBestMaps) {
+              for (const [guid, stats] of Object.entries(sidecar.statsByGuid)) {
+                for (const { mission, score } of stats.mapScores ?? []) {
+                  if (score <= 0) continue;
+                  const previous = bestMaps.get(guid);
+                  if (
+                    !previous ||
+                    score > previous.score ||
+                    (score === previous.score && mission < previous.mission)
+                  )
+                    bestMaps.set(guid, { guid, mission, score });
+                }
+              }
+            }
             for (const guid of players) {
               const stats = sidecar.statsByGuid[guid];
               if (!stats) continue;
@@ -141,6 +187,7 @@ export async function updatePlayerProfiles({
           } catch (error) {
             signal?.throwIfAborted();
             for (const guid of players) failedGuids.add(guid);
+            if (includeBestMaps) counts.bestMapDemosFailed++;
             onError?.(record.filename, error);
           }
         }
@@ -148,6 +195,12 @@ export async function updatePlayerProfiles({
     ),
   );
   signal?.throwIfAborted();
+  counts.bestMapsConsidered = bestMaps.size;
+  if (bestMaps.size) {
+    saveBestMaps?.(
+      [...bestMaps.values()].sort((a, b) => a.guid.localeCompare(b.guid)),
+    );
+  }
   for (const [guid, selection] of selections) {
     // SQLite commits are synchronous; let live socket traffic run between
     // players instead of monopolizing the relay for a whole profile batch.
@@ -207,6 +260,7 @@ export interface DemoPlayerProfileUpdaterOptions {
   config: DemoUploadConfig;
   store: Pick<PrivateDemoStore, "read" | "listDemoKeys">;
   saveProfile: (profile: T2PlayerProfile) => void;
+  saveBestMaps?: (entries: readonly T2PlayerBestMapUpdate[]) => void;
   client?: S3Client;
 }
 
@@ -216,6 +270,7 @@ export function createDemoPlayerProfileUpdater({
   config,
   store,
   saveProfile,
+  saveBestMaps,
   client = new S3Client({
     region: "auto",
     endpoint: config.endpoint,
@@ -274,15 +329,17 @@ export function createDemoPlayerProfileUpdater({
       guidSidecars: inventory.sidecars,
       statsSidecars: new Map([[demoKey, stats]]),
       saveProfile,
+      saveBestMaps,
+      bestMapDemos: new Set([demoKey]),
       onError,
       computedAt,
       signal,
     });
     signal?.throwIfAborted();
-    if (counts.failed)
+    if (counts.failed || counts.bestMapDemosFailed)
       throw new AggregateError(
         errors,
-        `Could not update ${counts.failed} player profiles for ${demoKey}`,
+        `Could not update ${counts.failed} player profiles or ${counts.bestMapDemosFailed} best-map demos for ${demoKey}`,
       );
     return counts;
   };

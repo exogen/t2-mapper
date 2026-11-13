@@ -28,7 +28,8 @@ vi.mock("../state/appAccountStore", () => ({
 vi.mock("./GameDetailsEditor", () => ({ GameDetailsDialog: () => null }));
 vi.mock("../manifest", () => ({ findMissionInfo: () => null }));
 vi.mock("./PreviewTileArt", () => ({ PreviewTileArt: () => null }));
-vi.mock("./missionPreview", () => ({
+vi.mock("./missionArt", () => ({
+  MISSION_ART_NAME_FALLBACKS: [],
   missionLoadScreenUrl: () => null,
   missionGalleryArtUrl: () => null,
 }));

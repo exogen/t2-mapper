@@ -26,12 +26,12 @@ import {
 import {
   DEMO_STATS_VERSION,
   type DemoStatsSidecar,
-} from "./demoPlayerStats.js";
+} from "./demoPlayerStatsModel.js";
 import {
   DEMO_PROFILES_SUFFIX,
   DEMO_STATS_SUFFIX,
   PROFILE_REFRESH_VERSION,
-  demoStatsVersion,
+  readCurrentDemoStats,
   isCurrentProfileRefresh,
 } from "./demoStats.js";
 import type { DemoUploadConfig } from "./demoUpload.js";
@@ -202,7 +202,7 @@ export class DemoStatsScheduler {
               DEMO_STATS_SUFFIX,
               signal,
             );
-            if (!this.currentStats(stats, etag)) {
+            if (!readCurrentDemoStats(stats, etag)) {
               missing.add(demoKey);
               continue;
             }
@@ -313,17 +313,6 @@ export class DemoStatsScheduler {
     }
   }
 
-  private currentStats(
-    value: unknown,
-    etag?: string,
-  ): DemoStatsSidecar | undefined {
-    if (demoStatsVersion(value) !== DEMO_STATS_VERSION) return;
-    const stats = value as DemoStatsSidecar;
-    return stats.sourceETag && etag && stats.sourceETag !== etag
-      ? undefined
-      : stats;
-  }
-
   private validGuids(value: unknown): DemoGuidSidecar | undefined {
     try {
       return readDemoGuidSidecar(value);
@@ -389,7 +378,7 @@ export class DemoStatsScheduler {
     );
     let stats = sourceChanged
       ? undefined
-      : this.currentStats(saved, source.ETag);
+      : readCurrentDemoStats(saved, source.ETag);
     let repairGuids =
       this.readNamesByGuid &&
       (sourceChanged ||
@@ -421,7 +410,7 @@ export class DemoStatsScheduler {
           // when legacy cached sidecars had no fingerprint of their own.
           stats = undefined;
           repairGuids = !!this.readNamesByGuid;
-        } else stats = this.currentStats(stats, etag);
+        } else stats = readCurrentDemoStats(stats, etag);
         const file = path.join(directory, "demo.rec");
         await pipeline(object.Body as Readable, fs.createWriteStream(file), {
           signal,
@@ -436,9 +425,9 @@ export class DemoStatsScheduler {
           if (!stats) {
             const value = await this.compute(file, signal);
             signal.throwIfAborted();
-            if (demoStatsVersion(value) !== DEMO_STATS_VERSION)
-              throw new Error("Worker returned invalid player stats");
-            stats = etag ? { ...value, sourceETag: etag } : value;
+            stats = readCurrentDemoStats(value);
+            if (!stats) throw new Error("Worker returned invalid player stats");
+            if (etag) stats = { ...stats, sourceETag: etag };
             computed = true;
           }
         } catch (err) {

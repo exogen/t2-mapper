@@ -795,6 +795,83 @@ it("uses the owner's T2 character from the signed-in account", () => {
   expect(fixture.profileOptions.enabled).toBe(false);
 });
 
+it("shows a public player's best-map banner behind their identity and character", () => {
+  fixture.profile = {
+    discordId: OWNER,
+    name: "Public Player",
+    discordUsername: "public_player",
+    image: "https://cdn.discordapp.com/avatar.png",
+    t2Profile: { ...t2Profile, bestMap: { mission: "Katabatic", score: 123 } },
+  };
+  const markup = render();
+  expect(markup).toContain('data-profile-map-banner="true"');
+  expect(markup).toContain(
+    '<img src="https://exogen.github.io/t2-maps/images/Katabatic.1.webp"',
+  );
+  expect(markup).toContain('aria-hidden="true"');
+  expect(markup).not.toContain("blob:");
+  expect(markup.indexOf("data-profile-map-banner")).toBeLessThan(
+    markup.indexOf('aria-label="Uploaded demos"'),
+  );
+  expect(markup.indexOf("data-profile-map-banner")).toBeLessThan(
+    markup.indexOf("Tribes 2 character"),
+  );
+  expect(markup).toContain('width="64" height="64"');
+  expect(markup).toContain('href="https://discord.com/users/');
+  expect(markup).toContain("Public Player&#x27;s Tribes 2 character");
+});
+
+it("uses the owner's best map from the signed-in profile", () => {
+  signIn();
+  fixture.account.user!.t2Profile = {
+    ...t2Profile,
+    bestMap: { mission: "DangerousCrossing", score: 42 },
+  };
+  expect(render()).toContain(
+    '<img src="https://exogen.github.io/t2-maps/images/DangerousCrossing.1.webp"',
+  );
+  expect(fixture.profileOptions.enabled).toBe(false);
+});
+
+it("keeps the header free of a banner when there is no best map", () => {
+  signIn();
+  expect(render()).not.toContain("data-profile-map-banner");
+  fixture.account.user!.t2Profile = t2Profile;
+  expect(render()).not.toContain("data-profile-map-banner");
+  fixture.account.user!.t2Profile = { ...t2Profile, bestMap: null };
+  expect(render()).not.toContain("data-profile-map-banner");
+});
+
+it("encodes mission names in the native banner URL", () => {
+  signIn();
+  fixture.account.user!.t2Profile = {
+    ...t2Profile,
+    bestMap: { mission: "Map #1", score: 42 },
+  };
+  expect(render()).toContain(
+    'src="https://exogen.github.io/t2-maps/images/Map%20%231.1.webp"',
+  );
+});
+
+it("omits a banner when a legacy best map has no mission name", () => {
+  signIn();
+  fixture.account.user!.t2Profile = {
+    ...t2Profile,
+    bestMap: { mission: "", score: 42 },
+  };
+  expect(render()).not.toContain("data-profile-map-banner");
+});
+
+it.each([0, -3])("omits a legacy best-map banner with score %i", (score) => {
+  signIn();
+  fixture.account.user!.t2Profile = {
+    ...t2Profile,
+    bestMap: { mission: "Katabatic", score },
+  };
+  expect(render()).not.toContain("data-profile-map-banner");
+  expect(render()).toContain("Example&#x27;s Tribes 2 character");
+});
+
 it("leaves out the viewer when the account has no T2 profile", () => {
   signIn();
   expect(render()).not.toContain("Tribes 2 character");

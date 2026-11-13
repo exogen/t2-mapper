@@ -11,7 +11,7 @@ import {
   loadPrivateDemoStorageConfig,
 } from "../relay/privateDemoStore.js";
 import type { DemoUploadConfig } from "../relay/demoUpload.js";
-import { collectDemoGuidInventory } from "./lib/demoGuidInventory.js";
+import { collectDemoGuidInventory } from "../relay/demoGuidInventory.js";
 
 const { values } = parseArgs({
   options: {

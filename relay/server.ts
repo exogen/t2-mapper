@@ -30,7 +30,11 @@ import {
 } from "./appAuth.js";
 import { UserDemoUploads } from "./userDemoUploads.js";
 import { createRelayDemoProcessing } from "./demoProcessing.js";
-import { openAccountDatabase, saveT2PlayerProfile } from "./accountDatabase.js";
+import {
+  openAccountDatabase,
+  saveT2PlayerBestMaps,
+  saveT2PlayerProfile,
+} from "./accountDatabase.js";
 import {
   loadAccountBackupConfig,
   startAccountBackups,
@@ -48,7 +52,7 @@ import { DemoUploader, loadUploadConfig } from "./demoUpload.js";
 import { DEMO_GUIDS_SUFFIX } from "./demoGuids.js";
 import { DEMO_PROFILES_SUFFIX, DEMO_STATS_SUFFIX } from "./demoStats.js";
 import { DemoStatsScheduler } from "./demoStatsScheduler.js";
-import { createDemoPlayerProfileUpdater } from "./playerProfileStore.js";
+import { createDemoPlayerProfileUpdater } from "./playerProfileService.js";
 import {
   PrivateDemoStore,
   loadPrivateDemoStorageConfig,
@@ -296,6 +300,8 @@ const updatePlayerProfiles =
         config: demoUploadConfig,
         store: privateDemoStore,
         saveProfile: (profile) => saveT2PlayerProfile(accountDatabase, profile),
+        saveBestMaps: (entries) =>
+          saveT2PlayerBestMaps(accountDatabase, entries),
       })
     : null;
 const demoStats =

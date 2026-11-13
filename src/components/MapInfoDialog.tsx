@@ -15,7 +15,8 @@ import {
   hasGuiMarkup,
 } from "./GuiMarkup";
 import type * as AST from "../torqueScript/ast";
-import { missionLoadScreenUrl, RawPreviewImage } from "./missionPreview";
+import { missionLoadScreenUrl } from "./missionArt";
+import { RawPreviewImage } from "./missionPreview";
 import { useParsedMission } from "./useParsedMission";
 import styles from "./MapInfoDialog.module.css";
 

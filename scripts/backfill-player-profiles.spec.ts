@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   migrateAccountSchema,
   openAccountDatabase,
+  saveT2PlayerBestMaps,
   saveT2PlayerProfile,
 } from "../relay/accountDatabase";
 import type { T2PlayerProfile } from "../relay/accountTypes";
@@ -15,7 +16,7 @@ import {
   DEMO_STATS_VERSION,
   outfitKey,
   type PlayerDemoStats,
-} from "../relay/demoPlayerStats";
+} from "../relay/demoPlayerStatsModel";
 import { DEMO_STATS_SUFFIX } from "../relay/demoStats";
 
 const mocks = vi.hoisted(() => ({
@@ -97,6 +98,17 @@ function readProfiles(): T2PlayerProfile[] {
     return database
       .prepare('SELECT * FROM "t2PlayerProfile" ORDER BY "guid"')
       .all() as T2PlayerProfile[];
+  } finally {
+    database.close();
+  }
+}
+
+function readBestMaps() {
+  const database = new Database(filename, { readonly: true });
+  try {
+    return database
+      .prepare('SELECT * FROM "t2PlayerBestMap" ORDER BY "guid"')
+      .all();
   } finally {
     database.close();
   }
@@ -250,6 +262,73 @@ it("keeps prior profiles when current selected stats are absent or outdated", as
     missingStats: 2,
   });
   expect(process.exitCode).toBeUndefined();
+});
+
+it("backfills best scores outside the recent appearance sample and excludes user uploads", async () => {
+  process.argv.push("--demos=1");
+  index.push(record("ancient.rec", "01"), record("users/123/upload.rec", "04"));
+  sidecars.set(`ancient.rec${DEMO_STATS_SUFFIX}`, {
+    version: DEMO_STATS_VERSION,
+    statsByGuid: {
+      "101": stats({ mapScores: [{ mission: "Old winner", score: 250 }] }),
+      "303": stats({ mapScores: [{ mission: "Zero", score: 0 }] }),
+    },
+  });
+  sidecars.set(`users/123/upload.rec${DEMO_STATS_SUFFIX}`, {
+    version: DEMO_STATS_VERSION,
+    statsByGuid: {
+      "101": stats({ mapScores: [{ mission: "Uploaded", score: 9999 }] }),
+    },
+  });
+  await import("./backfill-player-profiles");
+  expect(
+    readProfiles().find((profile) => profile.guid === "101"),
+  ).toMatchObject({
+    demoCount: 1,
+    skin: "Recent skin",
+  });
+  expect(readBestMaps()).toEqual([
+    { guid: "101", mission: "Old winner", score: 250 },
+  ]);
+  expect(statsReads().sort()).toEqual(["a.rec", "ancient.rec", "b.rec"]);
+  expect(summary()).toMatchObject({
+    bestMapsConsidered: 1,
+    bestMapDemosFailed: 0,
+  });
+  expect(process.exitCode).toBeUndefined();
+});
+
+it.each([500, 0, -2])(
+  "preserves a higher existing best map while refreshing appearance (score %s)",
+  async (score) => {
+    const database = openAccountDatabase(filename);
+    saveT2PlayerBestMaps(database, [
+      { guid: "101", mission: "Personal best", score: 1000 },
+    ]);
+    database.close();
+    const sidecar = sidecars.get(`a.rec${DEMO_STATS_SUFFIX}`) as {
+      statsByGuid: Record<string, PlayerDemoStats>;
+    };
+    sidecar.statsByGuid["101"].mapScores = [{ mission: "New map", score }];
+    await import("./backfill-player-profiles");
+    expect(readBestMaps()).toEqual([
+      { guid: "101", mission: "Personal best", score: 1000 },
+    ]);
+    expect(readProfiles()[0].skin).toBe("Recent skin");
+  },
+);
+
+it("reports an incomplete best-map backfill if an old unselected demo cannot be read", async () => {
+  process.argv.push("--demos=1");
+  index.push(record("ancient.rec", "01"));
+  sidecars.set(`ancient.rec${DEMO_STATS_SUFFIX}`, new Error("R2 offline"));
+  await import("./backfill-player-profiles");
+  expect(summary()).toMatchObject({
+    stored: 3,
+    failed: 0,
+    bestMapDemosFailed: 1,
+  });
+  expect(process.exitCode).toBe(1);
 });
 
 it("uses available current stats without replacing missing selected demos with older ones", async () => {

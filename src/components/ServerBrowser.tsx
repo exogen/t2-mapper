@@ -15,7 +15,7 @@ import { BsPinAngleFill } from "react-icons/bs";
 import { FaLock } from "react-icons/fa";
 import { WifiSignalIcon } from "./WifiSignalIcon";
 import { normalizeMissionType } from "../mission";
-import { mapNameGalleryArtUrl, mapNameLoadScreenUrl } from "./missionPreview";
+import { mapNameGalleryArtUrl, mapNameLoadScreenUrl } from "./missionArt";
 import { PreviewTileArt } from "./PreviewTileArt";
 
 function ServerTile({

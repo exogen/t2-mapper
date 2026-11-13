@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   PlayerRosterEntry,
   ServerMessageEvent,
@@ -9,13 +9,15 @@ import type {
   StreamSnapshot,
 } from "../src/stream/types";
 import {
-  DEMO_STATS_VERSION,
   DemoPlayerStatsTracker,
-  describeLoadout,
   loadStationPurchaseSequences,
+  computeDemoPlayerStats,
+} from "./demoPlayerStats";
+import {
+  DEMO_STATS_VERSION,
   loadoutKey,
   outfitKey,
-} from "./demoPlayerStats";
+} from "./demoPlayerStatsModel";
 
 const ALICE = "12345";
 const BOB = "67890";
@@ -136,6 +138,508 @@ const HEAVY_SHIELD = loadoutKey({
   weapons: ["weapon_disc", "weapon_chaingun"],
 });
 
+describe("per-map final player scores", () => {
+  function scoringTimeline() {
+    const at = timeline();
+    let id = 0;
+    return (
+      messages: string[][] = [],
+      options: Parameters<typeof at>[1] = {},
+    ) => {
+      const snapshot = at([], options);
+      snapshot.serverEvents = messages.map((args) => ({
+        id: ++id,
+        timeSec: snapshot.timeSec,
+        msgType: args[0],
+        args,
+      }));
+      return snapshot;
+    };
+  }
+  const score = (value: string, id = 1) => [
+    "MsgPlayerScore",
+    "",
+    String(id),
+    value,
+    "0",
+    "0",
+  ];
+  const debrief = (value: string, name = "Alice") => [
+    "MsgDebriefAddLine",
+    "",
+    "format",
+    name,
+    "Team",
+    value,
+    "0",
+  ];
+  const load = (mission: string) => [
+    "MsgLoadInfo",
+    "",
+    mission,
+    mission,
+    "Capture the Flag",
+  ];
+  const ready = ["MsgClientReady", "", "CTFGame"];
+  const kickoff = ["MsgMissionStart", "Match started!"];
+  const join = (guid: string, id = 1, name = "Alice") => [
+    "MsgClientJoin",
+    "",
+    name,
+    String(id),
+    "10",
+    "0",
+    "0",
+    "0",
+    "0",
+    guid,
+  ];
+  const playerScores = (tracker: DemoPlayerStatsTracker, guid = ALICE) =>
+    tracker.finish().statsByGuid[guid]?.mapScores ?? [];
+
+  it("keeps the final score instead of the mid-match peak, including late debrief updates", () => {
+    const tracker = new DemoPlayerStatsTracker(
+      SEQUENCES,
+      {},
+      { mission: "Katabatic" },
+    );
+    const at = scoringTimeline();
+    tracker.step(at([score("80")]));
+    tracker.step(at([score("65")], { endedAtSec: 0.5 }));
+    tracker.step(at([debrief("70")], { endedAtSec: 0.5 }));
+    expect(playerScores(tracker)).toEqual([
+      { mission: "Katabatic", score: 70 },
+    ]);
+    // Reading the finished stats twice does not duplicate the mission.
+    expect(playerScores(tracker)).toHaveLength(1);
+  });
+
+  it("uses the last recorded score when the recording ends during play", () => {
+    const tracker = new DemoPlayerStatsTracker(
+      SEQUENCES,
+      {},
+      { mission: "DX_Ice" },
+    );
+    const at = scoringTimeline();
+    tracker.step(at([score("-8")]));
+    tracker.step(at([score("-12")]));
+    expect(playerScores(tracker)).toEqual([{ mission: "DX_Ice", score: -12 }]);
+  });
+
+  it("distinguishes a real zero score from a default joined roster value", () => {
+    const tracker = new DemoPlayerStatsTracker(
+      SEQUENCES,
+      {},
+      { mission: "Katabatic" },
+    );
+    const at = scoringTimeline();
+    tracker.step(at());
+    expect(playerScores(tracker)).toEqual([]);
+    tracker.step(at([score("not a score"), debrief("n/a")]));
+    expect(playerScores(tracker)).toEqual([]);
+    tracker.step(at([score("0")]));
+    expect(playerScores(tracker)).toEqual([{ mission: "Katabatic", score: 0 }]);
+    expect(playerScores(tracker, BOB)).toEqual([]);
+  });
+
+  it("accepts a live score falling to zero, but protects HUD and debrief from live fallback values", () => {
+    const tracker = new DemoPlayerStatsTracker(
+      SEQUENCES,
+      {},
+      { mission: "Katabatic" },
+    );
+    const at = scoringTimeline();
+    tracker.step(at([score("42"), score("0")]));
+    expect(playerScores(tracker)).toEqual([{ mission: "Katabatic", score: 0 }]);
+    tracker.step(
+      at([
+        ["SetLineHud", "", "tag", "0", "fmt", "Alice", "60", "5"],
+        score("0"),
+      ]),
+    );
+    expect(playerScores(tracker)).toEqual([
+      { mission: "Katabatic", score: 60 },
+    ]);
+    tracker.step(
+      at(
+        [
+          debrief("75"),
+          score("18"),
+          ["SetLineHud", "", "tag", "0", "fmt", "Alice", "18", "5"],
+        ],
+        { endedAtSec: 0.75 },
+      ),
+    );
+    expect(playerScores(tracker)).toEqual([
+      { mission: "Katabatic", score: 75 },
+    ]);
+  });
+
+  it("uses scores explicitly saved in the initial PLAYERLIST", () => {
+    const roster = new Map([
+      [1, { ...ROSTER[0], score: 0 }],
+      [2, { ...ROSTER[1], score: -4 }],
+    ]);
+    const tracker = new DemoPlayerStatsTracker(
+      SEQUENCES,
+      {},
+      { mission: "Katabatic", roster },
+    );
+    tracker.step(scoringTimeline()());
+    expect(playerScores(tracker)).toEqual([{ mission: "Katabatic", score: 0 }]);
+    expect(playerScores(tracker, BOB)).toEqual([
+      { mission: "Katabatic", score: -4 },
+    ]);
+  });
+
+  it("captures shared score-HUD parsing, including updates that lower the score to zero", () => {
+    const tracker = new DemoPlayerStatsTracker(
+      SEQUENCES,
+      {},
+      { mission: "Katabatic" },
+    );
+    const at = scoringTimeline();
+    tracker.step(
+      at([["SetLineHud", "", "tag", "0", "fmt", "Alice", "42", "5"]]),
+    );
+    tracker.step(
+      at([["SetLineHud", "", "tag", "0", "fmt", "Alice", "0", "5"]]),
+    );
+    expect(playerScores(tracker)).toEqual([{ mission: "Katabatic", score: 0 }]);
+  });
+
+  it("retains score packets for players who disconnect within one world sample", () => {
+    const tracker = new DemoPlayerStatsTracker(
+      SEQUENCES,
+      {},
+      { mission: "Katabatic" },
+    );
+    const at = scoringTimeline();
+    tracker.step(
+      at([join(ALICE), score("77"), ["MsgClientDrop", "", "Alice", "1"]], {
+        roster: [],
+      }),
+    );
+    expect(playerScores(tracker)).toEqual([
+      { mission: "Katabatic", score: 77 },
+    ]);
+  });
+
+  it("does not attribute a recycled or hidden client identity's score to the earlier account", () => {
+    const tracker = new DemoPlayerStatsTracker(
+      SEQUENCES,
+      {},
+      { mission: "Katabatic" },
+    );
+    const at = scoringTimeline();
+    tracker.step(at([join(ALICE), score("17")]));
+    tracker.step(at([join("0"), score("9999")], { roster: [] }));
+    tracker.step(at([join(BOB), score("23")], { roster: [] }));
+    expect(playerScores(tracker)).toEqual([
+      { mission: "Katabatic", score: 17 },
+    ]);
+    expect(playerScores(tracker, BOB)).toEqual([
+      { mission: "Katabatic", score: 23 },
+    ]);
+  });
+
+  it("uses a reconnect's final score instead of its earlier connection's higher score", () => {
+    const tracker = new DemoPlayerStatsTracker(
+      SEQUENCES,
+      {},
+      { mission: "Katabatic" },
+    );
+    const at = scoringTimeline();
+    tracker.step(at([score("20")]));
+    tracker.step(
+      at([["MsgClientDrop", "", "Alice", "1"], join(ALICE), score("5")]),
+    );
+    expect(playerScores(tracker)).toEqual([{ mission: "Katabatic", score: 5 }]);
+    tracker.step(at([["MsgClientDrop", "", "Alice", "1"]], { roster: [] }));
+    expect(playerScores(tracker)).toEqual([{ mission: "Katabatic", score: 5 }]);
+  });
+
+  it("preserves the completed match's debrief score across a post-match reconnect", () => {
+    const tracker = new DemoPlayerStatsTracker(
+      SEQUENCES,
+      {},
+      { mission: "Katabatic" },
+    );
+    const at = scoringTimeline();
+    tracker.step(at([score("20")]));
+    tracker.step(at([debrief("99")], { endedAtSec: 0.5 }));
+    tracker.step(
+      at([["MsgClientDrop", "", "Alice", "1"], join(ALICE), score("0")], {
+        endedAtSec: 0.5,
+      }),
+    );
+    expect(playerScores(tracker)).toEqual([
+      { mission: "Katabatic", score: 99 },
+    ]);
+  });
+
+  it("protects a simultaneous playing connection from the same account's spectator score", () => {
+    const tracker = new DemoPlayerStatsTracker(
+      SEQUENCES,
+      {},
+      { mission: "Katabatic" },
+    );
+    const at = scoringTimeline();
+    tracker.step(at([score("-5"), join(ALICE, 3, "Observer"), score("0", 3)]));
+    expect(playerScores(tracker)).toEqual([
+      { mission: "Katabatic", score: -5 },
+    ]);
+  });
+
+  it("keeps separate final scores for several missions, including a repeated map", () => {
+    const tracker = new DemoPlayerStatsTracker(
+      SEQUENCES,
+      {},
+      { mission: "Katabatic" },
+    );
+    const at = scoringTimeline();
+    tracker.step(at([score("20")]));
+    tracker.step(at([load("DX_Ice"), ready, kickoff, score("30")]));
+    tracker.step(at([load("Katabatic"), ready, kickoff, score("25")]));
+    expect(playerScores(tracker)).toEqual([
+      { mission: "Katabatic", score: 20 },
+      { mission: "DX_Ice", score: 30 },
+      { mission: "Katabatic", score: 25 },
+    ]);
+  });
+
+  it("freezes the old mission before an incoming map's score resets and warmup", () => {
+    const tracker = new DemoPlayerStatsTracker(
+      SEQUENCES,
+      {},
+      { mission: "Katabatic" },
+    );
+    const at = scoringTimeline();
+    tracker.step(at([score("80")]));
+    tracker.step(at([debrief("95")], { endedAtSec: 0.5 }));
+    tracker.step(
+      at([load("DX_Ice"), score("0"), ready, score("500")], { live: false }),
+    );
+    expect(playerScores(tracker)).toEqual([
+      { mission: "Katabatic", score: 95 },
+    ]);
+    tracker.step(at([kickoff, score("12")]));
+    expect(playerScores(tracker)).toEqual([
+      { mission: "Katabatic", score: 95 },
+      { mission: "DX_Ice", score: 12 },
+    ]);
+  });
+
+  it("preserves the old score when a same-map rotation and reset share one sample", () => {
+    const tracker = new DemoPlayerStatsTracker(
+      SEQUENCES,
+      {},
+      { mission: "Katabatic" },
+    );
+    const at = scoringTimeline();
+    tracker.step(at([score("80")]));
+    tracker.step(
+      at([load("Katabatic"), score("0"), ready, kickoff, score("12")]),
+    );
+    expect(playerScores(tracker)).toEqual([
+      { mission: "Katabatic", score: 80 },
+      { mission: "Katabatic", score: 12 },
+    ]);
+  });
+
+  it("does not apply the last mission's snapshot start flag to earlier warmup packets", () => {
+    const tracker = new DemoPlayerStatsTracker(
+      SEQUENCES,
+      {},
+      { mission: "OldWarmup" },
+    );
+    const at = scoringTimeline();
+    tracker.step(at([], { live: false }));
+    tracker.step(
+      at([score("400"), load("NewMatch"), ready, kickoff, score("8")]),
+    );
+    expect(playerScores(tracker)).toEqual([{ mission: "NewMatch", score: 8 }]);
+  });
+
+  it("clears first-load state and ignores a mod's incomplete static load banner", () => {
+    const tracker = new DemoPlayerStatsTracker(
+      SEQUENCES,
+      {},
+      { mission: "TWL_StonehengeLT" },
+    );
+    const at = scoringTimeline();
+    tracker.step(
+      at([["MsgLoadInfo", "", "Katabatic"], ready], { live: false }),
+    );
+    tracker.step(at([kickoff, score("559")]));
+    expect(playerScores(tracker)).toEqual([
+      { mission: "TWL_StonehengeLT", score: 559 },
+    ]);
+    const other = new DemoPlayerStatsTracker(
+      SEQUENCES,
+      {},
+      { mission: "Display-Name" },
+    );
+    const later = scoringTimeline();
+    other.step(later([load("Internal_Name"), ready], { live: false }));
+    other.step(later([kickoff, score("42")]));
+    expect(playerScores(other)).toEqual([
+      { mission: "Internal_Name", score: 42 },
+    ]);
+  });
+
+  it("does not let countdowns or warmup scores produce a best map", () => {
+    const tracker = new DemoPlayerStatsTracker(
+      SEQUENCES,
+      {},
+      { mission: "Katabatic" },
+    );
+    const at = scoringTimeline();
+    tracker.step(at([score("300")], { live: false }));
+    tracker.step(
+      at([["MsgMissionStart", "Match starts in 10 seconds"], score("400")]),
+    );
+    expect(playerScores(tracker)).toEqual([]);
+    tracker.step(at([kickoff, score("8")]));
+    expect(playerScores(tracker)).toEqual([{ mission: "Katabatic", score: 8 }]);
+  });
+
+  it("recognizes case-insensitive kickoff tags after a tournament countdown", () => {
+    const tracker = new DemoPlayerStatsTracker(
+      SEQUENCES,
+      {},
+      { mission: "TWL_StonehengeLT" },
+    );
+    const at = scoringTimeline();
+    tracker.step(
+      at([["MsgMissionStart", "Match starts in 10 seconds"], score("300")]),
+    );
+    tracker.step(
+      at([
+        ["msgMissionStart", "Match started!"],
+        ["msgplayerscore", "", "1", "24", "0", "0"],
+      ]),
+    );
+    tracker.step(
+      at([["msgdebriefaddline", "", "format", "Alice", "Team", "29", "0"]], {
+        endedAtSec: 0.75,
+      }),
+    );
+    expect(playerScores(tracker)).toEqual([
+      { mission: "TWL_StonehengeLT", score: 29 },
+    ]);
+  });
+
+  it("handles same-map restarts without a loading screen", () => {
+    const tracker = new DemoPlayerStatsTracker(
+      SEQUENCES,
+      {},
+      { mission: "Katabatic" },
+    );
+    const at = scoringTimeline();
+    tracker.step(at([score("44")]));
+    tracker.step(at([], { endedAtSec: 0.5 }));
+    tracker.step(
+      at([["MsgMissionStart", "Match starts in 10 seconds"], score("200")]),
+    );
+    tracker.step(at([kickoff, score("5")]));
+    expect(playerScores(tracker)).toEqual([
+      { mission: "Katabatic", score: 44 },
+      { mission: "Katabatic", score: 5 },
+    ]);
+  });
+
+  it("ignores a mid-match welcome refresh and Classic's mod-info overload", () => {
+    const tracker = new DemoPlayerStatsTracker(
+      SEQUENCES,
+      {},
+      { mission: "Katabatic" },
+    );
+    const at = scoringTimeline();
+    tracker.step(at([score("60")]));
+    tracker.step(
+      at([
+        ["MsgLoadInfo", "", "Katabatic", "Classic  1.3", "Server"],
+        load("Katabatic"),
+        score("55"),
+      ]),
+    );
+    expect(playerScores(tracker)).toEqual([
+      { mission: "Katabatic", score: 55 },
+    ]);
+  });
+
+  it("omits scores when no internal mission identity was recorded", () => {
+    const tracker = new DemoPlayerStatsTracker(SEQUENCES);
+    tracker.step(scoringTimeline()([score("80")]));
+    expect(playerScores(tracker)).toEqual([]);
+  });
+
+  it("observes the final partial sample at the recording's exact duration", async () => {
+    const streaming = await import("../src/stream/demoStreaming");
+    const loading = await import("../src/stream/loadDemoParser");
+    const at = scoringTimeline();
+    const times: number[] = [];
+    vi.spyOn(loading, "loadDemoParser").mockResolvedValue({
+      initialBlock: { demoValues: [] },
+    } as never);
+    vi.spyOn(streaming, "createRecordingFromParser").mockReturnValue({
+      missionName: "Katabatic",
+      duration: 0.375,
+      streamingPlayback: {
+        stepToTime(time: number) {
+          times.push(time);
+          return {
+            ...at([score(time === 0.375 ? "99" : "10")]),
+            timeSec: time,
+            exhausted: time === 0.375,
+          };
+        },
+      },
+    } as never);
+    try {
+      const result = await computeDemoPlayerStats(new Uint8Array(), SEQUENCES);
+      expect(times).toEqual([0, 0.25, 0.375]);
+      expect(result.statsByGuid[ALICE].mapScores).toEqual([
+        { mission: "Katabatic", score: 99 },
+      ]);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it.each([0, -1, NaN, Infinity])(
+    "rejects invalid sampling steps promptly: %s",
+    async (step) => {
+      await expect(
+        computeDemoPlayerStats(new Uint8Array(), SEQUENCES, step),
+      ).rejects.toThrow("positive finite");
+    },
+  );
+
+  it.each([-1, NaN, Infinity])(
+    "rejects invalid recording duration promptly: %s",
+    async (duration) => {
+      const streaming = await import("../src/stream/demoStreaming");
+      const loading = await import("../src/stream/loadDemoParser");
+      vi.spyOn(loading, "loadDemoParser").mockResolvedValue({
+        initialBlock: { demoValues: [] },
+      } as never);
+      vi.spyOn(streaming, "createRecordingFromParser").mockReturnValue({
+        missionName: "Katabatic",
+        duration,
+      } as never);
+      try {
+        await expect(
+          computeDemoPlayerStats(new Uint8Array(), SEQUENCES),
+        ).rejects.toThrow("duration");
+      } finally {
+        vi.restoreAllMocks();
+      }
+    },
+  );
+});
+
 describe("DemoPlayerStatsTracker", () => {
   it("reads a full-station purchase as they step off, then the weapons they hold", () => {
     const tracker = new DemoPlayerStatsTracker(SEQUENCES);
@@ -191,6 +695,7 @@ describe("DemoPlayerStatsTracker", () => {
       },
       invLoadouts: { [HEAVY_SHIELD]: 1 },
       deployInvLoadouts: {},
+      mapScores: [],
     });
     expect(statsByGuid[BOB].invLoadouts).toEqual({});
     expect(statsByGuid[BOB].skins).toEqual([
@@ -625,30 +1130,6 @@ describe("DemoPlayerStatsTracker", () => {
       "spike turret": 1,
     });
     expect(statsByGuid[BOB].killsByWeapon).toEqual({ chaingun: 1 });
-  });
-});
-
-describe("loadout keys", () => {
-  it("are canonical JSON with weapons in inventory order", () => {
-    const key = loadoutKey({
-      armor: "Light",
-      pack: "pack_upgrade_energy",
-      weapons: [
-        "weapon_sniper",
-        "custom_gun",
-        "weapon_chaingun",
-        "weapon_sniper",
-      ],
-    });
-    expect(key).toBe(
-      '{"armor":"Light","pack":"pack_upgrade_energy","weapons":["weapon_chaingun","weapon_sniper","custom_gun"]}',
-    );
-    expect(describeLoadout(key)).toBe(
-      "Light · Energy Pack · Chaingun, Laser Rifle, custom_gun",
-    );
-    expect(
-      describeLoadout(loadoutKey({ armor: "Heavy", pack: null, weapons: [] })),
-    ).toBe("Heavy · No Pack · No Weapon Seen");
   });
 });
 

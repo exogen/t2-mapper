@@ -8,7 +8,10 @@ import {
 } from "@aws-sdk/client-s3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { demoLog } from "./logger";
-import { DEMO_STATS_VERSION, type DemoStatsSidecar } from "./demoPlayerStats";
+import {
+  DEMO_STATS_VERSION,
+  type DemoStatsSidecar,
+} from "./demoPlayerStatsModel";
 import {
   DEMO_PROFILES_SUFFIX,
   DEMO_STATS_SUFFIX,
@@ -455,6 +458,36 @@ it("repairs missing GUIDs and computes stats from one downloaded recording", asy
   expect(f.saved.get(`a.rec${DEMO_PROFILES_SUFFIX}`)).toMatchObject({
     sourceETag: '"source"',
   });
+});
+
+it("recomputes malformed final scores after restart even with a current completion marker", async () => {
+  const corrected = {
+    version: DEMO_STATS_VERSION,
+    statsByGuid: {
+      "101": { mapScores: [{ mission: "Katabatic", score: 42 }] } as never,
+    },
+  };
+  const refreshProfiles = vi.fn(async () => {});
+  const compute = vi.fn(async () => corrected);
+  const f = fixture({ compute, refreshProfiles });
+  f.objects.set("demos/a.rec", { body: "101", at: NOW });
+  f.saved.set(`a.rec${DEMO_STATS_SUFFIX}`, {
+    version: DEMO_STATS_VERSION,
+    statsByGuid: {
+      "101": { mapScores: [{ mission: "Katabatic", score: null }] },
+    },
+  });
+  f.saved.set(`a.rec${DEMO_PROFILES_SUFFIX}`, marker());
+  expect(await f.scheduler.sweep()).toBe(1);
+  await f.scheduler.idle();
+  expect(compute).toHaveBeenCalledOnce();
+  expect(f.saved.get(`a.rec${DEMO_STATS_SUFFIX}`)).toEqual(corrected);
+  expect(refreshProfiles).toHaveBeenCalledWith(
+    "a.rec",
+    corrected,
+    expect.any(AbortSignal),
+  );
+  expect(f.saved.get(`a.rec${DEMO_PROFILES_SUFFIX}`)).toEqual(marker());
 });
 
 it("retries a transient GUID worker failure after cooldown without replaying saved stats", async () => {

@@ -26,19 +26,16 @@ import {
   formatRecordedTime,
   recordedDayLabel,
 } from "./demoFormat";
-import { missionGalleryArtUrl, missionLoadScreenUrl } from "./missionPreview";
+import {
+  MISSION_ART_NAME_FALLBACKS,
+  missionGalleryArtUrl,
+  missionLoadScreenUrl,
+} from "./missionArt";
 import { PreviewTileArt } from "./PreviewTileArt";
 import { useAppNavigation } from "./useAppNavigation";
 import { GameDetailsDialog } from "./GameDetailsEditor";
 import tileStyles from "./PreviewTile.module.css";
 import styles from "./DemoCard.module.css";
-
-/** Loading-screen fallbacks for renamed mission variants. */
-const CARD_ART_NAME_FALLBACKS: readonly RegExp[] = [
-  /^(.+)LT$/,
-  /^(.+)Lak$/,
-  /^(.+)_b$/,
-];
 
 function DeleteButton({
   label,
@@ -176,7 +173,7 @@ export function DemoCard({
           t2-maps gallery screenshot, then the generic background. */}
           <PreviewTileArt
             candidates={[
-              missionLoadScreenUrl(mission, CARD_ART_NAME_FALLBACKS),
+              missionLoadScreenUrl(mission, MISSION_ART_NAME_FALLBACKS),
               missionGalleryArtUrl(mission),
             ]}
           >

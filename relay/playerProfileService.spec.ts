@@ -1,6 +1,6 @@
 import { type S3Client } from "@aws-sdk/client-s3";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { T2PlayerProfile } from "./accountTypes";
+import type { T2PlayerBestMapUpdate, T2PlayerProfile } from "./accountTypes";
 import { DEMO_GUIDS_SUFFIX } from "./demoGuids";
 import type { DemoMetadata } from "./demoMetadata";
 import {
@@ -8,12 +8,12 @@ import {
   outfitKey,
   type DemoStatsSidecar,
   type PlayerDemoStats,
-} from "./demoPlayerStats";
+} from "./demoPlayerStatsModel";
 import { DEMO_STATS_SUFFIX } from "./demoStats";
 import {
   createDemoPlayerProfileUpdater,
   updatePlayerProfiles,
-} from "./playerProfileStore";
+} from "./playerProfileService";
 
 const config = {
   endpoint: "https://example.r2.cloudflarestorage.com",
@@ -116,16 +116,200 @@ function fixture() {
     Body: { transformToString: async () => JSON.stringify(index) },
   }));
   const saveProfile = vi.fn<(profile: T2PlayerProfile) => void>();
+  const saveBestMaps =
+    vi.fn<(entries: readonly T2PlayerBestMapUpdate[]) => void>();
   const update = createDemoPlayerProfileUpdater({
     config,
     store,
     saveProfile,
+    saveBestMaps,
     client: { send } as unknown as S3Client,
   });
-  return { index, sidecars, current, store, send, saveProfile, update };
+  return {
+    index,
+    sidecars,
+    current,
+    store,
+    send,
+    saveProfile,
+    saveBestMaps,
+    update,
+  };
 }
 
 describe("automatic demo player profiles", () => {
+  it("compares only the new demo's final scores, while appearance still samples recent history", async () => {
+    const f = fixture();
+    f.sidecars.set(
+      `old.rec${DEMO_STATS_SUFFIX}`,
+      stats({ "101": player({ mapScores: [{ mission: "Old", score: 999 }] }) }),
+    );
+    f.current.statsByGuid["101"].mapScores = [
+      { mission: "Katabatic", score: 50 },
+      { mission: "DX", score: 65 },
+      { mission: "Katabatic", score: 60 },
+    ];
+    f.current.statsByGuid["202"].mapScores = [{ mission: "DX", score: -2 }];
+    await f.update("new.rec", f.current);
+    expect(f.saveBestMaps).toHaveBeenCalledExactlyOnceWith([
+      { guid: "101", mission: "DX", score: 65 },
+    ]);
+    expect(
+      f.store.read.mock.calls.filter(
+        ([, suffix]) => suffix === DEMO_STATS_SUFFIX,
+      ),
+    ).toEqual([["old.rec", DEMO_STATS_SUFFIX]]);
+  });
+
+  it("considers positive fractional scores but leaves zero and negative observations in raw stats", async () => {
+    const f = fixture();
+    const nonpositive = [
+      { mission: "Katabatic", score: 0 },
+      { mission: "DX", score: -2 },
+    ];
+    f.current.statsByGuid["101"].mapScores = structuredClone(nonpositive);
+    f.current.statsByGuid["202"].mapScores = [
+      { mission: "Riverdance", score: 0.5 },
+    ];
+    const counts = await f.update("new.rec", f.current);
+    expect(f.saveBestMaps).toHaveBeenCalledExactlyOnceWith([
+      { guid: "202", mission: "Riverdance", score: 0.5 },
+    ]);
+    expect(counts.bestMapsConsidered).toBe(1);
+    expect(f.current.statsByGuid["101"].mapScores).toEqual(nonpositive);
+  });
+
+  it("does not write best-map updates when a demo has only nonpositive scores", async () => {
+    const f = fixture();
+    f.current.statsByGuid["101"].mapScores = [
+      { mission: "Katabatic", score: 0 },
+      { mission: "DX", score: -2 },
+    ];
+    const counts = await f.update("new.rec", f.current);
+    expect(f.saveBestMaps).not.toHaveBeenCalled();
+    expect(counts.bestMapsConsidered).toBe(0);
+    expect(counts.stored).toBe(2);
+  });
+
+  it("excludes user-uploaded demo scores without changing appearance updates", async () => {
+    const f = fixture();
+    f.index.push(record("users/123/new.rec", "05"));
+    f.sidecars.set(`users/123/new.rec${DEMO_GUIDS_SUFFIX}`, {
+      namesByGuid: { "101": [] },
+    });
+    const upload = stats({
+      "101": player({ mapScores: [{ mission: "Uploaded", score: 1000 }] }),
+    });
+    await f.update("users/123/new.rec", upload);
+    expect(f.saveProfile).toHaveBeenCalledOnce();
+    expect(f.saveBestMaps).not.toHaveBeenCalled();
+  });
+
+  it("retries failed best-map writes without completing the profile task", async () => {
+    const f = fixture();
+    f.current.statsByGuid["101"].mapScores = [{ mission: "DX", score: 42 }];
+    f.saveBestMaps.mockImplementationOnce(() => {
+      throw new Error("SQLite busy");
+    });
+    await expect(f.update("new.rec", f.current)).rejects.toThrow("SQLite busy");
+    expect(f.saveProfile).not.toHaveBeenCalled();
+    await f.update("new.rec", f.current);
+    expect(f.saveBestMaps).toHaveBeenCalledTimes(2);
+    expect(f.saveProfile).toHaveBeenCalledTimes(2);
+  });
+
+  it("backfills every official score outside the recent appearance sample using one read per sidecar", async () => {
+    const f = fixture();
+    f.sidecars.set(`new.rec${DEMO_STATS_SUFFIX}`, f.current);
+    f.sidecars.set(
+      `old.rec${DEMO_STATS_SUFFIX}`,
+      stats({
+        "101": player({ mapScores: [{ mission: "Old winner", score: 100 }] }),
+      }),
+    );
+    f.sidecars.set(
+      `other.rec${DEMO_STATS_SUFFIX}`,
+      stats({ "303": player({ mapScores: [{ mission: "Other", score: 0 }] }) }),
+    );
+    f.index.push(record("users/123/upload.rec", "04"));
+    f.sidecars.set(
+      `users/123/upload.rec${DEMO_STATS_SUFFIX}`,
+      stats({
+        "101": player({ mapScores: [{ mission: "Uploaded", score: 9999 }] }),
+      }),
+    );
+    const counts = await updatePlayerProfiles({
+      store: f.store,
+      index: f.index,
+      guids: ["101"],
+      guidSidecars: new Map([
+        ["old.rec", { namesByGuid: { "101": [] } }],
+        ["new.rec", { namesByGuid: { "101": [] } }],
+      ]),
+      demoCount: 1,
+      saveProfile: f.saveProfile,
+      saveBestMaps: f.saveBestMaps,
+      bestMapDemos: "all",
+    });
+    expect(f.saveProfile.mock.calls[0][0].demoCount).toBe(1);
+    expect(f.saveBestMaps).toHaveBeenCalledExactlyOnceWith([
+      { guid: "101", mission: "Old winner", score: 100 },
+    ]);
+    expect(counts).toMatchObject({
+      statsRead: 3,
+      bestMapsConsidered: 1,
+      bestMapDemosFailed: 0,
+    });
+    expect(
+      f.store.read.mock.calls
+        .filter(([, suffix]) => suffix === DEMO_STATS_SUFFIX)
+        .map(([key]) => key)
+        .sort(),
+    ).toEqual(["new.rec", "old.rec", "other.rec"]);
+  });
+
+  it("reports failures reading historical best-map-only demos", async () => {
+    const f = fixture();
+    f.sidecars.set(`old.rec${DEMO_STATS_SUFFIX}`, new Error("R2 offline"));
+    const onError = vi.fn();
+    const counts = await updatePlayerProfiles({
+      store: f.store,
+      index: f.index,
+      guids: ["101"],
+      guidSidecars: new Map([["new.rec", { namesByGuid: { "101": [] } }]]),
+      demoCount: 1,
+      statsSidecars: new Map([["new.rec", f.current]]),
+      saveBestMaps: f.saveBestMaps,
+      bestMapDemos: "all",
+      onError,
+    });
+    expect(counts).toMatchObject({
+      planned: 1,
+      failed: 0,
+      bestMapDemosFailed: 1,
+    });
+    expect(onError).toHaveBeenCalledWith("old.rec", expect.any(Error));
+  });
+
+  it("requires an explicit best-map scope even when a writer is provided", async () => {
+    const f = fixture();
+    f.current.statsByGuid["101"].mapScores = [
+      { mission: "Katabatic", score: 42 },
+    ];
+    const counts = await updatePlayerProfiles({
+      store: f.store,
+      index: f.index,
+      guids: ["101"],
+      guidSidecars: new Map([["new.rec", { namesByGuid: { "101": [] } }]]),
+      statsSidecars: new Map([["new.rec", f.current]]),
+      saveProfile: f.saveProfile,
+      saveBestMaps: f.saveBestMaps,
+    });
+    expect(f.saveProfile).toHaveBeenCalledOnce();
+    expect(f.saveBestMaps).not.toHaveBeenCalled();
+    expect(counts).toMatchObject({ statsRead: 0, bestMapsConsidered: 0 });
+  });
+
   it("reaggregates recent history for every appearing GUID and reuses the freshly computed stats", async () => {
     const f = fixture();
     const result = await f.update("new.rec", f.current);
@@ -278,6 +462,7 @@ describe("automatic demo player profiles", () => {
 
   it("cancels while stats are loading without treating cancellation as a partial failure", async () => {
     const f = fixture();
+    f.current.statsByGuid["101"].mapScores = [{ mission: "DX", score: 100 }];
     const abort = new AbortController();
     const reason = new Error("Demo deleted");
     let release!: () => void;
@@ -308,6 +493,7 @@ describe("automatic demo player profiles", () => {
       abort.signal,
     );
     expect(f.saveProfile).not.toHaveBeenCalled();
+    expect(f.saveBestMaps).not.toHaveBeenCalled();
   });
 
   it("stops between SQLite writes when cancellation arrives during a yield", async () => {

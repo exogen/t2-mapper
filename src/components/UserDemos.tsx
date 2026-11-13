@@ -17,6 +17,11 @@ import { uploadUserDemo, userDemoUploadsUrl } from "../stream/userDemoUpload";
 import { DemoCard, PendingDemoCard } from "./DemoCard";
 import { DemoDropZone } from "./DemoDropZone";
 import { demoTitle } from "./demoFormat";
+import {
+  MISSION_ART_NAME_FALLBACKS,
+  missionGalleryArtUrl,
+  missionLoadScreenUrl,
+} from "./missionArt";
 import { PlayerProfileViewer } from "./PlayerProfileViewer";
 import { refreshDemoIndex, useDemoIndex } from "./useDemoIndex";
 import { UserIdentity } from "./UserIdentity";
@@ -55,6 +60,32 @@ interface GalleryEntry {
   card: ReactElement;
 }
 
+/** Keyed by mission below so a new best map retries its native image URLs. */
+function ProfileMapBanner({ mission }: { mission: string }) {
+  const [candidate, setCandidate] = useState(0);
+  const urls = [
+    missionGalleryArtUrl(mission),
+    missionLoadScreenUrl(mission, MISSION_ART_NAME_FALLBACKS),
+  ].filter((url): url is string => url != null);
+  const url = urls[candidate];
+  if (!url) return null;
+  return (
+    <div
+      className={styles.ProfileMapBanner}
+      aria-hidden
+      data-profile-map-banner
+    >
+      <img
+        key={url}
+        src={url}
+        alt=""
+        className={styles.ProfileMapImage}
+        onError={() => setCandidate(candidate + 1)}
+      />
+    </div>
+  );
+}
+
 /**
  * Visitors see the user's public index entries. Owners see their private
  * upload ledger instead, with published card details from the index.
@@ -87,6 +118,7 @@ export default function UserDemos({ userId }: { userId: string }) {
     retry: false,
   });
   const profile = owner ? account.user : publicProfile.data;
+  const bestMap = profile?.t2Profile?.bestMap;
   const transfer = useRef<AbortController | null>(null);
   const [transferState, setTransferState] = useState<{
     filename: string;
@@ -356,62 +388,69 @@ export default function UserDemos({ userId }: { userId: string }) {
   }
 
   const content = (
-    <section
-      className={styles.Section}
-      aria-label="Uploaded demos"
-      data-demo-cards
-    >
-      {validUser && (
-        <div
-          className={styles.Profile}
-          data-has-portrait={!!profile?.t2Profile || undefined}
-        >
-          {profile ? (
-            <UserIdentity
-              user={profile}
-              variant="page"
-              portrait={
-                profile.t2Profile ? (
-                  <PlayerProfileViewer
-                    profile={profile.t2Profile}
-                    playerName={profile.name}
-                  />
-                ) : undefined
-              }
-            />
-          ) : publicProfile.isError ? (
-            "Profile unavailable"
-          ) : publicProfile.data === null ? (
-            "Unknown user"
-          ) : null}
-        </div>
+    <>
+      {validUser && bestMap && bestMap.score > 0 && (
+        <ProfileMapBanner key={bestMap.mission} mission={bestMap.mission} />
       )}
-      <div className={styles.Header}>
-        <h2 className={styles.Title}>Uploaded demos</h2>
-        {(index.isFetching || (owner && uploads.isFetching)) && (
-          <LuLoaderCircle
-            className={styles.Spinner}
-            role="status"
-            aria-label="Refreshing demos"
-          />
+      <section
+        className={styles.Section}
+        aria-label="Uploaded demos"
+        data-demo-cards
+      >
+        {validUser && (
+          <div
+            className={styles.Profile}
+            data-has-portrait={!!profile?.t2Profile || undefined}
+          >
+            {profile ? (
+              <UserIdentity
+                user={profile}
+                variant="page"
+                portrait={
+                  profile.t2Profile ? (
+                    <PlayerProfileViewer
+                      profile={profile.t2Profile}
+                      playerName={profile.name}
+                    />
+                  ) : undefined
+                }
+              />
+            ) : publicProfile.isError ? (
+              "Profile unavailable"
+            ) : publicProfile.data === null ? (
+              "Unknown user"
+            ) : null}
+          </div>
         )}
-      </div>
-      {!validUser ? (
-        <p className={styles.Error} role="alert">
-          Invalid Discord user ID.
-        </p>
-      ) : gallery.length > 0 ? (
-        <div className={styles.Grid}>{gallery.map((entry) => entry.card)}</div>
-      ) : index.isPending ? (
-        <p className={styles.Message}>Loading demos…</p>
-      ) : index.isError && !index.data ? (
-        <p className={styles.Error} role="alert">
-          Could not load demos. Please reload to try again.
-        </p>
-      ) : (
-        <p className={styles.Message}>No demos uploaded yet.</p>
-      )}
-    </section>
+        <div className={styles.Header}>
+          <h2 className={styles.Title}>Uploaded demos</h2>
+          {(index.isFetching || (owner && uploads.isFetching)) && (
+            <LuLoaderCircle
+              className={styles.Spinner}
+              role="status"
+              aria-label="Refreshing demos"
+            />
+          )}
+        </div>
+        {!validUser ? (
+          <p className={styles.Error} role="alert">
+            Invalid Discord user ID.
+          </p>
+        ) : gallery.length > 0 ? (
+          <div className={styles.Grid}>
+            {gallery.map((entry) => entry.card)}
+          </div>
+        ) : index.isPending ? (
+          <p className={styles.Message}>Loading demos…</p>
+        ) : index.isError && !index.data ? (
+          <p className={styles.Error} role="alert">
+            Could not load demos. Please reload to try again.
+          </p>
+        ) : (
+          <p className={styles.Message}>No demos uploaded yet.</p>
+        )}
+      </section>
+    </>
   );
   return owner && validUser ? (
     <DemoDropZone

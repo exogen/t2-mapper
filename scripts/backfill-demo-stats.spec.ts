@@ -1,7 +1,7 @@
 import { Readable } from "node:stream";
 import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { DEMO_STATS_VERSION } from "../relay/demoPlayerStats";
+import { DEMO_STATS_VERSION } from "../relay/demoPlayerStatsModel";
 import { DEMO_STATS_SUFFIX } from "../relay/demoStats";
 
 const mocks = vi.hoisted(() => ({

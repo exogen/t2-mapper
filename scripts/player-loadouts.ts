@@ -16,15 +16,13 @@ import {
   saveT2PlayerProfile,
 } from "../relay/accountDatabase.js";
 import {
-  DEMO_STATS_VERSION,
   KILL_WEAPON_NAMES,
   PACK_NAMES,
   WEAPON_NAMES,
   describeLoadout,
   describeOutfit,
-  type DemoStatsSidecar,
-} from "../relay/demoPlayerStats.js";
-import { DEMO_STATS_SUFFIX, demoStatsVersion } from "../relay/demoStats.js";
+} from "../relay/demoPlayerStatsModel.js";
+import { DEMO_STATS_SUFFIX, readCurrentDemoStats } from "../relay/demoStats.js";
 import type { DemoUploadConfig } from "../relay/demoUpload.js";
 import {
   PrivateDemoStore,
@@ -37,7 +35,7 @@ import {
   isCTFDemo,
   summarizePlayerProfile,
   type PlayerProfileDemo,
-} from "./lib/playerProfiles.js";
+} from "../relay/playerProfiles.js";
 
 /** GUID sidecars read at once while searching for the player's demos. */
 const SEARCH_BATCH = 16;
@@ -177,9 +175,7 @@ if (withoutGuids.size)
 const sidecars = await Promise.all(
   selected.map(async (record) => {
     const value = await store.read(record.filename, DEMO_STATS_SUFFIX);
-    return demoStatsVersion(value) === DEMO_STATS_VERSION
-      ? (value as DemoStatsSidecar)
-      : null;
+    return readCurrentDemoStats(value);
   }),
 );
 const missingStats: string[] = [];

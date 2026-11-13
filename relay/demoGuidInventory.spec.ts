@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  DEMO_GUIDS_SUFFIX,
-  type DemoGuidSidecar,
-} from "../../relay/demoGuids.js";
+import { DEMO_GUIDS_SUFFIX, type DemoGuidSidecar } from "./demoGuids.js";
 import { collectDemoGuidInventory } from "./demoGuidInventory.js";
 
 describe("private demo GUID inventory", () => {

@@ -11,6 +11,7 @@ import {
   linkT2Account,
   migrateAccountSchema,
   openAccountDatabase,
+  saveT2PlayerBestMaps,
   saveT2PlayerProfile,
   setAccountRole,
   unlinkT2Account,
@@ -120,6 +121,105 @@ it("keeps a newer profile when an older snapshot finishes later on another conne
   const refreshed = { ...profile, skin: "Fresh update", computedAt: 300 };
   saveT2PlayerProfile(slowWriter, refreshed);
   expect(read()).toEqual(refreshed);
+});
+
+it("keeps the highest map score across retries, concurrent writers and appearance updates", () => {
+  const { filename, database } = setup();
+  database.transaction(() => migrateAccountSchema(database))();
+  const other = openAccountDatabase(filename);
+  databases.push(other);
+  const read = (guid: string) =>
+    database
+      .prepare('SELECT * FROM "t2PlayerBestMap" WHERE guid = ?')
+      .get(guid);
+  saveT2PlayerBestMaps(database, [
+    { guid: "00123", mission: "Katabatic", score: -5 },
+    { guid: "123", mission: "DX", score: -8 },
+    { guid: "456", mission: "Riverdance", score: 0 },
+  ]);
+  expect(read("123")).toBeUndefined();
+  expect(read("456")).toBeUndefined();
+  saveT2PlayerBestMaps(database, [
+    { guid: "00123", mission: "Katabatic", score: 0.5 },
+  ]);
+  expect(read("123")).toEqual({
+    guid: "123",
+    mission: "Katabatic",
+    score: 0.5,
+  });
+  saveT2PlayerBestMaps(other, [{ guid: "123", mission: "DX", score: 99.5 }]);
+  saveT2PlayerBestMaps(database, [
+    { guid: "123", mission: "Katabatic", score: 50 },
+    { guid: "123", mission: "Riverdance", score: 99.5 },
+    { guid: "123", mission: "Zero", score: 0 },
+    { guid: "123", mission: "Penalty", score: -20 },
+  ]);
+  expect(read("123")).toEqual({ guid: "123", mission: "DX", score: 99.5 });
+  saveT2PlayerProfile(database, {
+    guid: "123",
+    bodyType: "male",
+    skin: "base",
+    armor: "Light",
+    pack: null,
+    weapon: null,
+    loadoutSource: "worn",
+    suitUps: 0,
+    demoCount: 1,
+    lastSeenAt: 1,
+    computedAt: 1,
+  });
+  expect(read("123")).toEqual({ guid: "123", mission: "DX", score: 99.5 });
+});
+
+it("rolls back a best-map batch with invalid data", () => {
+  const { database } = setup();
+  database.transaction(() => migrateAccountSchema(database))();
+  for (const invalid of [
+    { guid: "0", mission: "Katabatic", score: 20 },
+    { guid: "123", mission: " ", score: 20 },
+    { guid: "123", mission: "Katabatic", score: Number.POSITIVE_INFINITY },
+    { guid: "123", mission: "Katabatic", score: Number.NaN },
+  ]) {
+    expect(() =>
+      saveT2PlayerBestMaps(database, [
+        { guid: "123", mission: "DX", score: 10 },
+        invalid,
+      ]),
+    ).toThrow();
+    expect(
+      database.prepare('SELECT count(*) FROM "t2PlayerBestMap"').pluck().get(),
+    ).toBe(0);
+    expect(database.inTransaction).toBe(false);
+  }
+});
+
+it("adds best-map storage to an existing profile database without changing its profiles", () => {
+  const { database } = setup();
+  database.transaction(() => migrateAccountSchema(database))();
+  const profile: T2PlayerProfile = {
+    guid: "123",
+    bodyType: "male",
+    skin: "base",
+    armor: "Light",
+    pack: null,
+    weapon: null,
+    loadoutSource: "worn",
+    suitUps: 0,
+    demoCount: 1,
+    lastSeenAt: 1,
+    computedAt: 1,
+  };
+  saveT2PlayerProfile(database, profile);
+  database.exec('DROP TABLE "t2PlayerBestMap"; PRAGMA user_version = 2');
+  expect(hasPendingAccountSchemaMigrations(database)).toBe(true);
+  database.transaction(() => migrateAccountSchema(database))();
+  expect(database.prepare('SELECT * FROM "t2PlayerProfile"').get()).toEqual(
+    profile,
+  );
+  saveT2PlayerBestMaps(database, [
+    { guid: "123", mission: "Katabatic", score: 10 },
+  ]);
+  expect(hasPendingAccountSchemaMigrations(database)).toBe(false);
 });
 
 it("backs up committed WAL data into a verified standalone restorable file", async () => {

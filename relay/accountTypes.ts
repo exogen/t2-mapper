@@ -9,6 +9,15 @@ export function isDiscordId(value: unknown): value is string {
  *  inventory station, or only seen worn (game types without stations). */
 export type T2LoadoutSource = "inv" | "deployInv" | "worn";
 
+/** Highest positive final mission score observed in a relay-recorded demo. */
+export interface T2PlayerBestMap {
+  /** Internal mission name, also used by the map screenshot gallery. */
+  mission: string;
+  score: number;
+}
+
+export type T2PlayerBestMapUpdate = T2PlayerBestMap & { guid: string };
+
 /**
  * A Tribes 2 account's representative look and loadout, from its recent
  * demos. Identifiers are the game's: shapes without `.dts` for images, and
@@ -37,6 +46,8 @@ export interface T2ProfileView extends Pick<
   T2PlayerProfile,
   "bodyType" | "skin" | "armor" | "pack" | "weapon" | "loadoutSource"
 > {
+  /** All-time best map, independent of the recent appearance sample. */
+  bestMap?: T2PlayerBestMap | null;
   /** ISO time of the newest demo the account appears in. */
   lastSeenAt: string | null;
 }

@@ -1,5 +1,7 @@
 .Page {
   composes: DropZone from "./DemoDropZone.module.css";
+  /* Keep full-width background art above the page background, behind its UI. */
+  isolation: isolate;
   overflow-x: hidden;
   padding-bottom: 40px;
 }
@@ -102,6 +104,39 @@
   align-items: flex-start;
   /* Empty header space lets drags reach the portrait behind this wrapper. */
   pointer-events: none;
+}
+
+.ProfileMapBanner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: -2;
+  height: 320px;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+  opacity: 0.6;
+  mask-image: linear-gradient(#000 35%, transparent);
+}
+
+.ProfileMapBanner::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(14, 27, 28, 0.75),
+    rgba(14, 27, 28, 0.2) 65%,
+    rgba(14, 27, 28, 0.45)
+  );
+}
+
+.ProfileMapImage {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 65%;
 }
 
 @media (max-width: 480px) {
