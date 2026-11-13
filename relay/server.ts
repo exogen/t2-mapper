@@ -30,7 +30,7 @@ import {
 } from "./appAuth.js";
 import { UserDemoUploads } from "./userDemoUploads.js";
 import { createRelayDemoProcessing } from "./demoProcessing.js";
-import { openAccountDatabase } from "./accountDatabase.js";
+import { openAccountDatabase, saveT2PlayerProfile } from "./accountDatabase.js";
 import {
   loadAccountBackupConfig,
   startAccountBackups,
@@ -44,6 +44,14 @@ import {
 } from "./missionControls.js";
 import { DemoCoordinator } from "./demoCoordinator.js";
 import { DemoUploader, loadUploadConfig } from "./demoUpload.js";
+import { DEMO_GUIDS_SUFFIX } from "./demoGuids.js";
+import { DEMO_PROFILES_SUFFIX, DEMO_STATS_SUFFIX } from "./demoStats.js";
+import { DemoStatsScheduler } from "./demoStatsScheduler.js";
+import { createDemoPlayerProfileUpdater } from "./playerProfileStore.js";
+import {
+  PrivateDemoStore,
+  loadPrivateDemoStorageConfig,
+} from "./privateDemoStore.js";
 import { createGamePresentationUpdater } from "./gamePresentationService.js";
 import {
   Patroller,
@@ -86,6 +94,15 @@ const TRUST_FLY_PROXY = /^(1|true)$/i.test(
 );
 const demoUploadConfig = loadUploadConfig();
 const demoProcessing = createRelayDemoProcessing();
+const privateDemoStorageConfig = loadPrivateDemoStorageConfig();
+const privateDemoStore = privateDemoStorageConfig
+  ? new PrivateDemoStore(privateDemoStorageConfig)
+  : null;
+if (demoUploadConfig && !privateDemoStore) {
+  relayLog.warn(
+    "DEMO_PRIVATE_R2_BUCKET is not configured; player GUIDs and stats from new demos are not saved",
+  );
+}
 const demoCheckpointPublisher =
   demoUploadConfig &&
   !/^(0|false)$/i.test(process.env.DEMO_CHECKPOINTS_ENABLED ?? "")
@@ -237,6 +254,7 @@ const WATCH_TOURNEY_SKIP_TYPES =
     : ["LakRabbit"];
 
 const eventLoopMonitor = new EventLoopMonitor();
+let shuttingDown = false;
 
 // Web app accounts are separate from the shared TribesNext game identity.
 // No Discord credentials means accounts remain disabled and watching still works.
@@ -266,6 +284,48 @@ if (accountDatabase && !accountBackups) {
     "Account database backups are not configured; configure a dedicated private backup bucket before production use",
   );
 }
+
+// Account initialization above migrates SQLite before any background update.
+const updatePlayerProfiles =
+  accountDatabase && demoUploadConfig && privateDemoStore
+    ? createDemoPlayerProfileUpdater({
+        config: demoUploadConfig,
+        store: privateDemoStore,
+        saveProfile: (profile) => saveT2PlayerProfile(accountDatabase, profile),
+      })
+    : null;
+const demoStats =
+  demoUploadConfig &&
+  privateDemoStore &&
+  !/^(0|false)$/i.test(process.env.DEMO_STATS_ENABLED ?? "")
+    ? new DemoStatsScheduler({
+        config: demoUploadConfig,
+        store: privateDemoStore,
+        compute: (file, signal) =>
+          demoProcessing.computeStats(
+            file,
+            GAME_BASE_PATH,
+            MANIFEST_PATH,
+            signal,
+          ),
+        readNamesByGuid: demoProcessing.repairNamesByGuid,
+        refreshProfiles: updatePlayerProfiles
+          ? (demoKey, stats, signal) =>
+              demoProcessing.updateProfiles(async () => {
+                const counts = await updatePlayerProfiles(
+                  demoKey,
+                  stats,
+                  signal,
+                );
+                relayLog.info(
+                  { demoKey, ...counts },
+                  "Player profiles updated",
+                );
+              }, signal)
+          : undefined,
+      })
+    : null;
+demoStats?.start();
 
 /** HTTP health checks and demo downloads; WebSocket upgrades are separate. */
 const httpServer = http.createServer(async (req, res) => {
@@ -515,6 +575,22 @@ const demoUploader: DemoUploader = new DemoUploader(
             ? demoCheckpointPublisher.publishPrepared(key, localFile, prepared)
             : demoCheckpointPublisher.publish(key, { localFile })
       : undefined,
+    onPublished: (demoKey) => demoStats?.enqueue(demoKey),
+    privateSidecars: privateDemoStore
+      ? {
+          publish: async (localFile, demoKey) => {
+            await privateDemoStore.put(demoKey, DEMO_GUIDS_SUFFIX, {
+              namesByGuid: await demoProcessing.readNamesByGuid(localFile),
+            });
+          },
+          delete: async (demoKey) => {
+            await demoStats?.cancel(demoKey);
+            await privateDemoStore.delete(demoKey, DEMO_GUIDS_SUFFIX);
+            await privateDemoStore.delete(demoKey, DEMO_STATS_SUFFIX);
+            await privateDemoStore.delete(demoKey, DEMO_PROFILES_SUFFIX);
+          },
+        }
+      : undefined,
   },
 );
 const demoCoordinator: DemoCoordinator = new DemoCoordinator({
@@ -586,7 +662,6 @@ if (demoUploader.enabled) {
 let watchStateWriteChain = Promise.resolve();
 let pendingWatchState: string | null = null;
 let writingWatchState = false;
-let shuttingDown = false;
 function persistWatchState(
   addresses: string[],
   missionControls: Record<string, MissionControlState>,
@@ -755,6 +830,7 @@ function drainSessions(timeoutMs: number): Promise<unknown> {
   shuttingDown = true;
   eventLoopMonitor.stop();
   appAuth?.close();
+  demoStats?.stop();
   const userDemosClosing = userDemoUploads?.close();
   patroller?.stop();
   watchSessions.shutdown();
@@ -764,6 +840,7 @@ function drainSessions(timeoutMs: number): Promise<unknown> {
       demoCoordinator.shutdown(timeoutMs),
       watchStateWriteChain,
       accountBackups?.stop(),
+      demoStats?.idle(),
       userDemosClosing,
     ]),
     new Promise((resolve) => setTimeout(resolve, timeoutMs).unref()),

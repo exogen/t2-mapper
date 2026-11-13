@@ -1,10 +1,15 @@
 .Page {
   composes: DropZone from "./DemoDropZone.module.css";
+  overflow-x: hidden;
+  padding-top: 0;
   padding-bottom: 40px;
 }
 
 .Section {
   composes: Featured from "./DemoDropScreen.module.css";
+  position: relative;
+  /* Keep the background portrait above the page background, below its UI. */
+  isolation: isolate;
 }
 
 .Header {
@@ -82,8 +87,22 @@
 .Profile {
   display: flex;
   align-items: center;
+  gap: 16px;
   min-height: 64px;
   margin-bottom: 16px;
   color: #b0d5c9;
   font-size: 13px;
+}
+
+.Profile[data-has-portrait] {
+  min-height: 160px;
+  align-items: flex-start;
+  /* Empty header space lets drags reach the portrait behind this wrapper. */
+  pointer-events: none;
+}
+
+@media (max-width: 480px) {
+  .Profile {
+    flex-wrap: wrap;
+  }
 }

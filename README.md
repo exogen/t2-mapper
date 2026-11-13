@@ -116,8 +116,3 @@ npm test
 ```
 
 Relay settings are documented in `.env.example`.
-
-List Discord users in the configured account database with `npm run accounts:list`.
-Use `npm run accounts:list -- --database /path/to/accounts.sqlite` to inspect another
-database. The script opens SQLite read-only and prints names, Discord handles and
-IDs, roles, and join dates.

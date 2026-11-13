@@ -210,14 +210,30 @@ export async function analyzeDemo(
 }
 
 /**
+ * Tag-less names for every authenticated GUID in a recording: the initial
+ * roster plus every later join, across renames. Private; never published.
+ */
+export async function readDemoNamesByGuid(
+  bytes: Uint8Array,
+  filename: string,
+): Promise<Record<string, string[]>> {
+  return (await analyzeDemoRecording(bytes, filename)).namesByGuid;
+}
+
+/**
  * `analyzeDemo`, plus the mission loaded when recording began (what the live
- * recorder names its files after), even if that match never started.
+ * recorder names its files after), even if that match never started, and the
+ * private GUID names kept apart from the published metadata.
  */
 export async function analyzeDemoRecording(
   bytes: Uint8Array,
   filename: string,
   options: { strict?: boolean } = {},
-): Promise<{ metadata: DemoMetadata; startMission: string }> {
+): Promise<{
+  metadata: DemoMetadata;
+  startMission: string;
+  namesByGuid: Record<string, string[]>;
+}> {
   const parser = new DemoParser(bytes);
   const { header, initialBlock } = await parser.load();
   const info = parseDemoHeader(initialBlock.demoValues);
@@ -416,7 +432,11 @@ export async function analyzeDemoRecording(
     reason: `backfilled: ${players.count} players, ${games.length} game${games.length === 1 ? "" : "s"}`,
     ...players.metadata(),
   };
-  return { metadata, startMission: firstMission || games[0]?.mission || "" };
+  return {
+    metadata,
+    startMission: firstMission || games[0]?.mission || "",
+    namesByGuid: players.namesByGuid(),
+  };
 }
 
 function validHeaderDate(raw: string, parsed: string): boolean {

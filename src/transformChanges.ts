@@ -1,4 +1,4 @@
-import type { Object3D } from "three";
+import { Scene, type Object3D } from "three";
 
 const changed = new Set<Object3D>();
 
@@ -16,8 +16,24 @@ export function markTransformChanged(object: Object3D, recompose = true): void {
   changed.add(object);
 }
 
-/** Re-mark every changed object right before the scene's matrix update. */
-export function flushTransformChanges(): void {
-  for (const object of changed) object.matrixWorldNeedsUpdate = true;
-  changed.clear();
+/** Re-mark changed objects right before their scene's matrix update.
+ * A separate renderer must leave other scenes' pending changes intact. */
+export function flushTransformChanges(root?: Object3D): void {
+  for (const object of changed) {
+    if (root) {
+      let ancestor = object;
+      while (ancestor !== root && ancestor.parent) ancestor = ancestor.parent;
+      if (ancestor !== root) {
+        // Detached subtrees have no renderer left to consume this entry.
+        // Keep their dirty flag; attachFrozen re-queues them if reused.
+        if (!(ancestor instanceof Scene)) {
+          object.matrixWorldNeedsUpdate = true;
+          changed.delete(object);
+        }
+        continue;
+      }
+    }
+    object.matrixWorldNeedsUpdate = true;
+    changed.delete(object);
+  }
 }

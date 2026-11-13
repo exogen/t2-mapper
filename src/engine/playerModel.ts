@@ -1,12 +1,10 @@
 import {
   AdditiveAnimationBlendMode,
-  FrontSide,
-  Group,
+  type Group,
   type AnimationAction,
   type AnimationMixer,
   type Object3D,
 } from "three";
-import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import {
   buildActionAnimMap,
   getPlayerAnimationActions,
@@ -23,18 +21,10 @@ import {
 } from "../stream/playerView";
 import {
   ANIM_TRANSITION_TIME,
-  disposeClonedScene,
   getKeyframeAtTime,
-  processShapeScene,
 } from "../stream/playbackUtils";
 import { samplePlayerPose } from "../stream/playerAnimation";
-import { observeShapeMeshes } from "../dts/dtsScene";
-import { DTSAnimationMixer } from "../dts/dtsAnimationMixer";
-import {
-  DTSRigidMeshBatch,
-  type DTSModel,
-  type DTSShape,
-} from "../dts/dtsModel";
+import type { DTSModel, DTSShape } from "../dts/dtsModel";
 import { createDtsDamageThreads } from "../dts/dtsDamage";
 import {
   holdDtsAction,
@@ -56,7 +46,6 @@ import { gameEntityStore } from "../state/gameEntityStore";
 import { streamClock } from "../state/streamPlaybackStore";
 import { selectDebugMode, settingsStore } from "../state/settingsStore";
 import type { PlayerEntity } from "../state/gameEntityTypes";
-import { SHAPE_MODEL_ROTATION_Y } from "../world/placement";
 import { createShapeLightState, updateShapeLighting } from "../shapeLighting";
 import { findOwnNode } from "../sceneNodes";
 import { stepFlareThread } from "./jetThreads";
@@ -75,7 +64,7 @@ import { registerEyeNode } from "./eyePositions";
 import { showShapeDebugBounds } from "./shapeModel";
 import { combineCleanups, type Cleanup } from "./storeReaction";
 import { FramePriority } from "./framePriority";
-import { freezeModelTransforms } from "./staticMatrices";
+import { createPlayerPresentation } from "./playerPresentation";
 import { markTransformChanged } from "../transformChanges";
 import type { GameEngine } from "./gameEngine";
 
@@ -156,38 +145,14 @@ export function createPlayerModel(
   const streamingPlayback = () =>
     engineStore.getState().playback.recording?.streamingPlayback;
 
-  const clonedScene = SkeletonUtils.clone(gltf.scene) as DTSShape;
-  processShapeScene(clonedScene, undefined, {
+  const presentation = createPlayerPresentation({
+    model: gltf,
     anisotropy: options.anisotropy,
     emap: options.emap,
     skinUrl: options.skinUrl,
   });
-  // Front-face-only rendering so the camera can see out from inside the
-  // model in first-person (backface culling hides interior faces).
-  // Rigid batches bound the current bone pose, including vehicle mounts.
-  // Keep the other paths uncullable until their animated bounds are reliable.
-  observeShapeMeshes(clonedScene, (mesh) => {
-    mesh.frustumCulled = mesh instanceof DTSRigidMeshBatch;
-    const materials = Array.isArray(mesh.material)
-      ? mesh.material
-      : [mesh.material];
-    for (const material of materials) material.side = FrontSide;
-  });
-  const mixer = new DTSAnimationMixer(clonedScene);
-
-  // The mount yaw root recomposes when its rotation changes; the rest of
-  // the model moves only as its animation marks nodes.
-  const root = new Group();
-  root.matrixAutoUpdate = false;
-  const rotated = new Group();
-  rotated.rotation.set(0, SHAPE_MODEL_ROTATION_Y, 0);
-  rotated.updateMatrix();
-  rotated.matrixAutoUpdate = false;
-  const unfreezeModel = freezeModelTransforms(clonedScene);
-  rotated.add(clonedScene);
-  root.add(rotated);
-
-  const cleanups: Cleanup[] = [unfreezeModel];
+  const { root, rotated, scene: clonedScene, mixer } = presentation;
+  const cleanups: Cleanup[] = [];
 
   const db =
     initial.dataBlockId != null
@@ -277,7 +242,6 @@ export function createPlayerModel(
 
   // Force initial pose evaluation.
   mixer.update(0);
-  cleanups.push(() => mixer.stopAllAction());
 
   // Client-side jet effects (Player::updateJet, FUN_005d65e0): the jet
   // sound loops and the jetEmitter runs at the JetNozzle nodes while
@@ -485,9 +449,7 @@ export function createPlayerModel(
     scene: clonedScene,
     dispose() {
       dispose();
-      rotated.remove(clonedScene);
-      disposeClonedScene(clonedScene);
-      mixer.uncacheRoot(clonedScene);
+      presentation.dispose();
     },
   };
 }

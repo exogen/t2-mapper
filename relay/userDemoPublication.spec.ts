@@ -242,6 +242,66 @@ describe("prepared user demo publication", () => {
     expect(await fs.readFile(input)).toEqual(Buffer.from([1, 2, 3]));
   });
 
+  it("publishes the private sidecar after checkpoints without letting it block publication", async () => {
+    const publish = vi.fn(async (_file: string, demoKey: string) => {
+      bucket.events.push(`private:${demoKey}`);
+    });
+    const uploader = new DemoUploader(config, directory, {
+      publishCheckpoints: checkpointPublisher(),
+      privateSidecars: { publish, delete: vi.fn() },
+      onPublished: (demoKey) => {
+        expect(bucket.objects.has(`demos/${demoKey}.json`)).toBe(true);
+        expect(
+          JSON.parse(bucket.objects.get("demos/index.json")!.body.toString()),
+        ).toEqual([metadata]);
+        bucket.events.push(`published:${demoKey}`);
+      },
+    });
+    await uploader.publishPreparedDemo(key, input, metadata, checkpoints);
+    expect(publish).toHaveBeenCalledExactlyOnceWith(input, key);
+    expect(
+      bucket.events.filter((event) =>
+        /^(upload|checkpoints|private|put|published):/.test(event),
+      ),
+    ).toEqual([
+      `upload:demos/${key}`,
+      `checkpoints:demos/${key}`,
+      `private:${key}`,
+      `put:demos/${key}.json`,
+      "put:demos/index.json",
+      `published:${key}`,
+    ]);
+
+    bucket.objects.clear();
+    publish.mockRejectedValueOnce(new Error("Private bucket unavailable"));
+    await uploader.publishPreparedDemo(key, input, metadata, checkpoints);
+    expect(
+      JSON.parse(bucket.objects.get("demos/index.json")!.body.toString()),
+    ).toEqual([metadata]);
+  });
+
+  it("notifies a prepared demo only after its index commit succeeds", async () => {
+    const onPublished = vi.fn();
+    const uploader = new DemoUploader(config, directory, { onPublished });
+    bucket.failIndex = true;
+    await expect(
+      uploader.publishPreparedDemo(key, input, metadata, checkpoints),
+    ).rejects.toThrow("Index unavailable");
+    expect(onPublished).not.toHaveBeenCalled();
+    bucket.failIndex = false;
+    await uploader.publishPreparedDemo(key, input, metadata, checkpoints);
+    expect(onPublished).toHaveBeenCalledExactlyOnceWith(key);
+  });
+
+  it("does not notify publication when a prepared demo is deleted", async () => {
+    const onPublished = vi.fn();
+    const uploader = new DemoUploader(config, directory, { onPublished });
+    await uploader.publishPreparedDemo(key, input, metadata, checkpoints);
+    onPublished.mockClear();
+    await uploader.deleteUserDemo(key);
+    expect(onPublished).not.toHaveBeenCalled();
+  });
+
   it("finishes a retried publish whose sidecar has no games", async () => {
     const gameless = { ...metadata, games: [] };
     seed(`demos/${key}.json`, gameless);
@@ -525,6 +585,28 @@ describe("prepared user demo publication", () => {
       bucket.events.indexOf(`removed:demos/${key}`),
     );
     expect(bucket.events.at(-1)).toBe(`removed:demos/${key}`);
+  });
+
+  it("removes the private sidecar before the recording and retries when that fails", async () => {
+    seed("demos/index.json", [metadata]);
+    seed(`demos/${key}`, {});
+    const remove = vi.fn(async (demoKey: string) => {
+      bucket.events.push(`private-delete:${demoKey}`);
+    });
+    remove.mockRejectedValueOnce(new Error("Private bucket unavailable"));
+    const uploader = new DemoUploader(config, directory, {
+      privateSidecars: { publish: vi.fn(), delete: remove },
+    });
+    await expect(uploader.deleteUserDemo(key)).rejects.toThrow(
+      "Private bucket unavailable",
+    );
+    expect(bucket.objects.has(`demos/${key}`)).toBe(true);
+    await uploader.deleteUserDemo(key);
+    expect(remove).toHaveBeenLastCalledWith(key);
+    expect(bucket.events.lastIndexOf(`private-delete:${key}`)).toBeLessThan(
+      bucket.events.indexOf(`removed:demos/${key}`),
+    );
+    expect(bucket.objects.has(`demos/${key}`)).toBe(false);
   });
 
   it("retains the recording when sidecar deletion fails and supports an idempotent retry", async () => {

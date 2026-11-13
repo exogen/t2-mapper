@@ -103,7 +103,7 @@ export function mountEngineCanvas(
       scene,
     });
     engine.runFrame(frame);
-    flushTransformChanges();
+    flushTransformChanges(scene);
     // The command circuit can switch cameras mid-frame.
     const camera = engine.cameras.active;
     setDTSCullCamera(camera);
@@ -188,6 +188,7 @@ export function mountEngineCanvas(
       timer.dispose();
       observer.disconnect();
       unsubscribe();
+      flushTransformChanges(scene);
       disconnect();
       registerShadowRenderer(null);
       renderer.dispose();

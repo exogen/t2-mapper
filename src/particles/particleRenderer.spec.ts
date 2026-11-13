@@ -1,4 +1,4 @@
-import { expect, it, vi } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import {
   ClampToEdgeWrapping,
   LinearFilter,
@@ -19,22 +19,31 @@ import {
 import { EmitterInstance, resolveEmitterData } from "./ParticleSystem";
 
 const pending = vi.hoisted(() => new Map<string, (image: unknown) => void>());
-vi.mock("three", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("three")>()),
-  ImageBitmapLoader: class {
-    setOptions() {
-      return this;
-    }
-    load(url: string, load: (image: unknown) => void) {
-      pending.set(url, load);
-    }
-  },
-}));
+vi.mock("three", async (importOriginal) => {
+  const three = await importOriginal<typeof import("three")>();
+  return {
+    ...three,
+    FileLoader: class {
+      manager = three.DefaultLoadingManager;
+      setResponseType() {
+        return this;
+      }
+      load(url: string, load: (image: unknown) => void) {
+        pending.set(url, load);
+      }
+    },
+  };
+});
 vi.mock("../loaders", () => ({
   textureToUrl: (name: string) => `/${name}.png`,
 }));
 
-it("shares particle image data without changing another renderer's texture settings", () => {
+beforeAll(() => {
+  vi.stubGlobal("createImageBitmap", async (image: unknown) => image);
+});
+afterAll(() => vi.unstubAllGlobals());
+
+it("shares particle image data without changing another renderer's texture settings", async () => {
   const source = loadTexture("/dust.png");
   source.colorSpace = SRGBColorSpace;
   source.minFilter = LinearFilter;
@@ -46,6 +55,7 @@ it("shares particle image data without changing another renderer's texture setti
   expect(particleTexturesReady.has(particle)).toBe(false);
   const image = { width: 64, height: 64 };
   pending.get("/dust.png")!(image);
+  await vi.waitFor(() => expect(particle.image).toBe(image));
   expect(particle.image).toBe(image);
   expect(particleTexturesReady.has(particle)).toBe(true);
   expect(particle.version).toBeGreaterThan(0);
@@ -61,9 +71,10 @@ it("shares particle image data without changing another renderer's texture setti
   expect(getParticleTexture("dust")).toBe(particle);
 });
 
-it("makes an already-decoded particle texture ready immediately", () => {
+it("makes an already-decoded particle texture ready immediately", async () => {
   const source = loadTexture("/footprint.png");
   pending.get("/footprint.png")!({ width: 32, height: 64 });
+  await vi.waitFor(() => expect(source.image).toHaveProperty("width", 32));
   const particle = getParticleTexture("footprint");
   expect(particle.source).toBe(source.source);
   expect(particleTexturesReady.has(particle)).toBe(true);

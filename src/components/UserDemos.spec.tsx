@@ -1,6 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { AccountPublicProfile } from "../../relay/accountTypes";
+import type {
+  AccountPublicProfile,
+  T2ProfileView,
+} from "../../relay/accountTypes";
 import type {
   UserDemoUpload,
   UserDemoUploadList,
@@ -185,6 +188,7 @@ function signIn(userId = OWNER, role: "user" | "admin" = "user") {
     id: "account",
     discordId: userId,
     discordUsername: "example",
+    t2Profile: null,
     name: "Example",
     image: null,
     role,
@@ -711,6 +715,7 @@ it("shows the public Discord identity above Uploaded demos", () => {
     discordId: OWNER,
     name: "Public <Player>",
     discordUsername: "public_player",
+    t2Profile: null,
     image: "https://cdn.discordapp.com/avatar.png",
   };
   const markup = render();
@@ -743,6 +748,7 @@ it("shows the current signed-in identity immediately without a public profile re
     discordId: OWNER,
     name: "Old public name",
     discordUsername: "old_handle",
+    t2Profile: null,
     image: null,
   };
   const markup = render();
@@ -753,6 +759,56 @@ it("shows the current signed-in identity immediately without a public profile re
   expect(markup).not.toContain("Old public name");
   expect(markup).not.toContain("@old_handle");
   expect(fixture.profileOptions.enabled).toBe(false);
+});
+
+const t2Profile: T2ProfileView = {
+  bodyType: "female",
+  skin: "beagle",
+  armor: "Light",
+  pack: "pack_upgrade_energy",
+  weapon: "weapon_disc",
+  loadoutSource: "inv",
+  lastSeenAt: "2026-11-01T12:00:00.000Z",
+};
+
+it("shows the public T2 character in the profile header", () => {
+  fixture.profile = {
+    discordId: OWNER,
+    name: "Public Player",
+    discordUsername: "public_player",
+    image: null,
+    t2Profile,
+  };
+  const markup = render();
+  expect(markup).toContain("Public Player&#x27;s Tribes 2 character");
+  expect(markup).toContain('tabindex="0"');
+  expect(markup.indexOf("Tribes 2 character")).toBeLessThan(
+    markup.indexOf(">Uploaded demos<"),
+  );
+});
+
+it("uses the owner's T2 character from the signed-in account", () => {
+  signIn();
+  fixture.account.user!.t2Profile = t2Profile;
+  const markup = render();
+  expect(markup).toContain("Example&#x27;s Tribes 2 character");
+  expect(fixture.profileOptions.enabled).toBe(false);
+});
+
+it("leaves out the viewer when the account has no T2 profile", () => {
+  signIn();
+  expect(render()).not.toContain("Tribes 2 character");
+  fixture.account.user = null;
+  fixture.profile = {
+    discordId: OWNER,
+    name: "Public Player",
+    discordUsername: "public_player",
+    image: null,
+    t2Profile: null,
+  };
+  expect(render()).not.toContain("Tribes 2 character");
+  fixture.profile = null;
+  expect(render()).not.toContain("Tribes 2 character");
 });
 
 it.each(["unknown", "unavailable"])(

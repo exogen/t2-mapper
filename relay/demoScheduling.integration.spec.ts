@@ -165,6 +165,48 @@ describe("relay demo scheduling", () => {
     expect(peakLive).toBe(1);
   });
 
+  it("cancels queued stats and stops an active GUID repair before releasing its worker slot", async () => {
+    const processing = createRelayDemoProcessing();
+    const first = processing.generateCheckpoints(
+      "recorded.rec",
+      "output.json",
+      "/assets",
+    );
+    const repairAbort = new AbortController();
+    const statsAbort = new AbortController();
+    const repair = processing.repairNamesByGuid(
+      "repair.rec",
+      repairAbort.signal,
+    );
+    const stats = processing.computeStats(
+      "stats.rec",
+      "/assets",
+      "manifest.json",
+      statsAbort.signal,
+    );
+    const statsCanceled = expect(stats).rejects.toThrow("cancel stats");
+    statsAbort.abort(new Error("cancel stats"));
+    await statsCanceled;
+    finish(children[0]);
+    await first;
+    await forks(2);
+    expect(children[1].script.pathname).toContain("demoGuidWorker.ts");
+
+    const upload = processing.processUpload("waiting.rec", "/assets");
+    const repairCanceled = expect(repair).rejects.toThrow("cancel repair");
+    repairAbort.abort(new Error("cancel repair"));
+    expect(children[1].kill).toHaveBeenCalledWith("SIGKILL");
+    expect(mocks.fork).toHaveBeenCalledTimes(2);
+    children[1].emit("close", null, "SIGKILL");
+    await repairCanceled;
+    await forks(3);
+    expect(children[2].args[0]).toBe("waiting.rec");
+    finish(children[2]);
+    await upload;
+    expect(peakLive).toBe(1);
+    expect(live).toBe(0);
+  });
+
   it.each(["cancellation", "timeout"] as const)(
     "holds the process slot until the child closes after %s",
     async (cause) => {

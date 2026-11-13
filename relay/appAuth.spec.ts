@@ -5,7 +5,13 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import type { DiscordProfile } from "better-auth/social-providers";
-import { openAccountDatabase, setAccountRole } from "./accountDatabase.js";
+import {
+  hasPendingAccountSchemaMigrations,
+  linkT2Account,
+  openAccountDatabase,
+  saveT2PlayerProfile,
+  setAccountRole,
+} from "./accountDatabase.js";
 
 import type { AccountPublicProfile, AccountUser } from "./accountTypes.js";
 import {
@@ -383,6 +389,7 @@ it("returns only a cached public Discord profile without requiring a session", a
     name: "Player display name",
     discordUsername: "chosen_handle",
     image: account.image,
+    t2Profile: null,
   });
   expect(query).toHaveBeenCalledExactlyOnceWith("discord", USER_ID);
   expect(Object.keys(profile).sort()).toEqual([
@@ -390,6 +397,7 @@ it("returns only a cached public Discord profile without requiring a session", a
     "discordUsername",
     "image",
     "name",
+    "t2Profile",
   ]);
   expect(app.providerRequests).toHaveLength(providerRequestCount);
 
@@ -1339,6 +1347,77 @@ it("backs up the previous schema before an additive migration and preserves acti
   expect(app.database.inTransaction).toBe(false);
   await app.login();
   expect((await app.account())?.discordUsername).toBe("chosen_handle");
+});
+
+it("backs up and adds Tribes 2 accounts to a database from before app-owned migrations", async () => {
+  const app = await fixture();
+  await app.login();
+  const user = (await app.account())!;
+  const backup = path.join(app.directory, "app.sqlite.pre-migration.sqlite");
+  expect(fs.existsSync(backup)).toBe(false);
+  app.database.exec(
+    'DROP TABLE "t2PlayerProfile"; DROP TABLE "t2AccountLink"; DROP TABLE "t2Account"; PRAGMA user_version = 0;',
+  );
+  await app.restart();
+  expect(fs.existsSync(backup)).toBe(true);
+  expect(app.database.inTransaction).toBe(false);
+  expect(hasPendingAccountSchemaMigrations(app.database)).toBe(false);
+  linkT2Account(app.database, USER_ID, "12345");
+  expect(
+    app.database
+      .prepare('SELECT "userId" FROM "t2AccountLink" WHERE "guid" = ?')
+      .pluck()
+      .get("12345"),
+  ).toBe(user.id);
+  expect((await app.account())?.id).toBe(user.id);
+});
+
+it("shows the most recently seen linked Tribes 2 profile, without its GUID", async () => {
+  const app = await fixture();
+  await app.login();
+  const profile = (guid: string, lastSeenAt: number | null, skin: string) => ({
+    guid,
+    bodyType: "female" as const,
+    skin,
+    armor: "Heavy",
+    pack: "pack_upgrade_shield",
+    weapon: "weapon_disc",
+    loadoutSource: "inv" as const,
+    suitUps: 12,
+    demoCount: 3,
+    lastSeenAt,
+    computedAt: 1,
+  });
+  linkT2Account(app.database, USER_ID, "111");
+  linkT2Account(app.database, USER_ID, "222");
+  linkT2Account(app.database, USER_ID, "333");
+  saveT2PlayerProfile(
+    app.database,
+    profile("111", Date.UTC(2026, 9, 1), "Old"),
+  );
+  saveT2PlayerProfile(
+    app.database,
+    profile("222", Date.UTC(2026, 10, 1), "New"),
+  );
+  saveT2PlayerProfile(app.database, profile("333", null, "Never"));
+  // An unlinked profile is never shown.
+  saveT2PlayerProfile(app.database, profile("444", Date.now(), "Other"));
+  const expected = {
+    bodyType: "female",
+    skin: "New",
+    armor: "Heavy",
+    pack: "pack_upgrade_shield",
+    weapon: "weapon_disc",
+    loadoutSource: "inv",
+    lastSeenAt: "2026-11-01T00:00:00.000Z",
+  };
+  const response = await app.request(`/api/users/${USER_ID}`, {
+    headers: { Cookie: "" },
+  });
+  expect(((await response.json()) as AccountPublicProfile).t2Profile).toEqual(
+    expected,
+  );
+  expect((await app.account())?.t2Profile).toEqual(expected);
 });
 
 it("removes expired sessions and abandoned OAuth state while retaining active data", async () => {

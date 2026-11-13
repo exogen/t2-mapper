@@ -85,6 +85,13 @@ export interface DemoUploaderOptions {
     key: string,
     prepared?: PreparedDemoCheckpoints,
   ) => Promise<unknown>;
+  /** Sidecars stored outside the public bucket, by published demo key. */
+  privateSidecars?: {
+    publish: (localFile: string, demoKey: string) => Promise<void>;
+    delete: (demoKey: string) => Promise<void>;
+  };
+  /** Queue background work after the demo's public metadata and index commit. */
+  onPublished?: (demoKey: string) => void;
 }
 
 export interface DemoUploadConfig {
@@ -143,6 +150,8 @@ export class DemoUploader {
   private isLive: (filePath: string) => boolean;
   private salvageMinLengthMs: number;
   private publishCheckpoints?: DemoUploaderOptions["publishCheckpoints"];
+  private privateSidecars?: DemoUploaderOptions["privateSidecars"];
+  private onPublished?: DemoUploaderOptions["onPublished"];
   private operationQueues: Record<"local" | "remote", Promise<unknown>> = {
     local: Promise.resolve(),
     remote: Promise.resolve(),
@@ -162,6 +171,8 @@ export class DemoUploader {
     this.isLive = options.isLive ?? (() => false);
     this.salvageMinLengthMs = options.salvageMinLengthMs ?? 0;
     this.publishCheckpoints = options.publishCheckpoints;
+    this.privateSidecars = options.privateSidecars;
+    this.onPublished = options.onPublished;
     this.client = config
       ? new S3Client({
           region: "auto",
@@ -213,6 +224,7 @@ export class DemoUploader {
           "no-cache",
         );
         await this.publishCheckpoints?.(localFile, key, checkpoints);
+        await this.publishPrivateSidecars(localFile, relativeKey);
         // A retry after the sidecar was written must not replace saved labels
         // or upload-time identity.
         const published =
@@ -290,6 +302,7 @@ export class DemoUploader {
           }
         };
         // Keep the recording until its sidecars have all been removed.
+        await this.privateSidecars?.delete(relativeKey);
         await remove([...objects].filter((object) => object !== key));
         await remove([key]);
         for (const suffix of [".json", ".json.edit"])
@@ -790,11 +803,15 @@ export class DemoUploader {
         { key },
         "Demo was rewritten in the bucket after this copy was uploaded — keeping the bucket's",
       );
-      if (record) await this.updateIndex(record);
+      if (record) {
+        await this.updateIndex(record);
+        this.notifyPublished(basename);
+      }
       return key;
     }
     await this.uploadFile(filePath, key);
     await this.publishCheckpoints?.(filePath, key);
+    await this.publishPrivateSidecars(filePath, basename);
     if (record) {
       await this.serializeMetadata(filePath, async () => {
         // A first upload may have reached its sidecar but not its index entry.
@@ -813,6 +830,32 @@ export class DemoUploader {
       });
     }
     return key;
+  }
+
+  /**
+   * Best-effort: private data never holds back publication, and the backfill
+   * script fills any gaps.
+   */
+  private async publishPrivateSidecars(
+    localFile: string,
+    demoKey: string,
+  ): Promise<void> {
+    try {
+      await this.privateSidecars?.publish(localFile, demoKey);
+    } catch (err) {
+      log.error({ err, demoKey }, "Private demo sidecar publication failed");
+    }
+  }
+
+  private notifyPublished(demoKey: string): void {
+    try {
+      this.onPublished?.(demoKey);
+    } catch (err) {
+      log.error(
+        { err, demoKey },
+        "Demo publication follow-up could not be queued",
+      );
+    }
   }
 
   private publishedGames(record: DemoMetadata): PublishedGame[] {
@@ -1185,6 +1228,7 @@ export class DemoUploader {
   ): Promise<void> {
     const published = (await this.writeSidecar(filename, record, true))!;
     await this.updateIndex(published);
+    this.notifyPublished(filename);
   }
 
   private async uploadFile(

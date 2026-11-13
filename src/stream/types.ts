@@ -770,6 +770,8 @@ export interface StreamingPlayback {
   getPreloadAssets(): PreloadAsset[];
   /** Resolve a datablock by its numeric ID. */
   getDataBlockData(id: number): ParsedData | undefined;
+  /** A client target's chosen skin, from its target info (no model needed). */
+  getTargetSkinPref(targetId: number): string | undefined;
   /**
    * Get TSShapeConstructor sequence entries for a shape (e.g. "heavy_male.dts").
    * Returns the raw sequence strings like `"heavy_male_root.dsq root"`.

@@ -26,6 +26,7 @@ const admin = {
   role: "admin" as const,
   discordId: "123456789012345678",
   discordUsername: "example_player",
+  t2Profile: null,
 };
 
 beforeEach(async () => {

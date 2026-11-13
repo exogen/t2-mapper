@@ -13,6 +13,7 @@ kill_timeout = 15
   DEMO_DIR = '/data/demos'
   DEMO_CHECKPOINT_INTERVAL_MINUTES = '6'
   DEMO_CHECKPOINT_COUNT = '6'
+  DEMO_PRIVATE_R2_BUCKET = 'non-public-demo-data'
   WATCH_STATE_PATH = '/data/watch-state.json'
   AUTH_DATABASE_PATH = '/data/accounts/app.sqlite'
   AUTH_BASE_URL = 'https://api.tribes2.online'

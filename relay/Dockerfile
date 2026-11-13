@@ -18,6 +18,7 @@ RUN apt-get update \
 
 COPY relay/ relay/
 COPY scripts/backup-account-database.ts scripts/backup-account-database.ts
+COPY scripts/link-t2-account.ts scripts/link-t2-account.ts
 COPY scripts/list-discord-users.ts scripts/list-discord-users.ts
 COPY scripts/set-account-role.ts scripts/set-account-role.ts
 # Checkpoint workers replay through the same decoder and simulation as playback.

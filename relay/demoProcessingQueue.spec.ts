@@ -10,13 +10,19 @@ function deferred() {
 }
 
 describe("background demo processing", () => {
-  it("runs one process at a time and puts queued recordings before user uploads", async () => {
+  it("runs recordings, uploads, stats, and profiles in priority order", async () => {
     const queue = new DemoProcessingQueue();
     const first = deferred();
     const started: string[] = [];
     const a = queue.run("upload", () => {
       started.push("active");
       return first.promise;
+    });
+    const profiles = queue.run("profiles", async () => {
+      started.push("profiles");
+    });
+    const stats = queue.run("stats", async () => {
+      started.push("stats");
     });
     const b = queue.run("upload", async () => {
       started.push("upload");
@@ -26,8 +32,14 @@ describe("background demo processing", () => {
     });
     expect(started).toEqual(["active"]);
     first.resolve();
-    await Promise.all([a, b, c]);
-    expect(started).toEqual(["active", "recording", "upload"]);
+    await Promise.all([a, b, c, stats, profiles]);
+    expect(started).toEqual([
+      "active",
+      "recording",
+      "upload",
+      "stats",
+      "profiles",
+    ]);
   });
 
   it("removes canceled queued work without starting it", async () => {

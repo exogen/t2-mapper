@@ -13,7 +13,11 @@ import {
   buildInitialBlock,
   ZERO_MOVE,
 } from "./demoWriter";
-import { analyzeDemo, validateDemoUploadBytes } from "./demoAnalysis";
+import {
+  analyzeDemo,
+  analyzeDemoRecording,
+  validateDemoUploadBytes,
+} from "./demoAnalysis";
 import { decodedPacket, remoteCommandEvent } from "./serverPacketFixtures";
 
 function demo(
@@ -358,5 +362,86 @@ describe("strict user recording validation", () => {
     await expect(
       analyzeDemo(demo(), "hash.rec", { strict: true }),
     ).rejects.toThrow("initial state is corrupt or unsupported");
+  });
+});
+
+describe("player GUIDs", () => {
+  /** A recording whose header roster already holds these 16-field player rows. */
+  function demoWithHeaderPlayers(players: string[][]) {
+    const rows = buildDemoValues({
+      recorderName: "Recorder",
+      serverName: "Server",
+      serverAddress: "localhost",
+      date: new Date("2026-11-01T00:00:00Z"),
+      missionDisplayName: "Test",
+      mod: "classic",
+      gameType: "CTF",
+    });
+    // MISC, then the PLAYERLIST count and one row per player.
+    rows.splice(
+      1,
+      1,
+      String(players.length),
+      ...players.map((fields) => fields.join("\t")),
+    );
+    const initial = buildInitialBlock({
+      connectSequence: 0,
+      missionName: "Test",
+      demoValues: rows,
+    });
+    return Buffer.concat([
+      buildHeader(initial.length),
+      initial,
+      zlib.deflateRawSync(frame(BlockTypeMove, ZERO_MOVE)),
+    ]);
+  }
+
+  const join = (name: string, clientId: string, smurf: string, guid: string) =>
+    [
+      "ServerMessage",
+      "MsgClientJoin",
+      "",
+      name,
+      clientId,
+      "1",
+      "0",
+      "0",
+      "0",
+      smurf,
+      guid,
+    ] as [string, ...string[]];
+
+  it("maps header and joined GUIDs to every tag-less name, privately", async () => {
+    replayCommands([
+      [
+        "ServerMessage",
+        "MsgClientNameChanged",
+        "",
+        "[TAG]Alice",
+        "Alicia",
+        "10",
+      ],
+      join("Smurf", "11", "1", "0"),
+      join("\x10\x0b[TAG]\x08AliceAlt\x11", "12", "0", "12345"),
+      join("Bob", "13", "0", "0067890"),
+    ]);
+    const { metadata, namesByGuid } = await analyzeDemoRecording(
+      demoWithHeaderPlayers([
+        [
+          "\x10\x0b[TAG]\x08Alice\x11",
+          "0012345",
+          "10",
+          "20",
+          "1",
+          ...Array<string>(11).fill("0"),
+        ],
+      ]),
+      "guids.rec",
+    );
+    expect(namesByGuid).toEqual({
+      "12345": ["Alice", "AliceAlt", "Alicia"],
+      "67890": ["Bob"],
+    });
+    expect(JSON.stringify(metadata)).not.toMatch(/12345|67890/);
   });
 });

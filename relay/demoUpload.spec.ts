@@ -1344,7 +1344,8 @@ describe("DemoUploader", () => {
 
   it("uploads legacy demos without a sidecar and skips the index", async () => {
     await fsp.writeFile(path.join(dir, "legacy.rec"), new Uint8Array([1]));
-    const uploader = new DemoUploader(config, dir);
+    const onPublished = vi.fn();
+    const uploader = new DemoUploader(config, dir, { onPublished });
     uploader.enqueue(path.join(dir, "legacy.rec"));
     await vi.waitFor(async () => {
       expect(await fsp.readdir(dir)).toEqual([]);
@@ -1352,6 +1353,7 @@ describe("DemoUploader", () => {
     expect(uploadCalls).toHaveLength(1);
     expect(s3Commands.map((cmd) => cmd.type)).toEqual(["HeadObject"]);
     expect(storedIndex).toBeNull();
+    expect(onPublished).not.toHaveBeenCalled();
   });
 
   it("preserves pre-games sidecars when uploading leftovers from an older relay", async () => {
@@ -1397,6 +1399,104 @@ describe("DemoUploader", () => {
     complete();
     await vi.waitFor(async () => expect(await fsp.readdir(dir)).toEqual([]));
     expect(JSON.parse(storedIndex!)).toEqual([record]);
+  });
+
+  it("publishes a recording's private sidecar by its bucket-relative key", async () => {
+    const file = path.join(dir, "private.rec");
+    const record = makeRecord("private.rec");
+    await fsp.writeFile(file, new Uint8Array([1, 2, 3]));
+    await fsp.writeFile(`${file}.json`, JSON.stringify(record));
+    const publish = vi.fn(async () => {
+      throw new Error("Private bucket unavailable");
+    });
+    const error = vi.spyOn(demoLog, "error").mockImplementation(() => {});
+    new DemoUploader(config, dir, {
+      privateSidecars: { publish, delete: vi.fn() },
+    }).enqueue(file);
+    await vi.waitFor(async () => expect(await fsp.readdir(dir)).toEqual([]));
+    expect(publish).toHaveBeenCalledExactlyOnceWith(file, "private.rec");
+    expect(error).toHaveBeenCalledWith(
+      expect.objectContaining({ demoKey: "private.rec" }),
+      "Private demo sidecar publication failed",
+    );
+    expect(JSON.parse(storedIndex!)).toEqual([record]);
+  });
+
+  it("notifies background work only after private sidecars and the public index are ready", async () => {
+    const file = path.join(dir, "ready.rec");
+    const record = makeRecord("ready.rec");
+    await fsp.writeFile(file, new Uint8Array([1, 2, 3]));
+    await fsp.writeFile(`${file}.json`, JSON.stringify(record));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const events: string[] = [];
+    const publish = vi.fn(async () => {
+      await gate;
+      events.push("private");
+    });
+    const onPublished = vi.fn((demoKey: string) => {
+      expect(demoKey).toBe("ready.rec");
+      expect(JSON.parse(storedIndex!)).toEqual([record]);
+      expect(storedSidecars.has("demos/ready.rec.json")).toBe(true);
+      events.push("published");
+    });
+    const uploader = new DemoUploader(config, dir, {
+      privateSidecars: { publish, delete: vi.fn() },
+      onPublished,
+    });
+    uploader.enqueue(file);
+    try {
+      await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce());
+      expect(onPublished).not.toHaveBeenCalled();
+      expect(storedIndex).toBeNull();
+    } finally {
+      release();
+    }
+    await vi.waitFor(() => expect(uploader.getStats().uploaded).toBe(1));
+    expect(onPublished).toHaveBeenCalledExactlyOnceWith("ready.rec");
+    expect(events).toEqual(["private", "published"]);
+  });
+
+  it("does not notify background work for a failed index commit, then notifies its successful retry", async () => {
+    const file = path.join(dir, "retry-profile.rec");
+    await fsp.writeFile(file, new Uint8Array([1, 2, 3]));
+    await fsp.writeFile(
+      `${file}.json`,
+      JSON.stringify(makeRecord(path.basename(file))),
+    );
+    const onPublished = vi.fn();
+    const uploader = new DemoUploader(config, dir, { onPublished });
+    failIndexWrites = true;
+    uploader.enqueue(file);
+    await vi.waitFor(() => expect(uploader.getStats().failed).toBe(1));
+    expect(onPublished).not.toHaveBeenCalled();
+    failIndexWrites = false;
+    await uploader.sweep();
+    await vi.waitFor(() => expect(uploader.getStats().uploaded).toBe(1));
+    expect(onPublished).toHaveBeenCalledExactlyOnceWith("retry-profile.rec");
+  });
+
+  it("keeps a successful public demo when queuing its follow-up throws", async () => {
+    const file = path.join(dir, "follow-up-error.rec");
+    const record = makeRecord(path.basename(file));
+    await fsp.writeFile(file, new Uint8Array([1, 2, 3]));
+    await fsp.writeFile(`${file}.json`, JSON.stringify(record));
+    const error = vi.spyOn(demoLog, "error").mockImplementation(() => {});
+    const uploader = new DemoUploader(config, dir, {
+      onPublished: () => {
+        throw new Error("Queue unavailable");
+      },
+    });
+    uploader.enqueue(file);
+    await vi.waitFor(() => expect(uploader.getStats().uploaded).toBe(1));
+    expect(uploader.getStats().failed).toBe(0);
+    expect(JSON.parse(storedIndex!)).toEqual([record]);
+    expect(error).toHaveBeenCalledWith(
+      expect.objectContaining({ demoKey: "follow-up-error.rec" }),
+      "Demo publication follow-up could not be queued",
+    );
   });
 
   it.each([undefined, 0])(

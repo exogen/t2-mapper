@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import {
   PerspectiveCamera,
@@ -19,6 +19,16 @@ import type { FlareEntity } from "../state/gameEntityTypes";
 import { streamClock } from "../state/streamPlaybackStore";
 import { createFlareView } from "./flare";
 import { createShapeProjectileView } from "./shape";
+
+vi.mock("../textureUtils", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../textureUtils")>();
+  const { Texture } = await import("three");
+  return {
+    ...actual,
+    loadTexture: () => new Texture(),
+    loadTextureInstance: () => new Texture(),
+  };
+});
 
 afterEach(() => {
   streamClock.time = 0;

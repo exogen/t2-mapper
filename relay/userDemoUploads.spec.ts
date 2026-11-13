@@ -54,6 +54,7 @@ const account: AccountUser = {
   role: "user",
   discordId: OWNER,
   discordUsername: "tester",
+  t2Profile: null,
 };
 const metadata: DemoMetadata = {
   filename: "demo.rec",

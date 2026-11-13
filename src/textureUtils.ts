@@ -3,7 +3,7 @@
  */
 import {
   DataTexture,
-  ImageBitmapLoader,
+  FileLoader,
   LinearFilter,
   LinearMipmapLinearFilter,
   NoColorSpace,
@@ -14,11 +14,8 @@ import {
   UnsignedByteType,
 } from "three";
 
-const _bitmapLoader = new ImageBitmapLoader();
-// Prevent the browser from premultiplying alpha, which destroys RGB data in
-// transparent pixels. Tribes 2 uses the alpha channel for purposes other than
-// transparency (e.g. environment map masking) on many non-Translucent textures.
-_bitmapLoader.setOptions({ premultiplyAlpha: "none" });
+// FileLoader rejects HTTP errors before their bodies reach the image decoder.
+const _bitmapLoader = new FileLoader().setResponseType("blob");
 const _textureCache = new Map<string, Texture>();
 const _textureWaiters = new Map<
   string,
@@ -29,8 +26,8 @@ const _textureWaiters = new Map<
 >();
 
 /**
- * Load a texture using ImageBitmapLoader, which decodes images off the main
- * thread to avoid jank from synchronous image decodes during texSubImage2D.
+ * Fetch a texture with HTTP status checking and decode it off the main thread
+ * to avoid jank from synchronous image decodes during texSubImage2D.
  * Returns a cached Texture if the same URL was loaded before, otherwise creates
  * an initially-empty Texture that gets populated when the image loads.
  */
@@ -55,25 +52,48 @@ export function loadTexture(
   // This matches our codebase where all textures use flipY = false.
   texture.flipY = false;
   _textureCache.set(url, texture);
+  const failed = () => {
+    // Remove failed URLs so their fallback or a later retry can be loaded.
+    _textureCache.delete(url);
+    const waiters = _textureWaiters.get(url);
+    _textureWaiters.delete(url);
+    onError?.(url);
+    for (const waiter of waiters ?? []) waiter.onError?.(url);
+  };
   _bitmapLoader.load(
     url,
-    (bitmap) => {
-      texture.image = bitmap;
-      texture.needsUpdate = true;
-      onLoad?.(texture);
-      const waiters = _textureWaiters.get(url);
-      _textureWaiters.delete(url);
-      for (const waiter of waiters ?? []) waiter.onLoad?.(texture);
+    (blob) => {
+      // The fetch item ends when this callback returns. Keep the loading
+      // manager busy until the asynchronous bitmap decode and callbacks finish.
+      const manager = _bitmapLoader.manager;
+      manager.itemStart(url);
+      void Promise.resolve()
+        .then(() =>
+          // Three's FileLoader types omit Blob from the response union.
+          createImageBitmap(blob as unknown as Blob, {
+            // Tribes 2 also uses transparent pixels' RGB for environment masks.
+            premultiplyAlpha: "none",
+            colorSpaceConversion: "none",
+          }),
+        )
+        .then(
+          (bitmap) => {
+            texture.image = bitmap;
+            texture.needsUpdate = true;
+            const waiters = _textureWaiters.get(url);
+            _textureWaiters.delete(url);
+            onLoad?.(texture);
+            for (const waiter of waiters ?? []) waiter.onLoad?.(texture);
+          },
+          () => {
+            manager.itemError(url);
+            failed();
+          },
+        )
+        .finally(() => manager.itemEnd(url));
     },
     undefined,
-    () => {
-      // Remove failed URL from cache so fallback can be tried.
-      _textureCache.delete(url);
-      onError?.(url);
-      const waiters = _textureWaiters.get(url);
-      _textureWaiters.delete(url);
-      for (const waiter of waiters ?? []) waiter.onError?.(url);
-    },
+    failed,
   );
   return texture;
 }

@@ -50,6 +50,7 @@ const account: AccountUser = {
   name: "Tester",
   image: null,
   role: "user",
+  t2Profile: null,
 };
 
 function validDemo(): Buffer {

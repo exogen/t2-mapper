@@ -1,0 +1,23 @@
+.Viewer {
+  position: absolute;
+  right: -120px;
+  top: -80px;
+  z-index: -1;
+  width: 400px;
+  height: 400px;
+  overflow: hidden;
+  border-radius: 12px;
+  pointer-events: auto;
+  user-select: none;
+  cursor: grab;
+  touch-action: pan-y;
+}
+
+.Viewer:active {
+  cursor: grabbing;
+}
+
+.Viewer:focus-visible {
+  outline: 2px solid #b0d5c9;
+  outline-offset: 2px;
+}

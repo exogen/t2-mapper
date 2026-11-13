@@ -152,3 +152,32 @@ describe("demo player identity", () => {
     expect(roster.get(10)?.name).toBe("Alice");
   });
 });
+
+describe("demo player GUIDs", () => {
+  it("collects tag-less names per GUID across clients, keeping them out of metadata", () => {
+    const players = new DemoPlayers("Recorder");
+    players.sample(
+      new Map([
+        [1, { rawName: "\x10\x0b[TAG]\x08Alice\x11", guid: "12345" }],
+        [2, { rawName: "Recorder", guid: "999" }],
+        [3, { rawName: "\x10\x0cSmurf\x11" }],
+      ]),
+      2,
+    );
+    players.sample(
+      new Map([
+        [1, { rawName: "\x10\x08Alice\x0b[NEW]\x11", guid: "12345" }],
+        [4, { rawName: "Zed", guid: "12345" }],
+        [5, { rawName: "Bob", guid: "67890" }],
+      ]),
+    );
+    expect(players.namesByGuid()).toEqual({
+      "999": ["Recorder"],
+      "12345": ["Alice", "Zed"],
+      "67890": ["Bob"],
+    });
+    expect(JSON.stringify(players.metadata())).not.toMatch(/12345|67890|999/);
+    players.clear();
+    expect(players.namesByGuid()).toEqual({});
+  });
+});

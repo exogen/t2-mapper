@@ -83,6 +83,7 @@ it.each(["admin", "user"] as const)(
       role,
       discordId: "123456789012345678",
       discordUsername: "example_player",
+      t2Profile: null,
     };
     const markup = renderToStaticMarkup(<AccountControls />);
     expect(markup).toContain("Example &lt;Player&gt;");
@@ -158,6 +159,7 @@ it("keeps the sign-out label fixed while signing out", () => {
     role: "user",
     discordId: "123456789012345678",
     discordUsername: "example_player",
+    t2Profile: null,
   };
   state.account.pending = "sign-out";
   const markup = renderToStaticMarkup(<AccountControls />);

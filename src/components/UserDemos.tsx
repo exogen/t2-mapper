@@ -17,6 +17,7 @@ import { uploadUserDemo, userDemoUploadsUrl } from "../stream/userDemoUpload";
 import { DemoCard, PendingDemoCard } from "./DemoCard";
 import { DemoDropZone } from "./DemoDropZone";
 import { demoTitle } from "./demoFormat";
+import { PlayerProfileViewer } from "./PlayerProfileViewer";
 import { refreshDemoIndex, useDemoIndex } from "./useDemoIndex";
 import { UserIdentity } from "./UserIdentity";
 import styles from "./UserDemos.module.css";
@@ -361,9 +362,23 @@ export default function UserDemos({ userId }: { userId: string }) {
       data-demo-cards
     >
       {validUser && (
-        <div className={styles.Profile}>
+        <div
+          className={styles.Profile}
+          data-has-portrait={!!profile?.t2Profile || undefined}
+        >
           {profile ? (
-            <UserIdentity user={profile} variant="page" />
+            <UserIdentity
+              user={profile}
+              variant="page"
+              portrait={
+                profile.t2Profile ? (
+                  <PlayerProfileViewer
+                    profile={profile.t2Profile}
+                    playerName={profile.name}
+                  />
+                ) : undefined
+              }
+            />
           ) : publicProfile.isError ? (
             "Profile unavailable"
           ) : publicProfile.data === null ? (
@@ -400,6 +415,7 @@ export default function UserDemos({ userId }: { userId: string }) {
   );
   return owner && validUser ? (
     <DemoDropZone
+      className={styles.Page}
       intent="upload"
       onFiles={(files) => void uploadFiles(files)}
       disabled={uploadDisabled}

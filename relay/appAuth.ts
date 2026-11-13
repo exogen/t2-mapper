@@ -11,7 +11,12 @@ import { getMigrations } from "better-auth/db/migration";
 import { fromNodeHeaders } from "better-auth/node";
 import { getRequest, setResponse } from "better-call/node";
 import type { DiscordProfile } from "better-auth/social-providers";
-import { createAccountDatabaseBackup } from "./accountDatabase.js";
+import {
+  createAccountDatabaseBackup,
+  hasPendingAccountSchemaMigrations,
+  migrateAccountSchema,
+  t2ProfileReader,
+} from "./accountDatabase.js";
 import { handleAccountCors, json } from "./accountHttp.js";
 import {
   isDiscordId,
@@ -339,11 +344,11 @@ export async function createAppAuth({
     throw new Error(
       "The account database schema needs repair before starting authentication",
     );
-  const hasChanges =
+  const hasLibraryChanges =
     migrations.toBeCreated.length ||
     migrations.toBeAdded.length ||
     migrations.toBeAddedIndexes.length;
-  if (hasChanges) {
+  if (hasLibraryChanges || hasPendingAccountSchemaMigrations(database)) {
     if (
       database.name !== ":memory:" &&
       database
@@ -362,7 +367,8 @@ export async function createAppAuth({
     }
     database.exec("BEGIN IMMEDIATE");
     try {
-      await migrations.runMigrations();
+      if (hasLibraryChanges) await migrations.runMigrations();
+      migrateAccountSchema(database);
       database.exec("COMMIT");
     } catch (error) {
       if (database.inTransaction) database.exec("ROLLBACK");
@@ -387,6 +393,7 @@ export async function createAppAuth({
     }
   }, 60 * 60_000);
   cleanupTimer.unref();
+  const readT2Profile = t2ProfileReader(database);
   const readAccount = async (headers: IncomingHttpHeaders | Headers) => {
     const result = await auth.api.getSession({
       headers: headers instanceof Headers ? headers : fromNodeHeaders(headers),
@@ -408,13 +415,14 @@ export async function createAppAuth({
       role: session.user.role === "admin" ? "admin" : "user",
       discordId: account.accountId,
       discordUsername: session.user.discordUsername,
+      t2Profile: readT2Profile(session.user.id),
     };
     return { user, headers: result.headers };
   };
   const getAccount: AppAuthService["getAccount"] = async (headers) =>
     (await readAccount(headers)).user;
   const publicProfileQuery = database.prepare(
-    'SELECT a."accountId" AS "discordId", u."name", u."discordUsername", u."image" FROM "user" u JOIN "account" a ON a."userId" = u."id" WHERE a."providerId" = ? AND a."accountId" = ? LIMIT 2',
+    'SELECT u."id" AS "userId", a."accountId" AS "discordId", u."name", u."discordUsername", u."image" FROM "user" u JOIN "account" a ON a."userId" = u."id" WHERE a."providerId" = ? AND a."accountId" = ? LIMIT 2',
   );
   const requireAdmin: AppAuthService["requireAdmin"] = async (headers) => {
     const user = await getAccount(headers);
@@ -448,17 +456,21 @@ export async function createAppAuth({
             json(res, 400, { error: "Invalid Discord user ID" });
             return true;
           }
-          const profiles = publicProfileQuery.all(
-            "discord",
-            discordId,
-          ) as AccountPublicProfile[];
-          if (profiles.length > 1)
+          const rows = publicProfileQuery.all("discord", discordId) as Array<
+            Omit<AccountPublicProfile, "t2Profile"> & { userId: string }
+          >;
+          if (rows.length > 1)
             throw new Error("Discord account linkage is ambiguous");
-          json(
-            res,
-            profiles.length === 1 ? 200 : 404,
-            profiles[0] ?? { error: "User not found" },
-          );
+          if (!rows.length) {
+            json(res, 404, { error: "User not found" });
+            return true;
+          }
+          const { userId, ...discord } = rows[0];
+          const profile: AccountPublicProfile = {
+            ...discord,
+            t2Profile: readT2Profile(userId),
+          };
+          json(res, 200, profile);
           return true;
         }
         if (pathname === "/api/account") {

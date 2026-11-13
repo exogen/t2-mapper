@@ -113,6 +113,7 @@ beforeEach(() => {
       image: null,
       discordId: "123",
       discordUsername: "admin",
+      t2Profile: null,
     },
   };
   fixture.live = { role: "watcher", watchStatus: "live" };

@@ -1,16 +1,22 @@
-export type DemoProcessingPriority = "recording" | "upload";
+export type DemoProcessingPriority =
+  "recording" | "upload" | "stats" | "profiles";
 
 interface Job {
   start(): void;
   cancel?: () => void;
 }
 
-/** One background replay process; relay recordings precede queued user work. */
+/**
+ * One background job; relay recordings precede queued user work, then
+ * private stats, then representative player profiles.
+ */
 export class DemoProcessingQueue {
   private active = false;
   private readonly waiting: Record<DemoProcessingPriority, Job[]> = {
     recording: [],
     upload: [],
+    stats: [],
+    profiles: [],
   };
 
   run<T>(
@@ -61,7 +67,11 @@ export class DemoProcessingQueue {
   }
 
   private release(): void {
-    const next = this.waiting.recording.shift() ?? this.waiting.upload.shift();
+    const next =
+      this.waiting.recording.shift() ??
+      this.waiting.upload.shift() ??
+      this.waiting.stats.shift() ??
+      this.waiting.profiles.shift();
     if (next) next.start();
     else this.active = false;
   }

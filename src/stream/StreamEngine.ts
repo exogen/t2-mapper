@@ -725,6 +725,10 @@ export abstract class StreamEngine implements StreamingPlayback {
   /** Resolve datablock data by numeric ID. */
   abstract getDataBlockData(id: number): ParsedData | undefined;
 
+  getTargetSkinPref(targetId: number): string | undefined {
+    return this.conn.targets.skinPrefs.get(targetId) || undefined;
+  }
+
   /** Every datablock received so far, by ID (the packet parser's map). */
   protected abstract getDataBlockDataMap():
     ReadonlyMap<number, ParsedData> | undefined;

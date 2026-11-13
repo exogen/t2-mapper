@@ -7,6 +7,16 @@ import type { ShapeEntity } from "../state/gameEntityTypes";
 import { streamClock } from "../state/streamPlaybackStore";
 import { createShapeProjectileView } from "./shape";
 
+vi.mock("../textureUtils", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../textureUtils")>();
+  const { Texture } = await import("three");
+  return {
+    ...actual,
+    loadTexture: () => new Texture(),
+    loadTextureInstance: () => new Texture(),
+  };
+});
+
 afterEach(() => {
   streamClock.time = 0;
   streamClock.matchEndedAtSec = null;

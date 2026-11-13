@@ -22,7 +22,9 @@ let manifest: SkinLookup | undefined;
 let pending: Promise<SkinLookup | undefined> | undefined;
 
 async function fetchSkinManifest(): Promise<SkinLookup> {
-  const res = await fetch(SKIN_MANIFEST_URL);
+  const res = await fetch(SKIN_MANIFEST_URL, {
+    signal: AbortSignal.timeout(10_000),
+  });
   if (!res.ok) throw new Error(`${res.status}`);
   const raw: { customSkins?: Record<string, string[]> } = await res.json();
   const lookup: SkinLookup = {};

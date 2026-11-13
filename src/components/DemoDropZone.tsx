@@ -10,6 +10,7 @@ export function DemoDropZone({
   hidePicker = false,
   feedback,
   children,
+  className,
 }: {
   intent: "load" | "upload";
   onFiles: (files: File[]) => void;
@@ -17,6 +18,7 @@ export function DemoDropZone({
   hidePicker?: boolean;
   feedback?: ReactNode;
   children: ReactNode;
+  className?: string;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -24,7 +26,7 @@ export function DemoDropZone({
   const label = uploading ? "Upload demo (.rec)" : "Load demo (.rec)";
   return (
     <div
-      className={styles.DropZone}
+      className={[styles.DropZone, className].filter(Boolean).join(" ")}
       data-drag-over={dragOver && !disabled}
       onDragOver={(event) => {
         event.preventDefault();

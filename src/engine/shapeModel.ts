@@ -9,7 +9,6 @@ import {
   type AnimationAction,
   type Object3D,
 } from "three";
-import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { getDTSCollisionMeshes } from "../dts/dtsCollision";
 import type { DTSModel, DTSShape } from "../dts/dtsModel";
 import { DTSAnimationMixer } from "../dts/dtsAnimationMixer";
@@ -32,7 +31,6 @@ import {
   wheelSteeringPosition,
   type WheelState,
 } from "../stream/vehicleWheels";
-import { processShapeScene, disposeClonedScene } from "../stream/playbackUtils";
 import {
   effectDeltaSec,
   engineStore,
@@ -73,7 +71,7 @@ import { createVehicleJets } from "./vehicleJets";
 import { createDebugBounds, showWhileDebugTourTarget } from "./debugVisuals";
 import { combineCleanups, reaction, type Cleanup } from "./storeReaction";
 import { FramePriority } from "./framePriority";
-import { freezeModelTransforms } from "./staticMatrices";
+import { createShapeInstance } from "./shapeInstance";
 import { WorldLabel } from "./worldLabel";
 import type { GameEngine } from "./gameEngine";
 
@@ -240,12 +238,14 @@ export function createShapeModel(
     imageSlot,
   } = options;
   const gltf = model;
-  const clonedScene = SkeletonUtils.clone(gltf.scene) as DTSShape;
-  processShapeScene(clonedScene, shapeName, {
+  const instance = createShapeInstance({
+    model: gltf,
+    shapeName,
     anisotropy: options.anisotropy,
     emap,
     skinName,
   });
+  const { scene: clonedScene } = instance;
 
   // Clips by name (case-insensitive). Native blend clips already contain
   // local deltas and additive mode.
@@ -260,7 +260,6 @@ export function createShapeModel(
   if (!noRotation) root.rotation.set(0, SHAPE_MODEL_ROTATION_Y, 0);
   root.updateMatrix();
   root.matrixAutoUpdate = false;
-  const unfreezeModel = freezeModelTransforms(clonedScene);
   root.add(clonedScene);
 
   const isStreamShape = readStream != null;
@@ -272,7 +271,7 @@ export function createShapeModel(
   // Ghost ThreadMask indices address the native DTS sequence order.
   const seqIndexToName = sequences.names;
 
-  const cleanups: Cleanup[] = [unfreezeModel];
+  const cleanups: Cleanup[] = [];
 
   if (entityId != null && imageSlot != null)
     cleanups.push(registerImageMuzzle(entityId, imageSlot, clonedScene));
@@ -889,9 +888,7 @@ export function createShapeModel(
     dispose() {
       dispose();
       root.remove(clonedScene);
-      // Dispose cloned geometries and materials to prevent GPU memory from
-      // accumulating.
-      disposeClonedScene(clonedScene);
+      instance.dispose();
       mixer?.uncacheRoot(clonedScene);
     },
   };

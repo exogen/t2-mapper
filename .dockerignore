@@ -10,5 +10,6 @@
 !scripts/
 scripts/*
 !scripts/backup-account-database.ts
+!scripts/link-t2-account.ts
 !scripts/list-discord-users.ts
 !scripts/set-account-role.ts

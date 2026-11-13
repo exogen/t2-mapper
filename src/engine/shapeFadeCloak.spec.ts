@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   AdditiveBlending,
   BoxGeometry,
@@ -13,6 +13,12 @@ import {
   mountedImageCloakAlpha,
   shapeCloakAlpha,
 } from "./shapeFadeCloak";
+
+vi.mock("../textureUtils", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../textureUtils")>();
+  const { Texture } = await import("three");
+  return { ...actual, loadTexture: () => new Texture() };
+});
 
 function mesh(material = new MeshBasicMaterial({ map: new Texture() })) {
   return new Mesh(new BoxGeometry(), material);

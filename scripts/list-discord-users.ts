@@ -10,6 +10,7 @@ interface DiscordUser {
   discordUsername: string | null;
   role: string | null;
   createdAt: string | number | null;
+  t2Guids: string | null;
 }
 
 function displayText(value: string | null): string {
@@ -73,10 +74,21 @@ function main(): void {
       throw new Error(
         "Account tables not found. Start the relay with Discord sign-in enabled first.",
       );
+    // Databases from before the first app-owned migration have no links.
+    const hasT2Accounts = !!database
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 't2AccountLink'",
+      )
+      .get();
     const users = database
       .prepare(
         `SELECT DISTINCT
-          u.id, a.accountId AS discordId, u.name, u.discordUsername, u.role, u.createdAt
+          u.id, a.accountId AS discordId, u.name, u.discordUsername, u.role, u.createdAt,
+          ${
+            hasT2Accounts
+              ? `(SELECT group_concat(l.guid, ', ') FROM "t2AccountLink" l WHERE l.userId = u.id)`
+              : "NULL"
+          } AS t2Guids
         FROM "user" u JOIN "account" a ON a.userId = u.id
         WHERE a.providerId = 'discord'
         ORDER BY u.discordUsername COLLATE NOCASE, a.accountId, u.id`,
@@ -100,6 +112,7 @@ function main(): void {
           : "—",
         "Discord ID": user.discordId,
         Role: displayText(user.role) || "—",
+        "T2 GUIDs": user.t2Guids ?? "—",
         "Joined (UTC)": joinedDate(user.createdAt),
       })),
     );
