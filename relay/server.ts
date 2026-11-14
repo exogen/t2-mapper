@@ -53,6 +53,7 @@ import { DEMO_GUIDS_SUFFIX } from "./demoGuids.js";
 import { DEMO_PROFILES_SUFFIX, DEMO_STATS_SUFFIX } from "./demoStats.js";
 import { DemoStatsScheduler } from "./demoStatsScheduler.js";
 import { createDemoPlayerProfileUpdater } from "./playerProfileService.js";
+import { createPlayerDemosReader } from "./playerDemos.js";
 import {
   PrivateDemoStore,
   loadPrivateDemoStorageConfig,
@@ -273,6 +274,11 @@ const accountDatabase = appAuthConfig
     )
   : null;
 const accountBackupConfig = accountDatabase ? loadAccountBackupConfig() : null;
+const playerDemos = accountDatabase
+  ? createPlayerDemosReader({
+      database: accountDatabase,
+    })
+  : null;
 const appAuth =
   appAuthConfig && accountDatabase
     ? await createAppAuth({
@@ -281,6 +287,7 @@ const appAuth =
         onUpdateGamePresentation: (update) => updateGamePresentation(update),
         onReadDemoPresentation: (filename) =>
           demoUploader.readPublishedDemo(filename),
+        onReadUserDemos: playerDemos?.read,
       })
     : null;
 const accountBackups =
@@ -299,6 +306,7 @@ const updatePlayerProfiles =
     ? createDemoPlayerProfileUpdater({
         config: demoUploadConfig,
         store: privateDemoStore,
+        memberships: playerDemos ?? undefined,
         saveProfile: (profile) => saveT2PlayerProfile(accountDatabase, profile),
         saveBestMaps: (entries) =>
           saveT2PlayerBestMaps(accountDatabase, entries),
@@ -319,13 +327,27 @@ const demoStats =
             signal,
           ),
         readNamesByGuid: demoProcessing.repairNamesByGuid,
+        isMembershipCurrent: playerDemos?.isCurrent,
+        updateMembership: playerDemos
+          ? (demoKey, guids, sourceETag, observedAt) => {
+              playerDemos.replace(demoKey, guids, { sourceETag, observedAt });
+            }
+          : undefined,
+        pruneMembership: playerDemos
+          ? (published, observedAt) => {
+              for (const filename of playerDemos.filenames())
+                if (!published.has(filename))
+                  playerDemos.remove(filename, observedAt);
+            }
+          : undefined,
         refreshProfiles: updatePlayerProfiles
-          ? (demoKey, stats, signal) =>
+          ? (demoKey, stats, signal, beforeSave) =>
               demoProcessing.updateProfiles(async () => {
                 const counts = await updatePlayerProfiles(
                   demoKey,
                   stats,
                   signal,
+                  beforeSave,
                 );
                 relayLog.info(
                   { demoKey, ...counts },
@@ -589,12 +611,16 @@ const demoUploader: DemoUploader = new DemoUploader(
     privateSidecars: privateDemoStore
       ? {
           publish: async (localFile, demoKey) => {
-            await privateDemoStore.put(demoKey, DEMO_GUIDS_SUFFIX, {
+            const observedAt = Date.now();
+            const guids = {
               namesByGuid: await demoProcessing.readNamesByGuid(localFile),
-            });
+            };
+            await privateDemoStore.put(demoKey, DEMO_GUIDS_SUFFIX, guids);
+            playerDemos?.replace(demoKey, guids, { observedAt });
           },
           delete: async (demoKey) => {
             await demoStats?.cancel(demoKey);
+            playerDemos?.remove(demoKey);
             await privateDemoStore.delete(demoKey, DEMO_GUIDS_SUFFIX);
             await privateDemoStore.delete(demoKey, DEMO_STATS_SUFFIX);
             await privateDemoStore.delete(demoKey, DEMO_PROFILES_SUFFIX);

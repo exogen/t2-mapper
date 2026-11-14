@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { DEMO_GUIDS_SUFFIX, type DemoGuidSidecar } from "./demoGuids.js";
-import { collectDemoGuidInventory } from "./demoGuidInventory.js";
+import {
+  collectDemoGuidInventory,
+  collectDemoMembershipInventory,
+} from "./demoGuidInventory.js";
 
 describe("private demo GUID inventory", () => {
   it("can restrict automatic reads to available published sidecars", async () => {
@@ -164,5 +167,112 @@ describe("private demo GUID inventory", () => {
       sidecarCount: 0,
     });
     expect(store.read).not.toHaveBeenCalled();
+  });
+});
+
+describe("private demo membership inventory", () => {
+  it("uses indexed membership and empty markers while preserving all-private upload and orphan scope", async () => {
+    const store = {
+      listDemoKeys: vi.fn(async () => [
+        "indexed.rec",
+        "empty.rec",
+        "users/owner/upload.rec",
+        "orphan.rec",
+      ]),
+      read: vi.fn(async (key: string) => ({
+        namesByGuid:
+          key === "orphan.rec"
+            ? { "789": [] }
+            : { "123": ["Alias"], "456": [] },
+      })),
+    };
+    const memberships = {
+      guidsForDemo: vi.fn((filename: string) =>
+        filename === "indexed.rec"
+          ? ["123"]
+          : filename === "empty.rec"
+            ? []
+            : undefined,
+      ),
+    };
+    const result = await collectDemoMembershipInventory(store, {
+      concurrency: 2,
+      memberships,
+    });
+    expect(result).toEqual({
+      membersByDemo: new Map([
+        ["indexed.rec", new Set(["123"])],
+        ["empty.rec", new Set()],
+        ["users/owner/upload.rec", new Set(["123", "456"])],
+        ["orphan.rec", new Set(["789"])],
+      ]),
+      guids: new Set(["123", "456", "789"]),
+      failed: 0,
+      sidecarCount: 4,
+    });
+    expect(store.read.mock.calls).toEqual([
+      ["users/owner/upload.rec", DEMO_GUIDS_SUFFIX],
+      ["orphan.rec", DEMO_GUIDS_SUFFIX],
+    ]);
+  });
+
+  it("reads an explicit public scope without a listing and skips sidecars that do not exist yet", async () => {
+    const store = {
+      listDemoKeys: vi.fn(),
+      read: vi.fn(async (key: string) =>
+        key === "missing.rec" ? null : { namesByGuid: { "123": [] } },
+      ),
+    };
+    const result = await collectDemoMembershipInventory(store, {
+      concurrency: 16,
+      demoKeys: new Set(["exists.rec", "missing.rec"]),
+    });
+    expect(store.listDemoKeys).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      failed: 0,
+      sidecarCount: 2,
+      guids: new Set(["123"]),
+    });
+    expect(result.membersByDemo).toEqual(
+      new Map([["exists.rec", new Set(["123"])]]),
+    );
+  });
+
+  it("reports corrupt sidecars and missing entries advertised by the private listing", async () => {
+    const store = {
+      listDemoKeys: async () => ["missing.rec", "corrupt.rec"],
+      read: async (key: string) =>
+        key === "missing.rec" ? null : { namesByGuid: { "123": null } },
+    };
+    const onError = vi.fn();
+    const result = await collectDemoMembershipInventory(store, {
+      concurrency: 2,
+      onError,
+    });
+    expect(result).toEqual({
+      membersByDemo: new Map(),
+      guids: new Set(),
+      failed: 2,
+      sidecarCount: 2,
+    });
+    expect(onError).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects cancellation before touching the SQL or remote inventory", async () => {
+    const abort = new AbortController();
+    abort.abort(new Error("Stopped"));
+    const store = { listDemoKeys: vi.fn(), read: vi.fn() };
+    const memberships = { guidsForDemo: vi.fn() };
+    await expect(
+      collectDemoMembershipInventory(store, {
+        concurrency: 2,
+        memberships,
+        demoKeys: new Set(["a.rec"]),
+        signal: abort.signal,
+      }),
+    ).rejects.toThrow("Stopped");
+    expect(memberships.guidsForDemo).not.toHaveBeenCalled();
+    expect(store.read).not.toHaveBeenCalled();
+    expect(store.listDemoKeys).not.toHaveBeenCalled();
   });
 });

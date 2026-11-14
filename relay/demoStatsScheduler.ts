@@ -56,7 +56,22 @@ export interface DemoStatsSchedulerOptions {
     demoKey: string,
     stats: DemoStatsSidecar,
     signal: AbortSignal,
+    beforeSave: () => Promise<void>,
   ) => Promise<void>;
+  /** SQLite's per-demo membership snapshot matches this recording. */
+  isMembershipCurrent?: (demoKey: string, sourceETag?: string) => boolean;
+  /** Replace membership only after the recording's identity is checked again. */
+  updateMembership?: (
+    demoKey: string,
+    guids: DemoGuidSidecar,
+    sourceETag: string | undefined,
+    observedAt: number,
+  ) => void;
+  /** A completed public listing can remove membership for deleted recordings. */
+  pruneMembership?: (
+    publishedFilenames: ReadonlySet<string>,
+    observedAt: number,
+  ) => void;
   /** Failed workers can retry after this cooldown rather than needing a restart. */
   retryDelayMs?: number;
   client?: S3Client;
@@ -73,6 +88,9 @@ export class DemoStatsScheduler {
   private readonly compute: DemoStatsSchedulerOptions["compute"];
   private readonly refreshProfiles: DemoStatsSchedulerOptions["refreshProfiles"];
   private readonly readNamesByGuid: DemoStatsSchedulerOptions["readNamesByGuid"];
+  private readonly isMembershipCurrent: DemoStatsSchedulerOptions["isMembershipCurrent"];
+  private readonly updateMembership: DemoStatsSchedulerOptions["updateMembership"];
+  private readonly pruneMembership: DemoStatsSchedulerOptions["pruneMembership"];
   private readonly retryDelayMs: number;
   private readonly client: S3Client;
   private readonly sweepWindowMs: number;
@@ -97,6 +115,9 @@ export class DemoStatsScheduler {
     this.compute = options.compute;
     this.refreshProfiles = options.refreshProfiles;
     this.readNamesByGuid = options.readNamesByGuid;
+    this.isMembershipCurrent = options.isMembershipCurrent;
+    this.updateMembership = options.updateMembership;
+    this.pruneMembership = options.pruneMembership;
     this.retryDelayMs = options.retryDelayMs ?? 60 * 60_000;
     this.sweepWindowMs = options.sweepWindowMs ?? 7 * DAY_MS;
     this.sweepIntervalMs = options.sweepIntervalMs ?? 60 * 60_000;
@@ -165,7 +186,9 @@ export class DemoStatsScheduler {
 
   private async sweepOnce(): Promise<number> {
     const signal = this.lifetime.signal;
-    const cutoff = this.now() - this.sweepWindowMs;
+    const observedAt = this.now();
+    const cutoff = observedAt - this.sweepWindowMs;
+    const published = new Set<string>();
     const recent: { demoKey: string; at: number; etag?: string }[] = [];
     let token: string | undefined;
     do {
@@ -181,13 +204,17 @@ export class DemoStatsScheduler {
       for (const { Key, LastModified, ETag } of page.Contents ?? []) {
         const demoKey = Key?.slice(this.config.prefix.length);
         const at = LastModified?.getTime() ?? 0;
-        if (demoKey && isPublishedDemoKey(demoKey) && at >= cutoff)
-          recent.push({ demoKey, at, etag: ETag });
+        if (demoKey && isPublishedDemoKey(demoKey)) {
+          published.add(demoKey);
+          if (at >= cutoff) recent.push({ demoKey, at, etag: ETag });
+        }
       }
       token = page.IsTruncated ? page.NextContinuationToken : undefined;
       if (page.IsTruncated && !token)
         throw new Error("Incomplete demo listing");
     } while (token);
+    signal.throwIfAborted();
+    this.pruneMembership?.(published, observedAt);
     recent.sort((a, b) => b.at - a.at);
     const missing = new Set<string>();
     let next = 0;
@@ -197,6 +224,13 @@ export class DemoStatsScheduler {
           signal.throwIfAborted();
           const { demoKey, etag } = recent[next++];
           try {
+            if (
+              this.isMembershipCurrent &&
+              !this.isMembershipCurrent(demoKey, etag)
+            ) {
+              missing.add(demoKey);
+              continue;
+            }
             const stats = await this.readJson(
               demoKey,
               DEMO_STATS_SUFFIX,
@@ -207,9 +241,10 @@ export class DemoStatsScheduler {
               continue;
             }
             if (
-              this.readNamesByGuid &&
+              (this.readNamesByGuid || this.updateMembership) &&
               !this.validGuids(
                 await this.readJson(demoKey, DEMO_GUIDS_SUFFIX, signal),
+                etag,
               )
             ) {
               missing.add(demoKey);
@@ -313,9 +348,15 @@ export class DemoStatsScheduler {
     }
   }
 
-  private validGuids(value: unknown): DemoGuidSidecar | undefined {
+  private validGuids(
+    value: unknown,
+    sourceETag?: string,
+  ): DemoGuidSidecar | undefined {
     try {
-      return readDemoGuidSidecar(value);
+      const guids = readDemoGuidSidecar(value);
+      return sourceETag && guids.sourceETag && guids.sourceETag !== sourceETag
+        ? undefined
+        : guids;
     } catch {
       return undefined;
     }
@@ -357,17 +398,16 @@ export class DemoStatsScheduler {
     demoKey: string,
     signal: AbortSignal,
   ): Promise<void> {
+    let observedAt = this.now();
     const key = `${this.config.prefix}${demoKey}`;
     const source = await this.head(key, signal);
     if (!source) return;
-    // An older marker must not hide a failed attempt to refresh newer data.
+    const membershipMissing =
+      !!this.updateMembership &&
+      !this.isMembershipCurrent?.(demoKey, source.ETag);
     const marker = this.refreshProfiles
       ? await this.readJson(demoKey, DEMO_PROFILES_SUFFIX, signal)
       : null;
-    if (this.refreshProfiles) {
-      await this.store.delete(demoKey, DEMO_PROFILES_SUFFIX, signal);
-      signal.throwIfAborted();
-    }
     const saved = await this.readJson(demoKey, DEMO_STATS_SUFFIX, signal);
     const statsETag = (saved as DemoStatsSidecar | null)?.sourceETag;
     const markerETag = (marker as { sourceETag?: string } | null)?.sourceETag;
@@ -379,14 +419,43 @@ export class DemoStatsScheduler {
     let stats = sourceChanged
       ? undefined
       : readCurrentDemoStats(saved, source.ETag);
-    let repairGuids =
-      this.readNamesByGuid &&
-      (sourceChanged ||
-        !this.validGuids(
-          await this.readJson(demoKey, DEMO_GUIDS_SUFFIX, signal),
-        ));
+    let guids =
+      this.readNamesByGuid || this.updateMembership
+        ? this.validGuids(
+            await this.readJson(demoKey, DEMO_GUIDS_SUFFIX, signal),
+            source.ETag,
+          )
+        : undefined;
+    if (sourceChanged) guids = undefined;
+    let repairGuids = !!this.readNamesByGuid && !guids;
+    const membershipOnly =
+      membershipMissing &&
+      !!guids &&
+      !!stats &&
+      !sourceChanged &&
+      (!this.refreshProfiles || isCurrentProfileRefresh(marker, source.ETag));
+    // A membership-only repair preserves successful R2/profile work. Other
+    // attempts must not leave an older successful marker hiding a failure.
+    if (this.refreshProfiles && !membershipOnly) {
+      await this.store.delete(demoKey, DEMO_PROFILES_SUFFIX, signal);
+      signal.throwIfAborted();
+    }
+    if (guids && membershipMissing) {
+      if (
+        !(await this.indexMembership(
+          demoKey,
+          guids,
+          source.ETag,
+          observedAt,
+          signal,
+        ))
+      )
+        return;
+    }
+    if (membershipOnly) return;
+    if (membershipMissing && !guids && !repairGuids)
+      throw new Error("Demo GUID sidecar is unavailable for membership repair");
     let etag = source.ETag;
-    let guids: DemoGuidSidecar | undefined;
     let computed = false;
     let directory: string | undefined;
     try {
@@ -410,18 +479,41 @@ export class DemoStatsScheduler {
           // when legacy cached sidecars had no fingerprint of their own.
           stats = undefined;
           repairGuids = !!this.readNamesByGuid;
+          guids = undefined;
         } else stats = readCurrentDemoStats(stats, etag);
         const file = path.join(directory, "demo.rec");
         await pipeline(object.Body as Readable, fs.createWriteStream(file), {
           signal,
         });
         signal.throwIfAborted();
-        try {
-          if (repairGuids)
+        if (repairGuids) {
+          observedAt = this.now();
+          try {
             guids = readDemoGuidSidecar({
               namesByGuid: await this.readNamesByGuid!(file, signal),
+              ...(etag && { sourceETag: etag }),
             });
+          } catch (err) {
+            if (!signal.aborted)
+              this.retryAfter.set(demoKey, this.now() + this.retryDelayMs);
+            throw err;
+          }
           signal.throwIfAborted();
+          if (!(await this.unchanged(key, etag, signal))) return;
+          await this.store.put(demoKey, DEMO_GUIDS_SUFFIX, guids, signal);
+          signal.throwIfAborted();
+          if (
+            !(await this.indexMembership(
+              demoKey,
+              guids,
+              etag,
+              observedAt,
+              signal,
+            ))
+          )
+            return;
+        }
+        try {
           if (!stats) {
             const value = await this.compute(file, signal);
             signal.throwIfAborted();
@@ -437,10 +529,6 @@ export class DemoStatsScheduler {
         }
       }
       if (!(await this.unchanged(key, etag, signal))) return;
-      if (guids) {
-        await this.store.put(demoKey, DEMO_GUIDS_SUFFIX, guids, signal);
-        signal.throwIfAborted();
-      }
       if (computed) {
         await this.store.put(demoKey, DEMO_STATS_SUFFIX, stats, signal);
         signal.throwIfAborted();
@@ -451,7 +539,12 @@ export class DemoStatsScheduler {
       }
       if (!this.refreshProfiles) return;
       signal.throwIfAborted();
-      await this.refreshProfiles(demoKey, stats!, signal);
+      await this.refreshProfiles(demoKey, stats!, signal, async () => {
+        if (!(await this.unchanged(key, etag, signal)))
+          throw new Error(
+            `Demo was removed before profile updates: ${demoKey}`,
+          );
+      });
       signal.throwIfAborted();
       if (!(await this.unchanged(key, etag, signal))) return;
       await this.store.put(
@@ -472,6 +565,27 @@ export class DemoStatsScheduler {
     } finally {
       if (directory) await fsp.rm(directory, { recursive: true, force: true });
     }
+  }
+
+  private async indexMembership(
+    demoKey: string,
+    guids: DemoGuidSidecar,
+    sourceETag: string | undefined,
+    observedAt: number,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    if (!this.updateMembership) return true;
+    if (
+      !(await this.unchanged(
+        `${this.config.prefix}${demoKey}`,
+        sourceETag,
+        signal,
+      ))
+    )
+      return false;
+    signal.throwIfAborted();
+    this.updateMembership(demoKey, guids, sourceETag, observedAt);
+    return true;
   }
 }
 

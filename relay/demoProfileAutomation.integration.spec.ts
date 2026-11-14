@@ -29,6 +29,7 @@ import { createRelayDemoProcessing } from "./demoProcessing";
 import { DEMO_PROFILES_SUFFIX, DEMO_STATS_SUFFIX } from "./demoStats";
 import { DemoStatsScheduler } from "./demoStatsScheduler";
 import { createDemoPlayerProfileUpdater } from "./playerProfileService";
+import { createPlayerDemosReader } from "./playerDemos";
 import { PrivateDemoStore } from "./privateDemoStore";
 
 it("stores affected players' profiles after stats, then recovers a profile retry without replaying", async () => {
@@ -36,6 +37,7 @@ it("stores affected players' profiles after stats, then recovers a profile retry
     path.join(os.tmpdir(), "demo-profile-auto-"),
   );
   const database = openAccountDatabase(path.join(directory, "accounts.sqlite"));
+  const memberships = createPlayerDemosReader({ database });
   const config = {
     endpoint: "https://example.r2.cloudflarestorage.com",
     bucket: "public",
@@ -156,6 +158,7 @@ it("stores affected players' profiles after stats, then recovers a profile retry
   const update = createDemoPlayerProfileUpdater({
     config,
     store,
+    memberships,
     client,
     saveBestMaps: (entries) => {
       if (failBestMapWrites) throw new Error("SQLite busy");
@@ -175,9 +178,13 @@ it("stores affected players' profiles after stats, then recovers a profile retry
       store,
       client,
       compute,
-      refreshProfiles: (demoKey, stats, signal) =>
+      isMembershipCurrent: memberships.isCurrent,
+      updateMembership: (filename, guids, sourceETag, observedAt) => {
+        memberships.replace(filename, guids, { sourceETag, observedAt });
+      },
+      refreshProfiles: (demoKey, stats, signal, beforeSave) =>
         processing.updateProfiles(async () => {
-          await update(demoKey, stats, signal);
+          await update(demoKey, stats, signal, beforeSave);
         }, signal),
       now: () => Date.parse(newest.recordedAt),
     });
@@ -186,6 +193,9 @@ it("stores affected players' profiles after stats, then recovers a profile retry
       'CREATE TABLE "user" ("id" TEXT PRIMARY KEY); CREATE TABLE "account" ("userId" TEXT, "providerId" TEXT, "accountId" TEXT)',
     );
     database.transaction(() => migrateAccountSchema(database))();
+    memberships.replace("old.rec", {
+      namesByGuid: { "101": ["Player"], "303": ["Other"] },
+    });
     const scheduler = makeScheduler();
     scheduler.enqueue("new.rec");
     await scheduler.idle();
@@ -197,6 +207,25 @@ it("stores affected players' profiles after stats, then recovers a profile retry
       demoCount: 2,
       lastSeenAt: Date.parse(newest.recordedAt),
     });
+    expect(memberships.guidsForDemo("new.rec")).toEqual(["101", "202"]);
+    expect(
+      vi
+        .mocked(client.send)
+        .mock.calls.some(
+          ([command]) =>
+            command instanceof GetObjectCommand &&
+            command.input.Key === `demos/old.rec${DEMO_GUIDS_SUFFIX}`,
+        ),
+    ).toBe(false);
+    expect(
+      vi
+        .mocked(client.send)
+        .mock.calls.some(
+          ([command]) =>
+            command instanceof ListObjectsV2Command &&
+            command.input.Bucket === "private",
+        ),
+    ).toBe(false);
     expect(
       database.prepare('SELECT COUNT(*) AS n FROM "t2PlayerProfile"').get(),
     ).toEqual({ n: 2 });

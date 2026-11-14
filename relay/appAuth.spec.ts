@@ -129,6 +129,9 @@ async function fixture({
   onReadDemoPresentation = undefined as Parameters<
     typeof createAppAuth
   >[0]["onReadDemoPresentation"],
+  onReadUserDemos = undefined as Parameters<
+    typeof createAppAuth
+  >[0]["onReadUserDemos"],
 } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "t2-app-auth-"));
   const database = openAccountDatabase(path.join(dir, "app.sqlite"));
@@ -172,6 +175,7 @@ async function fixture({
       database,
       onUpdateGamePresentation,
       onReadDemoPresentation,
+      onReadUserDemos,
     });
   let profile = {
     id: discordId,
@@ -325,6 +329,7 @@ async function fixture({
         database,
         onUpdateGamePresentation,
         onReadDemoPresentation,
+        onReadUserDemos,
       });
     },
   };
@@ -487,6 +492,123 @@ it("returns a CORS-readable unavailable response for public profiles when login 
     enabled: false,
     user: null,
   });
+});
+
+it("returns public demo membership without a session or private player identifiers", async () => {
+  const onReadUserDemos = vi.fn(async () => ({
+    linked: true,
+    filenames: ["first.rec", "second.rec"],
+    guids: ["12345"],
+    namesByGuid: { "12345": ["Private alias"] },
+  }));
+  const app = await fixture({ onReadUserDemos });
+  await app.login();
+  const providerRequestCount = app.providerRequests.length;
+  const response = await app.request(`/api/users/${USER_ID}/demos`, {
+    headers: { Cookie: "" },
+  });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({
+    linked: true,
+    filenames: ["first.rec", "second.rec"],
+  });
+  expect(onReadUserDemos).toHaveBeenCalledExactlyOnceWith(USER_ID);
+  expect(app.providerRequests).toHaveLength(providerRequestCount);
+  expect(response.headers.getSetCookie()).toEqual([]);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(response.headers.get("access-control-allow-origin")).toBe(APP_ORIGIN);
+});
+
+it("reports an unlinked account even without demo storage but keeps linked storage failures unavailable", async () => {
+  const app = await fixture();
+  await app.login();
+  const route = `/api/users/${USER_ID}/demos`;
+  const unlinked = await app.request(route);
+  expect(unlinked.status).toBe(200);
+  expect(await unlinked.json()).toEqual({ linked: false, filenames: [] });
+  linkT2Account(app.database, USER_ID, "12345");
+  const unavailable = await app.request(route);
+  expect(unavailable.status).toBe(503);
+  expect(await unavailable.json()).toEqual({
+    error: "User demos are unavailable",
+  });
+});
+
+it("returns unavailable for inventory failures without leaking details or caching a false empty result", async () => {
+  const onReadUserDemos = vi
+    .fn()
+    .mockRejectedValueOnce(
+      new SyntaxError("Private GUID 12345 inventory is corrupt"),
+    )
+    .mockResolvedValue({ linked: true, filenames: ["recovered.rec"] });
+  const app = await fixture({ onReadUserDemos });
+  await app.login();
+  const route = `/api/users/${USER_ID}/demos`;
+  const failed = await app.request(route, { headers: { Cookie: "" } });
+  expect(failed.status).toBe(503);
+  expect(await failed.json()).toEqual({ error: "User demos are unavailable" });
+  expect(failed.headers.get("access-control-allow-origin")).toBe(APP_ORIGIN);
+  const retried = await app.request(route, { headers: { Cookie: "" } });
+  expect(retried.status).toBe(200);
+  expect(await retried.json()).toEqual({
+    linked: true,
+    filenames: ["recovered.rec"],
+  });
+});
+
+it("validates public demo request IDs and existing Discord profiles before consulting inventory", async () => {
+  const onReadUserDemos = vi.fn(async () => ({ linked: false, filenames: [] }));
+  const app = await fixture({ onReadUserDemos });
+  await app.login();
+  for (const id of [
+    "chosen_handle",
+    "1234",
+    `${USER_ID}/extra`,
+    `${USER_ID}%2fextra`,
+    `${USER_ID}/demos`,
+  ]) {
+    const response = await app.request(`/api/users/${id}/demos`);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Invalid Discord user ID" });
+  }
+  // A pre-linked external identity does not create a public app account.
+  linkT2Account(app.database, ADMIN_ID, "12345");
+  const missing = await app.request(`/api/users/${ADMIN_ID}/demos`);
+  expect(missing.status).toBe(404);
+  expect(await missing.json()).toEqual({ error: "User not found" });
+  expect(onReadUserDemos).not.toHaveBeenCalled();
+});
+
+it("keeps public demo membership read-only with the account API's CORS policy", async () => {
+  const onReadUserDemos = vi.fn(async () => ({ linked: false, filenames: [] }));
+  const app = await fixture({ onReadUserDemos });
+  const route = `/api/users/${USER_ID}/demos`;
+  const forbidden = await app.request(route, {
+    headers: { Origin: "https://attacker.example" },
+  });
+  expect(forbidden.status).toBe(403);
+  expect(forbidden.headers.get("access-control-allow-origin")).toBeNull();
+  const preflight = await app.request(route, { method: "OPTIONS" });
+  expect(preflight.status).toBe(204);
+  expect(preflight.headers.get("access-control-allow-methods")).toContain(
+    "GET",
+  );
+  for (const method of ["POST", "PUT", "DELETE", "HEAD"]) {
+    const response = await app.request(route, { method });
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("GET, OPTIONS");
+  }
+  expect(onReadUserDemos).not.toHaveBeenCalled();
+});
+
+it("returns a CORS-readable unavailable response for public demo membership when login is disabled", async () => {
+  const app = await fixture({ disabled: true });
+  const response = await app.request(`/api/users/${USER_ID}/demos`);
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({
+    error: "User profiles are unavailable",
+  });
+  expect(response.headers.get("access-control-allow-origin")).toBe(APP_ORIGIN);
 });
 
 const oldDemo: DemoMetadata = {
@@ -1357,7 +1479,7 @@ it("backs up and adds Tribes 2 accounts to a database from before app-owned migr
   const backup = path.join(app.directory, "app.sqlite.pre-migration.sqlite");
   expect(fs.existsSync(backup)).toBe(false);
   app.database.exec(
-    'DROP TABLE "t2PlayerBestMap"; DROP TABLE "t2PlayerProfile"; DROP TABLE "t2AccountLink"; DROP TABLE "t2Account"; PRAGMA user_version = 0;',
+    'DROP TABLE "t2PlayerDemoGuid"; DROP TABLE "t2PlayerDemo"; DROP TABLE "t2PlayerBestMap"; DROP TABLE "t2PlayerProfile"; DROP TABLE "t2AccountLink"; DROP TABLE "t2Account"; PRAGMA user_version = 0;',
   );
   await app.restart();
   expect(fs.existsSync(backup)).toBe(true);

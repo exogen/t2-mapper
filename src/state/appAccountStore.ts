@@ -36,6 +36,7 @@ let refreshGeneration = 0;
 let lastRefreshAt: number | null = null;
 const FOCUS_REFRESH_INTERVAL_MS = 5 * 60_000;
 let signInWindow: DiscordSignInWindow | null = null;
+let redirectAfterSignIn = false;
 
 function finishSignInAttempt() {
   signInWindow?.dispose();
@@ -93,6 +94,16 @@ export function refreshAccount({ onlyIfStale = false } = {}): Promise<void> {
         error: null,
         signInUrl: user ? null : appAccountStore.getState().signInUrl,
       });
+      if (user && redirectAfterSignIn) {
+        redirectAfterSignIn = false;
+        const profile = new URL(
+          import.meta.env.BASE_URL || "/",
+          window.location.href,
+        );
+        profile.searchParams.set("mode", "demo");
+        profile.searchParams.set("user", user.discordId);
+        window.location.assign(profile.href);
+      }
     } catch {
       if (generation !== refreshGeneration) return;
       // A stale profile must never keep displaying admin controls after the
@@ -115,7 +126,7 @@ export function refreshAccount({ onlyIfStale = false } = {}): Promise<void> {
 
 export function refreshAccountOnFocus(): Promise<void> {
   // While sign-in is open, focus is also a fallback for blocked cross-window
-  // messaging. This never navigates or recreates the game engine.
+  // messaging, including the redirect after a verified sign-in.
   if (signInWindow && appAccountStore.getState().pending === "sign-in") {
     // A browser can block popup notifications, including the initial
     // "opened" notification. Returning from that popup must still verify login.
@@ -146,6 +157,7 @@ export function signInWithDiscord(): void {
   if (signInWindow?.focus()) return;
   finishSignInAttempt();
   invalidateRefresh();
+  redirectAfterSignIn = true;
   appAccountStore.setState({
     pending: "sign-in",
     error: null,
@@ -154,6 +166,8 @@ export function signInWithDiscord(): void {
   try {
     signInWindow = openDiscordSignIn({
       onEvent(event) {
+        if (event === "opened") redirectAfterSignIn = true;
+        if (event === "error") redirectAfterSignIn = false;
         appAccountStore.setState({
           pending: null,
           error:
@@ -174,6 +188,7 @@ export function signInWithDiscord(): void {
         });
       },
       onExpired() {
+        redirectAfterSignIn = false;
         signInWindow = null;
         appAccountStore.setState({ pending: null, signInUrl: null });
       },
@@ -186,6 +201,7 @@ export function signInWithDiscord(): void {
       });
     }
   } catch {
+    redirectAfterSignIn = false;
     finishSignInAttempt();
     appAccountStore.setState({
       pending: null,
@@ -196,6 +212,7 @@ export function signInWithDiscord(): void {
 
 export async function signOutAccount(): Promise<void> {
   if (appAccountStore.getState().pending) return;
+  redirectAfterSignIn = false;
   finishSignInAttempt();
   invalidateRefresh();
   appAccountStore.setState({ pending: "sign-out", error: null });

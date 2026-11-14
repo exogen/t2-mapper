@@ -10,7 +10,7 @@ import {
   saveT2PlayerProfile,
 } from "../relay/accountDatabase";
 import type { T2PlayerProfile } from "../relay/accountTypes";
-import { DEMO_GUIDS_SUFFIX } from "../relay/demoGuids";
+import { DEMO_GUIDS_SUFFIX, type DemoGuidSidecar } from "../relay/demoGuids";
 import type { DemoMetadata } from "../relay/demoMetadata";
 import {
   DEMO_STATS_VERSION,
@@ -18,6 +18,7 @@ import {
   type PlayerDemoStats,
 } from "../relay/demoPlayerStatsModel";
 import { DEMO_STATS_SUFFIX } from "../relay/demoStats";
+import { createPlayerDemosReader } from "../relay/playerDemos";
 
 const mocks = vi.hoisted(() => ({
   r2Client: vi.fn(),
@@ -243,6 +244,87 @@ it("stores every known GUID with stats, including unnamed and unlinked players, 
     failed: 0,
     statsRead: 2,
     missingStats: 0,
+  });
+  expect(process.exitCode).toBeUndefined();
+});
+
+it("uses indexed official membership without fetching its GUID sidecars", async () => {
+  const database = openAccountDatabase(filename);
+  const memberships = createPlayerDemosReader({ database });
+  for (const name of ["a.rec", "b.rec"]) {
+    memberships.replace(
+      name,
+      sidecars.get(`${name}${DEMO_GUIDS_SUFFIX}`) as DemoGuidSidecar,
+    );
+    sidecars.set(
+      `${name}${DEMO_GUIDS_SUFFIX}`,
+      new Error("Unexpected GUID read"),
+    );
+  }
+  database.close();
+
+  await import("./backfill-player-profiles");
+
+  expect(readProfiles().map(({ guid }) => guid)).toEqual(["101", "202", "303"]);
+  expect(
+    mocks.read.mock.calls.filter(([, suffix]) => suffix === DEMO_GUIDS_SUFFIX),
+  ).toEqual([["orphan.rec", DEMO_GUIDS_SUFFIX]]);
+  expect(mocks.list).toHaveBeenCalledExactlyOnceWith(DEMO_GUIDS_SUFFIX);
+  expect(summary()).toMatchObject({
+    guids: 4,
+    stored: 3,
+    skipped: 1,
+    failed: 0,
+  });
+  expect(process.exitCode).toBeUndefined();
+});
+
+it("uses partial SQL coverage while retaining uploaded-only and orphan GUIDs", async () => {
+  const upload = "users/123456789012345678/upload.rec";
+  index.push(record(upload, "04"));
+  mocks.list.mockResolvedValue(["a.rec", "b.rec", "orphan.rec", upload]);
+  sidecars.set(`${upload}${DEMO_GUIDS_SUFFIX}`, {
+    namesByGuid: { "505": ["Upload only"] },
+  });
+  sidecars.set(`${upload}${DEMO_STATS_SUFFIX}`, {
+    version: DEMO_STATS_VERSION,
+    statsByGuid: {
+      "505": stats({
+        skins: [{ raceGender: "Bioderm", skin: "Uploaded skin" }],
+      }),
+    },
+  });
+  const database = openAccountDatabase(filename);
+  createPlayerDemosReader({ database }).replace(
+    "a.rec",
+    sidecars.get(`a.rec${DEMO_GUIDS_SUFFIX}`) as DemoGuidSidecar,
+  );
+  database.close();
+  sidecars.set(`a.rec${DEMO_GUIDS_SUFFIX}`, new Error("Unexpected GUID read"));
+
+  await import("./backfill-player-profiles");
+
+  expect(readProfiles().map(({ guid }) => guid)).toEqual([
+    "101",
+    "202",
+    "303",
+    "505",
+  ]);
+  expect(readProfiles().find(({ guid }) => guid === "505")).toMatchObject({
+    bodyType: "bioderm",
+    skin: "Uploaded skin",
+  });
+  expect(
+    mocks.read.mock.calls
+      .filter(([, suffix]) => suffix === DEMO_GUIDS_SUFFIX)
+      .map(([key]) => key)
+      .sort(),
+  ).toEqual(["b.rec", "orphan.rec", upload].sort());
+  expect(summary()).toMatchObject({
+    guids: 5,
+    stored: 4,
+    skipped: 1,
+    failed: 0,
   });
   expect(process.exitCode).toBeUndefined();
 });

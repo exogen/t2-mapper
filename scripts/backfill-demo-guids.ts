@@ -1,7 +1,7 @@
 /** Write private GUID sidecars for demos already in R2. */
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { readDemoNamesByGuid } from "../relay/demoAnalysis.js";
 import { DEMO_GUIDS_SUFFIX } from "../relay/demoGuids.js";
 import {
@@ -10,7 +10,7 @@ import {
 } from "../relay/privateDemoStore.js";
 import { isPublishedDemoKey } from "../relay/demoKeys.js";
 import type { DemoUploadConfig } from "../relay/demoUpload.js";
-import { listAllObjects, r2Client } from "./lib/r2.js";
+import { listAllObjects, objectExists, r2Client } from "./lib/r2.js";
 
 const { values } = parseArgs({
   options: {
@@ -59,11 +59,11 @@ if (!privateConfig) {
 }
 const store = new PrivateDemoStore(privateConfig);
 
+const existing = new Set(await store.listDemoKeys(DEMO_GUIDS_SUFFIX));
 // Published recordings only; external-source caches are not part of the gallery.
 const recordings = (await listAllObjects(client, config))
   .map(({ key }) => key)
   .filter((key) => isPublishedDemoKey(key.slice(config.prefix.length)));
-const existing = new Set(await store.listDemoKeys(DEMO_GUIDS_SUFFIX));
 const demos = recordings.filter(
   (key) => !values.filter || key.includes(values.filter),
 );
@@ -100,7 +100,16 @@ await Promise.all(
           await object.Body.transformToByteArray(),
           path.posix.basename(demoKey),
         );
-        await store.put(demoKey, DEMO_GUIDS_SUFFIX, { namesByGuid });
+        const source = await client.send(
+          new HeadObjectCommand({ Bucket: config.bucket, Key: key }),
+          { abortSignal: AbortSignal.timeout(30_000) },
+        );
+        if (!object.ETag || source.ETag !== object.ETag)
+          throw new Error("Recording changed while reading its player GUIDs");
+        await store.put(demoKey, DEMO_GUIDS_SUFFIX, {
+          namesByGuid,
+          sourceETag: object.ETag,
+        });
         counts.written++;
         console.log(
           JSON.stringify({
@@ -122,13 +131,15 @@ if (values.prune) {
     recordings.map((key) => key.slice(config.prefix.length)),
   );
   for (const demoKey of existing) {
-    if (published.has(demoKey)) continue;
-    if (values["dry-run"]) {
-      counts.planned++;
-      console.log(JSON.stringify({ demoKey, action: "prune" }));
-      continue;
-    }
+    if (published.has(demoKey) || !isPublishedDemoKey(demoKey)) continue;
     try {
+      if (await objectExists(client, config, `${config.prefix}${demoKey}`))
+        continue;
+      if (values["dry-run"]) {
+        counts.planned++;
+        console.log(JSON.stringify({ demoKey, action: "prune" }));
+        continue;
+      }
       await store.delete(demoKey, DEMO_GUIDS_SUFFIX);
       counts.pruned++;
       console.log(JSON.stringify({ demoKey, result: "pruned" }));

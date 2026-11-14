@@ -21,6 +21,7 @@ import { handleAccountCors, json } from "./accountHttp.js";
 import {
   isDiscordId,
   type AccountPublicProfile,
+  type AccountMapGeniusDemos,
   type AccountUser,
 } from "./accountTypes.js";
 import { browserIdentity } from "./browserAudit.js";
@@ -261,6 +262,7 @@ export async function createAppAuth({
   database,
   onUpdateGamePresentation,
   onReadDemoPresentation,
+  onReadUserDemos,
 }: {
   config: AppAuthConfig;
   database: Database.Database;
@@ -268,6 +270,7 @@ export async function createAppAuth({
     update: GamePresentationUpdate,
   ) => Promise<PublishedGame>;
   onReadDemoPresentation?: (filename: string) => Promise<DemoMetadata>;
+  onReadUserDemos?: (discordId: string) => Promise<AccountMapGeniusDemos>;
 }): Promise<AppAuthService> {
   const requestOrigins = [...config.trustedOrigins, config.baseURL];
   const options = {
@@ -424,6 +427,9 @@ export async function createAppAuth({
   const publicProfileQuery = database.prepare(
     'SELECT u."id" AS "userId", a."accountId" AS "discordId", u."name", u."discordUsername", u."image" FROM "user" u JOIN "account" a ON a."userId" = u."id" WHERE a."providerId" = ? AND a."accountId" = ? LIMIT 2',
   );
+  const publicDemoLinkQuery = database.prepare(
+    'SELECT 1 FROM "t2AccountLink" WHERE "discordId" = ? LIMIT 1',
+  );
   const requireAdmin: AppAuthService["requireAdmin"] = async (headers) => {
     const user = await getAccount(headers);
     if (!user) throw new AppAuthError(401, "Sign in to continue");
@@ -451,7 +457,11 @@ export async function createAppAuth({
             json(res, 405, { error: "Method not allowed" });
             return true;
           }
-          const discordId = pathname.slice(PUBLIC_USERS_PATH.length + 1);
+          const path = pathname.slice(PUBLIC_USERS_PATH.length + 1);
+          const demosRequest = path.endsWith("/demos");
+          const discordId = demosRequest
+            ? path.slice(0, -"/demos".length)
+            : path;
           if (!isDiscordId(discordId)) {
             json(res, 400, { error: "Invalid Discord user ID" });
             return true;
@@ -463,6 +473,27 @@ export async function createAppAuth({
             throw new Error("Discord account linkage is ambiguous");
           if (!rows.length) {
             json(res, 404, { error: "User not found" });
+            return true;
+          }
+          if (demosRequest) {
+            try {
+              if (!onReadUserDemos) {
+                if (publicDemoLinkQuery.get(discordId)) {
+                  json(res, 503, { error: "User demos are unavailable" });
+                } else {
+                  json(res, 200, { linked: false, filenames: [] });
+                }
+              } else {
+                const { linked, filenames } = await onReadUserDemos(discordId);
+                json(res, 200, { linked, filenames });
+              }
+            } catch {
+              relayLog.error(
+                { event: "user_demos_unavailable", pathname },
+                "User demo membership is unavailable",
+              );
+              json(res, 503, { error: "User demos are unavailable" });
+            }
             return true;
           }
           const { userId, ...discord } = rows[0];

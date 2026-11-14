@@ -17,10 +17,24 @@
   isolation: isolate;
 }
 
+.DemoSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.DemoSection + .DemoSection {
+  margin-top: 20px;
+}
+
 .Header {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.Header > nav {
+  margin-left: auto;
 }
 
 .Title {

@@ -14,8 +14,9 @@ import {
   PrivateDemoStore,
   loadPrivateDemoStorageConfig,
 } from "../relay/privateDemoStore.js";
-import { collectDemoGuidInventory } from "../relay/demoGuidInventory.js";
+import { collectDemoMembershipInventory } from "../relay/demoGuidInventory.js";
 import { updatePlayerProfiles } from "../relay/playerProfileService.js";
+import { createPlayerDemosReader } from "../relay/playerDemos.js";
 import { r2Client } from "./lib/r2.js";
 
 async function main(): Promise<void> {
@@ -42,6 +43,7 @@ async function main(): Promise<void> {
         "A best map requires a score above zero; zero and negative scores are skipped.",
         "GUIDs without usable current stats are skipped; their existing profiles remain.",
         "Each needed stats sidecar is read once for appearance and best-map updates.",
+        "Uses SQLite membership for indexed demos and GUID sidecars for the rest.",
         "",
         "  --dry-run              Compute and report profiles without opening or writing SQLite",
         "  --concurrency=N        Sidecars fetched at once (default: 16)",
@@ -94,15 +96,16 @@ async function main(): Promise<void> {
     const privateConfig = loadPrivateDemoStorageConfig();
     if (!privateConfig) throw new Error("Missing DEMO_PRIVATE_R2_BUCKET.");
     const store = new PrivateDemoStore(privateConfig);
-    const inventory = await collectDemoGuidInventory(store, {
+    const inventory = await collectDemoMembershipInventory(store, {
       concurrency,
+      memberships: database ? createPlayerDemosReader({ database }) : undefined,
       onError: (demoKey, error) => console.error(demoKey, error),
     });
     if (inventory.failed)
       throw new Error(
         `Could not read ${inventory.failed} GUID sidecars; no profiles were written.`,
       );
-    const guids = Object.keys(inventory.namesByGuid);
+    const guids = [...inventory.guids];
     console.error(
       `Collected ${guids.length} GUIDs from ${inventory.sidecarCount} private sidecars.`,
     );
@@ -119,7 +122,7 @@ async function main(): Promise<void> {
       await indexObject.Body.transformToString(),
     ) as DemoMetadata[];
     const missingGuids = index.filter(
-      (record) => !inventory.sidecars.has(record.filename),
+      (record) => !inventory.membersByDemo.has(record.filename),
     ).length;
     if (missingGuids)
       console.error(
@@ -129,7 +132,8 @@ async function main(): Promise<void> {
       store,
       index,
       guids,
-      guidSidecars: inventory.sidecars,
+      hasGuid: (filename, guid) =>
+        inventory.membersByDemo.get(filename)?.has(guid) ?? false,
       demoCount,
       suitUps,
       concurrency,

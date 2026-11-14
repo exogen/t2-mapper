@@ -3,11 +3,9 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useState,
   type ReactNode,
 } from "react";
 import { FaSearch } from "react-icons/fa";
-import { LuChevronLeft, LuChevronRight } from "react-icons/lu";
 import { useDemoLoad } from "../state/demoLoadStore";
 import { demoPlayerCount } from "../stream/demoIndex";
 import { useDemoIndexSuspense } from "./useDemoIndex";
@@ -18,6 +16,8 @@ import { focusDemoSelect } from "./demoSelectFocus";
 import { LoadingIndicator } from "./LoadingIndicator";
 import { DEMO_CHECKPOINT_SUFFIX } from "../stream/demoCheckpoints";
 import { DemoCard } from "./DemoCard";
+import { DemoPagination } from "./DemoPagination";
+import { DEMO_PAGE_SIZE, useDemoPagination } from "./useDemoPagination";
 import { DemoDropZone } from "./DemoDropZone";
 import UserDemos from "./UserDemos";
 import styles from "./DemoDropScreen.module.css";
@@ -25,7 +25,6 @@ import styles from "./DemoDropScreen.module.css";
 /** Featured demos: recently indexed games with a real crowd and length. */
 const FEATURED_MIN_PLAYERS = 10;
 const FEATURED_MIN_DURATION_MS = 10 * 60_000;
-const FEATURED_COUNT = 6;
 
 /** The section's chrome, shared by the skeleton and the loaded list so
  *  the two can never drift apart (or shift the layout between them). */
@@ -60,7 +59,7 @@ function FeaturedSkeleton() {
         role="status"
         aria-label="Loading featured demos"
       >
-        {Array.from({ length: FEATURED_COUNT }, (_, i) => (
+        {Array.from({ length: DEMO_PAGE_SIZE }, (_, i) => (
           <div key={i} className={styles.SkeletonTile} aria-hidden="true">
             <div className={styles.SkeletonPreview} />
             <div className={styles.SkeletonBody}>
@@ -91,7 +90,6 @@ function FeaturedDemos() {
 }
 
 function FeaturedList() {
-  const [page, setPage] = useState(0);
   const { data: demos } = useDemoIndexSuspense();
   const matching = useMemo(
     () =>
@@ -108,44 +106,15 @@ function FeaturedList() {
         ),
     [demos],
   );
-  const pageCount = Math.ceil(matching.length / FEATURED_COUNT);
-  // Clamp instead of resetting state if the list shrinks under us.
-  const currentPage = Math.min(page, Math.max(0, pageCount - 1));
-  const featured = matching.slice(
-    currentPage * FEATURED_COUNT,
-    (currentPage + 1) * FEATURED_COUNT,
-  );
-  if (featured.length === 0) return null;
+  const pagination = useDemoPagination(matching);
+  if (pagination.items.length === 0) return null;
   return (
     <div className={styles.Featured} data-demo-cards>
       <FeaturedHeader
-        pager={
-          pageCount > 1 ? (
-            <>
-              <button
-                type="button"
-                className={styles.PagerButton}
-                aria-label="Previous page"
-                disabled={currentPage === 0}
-                onClick={() => setPage(currentPage - 1)}
-              >
-                <LuChevronLeft />
-              </button>
-              <button
-                type="button"
-                className={styles.PagerButton}
-                aria-label="Next page"
-                disabled={currentPage >= pageCount - 1}
-                onClick={() => setPage(currentPage + 1)}
-              >
-                <LuChevronRight />
-              </button>
-            </>
-          ) : null
-        }
+        pager={<DemoPagination {...pagination} label="Featured demo pages" />}
       />
       <div className={styles.FeaturedGrid}>
-        {featured.map((demo) => (
+        {pagination.items.map((demo) => (
           <DemoCard key={demo.filename} demo={demo} />
         ))}
       </div>

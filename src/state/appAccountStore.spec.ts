@@ -19,6 +19,7 @@ vi.mock("../account/authClient", () => ({
 let account: typeof import("./appAccountStore");
 let fetchMock: ReturnType<typeof vi.fn<typeof fetch>>;
 let replaceState: ReturnType<typeof vi.fn>;
+let assignLocation: ReturnType<typeof vi.fn>;
 const admin = {
   id: "user-1",
   name: "Example player",
@@ -32,11 +33,16 @@ const admin = {
 beforeEach(async () => {
   vi.resetModules();
   vi.stubEnv("AUTH_API_URL", "https://api.example.com");
+  vi.stubEnv("BASE_URL", "/");
   fetchMock = vi.fn<typeof fetch>();
   vi.stubGlobal("fetch", fetchMock);
   replaceState = vi.fn();
+  assignLocation = vi.fn();
   vi.stubGlobal("window", {
-    location: { href: "https://example.com/watch/?server=abc#camera" },
+    location: {
+      href: "https://example.com/watch/?server=abc#camera",
+      assign: assignLocation,
+    },
     history: { state: { keep: true }, replaceState },
   });
   client.social.mockReset();
@@ -75,6 +81,7 @@ it("loads a verified app session with its cookie and never caches the response",
     status: "ready",
     user: admin,
   });
+  expect(assignLocation).not.toHaveBeenCalled();
 });
 
 function stalledRequest(
@@ -400,7 +407,7 @@ it("clears pending state after a startup exception so the user can retry", () =>
   expect(popup.open).toHaveBeenCalledTimes(2);
 });
 
-it("verifies the cookie session on completion after clearing busy state, without navigating", async () => {
+it("verifies the cookie session before redirecting to the signed-in user's profile", async () => {
   account.appAccountStore.setState({ status: "ready", enabled: true });
   fetchMock.mockImplementation(async () => {
     expect(account.appAccountStore.getState().pending).toBeNull();
@@ -417,11 +424,35 @@ it("verifies the cookie session on completion after clearing busy state, without
     signInUrl: null,
   });
   expect(popup.dispose).toHaveBeenCalledOnce();
-  expect(window.location.href).toBe(
-    "https://example.com/watch/?server=abc#camera",
+  expect(assignLocation).toHaveBeenCalledExactlyOnceWith(
+    "https://example.com/?mode=demo&user=123456789012345678",
   );
   expect(replaceState).not.toHaveBeenCalled();
 });
+
+it("redirects under the frontend base path and only once per successful sign-in", async () => {
+  vi.stubEnv("BASE_URL", "/t2-mapper/");
+  fetchMock.mockResolvedValue(Response.json({ enabled: true, user: admin }));
+  account.signInWithDiscord();
+  signInEvent("complete");
+  await account.refreshAccount();
+  await account.refreshAccount();
+  expect(assignLocation).toHaveBeenCalledExactlyOnceWith(
+    "https://example.com/t2-mapper/?mode=demo&user=123456789012345678",
+  );
+});
+
+it.each(["error", "expired"])(
+  "does not redirect after sign-in is %s",
+  async (outcome) => {
+    fetchMock.mockResolvedValue(Response.json({ enabled: true, user: admin }));
+    account.signInWithDiscord();
+    if (outcome === "error") signInEvent("error");
+    else popup.open.mock.calls.at(-1)![0].onExpired();
+    await account.refreshAccount();
+    expect(assignLocation).not.toHaveBeenCalled();
+  },
+);
 
 it("ignores an older guest focus refresh after authentication even when the startup notification was lost", async () => {
   account.appAccountStore.setState({ status: "ready", enabled: true });
@@ -460,6 +491,7 @@ it("keeps authentication unverified when completion arrives while the relay is o
   expect(window.location.href).toBe(
     "https://example.com/watch/?server=abc#camera",
   );
+  expect(assignLocation).not.toHaveBeenCalled();
 });
 
 it("does not trust a completion notification when the relay still reports an anonymous session", async () => {
@@ -474,6 +506,7 @@ it("does not trust a completion notification when the relay still reports an ano
     user: null,
     error: "Sign-in could not be verified. Please try again.",
   });
+  expect(assignLocation).not.toHaveBeenCalled();
 });
 
 it.each(["retry", "sign-out"] as const)(
@@ -538,6 +571,9 @@ it("refreshes on focus during sign-in even before the normal cooldown expires", 
   await account.refreshAccountOnFocus();
   expect(fetchMock).toHaveBeenCalledTimes(2);
   expect(account.appAccountStore.getState().user).toEqual(admin);
+  expect(assignLocation).toHaveBeenCalledExactlyOnceWith(
+    "https://example.com/?mode=demo&user=123456789012345678",
+  );
   await account.refreshAccountOnFocus();
   expect(fetchMock).toHaveBeenCalledTimes(2);
 });

@@ -2,11 +2,16 @@
  * The demo bucket from a script: the client the relay's uploader builds,
  * from the same DEMO_R2_* variables, and a full listing.
  */
-import { ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
+import {
+  HeadObjectCommand,
+  ListObjectsV2Command,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import {
   loadUploadConfig,
   type DemoUploadConfig,
 } from "../../relay/demoUpload.js";
+import { isMissingObject } from "../../relay/privateDemoStore.js";
 
 /**
  * The bucket client, or a clear exit when the environment lacks the
@@ -49,6 +54,24 @@ export interface BucketObject {
   etag?: string;
 }
 
+/** Only a confirmed missing object is absent; network or permission errors reject. */
+export async function objectExists(
+  client: S3Client,
+  config: DemoUploadConfig,
+  key: string,
+): Promise<boolean> {
+  try {
+    await client.send(
+      new HeadObjectCommand({ Bucket: config.bucket, Key: key }),
+      { abortSignal: AbortSignal.timeout(30_000) },
+    );
+    return true;
+  } catch (error) {
+    if (isMissingObject(error)) return false;
+    throw error;
+  }
+}
+
 /** Every object under the prefix (the bucket's demo folder by default). */
 export async function listAllObjects(
   client: S3Client,
@@ -76,6 +99,7 @@ export async function listAllObjects(
       }
     }
     token = res.IsTruncated ? res.NextContinuationToken : undefined;
+    if (res.IsTruncated && !token) throw new Error("Incomplete demo listing");
   } while (token);
   return out;
 }

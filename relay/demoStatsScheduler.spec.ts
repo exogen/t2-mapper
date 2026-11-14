@@ -18,7 +18,10 @@ import {
   PROFILE_REFRESH_VERSION,
 } from "./demoStats";
 import { DEMO_GUIDS_SUFFIX } from "./demoGuids";
-import { DemoStatsScheduler } from "./demoStatsScheduler";
+import {
+  DemoStatsScheduler,
+  type DemoStatsSchedulerOptions,
+} from "./demoStatsScheduler";
 import type { PrivateDemoStore } from "./privateDemoStore";
 
 afterEach(() => {
@@ -46,6 +49,9 @@ function fixture({
   saved = new Map<string, unknown>(),
   refreshProfiles,
   readNamesByGuid,
+  isMembershipCurrent,
+  updateMembership,
+  pruneMembership,
   now = () => NOW,
   retryDelayMs,
   firstSweepDelayMs,
@@ -61,15 +67,14 @@ function fixture({
   compute?: ReturnType<
     typeof vi.fn<(file: string) => Promise<DemoStatsSidecar>>
   >;
-  refreshProfiles?: (
-    demoKey: string,
-    stats: DemoStatsSidecar,
-    signal: AbortSignal,
-  ) => Promise<void>;
+  refreshProfiles?: DemoStatsSchedulerOptions["refreshProfiles"];
   readNamesByGuid?: (
     file: string,
     signal?: AbortSignal,
   ) => Promise<Record<string, string[]>>;
+  isMembershipCurrent?: DemoStatsSchedulerOptions["isMembershipCurrent"];
+  updateMembership?: DemoStatsSchedulerOptions["updateMembership"];
+  pruneMembership?: DemoStatsSchedulerOptions["pruneMembership"];
   now?: () => number;
   retryDelayMs?: number;
   firstSweepDelayMs?: number;
@@ -127,6 +132,9 @@ function fixture({
     now,
     refreshProfiles,
     readNamesByGuid,
+    isMembershipCurrent,
+    updateMembership,
+    pruneMembership,
     retryDelayMs,
     firstSweepDelayMs,
     sweepIntervalMs,
@@ -135,6 +143,45 @@ function fixture({
 }
 
 describe("DemoStatsScheduler", () => {
+  it.each(["replaced", "deleted"] as const)(
+    "validates the recording again before profile commits when it is %s during refresh",
+    async (change) => {
+      vi.spyOn(demoLog, "error").mockImplementation(() => {});
+      const commit = vi.fn();
+      let changed = false;
+      const refreshProfiles: NonNullable<
+        DemoStatsSchedulerOptions["refreshProfiles"]
+      > = async (_key, stats, _signal, beforeSave) => {
+        if (!changed) {
+          changed = true;
+          if (change === "deleted") f.objects.delete("demos/a.rec");
+          else
+            f.objects.set("demos/a.rec", {
+              body: "202",
+              at: NOW,
+              etag: '"new"',
+            });
+        }
+        await beforeSave();
+        commit(stats.sourceETag);
+      };
+      const f = fixture({ refreshProfiles });
+      f.objects.set("demos/a.rec", { body: "101", at: NOW, etag: '"old"' });
+      f.scheduler.enqueue("a.rec");
+      await f.scheduler.idle();
+      if (change === "deleted") {
+        expect(commit).not.toHaveBeenCalled();
+        expect(f.saved.has(`a.rec${DEMO_PROFILES_SUFFIX}`)).toBe(false);
+      } else {
+        expect(commit).toHaveBeenCalledExactlyOnceWith('"new"');
+        expect(f.compute).toHaveBeenCalledTimes(2);
+        expect(f.saved.get(`a.rec${DEMO_PROFILES_SUFFIX}`)).toMatchObject({
+          sourceETag: '"new"',
+        });
+      }
+    },
+  );
+
   it("saves stats computed from each queued recording, once per key", async () => {
     const { scheduler, saved, objects, compute } = fixture();
     objects.set("demos/a.rec", { body: "from-a", at: NOW });
@@ -245,6 +292,7 @@ describe("DemoStatsScheduler", () => {
       "a.rec",
       saved.get(`a.rec${DEMO_STATS_SUFFIX}`),
       expect.any(AbortSignal),
+      expect.any(Function),
     );
     expect(saved.get(`a.rec${DEMO_PROFILES_SUFFIX}`)).toEqual({
       version: PROFILE_REFRESH_VERSION,
@@ -312,6 +360,7 @@ describe("DemoStatsScheduler", () => {
         statsByGuid: { "101": {} },
       },
       expect.any(AbortSignal),
+      expect.any(Function),
     );
   });
 
@@ -451,6 +500,7 @@ it("repairs missing GUIDs and computes stats from one downloaded recording", asy
   ).toHaveLength(1);
   expect(f.saved.get(`a.rec${DEMO_GUIDS_SUFFIX}`)).toEqual({
     namesByGuid: { "101": ["Player"] },
+    sourceETag: '"source"',
   });
   expect(f.saved.get(`a.rec${DEMO_STATS_SUFFIX}`)).toMatchObject({
     sourceETag: '"source"',
@@ -486,6 +536,7 @@ it("recomputes malformed final scores after restart even with a current completi
     "a.rec",
     corrected,
     expect.any(AbortSignal),
+    expect.any(Function),
   );
   expect(f.saved.get(`a.rec${DEMO_PROFILES_SUFFIX}`)).toEqual(marker());
 });
@@ -632,6 +683,7 @@ it("invalidates saved stats and GUIDs when the published recording was replaced"
   });
   expect(f.saved.get(`a.rec${DEMO_GUIDS_SUFFIX}`)).toEqual({
     namesByGuid: { "202": ["Replacement"] },
+    sourceETag: '"new"',
   });
 });
 
@@ -721,6 +773,362 @@ it.each([false, true])(
     });
     expect(f.saved.get(`a.rec${DEMO_GUIDS_SUFFIX}`)).toEqual({
       namesByGuid: { "202": ["Replacement"] },
+      sourceETag: '"new"',
     });
   },
 );
+
+describe("demo membership maintenance", () => {
+  function seedComplete(f: ReturnType<typeof fixture>, etag = '"source"') {
+    f.objects.set("demos/a.rec", { body: "101", at: NOW, etag });
+    f.saved.set(`a.rec${DEMO_STATS_SUFFIX}`, {
+      ...currentStats(),
+      sourceETag: etag,
+    });
+    f.saved.set(`a.rec${DEMO_GUIDS_SUFFIX}`, {
+      namesByGuid: { "101": ["Player"] },
+    });
+    f.saved.set(`a.rec${DEMO_PROFILES_SUFFIX}`, marker({ sourceETag: etag }));
+  }
+
+  it("repairs a missing SQLite snapshot after restart without replaying or refreshing completed profiles", async () => {
+    let indexed = false;
+    const isMembershipCurrent = vi.fn(() => indexed);
+    const updateMembership = vi.fn(() => {
+      indexed = true;
+    });
+    const refreshProfiles = vi.fn(async () => {});
+    const f = fixture({
+      isMembershipCurrent,
+      updateMembership,
+      refreshProfiles,
+    });
+    seedComplete(f);
+    const originalMarker = f.saved.get(`a.rec${DEMO_PROFILES_SUFFIX}`);
+    expect(await f.scheduler.sweep()).toBe(1);
+    await f.scheduler.idle();
+    expect(updateMembership).toHaveBeenCalledExactlyOnceWith(
+      "a.rec",
+      { namesByGuid: { "101": ["Player"] } },
+      '"source"',
+      NOW,
+    );
+    expect(f.compute).not.toHaveBeenCalled();
+    expect(refreshProfiles).not.toHaveBeenCalled();
+    expect(f.store.delete).not.toHaveBeenCalled();
+    expect(f.store.put).not.toHaveBeenCalled();
+    expect(f.saved.get(`a.rec${DEMO_PROFILES_SUFFIX}`)).toBe(originalMarker);
+    expect(f.store.read).toHaveBeenCalledTimes(3);
+    expect(
+      vi
+        .mocked(f.client.send)
+        .mock.calls.some(([command]) => command instanceof GetObjectCommand),
+    ).toBe(false);
+    expect(await f.scheduler.sweep()).toBe(0);
+    await f.scheduler.idle();
+    expect(updateMembership).toHaveBeenCalledOnce();
+  });
+
+  it("keeps explicit profile refresh behavior when SQLite membership is already current", async () => {
+    const updateMembership = vi.fn();
+    const refreshProfiles = vi.fn(async () => {});
+    const f = fixture({
+      isMembershipCurrent: () => true,
+      updateMembership,
+      refreshProfiles,
+    });
+    seedComplete(f);
+    f.scheduler.enqueue("a.rec");
+    await f.scheduler.idle();
+    expect(refreshProfiles).toHaveBeenCalledOnce();
+    expect(updateMembership).not.toHaveBeenCalled();
+    expect(f.compute).not.toHaveBeenCalled();
+    expect(f.store.delete).toHaveBeenCalledWith(
+      "a.rec",
+      DEMO_PROFILES_SUFFIX,
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("timestamps existing GUID data before the asynchronous sidecar read", async () => {
+    let now = NOW;
+    const updateMembership = vi.fn();
+    const f = fixture({
+      isMembershipCurrent: () => false,
+      updateMembership,
+      now: () => now,
+    });
+    seedComplete(f);
+    const read = vi.mocked(f.store.read).getMockImplementation()!;
+    vi.mocked(f.store.read).mockImplementation(async (...args) => {
+      if (args[1] === DEMO_GUIDS_SUFFIX) now += 1_000;
+      return read(...args);
+    });
+    f.scheduler.enqueue("a.rec");
+    await f.scheduler.idle();
+    expect(updateMembership).toHaveBeenCalledWith(
+      "a.rec",
+      expect.anything(),
+      '"source"',
+      NOW,
+    );
+  });
+
+  it.each([false, true])(
+    "saves and indexes GUIDs before a stats-worker failure (already valid: %s)",
+    async (existingGuids) => {
+      vi.spyOn(demoLog, "error").mockImplementation(() => {});
+      let now = NOW;
+      const readNamesByGuid = vi.fn(async () => {
+        now += 100;
+        return { "101": ["Player"] };
+      });
+      const updateMembership = vi.fn();
+      const f = fixture({
+        readNamesByGuid,
+        isMembershipCurrent: () => false,
+        updateMembership,
+        now: () => now,
+      });
+      f.objects.set("demos/a.rec", { body: "101", at: NOW, etag: '"source"' });
+      if (existingGuids)
+        f.saved.set(`a.rec${DEMO_GUIDS_SUFFIX}`, {
+          namesByGuid: { "101": ["Player"] },
+        });
+      const send = vi.mocked(f.client.send).getMockImplementation()!;
+      vi.mocked(f.client.send).mockImplementation(async (...args) => {
+        const result = await send(...args);
+        if (args[0] instanceof GetObjectCommand) now += 100;
+        return result;
+      });
+      f.compute.mockRejectedValueOnce(new Error("Stats worker crashed"));
+      f.scheduler.enqueue("a.rec");
+      await f.scheduler.idle();
+      expect(updateMembership).toHaveBeenCalledExactlyOnceWith(
+        "a.rec",
+        expect.objectContaining({ namesByGuid: { "101": ["Player"] } }),
+        '"source"',
+        existingGuids ? NOW : NOW + 100,
+      );
+      expect(updateMembership.mock.invocationCallOrder[0]).toBeLessThan(
+        f.compute.mock.invocationCallOrder[0],
+      );
+      expect(readNamesByGuid).toHaveBeenCalledTimes(existingGuids ? 0 : 1);
+      expect(f.saved.get(`a.rec${DEMO_GUIDS_SUFFIX}`)).toMatchObject({
+        namesByGuid: { "101": ["Player"] },
+      });
+      expect(f.saved.has(`a.rec${DEMO_STATS_SUFFIX}`)).toBe(false);
+      expect(f.saved.has(`a.rec${DEMO_PROFILES_SUFFIX}`)).toBe(false);
+    },
+  );
+
+  it("retries a failed membership write without replaying completed stats", async () => {
+    vi.spyOn(demoLog, "error").mockImplementation(() => {});
+    let indexed = false;
+    const updateMembership = vi
+      .fn(() => {
+        indexed = true;
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("SQLite busy");
+      });
+    const f = fixture({
+      isMembershipCurrent: () => indexed,
+      updateMembership,
+      refreshProfiles: vi.fn(async () => {}),
+    });
+    seedComplete(f);
+    expect(await f.scheduler.sweep()).toBe(1);
+    await f.scheduler.idle();
+    expect(indexed).toBe(false);
+    expect(await f.scheduler.sweep()).toBe(1);
+    await f.scheduler.idle();
+    expect(indexed).toBe(true);
+    expect(updateMembership).toHaveBeenCalledTimes(2);
+    expect(f.compute).not.toHaveBeenCalled();
+    expect(f.store.put).not.toHaveBeenCalled();
+  });
+
+  it("does not index GUIDs read before a recording replacement", async () => {
+    vi.spyOn(demoLog, "error").mockImplementation(() => {});
+    const updateMembership = vi.fn();
+    const readNamesByGuid = vi.fn(async () => ({ "202": ["Replacement"] }));
+    const f = fixture({
+      isMembershipCurrent: () => false,
+      updateMembership,
+      readNamesByGuid,
+    });
+    seedComplete(f, '"old"');
+    const read = vi.mocked(f.store.read).getMockImplementation()!;
+    let replaced = false;
+    vi.mocked(f.store.read).mockImplementation(async (...args) => {
+      if (args[1] === DEMO_GUIDS_SUFFIX && !replaced) {
+        replaced = true;
+        f.objects.set("demos/a.rec", { body: "202", at: NOW, etag: '"new"' });
+      }
+      return read(...args);
+    });
+    f.scheduler.enqueue("a.rec");
+    await f.scheduler.idle();
+    expect(updateMembership).toHaveBeenCalledExactlyOnceWith(
+      "a.rec",
+      expect.objectContaining({ namesByGuid: { "202": ["Replacement"] } }),
+      '"new"',
+      NOW,
+    );
+    expect(f.compute).toHaveBeenCalledOnce();
+    expect(f.saved.get(`a.rec${DEMO_STATS_SUFFIX}`)).toMatchObject({
+      sourceETag: '"new"',
+      statsByGuid: { "202": {} },
+    });
+  });
+
+  it("rejects a stale fingerprint left by a source replacement during GUID publication", async () => {
+    vi.spyOn(demoLog, "error").mockImplementation(() => {});
+    const updateMembership = vi.fn();
+    const readNamesByGuid = vi.fn(async (file: string) => ({
+      [await fs.readFile(file, "utf8")]: ["Player"],
+    }));
+    const f = fixture({
+      isMembershipCurrent: () => false,
+      updateMembership,
+      readNamesByGuid,
+    });
+    f.objects.set("demos/a.rec", { body: "101", at: NOW, etag: '"old"' });
+    const put = vi.mocked(f.store.put).getMockImplementation()!;
+    let replaced = false;
+    vi.mocked(f.store.put).mockImplementation(async (...args) => {
+      await put(...args);
+      if (args[1] === DEMO_GUIDS_SUFFIX && !replaced) {
+        replaced = true;
+        f.objects.set("demos/a.rec", { body: "202", at: NOW, etag: '"new"' });
+      }
+    });
+    f.scheduler.enqueue("a.rec");
+    await f.scheduler.idle();
+    expect(readNamesByGuid).toHaveBeenCalledTimes(2);
+    expect(updateMembership).toHaveBeenCalledExactlyOnceWith(
+      "a.rec",
+      { namesByGuid: { "202": ["Player"] }, sourceETag: '"new"' },
+      '"new"',
+      NOW,
+    );
+    expect(f.compute).toHaveBeenCalledOnce();
+    expect(f.saved.get(`a.rec${DEMO_GUIDS_SUFFIX}`)).toEqual({
+      namesByGuid: { "202": ["Player"] },
+      sourceETag: '"new"',
+    });
+  });
+
+  it.each(["guid-read", "membership-head", "guid-put"] as const)(
+    "does not resurrect membership after cancellation during %s",
+    async (phase) => {
+      const updateMembership = vi.fn();
+      const f = fixture({
+        isMembershipCurrent: () => false,
+        updateMembership,
+        readNamesByGuid: vi.fn(async () => ({ "101": ["Player"] })),
+      });
+      seedComplete(f);
+      if (phase === "guid-put") f.saved.delete(`a.rec${DEMO_GUIDS_SUFFIX}`);
+      let release!: () => void;
+      let started!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const waiting = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const block = async () => {
+        started();
+        await gate;
+      };
+      if (phase === "guid-read") {
+        const read = vi.mocked(f.store.read).getMockImplementation()!;
+        vi.mocked(f.store.read).mockImplementation(async (...args) => {
+          if (args[1] === DEMO_GUIDS_SUFFIX) await block();
+          return read(...args);
+        });
+      } else if (phase === "membership-head") {
+        const send = vi.mocked(f.client.send).getMockImplementation()!;
+        let heads = 0;
+        vi.mocked(f.client.send).mockImplementation(async (...args) => {
+          if (args[0] instanceof HeadObjectCommand && ++heads === 2)
+            await block();
+          return send(...args);
+        });
+      } else {
+        const put = vi.mocked(f.store.put).getMockImplementation()!;
+        vi.mocked(f.store.put).mockImplementation(async (...args) => {
+          if (args[1] === DEMO_GUIDS_SUFFIX) await block();
+          return put(...args);
+        });
+      }
+      f.scheduler.enqueue("a.rec");
+      await waiting;
+      const canceled = f.scheduler.cancel("a.rec");
+      release();
+      await canceled;
+      await f.scheduler.idle();
+      expect(updateMembership).not.toHaveBeenCalled();
+      expect(f.compute).not.toHaveBeenCalled();
+    },
+  );
+
+  it("prunes from a complete listing including old recordings, using the observation start", async () => {
+    let now = NOW;
+    const pruneMembership = vi.fn();
+    const f = fixture({
+      pruneMembership,
+      now: () => now,
+      stats: new Set(["a.rec", "b.rec"]),
+    });
+    const send = vi.mocked(f.client.send).getMockImplementation()!;
+    let page = 0;
+    vi.mocked(f.client.send).mockImplementation(async (...args) => {
+      if (!(args[0] instanceof ListObjectsV2Command)) return send(...args);
+      page++;
+      now += 100;
+      return page === 1
+        ? {
+            Contents: [
+              { Key: "demos/a.rec", LastModified: new Date(NOW) },
+              { Key: "demos/old.rec", LastModified: new Date(NOW - 30 * DAY) },
+              { Key: "demos/sources/cache.rec", LastModified: new Date(NOW) },
+            ],
+            IsTruncated: true,
+            NextContinuationToken: "page-2",
+          }
+        : {
+            Contents: [{ Key: "demos/b.rec", LastModified: new Date(NOW) }],
+            IsTruncated: false,
+          };
+    });
+    expect(await f.scheduler.sweep()).toBe(0);
+    expect(pruneMembership).toHaveBeenCalledExactlyOnceWith(
+      new Set(["a.rec", "old.rec", "b.rec"]),
+      NOW,
+    );
+  });
+
+  it.each(["network-error", "missing-token"] as const)(
+    "never prunes an incomplete listing (%s)",
+    async (failure) => {
+      const pruneMembership = vi.fn();
+      const f = fixture({ pruneMembership });
+      let page = 0;
+      vi.mocked(f.client.send).mockImplementation(async () => {
+        if (++page === 2) throw new Error("R2 unavailable");
+        return {
+          Contents: [{ Key: "demos/a.rec", LastModified: new Date(NOW) }],
+          IsTruncated: true,
+          ...(failure === "network-error" && {
+            NextContinuationToken: "page-2",
+          }),
+        };
+      });
+      await expect(f.scheduler.sweep()).rejects.toThrow();
+      expect(pruneMembership).not.toHaveBeenCalled();
+    },
+  );
+});

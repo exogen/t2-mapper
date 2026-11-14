@@ -3,12 +3,13 @@
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { setImmediate } from "node:timers/promises";
 import type { T2PlayerBestMapUpdate, T2PlayerProfile } from "./accountTypes.js";
-import { collectDemoGuidInventory } from "./demoGuidInventory.js";
+import { collectDemoMembershipInventory } from "./demoGuidInventory.js";
 import type { DemoGuidSidecar } from "./demoGuids.js";
 import type { DemoMetadata } from "./demoMetadata.js";
 import type { DemoStatsSidecar } from "./demoPlayerStatsModel.js";
 import { DEMO_STATS_SUFFIX, readCurrentDemoStats } from "./demoStats.js";
 import type { DemoUploadConfig } from "./demoUpload.js";
+import type { PlayerDemosReader } from "./playerDemos.js";
 import {
   createProfileDemoSelector,
   summarizePlayerProfile,
@@ -41,7 +42,9 @@ export interface UpdatePlayerProfilesOptions {
   store: Pick<PrivateDemoStore, "read">;
   index: readonly DemoMetadata[];
   guids: readonly string[];
-  guidSidecars: ReadonlyMap<string, DemoGuidSidecar>;
+  guidSidecars?: ReadonlyMap<string, DemoGuidSidecar>;
+  /** Membership can come directly from SQLite instead of remote GUID sidecars. */
+  hasGuid?: (filename: string, guid: string) => boolean;
   /** Omit to compute appearance profiles without writing them. */
   saveProfile?: (profile: T2PlayerProfile) => void;
   /** Atomic max-only writes, independent of appearance snapshot timestamps. */
@@ -57,6 +60,8 @@ export interface UpdatePlayerProfilesOptions {
   onError?: (key: string, error: unknown) => void;
   /** Snapshot start, so an older concurrent computation cannot replace a newer one. */
   computedAt?: number;
+  /** Revalidate the recording after remote reads and before committing results. */
+  beforeSave?: () => Promise<void>;
   signal?: AbortSignal;
 }
 
@@ -65,6 +70,8 @@ export async function updatePlayerProfiles({
   index,
   guids,
   guidSidecars,
+  hasGuid = (filename, guid) =>
+    !!guidSidecars?.get(filename)?.namesByGuid[guid],
   saveProfile,
   saveBestMaps,
   bestMapDemos,
@@ -75,6 +82,7 @@ export async function updatePlayerProfiles({
   onResult,
   onError,
   computedAt = Date.now(),
+  beforeSave,
   signal,
 }: UpdatePlayerProfilesOptions): Promise<PlayerProfileUpdateCounts> {
   signal?.throwIfAborted();
@@ -88,8 +96,7 @@ export async function updatePlayerProfiles({
     const selection = await select(async (candidates, wanted) => {
       const found: DemoMetadata[] = [];
       for (const record of candidates) {
-        if (guidSidecars.get(record.filename)?.namesByGuid[guid])
-          found.push(record);
+        if (hasGuid(record.filename, guid)) found.push(record);
         if (found.length >= wanted) break;
       }
       return found;
@@ -195,6 +202,10 @@ export async function updatePlayerProfiles({
     ),
   );
   signal?.throwIfAborted();
+  if (beforeSave) {
+    await beforeSave();
+    signal?.throwIfAborted();
+  }
   counts.bestMapsConsidered = bestMaps.size;
   if (bestMaps.size) {
     saveBestMaps?.(
@@ -261,6 +272,7 @@ export interface DemoPlayerProfileUpdaterOptions {
   store: Pick<PrivateDemoStore, "read" | "listDemoKeys">;
   saveProfile: (profile: T2PlayerProfile) => void;
   saveBestMaps?: (entries: readonly T2PlayerBestMapUpdate[]) => void;
+  memberships?: Pick<PlayerDemosReader, "snapshotForDemo" | "filenames">;
   client?: S3Client;
 }
 
@@ -271,6 +283,7 @@ export function createDemoPlayerProfileUpdater({
   store,
   saveProfile,
   saveBestMaps,
+  memberships,
   client = new S3Client({
     region: "auto",
     endpoint: config.endpoint,
@@ -285,6 +298,7 @@ export function createDemoPlayerProfileUpdater({
     demoKey: string,
     stats: DemoStatsSidecar,
     signal?: AbortSignal,
+    beforeSave?: () => Promise<void>,
   ): Promise<PlayerProfileUpdateCounts> => {
     signal?.throwIfAborted();
     const computedAt = Date.now();
@@ -308,31 +322,57 @@ export function createDemoPlayerProfileUpdater({
     const onError = (key: string, cause: unknown) => {
       errors.push(new Error(`Player profile data failed: ${key}`, { cause }));
     };
-    const inventory = await collectDemoGuidInventory(store, {
+    const initiallyIndexed = new Set(memberships?.filenames() ?? []);
+    const inventory = await collectDemoMembershipInventory(store, {
       concurrency: 16,
+      demoKeys: new Set(
+        index
+          .filter((record) => !initiallyIndexed.has(record.filename))
+          .map((record) => record.filename),
+      ),
       onError,
-      includeDemoKeys: new Set(index.map((record) => record.filename)),
       signal,
     });
-    signal?.throwIfAborted();
     if (inventory.failed)
       throw new AggregateError(
         errors,
         `Could not read ${inventory.failed} GUID sidecars`,
       );
-    const current = inventory.sidecars.get(demoKey);
+    const fallbackGuids = inventory.membersByDemo.get(demoKey);
+    const snapshot = memberships?.snapshotForDemo(
+      demoKey,
+      fallbackGuids ? [...fallbackGuids] : undefined,
+    );
+    if (
+      stats.sourceETag &&
+      snapshot?.sourceETag &&
+      stats.sourceETag !== snapshot.sourceETag
+    )
+      throw new Error(
+        `Demo membership changed during profile refresh: ${demoKey}`,
+      );
+    const current = snapshot ? snapshot.guids : fallbackGuids;
     if (!current) throw new Error(`Demo has no GUID sidecar yet: ${demoKey}`);
+    const guids = [...current];
+    const hasGuid = (filename: string, guid: string) => {
+      if (snapshot?.deletedFilenames.has(filename)) return false;
+      return snapshot?.indexedFilenames.has(filename)
+        ? !!snapshot.filenamesByGuid.get(guid)?.has(filename)
+        : !!inventory.membersByDemo.get(filename)?.has(guid);
+    };
+    signal?.throwIfAborted();
     const counts = await updatePlayerProfiles({
       store,
       index,
-      guids: Object.keys(current.namesByGuid),
-      guidSidecars: inventory.sidecars,
+      guids,
+      hasGuid,
       statsSidecars: new Map([[demoKey, stats]]),
       saveProfile,
       saveBestMaps,
       bestMapDemos: new Set([demoKey]),
       onError,
       computedAt,
+      beforeSave,
       signal,
     });
     signal?.throwIfAborted();

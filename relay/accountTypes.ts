@@ -62,6 +62,12 @@ export interface AccountPublicProfile {
   t2Profile: T2ProfileView | null;
 }
 
+/** Public demo membership for all linked T2 accounts, without account GUIDs. */
+export interface AccountMapGeniusDemos {
+  linked: boolean;
+  filenames: string[];
+}
+
 /** The signed-in account additionally carries authorization and session identity. */
 export interface AccountUser extends AccountPublicProfile {
   id: string;

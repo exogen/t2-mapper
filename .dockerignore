@@ -15,6 +15,7 @@ scripts/*
 !scripts/list-discord-users.ts
 !scripts/set-account-role.ts
 !scripts/backfill-demo-guids.ts
+!scripts/backfill-demo-players.ts
 !scripts/backfill-demo-stats.ts
 !scripts/backfill-player-profiles.ts
 !scripts/merge-demo-guids.ts

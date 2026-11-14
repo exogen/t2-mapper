@@ -8,15 +8,20 @@ export const DEMO_GUIDS_SUFFIX = ".guids.json";
 
 export interface DemoGuidSidecar {
   namesByGuid: Record<string, string[]>;
+  /** Identity of the recording used to extract these GUIDs; absent on legacy sidecars. */
+  sourceETag?: string;
 }
 
 /** Validate a stored sidecar, so one damaged object cannot poison a merge. */
 export function readDemoGuidSidecar(value: unknown): DemoGuidSidecar {
   const namesByGuid = (value as Partial<DemoGuidSidecar> | null)?.namesByGuid;
+  const sourceETag = (value as Partial<DemoGuidSidecar> | null)?.sourceETag;
   if (
     !namesByGuid ||
     typeof namesByGuid !== "object" ||
     Array.isArray(namesByGuid) ||
+    (sourceETag !== undefined &&
+      (typeof sourceETag !== "string" || sourceETag.length === 0)) ||
     Object.entries(namesByGuid).some(
       ([guid, names]) =>
         !/^[1-9]\d*$/.test(guid) ||
@@ -25,7 +30,7 @@ export function readDemoGuidSidecar(value: unknown): DemoGuidSidecar {
     )
   )
     throw new Error("Invalid demo GUID sidecar");
-  return { namesByGuid };
+  return { namesByGuid, ...(sourceETag !== undefined && { sourceETag }) };
 }
 
 /**

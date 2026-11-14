@@ -20,7 +20,7 @@ import {
   loadPrivateDemoStorageConfig,
 } from "../relay/privateDemoStore.js";
 import { ASSET_BASE_DIR } from "../src/resourcePaths";
-import { listAllObjects, r2Client } from "./lib/r2.js";
+import { listAllObjects, objectExists, r2Client } from "./lib/r2.js";
 
 const { values } = parseArgs({
   options: {
@@ -77,6 +77,7 @@ if (!privateConfig) {
 const store = new PrivateDemoStore(privateConfig);
 const assetRoot = path.resolve(values["asset-root"]);
 const manifest = path.resolve(values.manifest);
+const existing = await store.listDemoKeys(DEMO_STATS_SUFFIX);
 
 // Published recordings only, newest first; external-source caches are not
 // part of the gallery.
@@ -89,7 +90,6 @@ const recordings = (await listAllObjects(client, config))
   }))
   .filter(({ demoKey }) => isPublishedDemoKey(demoKey))
   .sort((a, b) => b.at - a.at);
-const existing = await store.listDemoKeys(DEMO_STATS_SUFFIX);
 const sourceETags = new Map(
   recordings.map(({ demoKey, etag }) => [demoKey, etag]),
 );
@@ -180,13 +180,15 @@ if (values["dry-run"]) {
 if (values.prune) {
   const published = new Set(recordings.map(({ demoKey }) => demoKey));
   for (const demoKey of existing) {
-    if (published.has(demoKey)) continue;
-    if (values["dry-run"]) {
-      counts.planned++;
-      console.log(JSON.stringify({ demoKey, action: "prune" }));
-      continue;
-    }
+    if (published.has(demoKey) || !isPublishedDemoKey(demoKey)) continue;
     try {
+      if (await objectExists(client, config, `${config.prefix}${demoKey}`))
+        continue;
+      if (values["dry-run"]) {
+        counts.planned++;
+        console.log(JSON.stringify({ demoKey, action: "prune" }));
+        continue;
+      }
       await store.delete(demoKey, DEMO_STATS_SUFFIX);
       counts.pruned++;
       console.log(JSON.stringify({ demoKey, result: "pruned" }));

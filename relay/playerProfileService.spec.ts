@@ -1,5 +1,7 @@
 import { type S3Client } from "@aws-sdk/client-s3";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { migrateAccountSchema } from "./accountDatabase";
 import type { T2PlayerBestMapUpdate, T2PlayerProfile } from "./accountTypes";
 import { DEMO_GUIDS_SUFFIX } from "./demoGuids";
 import type { DemoMetadata } from "./demoMetadata";
@@ -10,9 +12,11 @@ import {
   type PlayerDemoStats,
 } from "./demoPlayerStatsModel";
 import { DEMO_STATS_SUFFIX } from "./demoStats";
+import { createPlayerDemosReader } from "./playerDemos";
 import {
   createDemoPlayerProfileUpdater,
   updatePlayerProfiles,
+  type DemoPlayerProfileUpdaterOptions,
 } from "./playerProfileService";
 
 const config = {
@@ -23,7 +27,12 @@ const config = {
   secretAccessKey: "secret",
 };
 
-afterEach(() => vi.restoreAllMocks());
+const databases: Database.Database[] = [];
+
+afterEach(() => {
+  for (const database of databases.splice(0)) database.close();
+  vi.restoreAllMocks();
+});
 
 function record(filename: string, day: string): DemoMetadata {
   return {
@@ -63,7 +72,7 @@ function stats(statsByGuid: DemoStatsSidecar["statsByGuid"]): DemoStatsSidecar {
   return { version: DEMO_STATS_VERSION, statsByGuid };
 }
 
-function fixture() {
+function fixture(memberships?: DemoPlayerProfileUpdaterOptions["memberships"]) {
   const index = [
     record("old.rec", "01"),
     record("new.rec", "03"),
@@ -123,6 +132,7 @@ function fixture() {
     store,
     saveProfile,
     saveBestMaps,
+    memberships,
     client: { send } as unknown as S3Client,
   });
   return {
@@ -137,7 +147,241 @@ function fixture() {
   };
 }
 
+function membershipIndex(rows: Record<string, string[]>) {
+  const database = new Database(":memory:");
+  databases.push(database);
+  database.exec(
+    'CREATE TABLE "user" ("id" TEXT PRIMARY KEY); CREATE TABLE "account" ("userId" TEXT, "providerId" TEXT, "accountId" TEXT)',
+  );
+  database.transaction(() => migrateAccountSchema(database))();
+  const reader = createPlayerDemosReader({ database });
+  for (const [filename, guids] of Object.entries(rows))
+    reader.replace(filename, {
+      namesByGuid: Object.fromEntries(guids.map((guid) => [guid, []])),
+    });
+  return {
+    ...reader,
+    database,
+    snapshotForDemo: vi.fn(reader.snapshotForDemo),
+  };
+}
+
+function pauseGuidRead(
+  store: ReturnType<typeof fixture>["store"],
+  filename: string,
+) {
+  const read = store.read.getMockImplementation()!;
+  let release!: () => void;
+  let started!: () => void;
+  const paused = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  store.read.mockImplementation(async (key, suffix) => {
+    if (key === filename && suffix === DEMO_GUIDS_SUFFIX) {
+      started();
+      await gate;
+    }
+    return read(key, suffix);
+  });
+  return { paused, release: () => release() };
+}
+
 describe("automatic demo player profiles", () => {
+  it("uses indexed membership for affected players without listing or reading any GUID sidecars", async () => {
+    const memberships = membershipIndex({
+      "old.rec": ["101"],
+      "new.rec": ["101", "202", "404"],
+      "other.rec": ["303"],
+    });
+    const f = fixture(memberships);
+    for (const key of f.sidecars.keys()) {
+      if (key.endsWith(DEMO_GUIDS_SUFFIX))
+        f.sidecars.set(
+          key,
+          new Error("Indexed GUID sidecars must not be read"),
+        );
+    }
+    await expect(f.update("new.rec", f.current)).resolves.toMatchObject({
+      stored: 2,
+    });
+    expect(f.store.listDemoKeys).not.toHaveBeenCalled();
+    expect(f.store.read.mock.calls).toEqual([["old.rec", DEMO_STATS_SUFFIX]]);
+    expect(memberships.snapshotForDemo).toHaveBeenCalledExactlyOnceWith(
+      "new.rec",
+      undefined,
+    );
+    expect(f.saveProfile.mock.calls[0][0]).toMatchObject({
+      guid: "101",
+      demoCount: 2,
+      armor: "Heavy",
+    });
+  });
+
+  it("honors membership backfilled while a missing sidecar read is pending", async () => {
+    const memberships = membershipIndex({ "new.rec": ["101", "202", "404"] });
+    const f = fixture(memberships);
+    f.sidecars.set(`old.rec${DEMO_GUIDS_SUFFIX}`, null);
+    const { paused, release } = pauseGuidRead(f.store, "old.rec");
+    const pending = f.update("new.rec", f.current);
+    await paused;
+    expect(memberships.database.inTransaction).toBe(false);
+    memberships.replace("old.rec", { namesByGuid: { "101": [] } });
+    release();
+    await pending;
+    expect(f.saveProfile.mock.calls[0][0]).toMatchObject({
+      guid: "101",
+      demoCount: 2,
+      armor: "Heavy",
+    });
+  });
+
+  it("does not save profiles if current membership is deleted during fallback reads", async () => {
+    const memberships = membershipIndex({ "new.rec": ["101", "202"] });
+    const f = fixture(memberships);
+    const { paused, release } = pauseGuidRead(f.store, "old.rec");
+    const pending = f.update("new.rec", f.current);
+    await paused;
+    memberships.remove("new.rec");
+    release();
+    await expect(pending).rejects.toThrow(/no GUID sidecar/);
+    expect(f.saveProfile).not.toHaveBeenCalled();
+    expect(f.saveBestMaps).not.toHaveBeenCalled();
+  });
+
+  it("ignores a historical fallback sidecar tombstoned while its read is pending", async () => {
+    const memberships = membershipIndex({ "new.rec": ["101", "202"] });
+    const f = fixture(memberships);
+    f.index[0].recordedAt = "2026-11-05T12:00:00.000Z";
+    const { paused, release } = pauseGuidRead(f.store, "old.rec");
+    const pending = f.update("new.rec", f.current);
+    await paused;
+    memberships.remove("old.rec");
+    release();
+    await pending;
+    expect(f.saveProfile.mock.calls[0][0]).toMatchObject({
+      guid: "101",
+      demoCount: 1,
+      armor: "Light",
+      lastSeenAt: Date.parse(f.index[1].recordedAt),
+    });
+    expect(f.store.read).not.toHaveBeenCalledWith("old.rec", DEMO_STATS_SUFFIX);
+  });
+
+  it("rejects replacement membership from another recording before committing old stats", async () => {
+    const memberships = membershipIndex({ "new.rec": ["101", "202"] });
+    const f = fixture(memberships);
+    f.current.sourceETag = '"old-recording"';
+    f.current.statsByGuid["101"].mapScores = [{ mission: "Old", score: 999 }];
+    const { paused, release } = pauseGuidRead(f.store, "old.rec");
+    const pending = f.update("new.rec", f.current);
+    await paused;
+    memberships.replace(
+      "new.rec",
+      { namesByGuid: { "303": [] } },
+      { sourceETag: '"replacement"' },
+    );
+    release();
+    await expect(pending).rejects.toThrow(/membership changed/);
+    expect(f.saveProfile).not.toHaveBeenCalled();
+    expect(f.saveBestMaps).not.toHaveBeenCalled();
+  });
+
+  it("revalidates the source after historical stats reads before any SQLite writes", async () => {
+    const f = fixture();
+    f.current.statsByGuid["101"].mapScores = [{ mission: "Old", score: 999 }];
+    const beforeSave = vi.fn(async () => {
+      expect(f.store.read).toHaveBeenCalledWith("old.rec", DEMO_STATS_SUFFIX);
+      throw new Error("Recording replaced during profile refresh");
+    });
+    await expect(
+      f.update("new.rec", f.current, undefined, beforeSave),
+    ).rejects.toThrow(/Recording replaced/);
+    expect(beforeSave).toHaveBeenCalledOnce();
+    expect(f.saveBestMaps).not.toHaveBeenCalled();
+    expect(f.saveProfile).not.toHaveBeenCalled();
+  });
+
+  it("honors cancellation received during the final source validation", async () => {
+    const f = fixture();
+    f.current.statsByGuid["101"].mapScores = [{ mission: "Old", score: 999 }];
+    const controller = new AbortController();
+    await expect(
+      f.update("new.rec", f.current, controller.signal, async () => {
+        controller.abort(new Error("Canceled during validation"));
+      }),
+    ).rejects.toThrow(/Canceled during validation/);
+    expect(f.saveBestMaps).not.toHaveBeenCalled();
+    expect(f.saveProfile).not.toHaveBeenCalled();
+  });
+
+  it("reads unindexed historical membership while keeping indexed demos local", async () => {
+    const f = fixture(membershipIndex({ "new.rec": ["101", "202", "404"] }));
+    await expect(f.update("new.rec", f.current)).resolves.toMatchObject({
+      stored: 2,
+    });
+    expect(
+      f.store.read.mock.calls.filter(
+        ([, suffix]) => suffix === DEMO_GUIDS_SUFFIX,
+      ),
+    ).toEqual([
+      ["old.rec", DEMO_GUIDS_SUFFIX],
+      ["other.rec", DEMO_GUIDS_SUFFIX],
+    ]);
+    expect(f.store.listDemoKeys).not.toHaveBeenCalled();
+    expect(f.saveProfile.mock.calls[0][0]).toMatchObject({
+      guid: "101",
+      demoCount: 2,
+    });
+  });
+
+  it("preserves user-uploaded appearance history alongside the official SQLite index", async () => {
+    const f = fixture(
+      membershipIndex({
+        "old.rec": ["101"],
+        "new.rec": ["101", "202", "404"],
+        "other.rec": ["303"],
+      }),
+    );
+    const upload = "users/123456789012345678/upload.rec";
+    f.index.push(record(upload, "04"));
+    f.sidecars.set(`${upload}${DEMO_GUIDS_SUFFIX}`, {
+      namesByGuid: { "101": [] },
+    });
+    f.sidecars.set(
+      `${upload}${DEMO_STATS_SUFFIX}`,
+      stats({
+        "101": player({
+          skins: [{ raceGender: "Bioderm", skin: "Uploaded skin" }],
+        }),
+      }),
+    );
+    await f.update("new.rec", f.current);
+    expect(
+      f.store.read.mock.calls.filter(
+        ([, suffix]) => suffix === DEMO_GUIDS_SUFFIX,
+      ),
+    ).toEqual([[upload, DEMO_GUIDS_SUFFIX]]);
+    expect(f.saveProfile.mock.calls[0][0]).toMatchObject({
+      guid: "101",
+      bodyType: "bioderm",
+      skin: "Uploaded skin",
+      demoCount: 3,
+      lastSeenAt: Date.parse(f.index.at(-1)!.recordedAt),
+    });
+  });
+
+  it("rejects corrupt unindexed membership before writing any profiles", async () => {
+    const f = fixture(membershipIndex({ "new.rec": ["101", "202"] }));
+    f.sidecars.set(`old.rec${DEMO_GUIDS_SUFFIX}`, new Error("Offline"));
+    await expect(f.update("new.rec", f.current)).rejects.toThrow(
+      /GUID sidecars/,
+    );
+    expect(f.saveProfile).not.toHaveBeenCalled();
+  });
+
   it("compares only the new demo's final scores, while appearance still samples recent history", async () => {
     const f = fixture();
     f.sidecars.set(
@@ -374,7 +618,7 @@ describe("automatic demo player profiles", () => {
       lastSeenAt: Date.parse(f.index.at(-1)!.recordedAt),
     });
     expect(f.send).toHaveBeenCalledTimes(2);
-    expect(f.store.listDemoKeys).toHaveBeenCalledTimes(2);
+    expect(f.store.listDemoKeys).not.toHaveBeenCalled();
   });
 
   it("waits for the current recording's index and GUID publication before updating", async () => {

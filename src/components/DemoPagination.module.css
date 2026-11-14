@@ -1,0 +1,42 @@
+.Root {
+  display: flex;
+  gap: 4px;
+}
+
+.Button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(65, 131, 139, 0.5);
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.3);
+  color: #b0d5c9;
+  font-size: 14px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+}
+
+@media (hover: hover) {
+  .Button:hover:not(:disabled) {
+    border-color: rgba(125, 255, 255, 0.6);
+    color: #7dffff;
+  }
+}
+
+.Button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+@media (pointer: coarse) {
+  .Button {
+    width: 40px;
+    height: 40px;
+    font-size: 20px;
+  }
+}

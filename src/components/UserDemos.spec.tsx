@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type {
+  AccountMapGeniusDemos,
   AccountPublicProfile,
   T2ProfileView,
 } from "../../relay/accountTypes";
@@ -11,6 +12,7 @@ import type {
 import type { AppAccountState } from "../state/appAccountStore";
 import type { DemoIndexEntry } from "../stream/demoIndex";
 import UserDemos from "./UserDemos";
+import { useDemoPagination } from "./useDemoPagination";
 
 const OWNER = "123456789012345678";
 const OTHER = "223456789012345678";
@@ -24,6 +26,18 @@ const fixture = vi.hoisted(() => ({
   uploadsError: false,
   profile: undefined as AccountPublicProfile | null | undefined,
   profileError: false,
+  mapGenius: { linked: false, filenames: [] } as
+    AccountMapGeniusDemos | null | undefined,
+  mapGeniusError: false,
+  mapGeniusOptions: {} as {
+    queryKey: readonly string[];
+    enabled: boolean;
+    staleTime: number;
+    refetchOnWindowFocus: boolean;
+    queryFn: (context: {
+      signal: AbortSignal;
+    }) => Promise<AccountMapGeniusDemos | null>;
+  },
   profileOptions: {} as {
     queryKey: readonly string[];
     enabled: boolean;
@@ -62,6 +76,14 @@ vi.mock("@tanstack/react-query", () => ({
         isFetching: false,
       };
     }
+    if (options.queryKey[0] === "userMapGeniusDemos") {
+      fixture.mapGeniusOptions = options as typeof fixture.mapGeniusOptions;
+      return {
+        data: fixture.mapGenius,
+        isError: fixture.mapGeniusError,
+        isFetching: false,
+      };
+    }
     fixture.queryOptions = options as typeof fixture.queryOptions;
     return {
       data: fixture.uploads,
@@ -74,6 +96,10 @@ vi.mock("./useDemoIndex", () => ({
   useDemoIndex: () => ({ data: fixture.demos, ...fixture.index }),
   refreshDemoIndex: vi.fn(),
 }));
+vi.mock("./useDemoPagination", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./useDemoPagination")>();
+  return { ...actual, useDemoPagination: vi.fn(actual.useDemoPagination) };
+});
 vi.mock("../state/appAccountStore", () => ({
   useAppAccount: (select: (state: AppAccountState) => unknown) =>
     select(fixture.account),
@@ -210,6 +236,9 @@ beforeEach(() => {
   fixture.uploadsError = false;
   fixture.profile = undefined;
   fixture.profileError = false;
+  fixture.mapGenius = { linked: false, filenames: [] };
+  fixture.mapGeniusError = false;
+  vi.mocked(useDemoPagination).mockClear();
   fixture.invalidate.mockClear();
   fixture.refreshAccount.mockClear();
   fixture.cacheUpload.mockReset();
@@ -231,6 +260,208 @@ afterEach(() => vi.unstubAllGlobals());
 
 const render = (userId = OWNER) =>
   renderToStaticMarkup(<UserDemos userId={userId} />);
+
+function section(markup: string, label: "MapGenius demos" | "Uploaded demos") {
+  return (
+    markup.match(
+      new RegExp(
+        `<section\\b[^>]*aria-label="${label}"[^>]*>([\\s\\S]*?)<\\/section>`,
+      ),
+    )?.[1] ?? ""
+  );
+}
+
+function mapGeniusDemo(index: number): DemoIndexEntry {
+  return {
+    ...demo,
+    filename: `mapgenius-${index}.rec`,
+    recordedAt: `2026-11-${String(index + 1).padStart(2, "0")}T12:00:00.000Z`,
+    recorder: "MapGenius",
+    games: [{ ...demo.games[0], mission: `MapGenius ${index}` }],
+  };
+}
+
+it.each(["owner", "visitor"])(
+  "shows the linked MapGenius demo union above uploads for the %s",
+  (viewer) => {
+    if (viewer === "owner") {
+      signIn();
+      fixture.uploads = ledger();
+    }
+    const older = mapGeniusDemo(0);
+    const newer = mapGeniusDemo(1);
+    const community = { ...mapGeniusDemo(2), recorder: "Another recorder" };
+    const otherUpload = {
+      ...demo,
+      filename: key(OTHER),
+      recorder: "MapGenius",
+    };
+    fixture.demos = [older, newer, older, community, demo, otherUpload];
+    fixture.mapGenius = {
+      linked: true,
+      filenames: [
+        older.filename,
+        newer.filename,
+        older.filename,
+        community.filename,
+        demo.filename,
+        otherUpload.filename,
+        "missing.rec",
+      ],
+    };
+    const markup = render();
+    const official = section(markup, "MapGenius demos");
+    expect(official.match(/<article\b/g)).toHaveLength(2);
+    expect(official.indexOf(newer.filename)).toBeLessThan(
+      official.indexOf(older.filename),
+    );
+    expect(official).not.toContain(community.filename);
+    expect(official).not.toContain(demo.filename);
+    expect(official).not.toContain(otherUpload.filename);
+    expect(official).not.toContain("Delete");
+    expect(section(markup, "Uploaded demos")).toContain(demo.filename);
+    expect(markup.indexOf('aria-label="MapGenius demos"')).toBeLessThan(
+      markup.indexOf('aria-label="Uploaded demos"'),
+    );
+    expect(fixture.demos[0]).toBe(older);
+    expect(fixture.mapGeniusOptions.enabled).toBe(true);
+  },
+);
+
+it("uses separate page slices for MapGenius demos and uploaded demos", () => {
+  const official = Array.from({ length: 13 }, (_, index) =>
+    mapGeniusDemo(index),
+  );
+  const uploads = Array.from({ length: 8 }, (_, index) => ({
+    ...demo,
+    filename: key(OWNER, index.toString(16)),
+  }));
+  fixture.demos = [...official, ...uploads];
+  fixture.mapGenius = {
+    linked: true,
+    filenames: official.map(({ filename }) => filename),
+  };
+  vi.mocked(useDemoPagination).mockImplementationOnce(
+    <T,>(items: readonly T[]) => ({
+      page: 1,
+      pageCount: 3,
+      items: items.slice(6, 12),
+      onPageChange: vi.fn(),
+    }),
+  );
+  const markup = render();
+  const mapPage = section(markup, "MapGenius demos");
+  const uploadPage = section(markup, "Uploaded demos");
+  expect(mapPage.match(/<article\b/g)).toHaveLength(6);
+  expect(mapPage).toContain(official[6].filename);
+  expect(mapPage).not.toContain(official[12].filename);
+  expect(mapPage).not.toContain(official[0].filename);
+  expect(uploadPage.match(/<article\b/g)).toHaveLength(6);
+  expect(uploadPage).toContain(uploads[0].filename);
+  expect(uploadPage).not.toContain(uploads[6].filename);
+  expect(mapPage).toContain('aria-label="MapGenius demo pages"');
+  expect(uploadPage).toContain('aria-label="Uploaded demo pages"');
+  expect(vi.mocked(useDemoPagination).mock.calls).toHaveLength(2);
+});
+
+it.each([
+  { linked: false, filenames: [], message: "No Tribes 2 account linked." },
+  { linked: true, filenames: [], message: "No MapGenius demos found." },
+])(
+  "distinguishes linked=$linked when there are no MapGenius demos",
+  ({ linked, filenames, message }) => {
+    fixture.mapGenius = { linked, filenames };
+    const official = section(render(), "MapGenius demos");
+    expect(official).toContain(message);
+    expect(official).not.toContain('role="alert"');
+  },
+);
+
+it.each(["loading", "failed", "unknown"])(
+  "keeps the $0 MapGenius query distinct from having no links",
+  (state) => {
+    fixture.mapGenius = state === "unknown" ? null : undefined;
+    fixture.mapGeniusError = state === "failed";
+    const markup = render();
+    const official = section(markup, "MapGenius demos");
+    expect(official).toContain(
+      state === "loading"
+        ? "Loading MapGenius demos…"
+        : state === "failed"
+          ? "Could not load MapGenius demos"
+          : "Unknown user.",
+    );
+    expect(official).not.toContain("No Tribes 2 account linked.");
+    expect(official).not.toContain("No MapGenius demos found.");
+    expect(section(markup, "Uploaded demos")).toContain(demo.filename);
+  },
+);
+
+it.each(["loading", "failed"])(
+  "keeps the MapGenius gallery waiting while its public index is %s",
+  (state) => {
+    fixture.mapGenius = { linked: true, filenames: ["mapgenius.rec"] };
+    fixture.demos = undefined;
+    fixture.index.isPending = state === "loading";
+    fixture.index.isError = state === "failed";
+    const official = section(render(), "MapGenius demos");
+    expect(official).toContain(
+      state === "loading"
+        ? "Loading MapGenius demos…"
+        : "Could not load MapGenius demos",
+    );
+    expect(official).not.toContain("No MapGenius demos found.");
+    expect(official).not.toContain("No Tribes 2 account linked.");
+  },
+);
+
+it("fetches public linked-demo membership without cookies and preserves cancellation", async () => {
+  signIn();
+  const membership = { linked: true, filenames: ["mapgenius.rec"] };
+  const request = vi.fn(
+    async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json(membership),
+  );
+  vi.stubGlobal("fetch", request);
+  render();
+  const controller = new AbortController();
+  await expect(
+    fixture.mapGeniusOptions.queryFn({ signal: controller.signal }),
+  ).resolves.toEqual(membership);
+  expect(fixture.mapGeniusOptions.queryKey).toEqual([
+    "userMapGeniusDemos",
+    OWNER,
+  ]);
+  expect(fixture.mapGeniusOptions.staleTime).toBe(60_000);
+  expect(fixture.mapGeniusOptions.refetchOnWindowFocus).toBe(false);
+  expect(String(request.mock.calls[0][0])).toBe(
+    `https://api.example.com/api/users/${OWNER}/demos`,
+  );
+  const options = request.mock.calls[0][1];
+  expect(options).toMatchObject({
+    credentials: "omit",
+    cache: "no-cache",
+    signal: expect.any(AbortSignal),
+  });
+  controller.abort();
+  expect(options?.signal?.aborted).toBe(true);
+});
+
+it.each([404, 500])(
+  "handles the linked-demo endpoint's HTTP %i without claiming no linked account",
+  async (status) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("Private diagnostics", { status })),
+    );
+    render();
+    const load = fixture.mapGeniusOptions.queryFn({
+      signal: new AbortController().signal,
+    });
+    if (status === 404) await expect(load).resolves.toBeNull();
+    else await expect(load).rejects.toThrow("Could not load MapGenius demos");
+  },
+);
 
 it("shows public cards for only the exact canonical owner, including short solo demos", () => {
   fixture.demos = [
@@ -284,16 +515,17 @@ it.each([
   },
 );
 
-it("renders every matching card without pagination, search, upload, or drop controls", () => {
+it("paginates matching public uploads six per page without search or upload controls", () => {
   fixture.demos = Array.from({ length: 12 }, (_, i) => ({
     ...demo,
     filename: key(OWNER, i.toString(16)),
   }));
   const markup = render();
-  expect(markup.match(/<article\b/g)).toHaveLength(12);
-  expect(markup).not.toMatch(
-    /Previous page|Next page|Search|My demos|Upload demo|Drag|<input/,
-  );
+  expect(markup.match(/<article\b/g)).toHaveLength(6);
+  expect(markup).toContain('aria-label="Uploaded demo pages"');
+  expect(markup).toContain('aria-label="Previous page" disabled=""');
+  expect(markup).toContain('aria-label="Next page"');
+  expect(markup).not.toMatch(/Search|My demos|Upload demo|Drag|<input/);
 });
 
 it("sorts by recording date rather than upload creation time without mutating the shared index", () => {
@@ -457,6 +689,7 @@ it.each([
   expect(markup).toContain("Invalid Discord user ID");
   expect(markup).not.toContain("SoloGame");
   expect(fixture.queryOptions.enabled).toBe(false);
+  expect(fixture.mapGeniusOptions.enabled).toBe(false);
 });
 
 it("shows the empty state without falling back to featured demos", () => {
@@ -782,6 +1015,9 @@ it("shows the public T2 character in the profile header", () => {
   const markup = render();
   expect(markup).toContain("Public Player&#x27;s Tribes 2 character");
   expect(markup).toContain('tabindex="0"');
+  expect(markup.indexOf("Tribes 2 character")).toBeLessThan(
+    markup.indexOf(">MapGenius demos<"),
+  );
   expect(markup.indexOf("Tribes 2 character")).toBeLessThan(
     markup.indexOf(">Uploaded demos<"),
   );

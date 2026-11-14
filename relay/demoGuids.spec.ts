@@ -27,6 +27,14 @@ describe("readDemoGuidSidecar", () => {
     expect(readDemoGuidSidecar(sidecar)).toEqual(sidecar);
   });
 
+  it("retains a recording fingerprint when present", () => {
+    const sidecar = {
+      namesByGuid: { "12345": ["exogen"] },
+      sourceETag: '"source-a"',
+    };
+    expect(readDemoGuidSidecar(sidecar)).toEqual(sidecar);
+  });
+
   it.each([
     null,
     {},
@@ -35,6 +43,8 @@ describe("readDemoGuidSidecar", () => {
     { namesByGuid: { "012": ["Padded"] } },
     { namesByGuid: { "12345": "exogen" } },
     { namesByGuid: { "12345": [7] } },
+    { namesByGuid: {}, sourceETag: "" },
+    { namesByGuid: {}, sourceETag: 42 },
   ])("rejects %j", (value) => {
     expect(() => readDemoGuidSidecar(value)).toThrow(/Invalid/);
   });

@@ -15,11 +15,13 @@ const mocks = vi.hoisted(() => ({
   send: vi.fn(),
   compute: vi.fn(),
 }));
-vi.mock("./lib/r2", () => ({
+vi.mock("./lib/r2", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/r2")>()),
   r2Client: mocks.r2Client,
   listAllObjects: mocks.list,
 }));
-vi.mock("../relay/privateDemoStore", () => ({
+vi.mock("../relay/privateDemoStore", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../relay/privateDemoStore")>()),
   loadPrivateDemoStorageConfig: mocks.loadPrivate,
   PrivateDemoStore: class {
     listDemoKeys = mocks.existing;
@@ -52,6 +54,7 @@ beforeEach(() => {
   mocks.loadPrivate.mockReturnValue({ bucket: "private", prefix: "demos/" });
   mocks.list.mockResolvedValue([{ key: "demos/a.rec", etag: sourceETag }]);
   mocks.existing.mockResolvedValue([]);
+  mocks.read.mockResolvedValue(null);
   mocks.compute.mockResolvedValue(stats);
   mocks.send.mockImplementation(async (command: unknown) => {
     if (command instanceof GetObjectCommand)
@@ -149,3 +152,57 @@ it.each([sourceETag, undefined])(
     expect(summary()).toMatchObject({ written: 0, current: 1, failed: 0 });
   },
 );
+
+it("preserves sidecars for recordings published after the public listing", async () => {
+  process.argv.push("--prune");
+  mocks.existing.mockResolvedValue(["new.rec"]);
+  mocks.list.mockResolvedValue([]);
+  await import("./backfill-demo-stats");
+  expect(mocks.existing.mock.invocationCallOrder[0]).toBeLessThan(
+    mocks.list.mock.invocationCallOrder[0],
+  );
+  expect(mocks.send).toHaveBeenCalledWith(
+    expect.objectContaining({
+      input: { Bucket: "public", Key: "demos/new.rec" },
+    }),
+    expect.anything(),
+  );
+  expect(mocks.remove).not.toHaveBeenCalled();
+  expect(summary()).toMatchObject({ pruned: 0, failed: 0 });
+});
+
+it.each([false, true])(
+  "prunes only a confirmed missing recording (dry run: %s)",
+  async (dryRun) => {
+    process.argv.push("--prune", ...(dryRun ? ["--dry-run"] : []));
+    mocks.existing.mockResolvedValue(["gone.rec", "sources/cache.rec"]);
+    mocks.list.mockResolvedValue([]);
+    mocks.send.mockRejectedValue(
+      Object.assign(new Error("Missing"), { name: "NoSuchKey" }),
+    );
+    await import("./backfill-demo-stats");
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    if (dryRun) expect(mocks.remove).not.toHaveBeenCalled();
+    else
+      expect(mocks.remove).toHaveBeenCalledExactlyOnceWith(
+        "gone.rec",
+        DEMO_STATS_SUFFIX,
+      );
+    expect(summary()).toMatchObject({
+      pruned: dryRun ? 0 : 1,
+      planned: dryRun ? 1 : 0,
+      failed: 0,
+    });
+  },
+);
+
+it("keeps sidecars when the source presence check fails", async () => {
+  process.argv.push("--prune");
+  mocks.existing.mockResolvedValue(["uncertain.rec"]);
+  mocks.list.mockResolvedValue([]);
+  mocks.send.mockRejectedValue(new Error("R2 unavailable"));
+  await import("./backfill-demo-stats");
+  expect(mocks.remove).not.toHaveBeenCalled();
+  expect(summary()).toMatchObject({ pruned: 0, failed: 1 });
+  expect(process.exitCode).toBe(1);
+});

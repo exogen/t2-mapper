@@ -1,13 +1,14 @@
 /**
  * A player's most common inventory loadouts, recent skins, kills, held
  * weapons and outfits, and their representative profile, from the private
- * stats of their most recent demos (found by GUID through the private GUID
- * sidecars). `--store` saves the profile to the account database.
+ * stats of their most recent demos (found through SQLite membership when
+ * available, otherwise private GUID sidecars). `--store` saves the profile.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
+import Database from "better-sqlite3";
 import { DEMO_GUIDS_SUFFIX, readDemoGuidSidecar } from "../relay/demoGuids.js";
 import type { DemoMetadata } from "../relay/demoMetadata.js";
 import {
@@ -29,6 +30,7 @@ import {
   loadPrivateDemoStorageConfig,
 } from "../relay/privateDemoStore.js";
 import { normalizePlayerGuid } from "../relay/shared.js";
+import { createPlayerDemosReader } from "../relay/playerDemos.js";
 import { r2Client } from "./lib/r2.js";
 import {
   createProfileDemoSelector,
@@ -106,6 +108,44 @@ if (!privateConfig) {
 }
 const store = new PrivateDemoStore(privateConfig);
 
+function indexedAppearances(playerGuid: string) {
+  const filename = path.resolve(
+    process.env.AUTH_DATABASE_PATH || ".relay/accounts/app.sqlite",
+  );
+  if (!fs.existsSync(filename)) return;
+  const database = new Database(filename, {
+    readonly: true,
+    fileMustExist: true,
+  });
+  try {
+    if (hasPendingAccountSchemaMigrations(database)) {
+      database.close();
+      return;
+    }
+    const version = database.pragma("data_version", { simple: true });
+    const membership = createPlayerDemosReader({ database });
+    const appearances = database.transaction(() => ({
+      covered: new Set(membership.filenames()),
+      matching: new Set(membership.filenamesForGuid(playerGuid)),
+    }))();
+    return {
+      ...appearances,
+      assertCurrent() {
+        if (database.pragma("data_version", { simple: true }) !== version)
+          throw new Error(
+            "Player demo membership changed during the lookup; rerun this command.",
+          );
+      },
+      close: () => database.close(),
+    };
+  } catch (error) {
+    if (database.open) database.close();
+    throw error;
+  }
+}
+
+const indexed = indexedAppearances(guid);
+
 const names = new Set<string>();
 const withoutGuids = new Set<string>();
 
@@ -125,6 +165,10 @@ async function findAppearances(
   candidates: DemoMetadata[],
   wanted: number,
 ): Promise<DemoMetadata[]> {
+  candidates = candidates.filter(
+    ({ filename }) =>
+      !indexed?.covered.has(filename) || indexed.matching.has(filename),
+  );
   const found: DemoMetadata[] = [];
   for (
     let offset = 0;
@@ -149,82 +193,101 @@ async function findAppearances(
   return found;
 }
 
-const indexObject = await client.send(
-  new GetObjectCommand({
-    Bucket: config.bucket,
-    Key: `${config.prefix}index.json`,
-  }),
-  { abortSignal: AbortSignal.timeout(60_000) },
-);
-const index = JSON.parse(
-  await indexObject.Body!.transformToString(),
-) as DemoMetadata[];
-const { selected, lastSeen } = await createProfileDemoSelector(index)(
-  findAppearances,
-  demoCount,
-);
-if (!selected.length) {
-  console.error(`No published demos include GUID ${guid}.`);
-  process.exit(1);
-}
-if (withoutGuids.size)
-  console.error(
-    `${withoutGuids.size} demos have no GUID sidecar yet; run npm run demos:backfill-guids.`,
-  );
-
-const sidecars = await Promise.all(
-  selected.map(async (record) => {
-    const value = await store.read(record.filename, DEMO_STATS_SUFFIX);
-    return readCurrentDemoStats(value);
-  }),
-);
-const missingStats: string[] = [];
-const playerDemos: PlayerProfileDemo[] = [];
-for (const [i, record] of selected.entries()) {
-  const sidecar = sidecars[i];
-  if (!sidecar) missingStats.push(record.filename);
-  else if (sidecar.statsByGuid[guid])
-    playerDemos.push({
-      record,
-      recordedAt: record.recordedAt,
-      stats: sidecar.statsByGuid[guid],
-    });
-}
-if (missingStats.length)
-  console.error(
-    `${missingStats.length} demos have no current player stats yet; run npm run demos:backfill-stats.`,
-  );
-const result = summarizePlayerProfile(
-  guid,
-  playerDemos,
-  lastSeen,
-  suitUps,
-  computedAt,
-);
-if (!result) process.exit(1);
-const { stats, used, profile } = result;
-
-if (values.store) {
-  const filename = path.resolve(
-    process.env.AUTH_DATABASE_PATH || ".relay/accounts/app.sqlite",
-  );
-  // Never create a fresh database for a mistyped path.
-  if (!fs.existsSync(filename)) {
-    console.error(`Account database not found: ${filename}`);
-    process.exit(1);
-  }
-  const database = openAccountDatabase(filename);
-  const migrated = !hasPendingAccountSchemaMigrations(database);
-  if (migrated) saveT2PlayerProfile(database, profile);
-  database.close();
-  if (!migrated) {
-    console.error(
-      "Account database has not been migrated yet. Start the relay with Discord sign-in enabled first.",
+const { selected, stats, used, profile, missingStats } = await (async () => {
+  try {
+    const indexObject = await client.send(
+      new GetObjectCommand({
+        Bucket: config.bucket,
+        Key: `${config.prefix}index.json`,
+      }),
+      { abortSignal: AbortSignal.timeout(60_000) },
     );
-    process.exit(1);
+    const index = JSON.parse(
+      await indexObject.Body!.transformToString(),
+    ) as DemoMetadata[];
+    const { selected, lastSeen } = await createProfileDemoSelector(index)(
+      findAppearances,
+      demoCount,
+    );
+    indexed?.assertCurrent();
+    if (!selected.length) {
+      console.error(`No published demos include GUID ${guid}.`);
+      process.exit(1);
+    }
+    if (withoutGuids.size)
+      console.error(
+        `${withoutGuids.size} demos have no GUID sidecar yet; run npm run demos:backfill-guids.`,
+      );
+
+    const sidecars = await Promise.all(
+      selected.map(async (record) => {
+        const value = await store.read(record.filename, DEMO_STATS_SUFFIX);
+        return readCurrentDemoStats(value);
+      }),
+    );
+    const missingStats: string[] = [];
+    const playerDemos: PlayerProfileDemo[] = [];
+    for (const [i, record] of selected.entries()) {
+      const sidecar = sidecars[i];
+      if (!sidecar) missingStats.push(record.filename);
+      else if (sidecar.statsByGuid[guid])
+        playerDemos.push({
+          record,
+          recordedAt: record.recordedAt,
+          stats: sidecar.statsByGuid[guid],
+        });
+    }
+    if (missingStats.length)
+      console.error(
+        `${missingStats.length} demos have no current player stats yet; run npm run demos:backfill-stats.`,
+      );
+    indexed?.assertCurrent();
+    const result = summarizePlayerProfile(
+      guid,
+      playerDemos,
+      lastSeen,
+      suitUps,
+      computedAt,
+    );
+    if (!result) process.exit(1);
+    const { stats, used, profile } = result;
+
+    if (values.store) {
+      const filename = path.resolve(
+        process.env.AUTH_DATABASE_PATH || ".relay/accounts/app.sqlite",
+      );
+      // Never create a fresh database for a mistyped path.
+      if (!fs.existsSync(filename)) {
+        console.error(`Account database not found: ${filename}`);
+        process.exit(1);
+      }
+      const database = openAccountDatabase(filename);
+      const migrated = !hasPendingAccountSchemaMigrations(database);
+      try {
+        if (migrated)
+          database
+            .transaction(() => {
+              indexed?.assertCurrent();
+              saveT2PlayerProfile(database, profile);
+            })
+            .immediate();
+      } finally {
+        database.close();
+      }
+      if (!migrated) {
+        console.error(
+          "Account database has not been migrated yet. Start the relay with Discord sign-in enabled first.",
+        );
+        process.exit(1);
+      }
+      console.error(`Stored the profile for GUID ${guid} in ${filename}.`);
+    }
+
+    return { selected, stats, used, profile, missingStats };
+  } finally {
+    indexed?.close();
   }
-  console.error(`Stored the profile for GUID ${guid} in ${filename}.`);
-}
+})();
 
 const sorted = (counts: Map<string, number>) =>
   Object.fromEntries([...counts].sort((a, b) => b[1] - a[1]));

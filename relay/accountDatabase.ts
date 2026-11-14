@@ -91,6 +91,21 @@ const ACCOUNT_SCHEMA_MIGRATIONS: readonly string[] = [
     GROUP BY a."accountId", l."guid";
   DROP TABLE "t2AccountLink_legacy";
   CREATE INDEX "t2AccountLink_guid" ON "t2AccountLink" ("guid");`,
+  // Durable demo membership is independent of linked accounts. Keep a marker
+  // for empty demos and deletions so older backfills cannot resurrect them.
+  `CREATE TABLE "t2PlayerDemo" (
+    "filename" TEXT NOT NULL PRIMARY KEY,
+    "sourceETag" TEXT,
+    "observedAt" INTEGER NOT NULL CHECK ("observedAt" >= 0),
+    "deleted" INTEGER NOT NULL CHECK ("deleted" IN (0, 1))
+  ) STRICT;
+  CREATE TABLE "t2PlayerDemoGuid" (
+    "guid" TEXT NOT NULL
+      CHECK ("guid" GLOB '[1-9]*' AND "guid" NOT GLOB '*[^0-9]*'),
+    "filename" TEXT NOT NULL REFERENCES "t2PlayerDemo" ("filename") ON DELETE CASCADE,
+    PRIMARY KEY ("guid", "filename")
+  ) STRICT, WITHOUT ROWID;
+  CREATE INDEX "t2PlayerDemoGuid_filename" ON "t2PlayerDemoGuid" ("filename");`,
 ];
 
 function accountSchemaVersion(database: Database.Database): number {

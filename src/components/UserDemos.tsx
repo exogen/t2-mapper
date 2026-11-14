@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ReactElement } from "react";
 import { LuLoaderCircle } from "react-icons/lu";
 import {
   isDiscordId,
+  type AccountMapGeniusDemos,
   type AccountPublicProfile,
 } from "../../relay/accountTypes";
 import {
@@ -14,8 +15,10 @@ import {
 import { appApiBaseUrl } from "../account/authClient";
 import { refreshAccount, useAppAccount } from "../state/appAccountStore";
 import { uploadUserDemo, userDemoUploadsUrl } from "../stream/userDemoUpload";
+import { isMapGeniusDemo } from "../stream/demoIndex";
 import { DemoCard, PendingDemoCard } from "./DemoCard";
 import { DemoDropZone } from "./DemoDropZone";
+import { DemoPagination } from "./DemoPagination";
 import { demoTitle } from "./demoFormat";
 import {
   MISSION_ART_NAME_FALLBACKS,
@@ -24,6 +27,7 @@ import {
 } from "./missionArt";
 import { PlayerProfileViewer } from "./PlayerProfileViewer";
 import { refreshDemoIndex, useDemoIndex } from "./useDemoIndex";
+import { useDemoPagination } from "./useDemoPagination";
 import { UserIdentity } from "./UserIdentity";
 import styles from "./UserDemos.module.css";
 
@@ -119,6 +123,29 @@ export default function UserDemos({ userId }: { userId: string }) {
   });
   const profile = owner ? account.user : publicProfile.data;
   const bestMap = profile?.t2Profile?.bestMap;
+  const mapGenius = useQuery({
+    queryKey: ["userMapGeniusDemos", userId],
+    enabled: validUser,
+    queryFn: async ({ signal }): Promise<AccountMapGeniusDemos | null> => {
+      const response = await fetch(
+        new URL(
+          `/api/users/${encodeURIComponent(userId)}/demos`,
+          appApiBaseUrl,
+        ),
+        {
+          credentials: "omit",
+          cache: "no-cache",
+          signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
+        },
+      );
+      if (response.status === 404) return null;
+      if (!response.ok) throw new Error("Could not load MapGenius demos");
+      return response.json();
+    },
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
   const transfer = useRef<AbortController | null>(null);
   const [transferState, setTransferState] = useState<{
     filename: string;
@@ -211,6 +238,7 @@ export default function UserDemos({ userId }: { userId: string }) {
       setError("Demo exceeds the 50 MB upload limit.");
       return;
     }
+    uploadedPages.onPageChange(0);
     const controller = new AbortController();
     transfer.current = controller;
     setTransferState({ filename: file.name, progress: 0 });
@@ -368,6 +396,45 @@ export default function UserDemos({ userId }: { userId: string }) {
       a.key.localeCompare(b.key)
     );
   });
+  const mapGeniusFilenames = new Set(
+    mapGenius.data?.linked ? mapGenius.data.filenames : [],
+  );
+  const mapGeniusDemos = [
+    ...new Map(
+      (index.data ?? [])
+        .filter(
+          (demo) =>
+            mapGeniusFilenames.has(demo.filename) && isMapGeniusDemo(demo),
+        )
+        .map((demo) => [demo.filename, demo]),
+    ).values(),
+  ].sort(
+    (a, b) =>
+      b.recordedAt.localeCompare(a.recordedAt) ||
+      a.filename.localeCompare(b.filename),
+  );
+  const mapGeniusPages = useDemoPagination(mapGeniusDemos);
+  const uploadedPages = useDemoPagination(gallery);
+  let mapGeniusMessage = "";
+  let mapGeniusError = false;
+  if (mapGenius.isError && !mapGenius.data) {
+    mapGeniusMessage =
+      "Could not load MapGenius demos. Please reload to try again.";
+    mapGeniusError = true;
+  } else if (mapGenius.data === null) {
+    mapGeniusMessage = "Unknown user.";
+  } else if (!mapGenius.data) {
+    mapGeniusMessage = "Loading MapGenius demos…";
+  } else if (!mapGenius.data.linked) {
+    mapGeniusMessage = "No Tribes 2 account linked.";
+  } else if (mapGenius.data.filenames.length && !index.data) {
+    mapGeniusError = index.isError;
+    mapGeniusMessage = index.isError
+      ? "Could not load MapGenius demos. Please reload to try again."
+      : "Loading MapGenius demos…";
+  } else if (!mapGeniusDemos.length) {
+    mapGeniusMessage = "No MapGenius demos found.";
+  }
 
   // A failed card already shows its own error.
   const shownError =
@@ -392,11 +459,7 @@ export default function UserDemos({ userId }: { userId: string }) {
       {validUser && bestMap && bestMap.score > 0 && (
         <ProfileMapBanner key={bestMap.mission} mission={bestMap.mission} />
       )}
-      <section
-        className={styles.Section}
-        aria-label="Uploaded demos"
-        data-demo-cards
-      >
+      <div className={styles.Section} data-demo-cards>
         {validUser && (
           <div
             className={styles.Profile}
@@ -422,34 +485,69 @@ export default function UserDemos({ userId }: { userId: string }) {
             ) : null}
           </div>
         )}
-        <div className={styles.Header}>
-          <h2 className={styles.Title}>Uploaded demos</h2>
-          {(index.isFetching || (owner && uploads.isFetching)) && (
-            <LuLoaderCircle
-              className={styles.Spinner}
-              role="status"
-              aria-label="Refreshing demos"
-            />
-          )}
-        </div>
-        {!validUser ? (
-          <p className={styles.Error} role="alert">
-            Invalid Discord user ID.
-          </p>
-        ) : gallery.length > 0 ? (
-          <div className={styles.Grid}>
-            {gallery.map((entry) => entry.card)}
-          </div>
-        ) : index.isPending ? (
-          <p className={styles.Message}>Loading demos…</p>
-        ) : index.isError && !index.data ? (
-          <p className={styles.Error} role="alert">
-            Could not load demos. Please reload to try again.
-          </p>
-        ) : (
-          <p className={styles.Message}>No demos uploaded yet.</p>
+        {validUser && (
+          <section className={styles.DemoSection} aria-label="MapGenius demos">
+            <div className={styles.Header}>
+              <h2 className={styles.Title}>MapGenius demos</h2>
+              {(mapGenius.isFetching || index.isFetching) && (
+                <LuLoaderCircle
+                  className={styles.Spinner}
+                  role="status"
+                  aria-label="Refreshing MapGenius demos"
+                />
+              )}
+              <DemoPagination
+                {...mapGeniusPages}
+                label="MapGenius demo pages"
+              />
+            </div>
+            {mapGeniusDemos.length > 0 ? (
+              <div className={styles.Grid}>
+                {mapGeniusPages.items.map((demo) => (
+                  <DemoCard key={demo.filename} demo={demo} />
+                ))}
+              </div>
+            ) : (
+              <p
+                className={mapGeniusError ? styles.Error : styles.Message}
+                role={mapGeniusError ? "alert" : undefined}
+              >
+                {mapGeniusMessage}
+              </p>
+            )}
+          </section>
         )}
-      </section>
+        <section className={styles.DemoSection} aria-label="Uploaded demos">
+          <div className={styles.Header}>
+            <h2 className={styles.Title}>Uploaded demos</h2>
+            {(index.isFetching || (owner && uploads.isFetching)) && (
+              <LuLoaderCircle
+                className={styles.Spinner}
+                role="status"
+                aria-label="Refreshing demos"
+              />
+            )}
+            <DemoPagination {...uploadedPages} label="Uploaded demo pages" />
+          </div>
+          {!validUser ? (
+            <p className={styles.Error} role="alert">
+              Invalid Discord user ID.
+            </p>
+          ) : gallery.length > 0 ? (
+            <div className={styles.Grid}>
+              {uploadedPages.items.map((entry) => entry.card)}
+            </div>
+          ) : index.isPending ? (
+            <p className={styles.Message}>Loading demos…</p>
+          ) : index.isError && !index.data ? (
+            <p className={styles.Error} role="alert">
+              Could not load demos. Please reload to try again.
+            </p>
+          ) : (
+            <p className={styles.Message}>No demos uploaded yet.</p>
+          )}
+        </section>
+      </div>
     </>
   );
   return owner && validUser ? (

@@ -16,6 +16,7 @@
     "demos:checkpoints": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/generate-demo-checkpoints.ts",
     "demos:backfill-checkpoints": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/backfill-demo-checkpoints.ts",
     "demos:backfill-guids": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/backfill-demo-guids.ts",
+    "demos:backfill-players": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/backfill-demo-players.ts",
     "demos:backfill-profiles": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/backfill-player-profiles.ts",
     "demos:backfill-stats": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/backfill-demo-stats.ts",
     "demos:merge-guids": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/merge-demo-guids.ts",

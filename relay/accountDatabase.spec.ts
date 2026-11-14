@@ -51,6 +51,8 @@ afterEach(() => {
 
 function restoreLegacyT2Links(database: Database.Database): void {
   database.exec(`
+    DROP TABLE "t2PlayerDemoGuid";
+    DROP TABLE "t2PlayerDemo";
     DROP TABLE "t2AccountLink";
     CREATE TABLE "t2AccountLink" (
       "userId" TEXT NOT NULL REFERENCES "user" ("id") ON DELETE CASCADE,
@@ -237,6 +239,68 @@ it("adds best-map storage to an existing profile database without changing its p
   saveT2PlayerBestMaps(database, [
     { guid: "123", mission: "Katabatic", score: 10 },
   ]);
+  expect(hasPendingAccountSchemaMigrations(database)).toBe(false);
+});
+
+it("adds durable demo membership to schema four without changing linked accounts or profiles", () => {
+  const { database } = setup();
+  database.transaction(() => migrateAccountSchema(database))();
+  const discordId = "126767979894407168";
+  linkT2Account(database, discordId, "123", "Player");
+  const profile: T2PlayerProfile = {
+    guid: "123",
+    bodyType: "male",
+    skin: "custom",
+    armor: "Light",
+    pack: null,
+    weapon: null,
+    loadoutSource: "worn",
+    suitUps: 2,
+    demoCount: 3,
+    lastSeenAt: 100,
+    computedAt: 200,
+  };
+  saveT2PlayerProfile(database, profile);
+  saveT2PlayerBestMaps(database, [
+    { guid: "123", mission: "Katabatic", score: 42 },
+  ]);
+  const links = database.prepare('SELECT * FROM "t2AccountLink"').all();
+  database.exec(
+    'DROP TABLE "t2PlayerDemoGuid"; DROP TABLE "t2PlayerDemo"; PRAGMA user_version = 4',
+  );
+  expect(hasPendingAccountSchemaMigrations(database)).toBe(true);
+  database.transaction(() => migrateAccountSchema(database))();
+  expect(database.pragma("user_version", { simple: true })).toBe(5);
+  expect(database.prepare('SELECT * FROM "t2AccountLink"').all()).toEqual(
+    links,
+  );
+  expect(database.prepare('SELECT * FROM "t2PlayerProfile"').get()).toEqual(
+    profile,
+  );
+  expect(database.prepare('SELECT * FROM "t2PlayerBestMap"').get()).toEqual({
+    guid: "123",
+    mission: "Katabatic",
+    score: 42,
+  });
+  expect(database.prepare('SELECT * FROM "t2PlayerDemo"').all()).toEqual([]);
+  expect(database.prepare('SELECT * FROM "t2PlayerDemoGuid"').all()).toEqual(
+    [],
+  );
+  database.exec(`INSERT INTO "t2PlayerDemo" VALUES ('match.rec', 'v1', 100, 0);
+    INSERT INTO "t2PlayerDemoGuid" VALUES ('999', 'match.rec');`);
+  expect(() =>
+    database.exec(
+      `INSERT INTO "t2PlayerDemoGuid" VALUES ('888', 'missing.rec')`,
+    ),
+  ).toThrow(/FOREIGN KEY/);
+  expect(() =>
+    database.exec(`INSERT INTO "t2PlayerDemoGuid" VALUES ('0', 'match.rec')`),
+  ).toThrow(/CHECK/);
+  database.exec(`DELETE FROM "t2PlayerDemo" WHERE filename = 'match.rec'`);
+  expect(database.prepare('SELECT * FROM "t2PlayerDemoGuid"').all()).toEqual(
+    [],
+  );
+  expect(database.pragma("foreign_key_check")).toEqual([]);
   expect(hasPendingAccountSchemaMigrations(database)).toBe(false);
 });
 
