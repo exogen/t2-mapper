@@ -15,12 +15,35 @@ import {
   saveT2PlayerBestMaps,
   saveT2PlayerProfile,
   setAccountRole,
+  t2AccountNamesReader,
   t2ProfileReader,
   unlinkT2Account,
 } from "./accountDatabase.js";
 
 const directories: string[] = [];
 const databases: Database.Database[] = [];
+
+it("reads only named linked T2 account labels without requiring a detected player profile", () => {
+  const { database } = setup();
+  database.transaction(() => migrateAccountSchema(database))();
+  const discordId = "126767979894407168";
+  const otherId = "234567890123456789";
+  linkT2Account(database, discordId, "456", "Second name");
+  linkT2Account(database, discordId, "123", "First name");
+  linkT2Account(database, discordId, "789", "First name");
+  linkT2Account(database, discordId, "1000");
+  linkT2Account(database, discordId, "1001", " \t ");
+  linkT2Account(database, otherId, "999", "Someone else");
+  const read = t2AccountNamesReader(database);
+  expect(read(discordId)).toEqual(["First name", "Second name", "First name"]);
+  expect(read(otherId)).toEqual(["Someone else"]);
+  expect(read("345678901234567890")).toEqual([]);
+  unlinkT2Account(database, discordId, "123");
+  expect(read(discordId)).toEqual(["Second name", "First name"]);
+  expect(
+    database.prepare('SELECT count(*) FROM "t2PlayerProfile"').pluck().get(),
+  ).toBe(0);
+});
 
 function setup() {
   const directory = fs.mkdtempSync(

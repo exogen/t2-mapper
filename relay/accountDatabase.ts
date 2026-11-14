@@ -315,6 +315,22 @@ function linkedT2Accounts(
     .all(discordId) as LinkedT2Account[];
 }
 
+/** Public badge labels for linked accounts, including accounts without profile data. */
+export function t2AccountNamesReader(
+  database: Database.Database,
+): (discordId: string) => string[] {
+  const query = database.prepare(`
+    SELECT t."name" FROM "t2AccountLink" l
+    JOIN "t2Account" t ON t."guid" = l."guid"
+    WHERE l."discordId" = ? AND t."name" IS NOT NULL
+    ORDER BY t."guid"
+  `);
+  return (discordId) =>
+    (query.pluck().all(discordId) as string[]).filter(
+      (name) => name.trim().length > 0,
+    );
+}
+
 /** GUIDs linked to any Discord identity, including identities that have not signed in. */
 export function getLinkedT2Guids(database: Database.Database): Set<string> {
   return new Set(

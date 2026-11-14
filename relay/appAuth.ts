@@ -15,6 +15,7 @@ import {
   createAccountDatabaseBackup,
   hasPendingAccountSchemaMigrations,
   migrateAccountSchema,
+  t2AccountNamesReader,
   t2ProfileReader,
 } from "./accountDatabase.js";
 import { handleAccountCors, json } from "./accountHttp.js";
@@ -397,6 +398,7 @@ export async function createAppAuth({
   }, 60 * 60_000);
   cleanupTimer.unref();
   const readT2Profile = t2ProfileReader(database);
+  const readT2AccountNames = t2AccountNamesReader(database);
   const readAccount = async (headers: IncomingHttpHeaders | Headers) => {
     const result = await auth.api.getSession({
       headers: headers instanceof Headers ? headers : fromNodeHeaders(headers),
@@ -418,6 +420,7 @@ export async function createAppAuth({
       role: session.user.role === "admin" ? "admin" : "user",
       discordId: account.accountId,
       discordUsername: session.user.discordUsername,
+      t2AccountNames: readT2AccountNames(account.accountId),
       t2Profile: readT2Profile(session.user.id),
     };
     return { user, headers: result.headers };
@@ -467,7 +470,9 @@ export async function createAppAuth({
             return true;
           }
           const rows = publicProfileQuery.all("discord", discordId) as Array<
-            Omit<AccountPublicProfile, "t2Profile"> & { userId: string }
+            Omit<AccountPublicProfile, "t2Profile" | "t2AccountNames"> & {
+              userId: string;
+            }
           >;
           if (rows.length > 1)
             throw new Error("Discord account linkage is ambiguous");
@@ -499,6 +504,7 @@ export async function createAppAuth({
           const { userId, ...discord } = rows[0];
           const profile: AccountPublicProfile = {
             ...discord,
+            t2AccountNames: readT2AccountNames(discordId),
             t2Profile: readT2Profile(userId),
           };
           json(res, 200, profile);

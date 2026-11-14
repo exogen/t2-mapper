@@ -58,6 +58,8 @@ export interface AccountPublicProfile {
   image: string | null;
   discordId: string;
   discordUsername: string;
+  /** Known names of linked Tribes 2 accounts, without their GUIDs. */
+  t2AccountNames: string[];
   /** The most recently seen linked Tribes 2 account's profile. */
   t2Profile: T2ProfileView | null;
 }

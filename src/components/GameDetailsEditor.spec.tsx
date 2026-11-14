@@ -113,6 +113,7 @@ beforeEach(() => {
       image: null,
       discordId: "123",
       discordUsername: "admin",
+      t2AccountNames: [],
       t2Profile: null,
     },
   };

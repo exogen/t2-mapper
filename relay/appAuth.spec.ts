@@ -395,6 +395,7 @@ it("returns only a cached public Discord profile without requiring a session", a
     name: "Player display name",
     discordUsername: "chosen_handle",
     image: account.image,
+    t2AccountNames: [],
     t2Profile: null,
   });
   expect(query).toHaveBeenCalledExactlyOnceWith("discord", USER_ID);
@@ -403,6 +404,7 @@ it("returns only a cached public Discord profile without requiring a session", a
     "discordUsername",
     "image",
     "name",
+    "t2AccountNames",
     "t2Profile",
   ]);
   expect(app.providerRequests).toHaveLength(providerRequestCount);
@@ -1536,12 +1538,13 @@ it("resolves a prelinked Tribes 2 account on the first Discord sign-in", async (
     bestMap: { mission: "Katabatic", score: 42 },
   };
   expect((await app.account())?.t2Profile).toEqual(expected);
+  expect((await app.account())?.t2AccountNames).toEqual(["Prelinked player"]);
   const response = await app.request(`/api/users/${USER_ID}`, {
     headers: { Cookie: "" },
   });
-  expect(((await response.json()) as AccountPublicProfile).t2Profile).toEqual(
-    expected,
-  );
+  const publicProfile = (await response.json()) as AccountPublicProfile;
+  expect(publicProfile.t2Profile).toEqual(expected);
+  expect(publicProfile.t2AccountNames).toEqual(["Prelinked player"]);
 });
 
 it("shows the most recently seen linked Tribes 2 profile, without its GUID", async () => {
@@ -1560,9 +1563,10 @@ it("shows the most recently seen linked Tribes 2 profile, without its GUID", asy
     lastSeenAt,
     computedAt: 1,
   });
-  linkT2Account(app.database, USER_ID, "111");
-  linkT2Account(app.database, USER_ID, "222");
-  linkT2Account(app.database, USER_ID, "333");
+  linkT2Account(app.database, USER_ID, "111", "Older player");
+  linkT2Account(app.database, USER_ID, "222", "Current player");
+  linkT2Account(app.database, USER_ID, "333", "No recent play");
+  linkT2Account(app.database, USER_ID, "555", "No detected profile");
   saveT2PlayerProfile(
     app.database,
     profile("111", Date.UTC(2026, 9, 1), "Old"),
@@ -1591,6 +1595,19 @@ it("shows the most recently seen linked Tribes 2 profile, without its GUID", asy
     expected,
   );
   expect((await app.account())?.t2Profile).toEqual(expected);
+  const expectedNames = [
+    "Older player",
+    "Current player",
+    "No recent play",
+    "No detected profile",
+  ];
+  expect((await app.account())?.t2AccountNames).toEqual(expectedNames);
+  const withNames = await app.request(`/api/users/${USER_ID}`, {
+    headers: { Cookie: "" },
+  });
+  expect(
+    ((await withNames.json()) as AccountPublicProfile).t2AccountNames,
+  ).toEqual(expectedNames);
   // Older computations could store a zero or penalty-only best map.
   for (const score of [0, -3]) {
     app.database

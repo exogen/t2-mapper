@@ -70,21 +70,36 @@
   overflow-wrap: anywhere;
 }
 
+.AccountBadges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .SocialBadge {
-  align-self: flex-start;
   display: inline-flex;
   align-items: center;
   gap: 4px;
   box-sizing: border-box;
+  min-height: 26px;
   max-width: 100%;
   padding: 3px 8px 4px;
-  border: 1px solid rgba(88, 101, 242, 0.35);
+  border: 1px solid rgba(88, 101, 242, 0.55);
   border-radius: 999px;
-  background: rgba(88, 101, 242, 0.12);
+  background: rgba(88, 101, 242, 0.2);
   color: #c7ccff;
   font-size: 12px;
   line-height: 16px;
   text-decoration: none;
+}
+
+.T2Badge {
+  composes: SocialBadge;
+  border-color: rgba(65, 131, 139, 0.7);
+  background: rgba(65, 131, 139, 0.26);
+  color: #b0d5c9;
 }
 
 .SocialBadge:focus-visible {
@@ -96,6 +111,10 @@
   flex-shrink: 0;
   margin-top: 1px;
   font-size: 16px;
+}
+
+.T2Badge > svg {
+  font-size: 14px;
 }
 
 .BadgeText {

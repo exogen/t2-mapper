@@ -47,6 +47,7 @@ const account: AccountUser = {
   id: "fixture-user",
   discordId: OWNER,
   discordUsername: "tester",
+  t2AccountNames: [],
   name: "Tester",
   image: null,
   role: "user",

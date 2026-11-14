@@ -214,6 +214,7 @@ function signIn(userId = OWNER, role: "user" | "admin" = "user") {
     id: "account",
     discordId: userId,
     discordUsername: "example",
+    t2AccountNames: [],
     t2Profile: null,
     name: "Example",
     image: null,
@@ -948,6 +949,7 @@ it("shows the public Discord identity above Uploaded demos", () => {
     discordId: OWNER,
     name: "Public <Player>",
     discordUsername: "public_player",
+    t2AccountNames: [],
     t2Profile: null,
     image: "https://cdn.discordapp.com/avatar.png",
   };
@@ -981,6 +983,7 @@ it("shows the current signed-in identity immediately without a public profile re
     discordId: OWNER,
     name: "Old public name",
     discordUsername: "old_handle",
+    t2AccountNames: [],
     t2Profile: null,
     image: null,
   };
@@ -1009,6 +1012,7 @@ it("shows the public T2 character in the profile header", () => {
     discordId: OWNER,
     name: "Public Player",
     discordUsername: "public_player",
+    t2AccountNames: [],
     image: null,
     t2Profile,
   };
@@ -1036,6 +1040,7 @@ it("shows a public player's best-map banner behind their identity and character"
     discordId: OWNER,
     name: "Public Player",
     discordUsername: "public_player",
+    t2AccountNames: [],
     image: "https://cdn.discordapp.com/avatar.png",
     t2Profile: { ...t2Profile, bestMap: { mission: "Katabatic", score: 123 } },
   };
@@ -1116,6 +1121,7 @@ it("leaves out the viewer when the account has no T2 profile", () => {
     discordId: OWNER,
     name: "Public Player",
     discordUsername: "public_player",
+    t2AccountNames: [],
     image: null,
     t2Profile: null,
   };
@@ -1148,6 +1154,7 @@ it("fetches public profile data without cookies and preserves query cancellation
     discordId: OWNER,
     name: "Public Player",
     discordUsername: "public_player",
+    t2AccountNames: [],
     image: null,
   };
   const fetchProfile = vi.fn(
