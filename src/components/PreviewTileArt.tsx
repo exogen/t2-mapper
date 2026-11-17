@@ -1,7 +1,32 @@
 import type { ReactNode } from "react";
 import { RawPreviewImage, useFirstAvailableImage } from "./missionPreview";
-import { TILE_FALLBACK_ART_URL } from "./missionArt";
+import {
+  MISSION_ART_NAME_FALLBACKS,
+  missionGalleryArtUrl,
+  missionLoadScreenUrl,
+  TILE_FALLBACK_ART_URL,
+} from "./missionArt";
 import tileStyles from "./PreviewTile.module.css";
+
+/** Load-screen art (with variant fallbacks), then gallery screenshots, then generic art. */
+export function MissionPreviewTileArt({
+  mission,
+  children,
+}: {
+  mission: string;
+  children?: ReactNode;
+}) {
+  return (
+    <PreviewTileArt
+      candidates={[
+        missionLoadScreenUrl(mission, MISSION_ART_NAME_FALLBACKS),
+        missionGalleryArtUrl(mission),
+      ]}
+    >
+      {children}
+    </PreviewTileArt>
+  );
+}
 
 /**
  * A PreviewTile's art pane: tries the candidate art URLs in order (404s

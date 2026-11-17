@@ -12,6 +12,7 @@ import { useFogQueryState, useModeQueryState } from "./useQueryParams";
 import { useTouchDevice } from "./useTouchDevice";
 import { useDataSource } from "../state/gameEntityStore";
 import { applyModeFeatureAccess } from "./modeFeatureAccess";
+import { clipStore } from "../state/clipStore";
 import {
   clearFogEnabledOverride,
   readPersistedSettings,
@@ -57,6 +58,8 @@ export {
 type StateSetter<T> = Dispatch<SetStateAction<T>>;
 
 type SettingsContextType = {
+  clipPlaybackActive: boolean;
+  clipHudLocked: boolean;
   canDisableFog: boolean;
   fogEnabled: boolean;
   setFogEnabled: StateSetter<boolean>;
@@ -211,7 +214,9 @@ const settingsActions = {
   setFollowBehindPlayer: setter("followBehindPlayer"),
 };
 
-function selectSettings(state: SettingsState): SettingsContextType {
+function selectSettings(
+  state: SettingsState,
+): Omit<SettingsContextType, "clipPlaybackActive" | "clipHudLocked"> {
   return {
     ...settingsActions,
     canDisableFog: state.access.canDisableFog,
@@ -299,7 +304,31 @@ function selectControls(state: SettingsState): ControlsContextType {
 
 /** Viewer preferences. Re-renders only when one of these fields changes. */
 export function useSettings(): SettingsContextType {
-  return useStoreWithEqualityFn(settingsStore, selectSettings, shallow);
+  const settings = useStoreWithEqualityFn(
+    settingsStore,
+    selectSettings,
+    shallow,
+  );
+  const { clipPlaybackActive, clipHud } = useStoreWithEqualityFn(
+    clipStore,
+    (state) => ({
+      clipPlaybackActive: state.active !== null,
+      clipHud: state.draft ? undefined : state.active?.hud,
+    }),
+    shallow,
+  );
+  return {
+    ...settings,
+    clipPlaybackActive,
+    clipHudLocked: !!clipHud,
+    showChat: clipHud?.showChat ?? settings.showChat,
+    chatHudStyle: clipHud?.chatHudStyle ?? settings.chatHudStyle,
+    showMatchHud: clipHud?.showMatchHud ?? settings.showMatchHud,
+    matchHudStyle: clipHud?.matchHudStyle ?? settings.matchHudStyle,
+    showScoreHud: settings.showScoreHud && !clipPlaybackActive,
+    showQuickCamHud: settings.showQuickCamHud && !clipPlaybackActive,
+    showInputOverlay: settings.showInputOverlay && !clipPlaybackActive,
+  };
 }
 
 export function useDebug(): DebugContextType {

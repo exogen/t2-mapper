@@ -54,8 +54,29 @@ export async function generateDemoCheckpoints(
   reuseExisting = true,
   plan: DemoCheckpointPlan = loadDemoCheckpointPlan(),
   maxOutputBytes = Infinity,
+  targetTicks?: readonly number[],
+  requiredEndTick?: number,
 ): Promise<DemoCheckpointGenerationResult> {
   plan = checkDemoCheckpointPlan(plan);
+  if (
+    requiredEndTick !== undefined &&
+    (!Number.isSafeInteger(requiredEndTick) || requiredEndTick < 0)
+  )
+    throw new Error("Checkpoint range must end at a non-negative tick");
+  if (targetTicks !== undefined) {
+    if (
+      targetTicks.some(
+        (tick, index) =>
+          !Number.isSafeInteger(tick) ||
+          tick < 0 ||
+          (index > 0 && tick <= targetTicks[index - 1]),
+      )
+    )
+      throw new Error(
+        "Checkpoint targets must be ascending non-negative ticks",
+      );
+    plan = { ...plan, maxCount: targetTicks.length };
+  }
   if (
     [output, `${output}.tmp`].some(
       (target) => path.resolve(target) === path.resolve(input),
@@ -72,7 +93,7 @@ export async function generateDemoCheckpoints(
         )
   ) as ArrayBuffer;
   const start = performance.now();
-  if (reuseExisting) {
+  if (reuseExisting && requiredEndTick === undefined) {
     try {
       const text = await fs.readFile(output, "utf8");
       if (Buffer.byteLength(text) > maxOutputBytes)
@@ -83,7 +104,12 @@ export async function generateDemoCheckpoints(
       if (
         existing.requestedCount !== plan.maxCount ||
         (existing.intervalTicks ?? DEFAULT_CHECKPOINT_INTERVAL_TICKS) !==
-          plan.intervalTicks
+          plan.intervalTicks ||
+        (targetTicks !== undefined &&
+          (existing.checkpoints.length !== targetTicks.length ||
+            existing.checkpoints.some(
+              (checkpoint, index) => checkpoint.tick !== targetTicks[index],
+            )))
       )
         throw new Error("Checkpoint plan changed");
       await validateDemoCheckpoints(text, buffer);
@@ -102,8 +128,17 @@ export async function generateDemoCheckpoints(
   }
   const parser = new DemoParser(new Uint8Array(buffer));
   await parser.load();
+  if (
+    requiredEndTick !== undefined &&
+    requiredEndTick > parser.bufferedMoveTicks
+  )
+    throw new Error("Clip range is past the end of the recording");
   let targets: ReturnType<typeof demoCheckpointTargets> = [];
-  if (plan.maxCount > 0) {
+  if (targetTicks !== undefined) {
+    if (targetTicks.some((tick) => tick > parser.bufferedMoveTicks))
+      throw new Error("Checkpoint target is past the end of the recording");
+    targets = targetTicks.map((tick) => ({ tick, description: "Clip start" }));
+  } else if (plan.maxCount > 0) {
     const { recorderName } = extractMissionInfo(parser.initialBlock.demoValues);
     const { events } = await scanDemoTimelineParser(parser, recorderName);
     targets = demoCheckpointTargets(events, plan, parser.bufferedMoveTicks);

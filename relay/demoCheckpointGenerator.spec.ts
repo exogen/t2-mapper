@@ -63,6 +63,111 @@ afterEach(async () => {
 });
 
 describe("offline checkpoint generation", () => {
+  it.each([0, 2])(
+    "captures an explicit clip start at tick %i without a timeline scan",
+    async (tick) => {
+      const scan = vi.spyOn(timelineScanner, "scanDemoTimelineParser");
+      const result = await generateDemoCheckpoints(
+        file,
+        output,
+        "/absent-assets",
+        undefined,
+        false,
+        plan(1),
+        Infinity,
+        [tick],
+        3,
+      );
+      expect(result).toMatchObject({ count: 1, reused: false });
+      expect(scan).not.toHaveBeenCalled();
+      const bytes = await fs.readFile(file);
+      const buffer = bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength,
+      ) as ArrayBuffer;
+      const loaded = await readDemoCheckpoints(
+        await fs.readFile(output, "utf8"),
+        buffer,
+      );
+      expect(loaded.map((checkpoint) => checkpoint.cursor.moveTicks)).toEqual([
+        tick,
+      ]);
+    },
+  );
+
+  it("does not reuse a checkpoint for a different explicit clip start", async () => {
+    await generateDemoCheckpoints(
+      file,
+      output,
+      "/absent-assets",
+      undefined,
+      false,
+      plan(1),
+      Infinity,
+      [1],
+    );
+    expect(
+      await generateDemoCheckpoints(
+        file,
+        output,
+        "/absent-assets",
+        undefined,
+        true,
+        plan(1),
+        Infinity,
+        [2],
+      ),
+    ).toMatchObject({ reused: false });
+    expect(
+      await generateDemoCheckpoints(
+        file,
+        output,
+        "/absent-assets",
+        undefined,
+        true,
+        plan(1),
+        Infinity,
+        [2],
+      ),
+    ).toMatchObject({ reused: true });
+  });
+
+  it.each(
+    [[4], [1, 1], [2, 1], [-1], [NaN], [0.5]].map((ticks) => ({ ticks })),
+  )("rejects unusable explicit clip ticks %j", async ({ ticks }) => {
+    await expect(
+      generateDemoCheckpoints(
+        file,
+        output,
+        "/absent-assets",
+        undefined,
+        false,
+        plan(1),
+        Infinity,
+        ticks,
+      ),
+    ).rejects.toThrow(/Checkpoint target/);
+    await expect(fs.access(output)).rejects.toThrow();
+  });
+
+  it("rejects a clip ending beyond actual move data even when the header claims a longer duration", async () => {
+    await writeDemo(3, 1_000_000);
+    await expect(
+      generateDemoCheckpoints(
+        file,
+        output,
+        "/absent-assets",
+        undefined,
+        false,
+        plan(1),
+        Infinity,
+        [1],
+        4,
+      ),
+    ).rejects.toThrow("Clip range is past the end");
+    await expect(fs.access(output)).rejects.toThrow();
+  });
+
   it.each([false, true])(
     "preserves the recording if it conflicts with the output or temporary path (temporary=%s)",
     async (temporary) => {

@@ -39,11 +39,13 @@ export interface PlaybackSliceState {
   /** Seek target in seconds. Written by UI seek actions, read by
    *  StreamPlaybackSession to detect and execute seeks. */
   seekTime: number;
-  /** Bumped on EVERY seekPlayback call. The controller keys seek
+  /** Bumped on every accepted seekPlayback call. The controller keys seek
    *  detection on this, not on seekTime equality — two seeks to the
    *  same position (click the same spot twice, or a deferred-commit
    *  scrub released where it started) must both execute. */
   seekNonce: number;
+  /** Requested positions, excluding reconstruction after late assets arrive. */
+  seekIntentNonce: number;
   rate: number;
   durationMs: number;
   /**
@@ -80,7 +82,8 @@ export interface EngineStoreState {
   refreshRecordingDuration(recording: StreamRecording): void;
   setDemoBuffer(recording: StreamRecording, demoBuffer: ArrayBuffer): void;
   setDownloadComplete(complete: boolean): void;
-  seekPlayback(timeSec: number): void;
+  /** False when the seek is invalid or canceled by a guard. */
+  seekPlayback(timeSec: number, reason?: "reconstruction"): boolean;
   /** Execute the pending beyond-the-buffer seek once fulfillable. */
   fulfillPendingSeek(): void;
   updateSeekProgress(
@@ -97,6 +100,14 @@ export interface EngineStoreState {
   setPlaybackStatus(status: SettledPlaybackStatus | "ending"): void;
   togglePlayback(recording: StreamRecording): void;
   setPlaybackRate(rate: number): void;
+}
+
+const playbackSeekGuards = new Set<() => boolean>();
+
+/** Veto an explicit seek before its transport or scene state changes. */
+export function addPlaybackSeekGuard(guard: () => boolean): () => void {
+  playbackSeekGuards.add(guard);
+  return () => playbackSeekGuards.delete(guard);
 }
 
 function normalizeName(name: string): string {
@@ -197,6 +208,7 @@ const initialState: Omit<
     seekProgress: null,
     seekTime: 0,
     seekNonce: 0,
+    seekIntentNonce: 0,
     rate: 1,
     durationMs: 0,
     downloadComplete: true,
@@ -353,6 +365,7 @@ export const engineStore = createStore<EngineStoreState>()(
           // Monotonic across recordings; the controller re-syncs its
           // ref at mount, so this never reads as a phantom seek.
           seekNonce: state.playback.seekNonce + 1,
+          seekIntentNonce: state.playback.seekIntentNonce + 1,
           rate: recording ? 1 : state.playback.rate,
           durationMs,
           // A progressively-loading recording reports incomplete; the
@@ -388,10 +401,14 @@ export const engineStore = createStore<EngineStoreState>()(
       }));
     },
 
-    seekPlayback(timeSec: number) {
+    seekPlayback(timeSec: number, reason?: "reconstruction") {
+      let accepted = false;
       set((state) => {
         if (!state.playback.recording || !Number.isFinite(timeSec))
           return state;
+        if (reason !== "reconstruction")
+          for (const guard of playbackSeekGuards) if (!guard()) return state;
+        accepted = true;
         // With no header duration, the total grows as bytes arrive. Preserve
         // timestamp links beyond that prefix until the actual end is known.
         const target = state.playback.downloadComplete
@@ -409,6 +426,9 @@ export const engineStore = createStore<EngineStoreState>()(
                 : state.playback.status,
           seekTime: target,
           seekNonce: state.playback.seekNonce + 1,
+          seekIntentNonce:
+            state.playback.seekIntentNonce +
+            (reason === "reconstruction" ? 0 : 1),
           pendingSeekSec: null,
         };
         // A seek past the downloaded frontier can't execute yet — park
@@ -429,6 +449,7 @@ export const engineStore = createStore<EngineStoreState>()(
           playback,
         };
       });
+      return accepted;
     },
 
     fulfillPendingSeek() {

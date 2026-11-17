@@ -26,9 +26,13 @@ COPY scripts/backfill-demo-guids.ts \
      scripts/backfill-demo-players.ts \
      scripts/backfill-demo-stats.ts \
      scripts/backfill-player-profiles.ts \
+     scripts/delete-demos.ts \
      scripts/merge-demo-guids.ts \
      scripts/player-loadouts.ts scripts/
-COPY scripts/lib/r2.ts scripts/lib/
+COPY scripts/lib/r2.ts \
+     scripts/lib/demoDeletion.ts \
+     scripts/lib/demoDeletionCleanup.ts \
+     scripts/lib/demoDeletionProfiles.ts scripts/lib/
 # Checkpoint workers replay through the same decoder and simulation as playback.
 COPY src/ src/
 

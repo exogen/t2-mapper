@@ -5,6 +5,7 @@ import {
   type SavedCamera,
 } from "./casterStore";
 import { cameraRegistry } from "./cameraRegistry";
+import { clipStore } from "./clipStore";
 import { liveConnectionStore } from "./liveConnectionStore";
 import { replayConnectionStore } from "./replayConnectionStore";
 import { gameEntityStore } from "./gameEntityStore";
@@ -16,6 +17,7 @@ import { referencePlayerEntity, lookupPlayerBody } from "./playerResolver";
 import { exitToFreeFly, followFlag, resolveFlagEntityId } from "./watchFollow";
 
 function ready() {
+  if (clipStore.getState().active) return false;
   const source = gameEntityStore.getState().dataSource;
   const live = liveConnectionStore.getState();
   const playback = streamPlaybackStore.getState().playback;

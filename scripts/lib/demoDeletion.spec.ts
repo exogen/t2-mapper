@@ -143,3 +143,33 @@ it("groups only the selected demo's objects, preserving similarly named recordin
   ]);
   expect(result.get("demos/b.rec")).toEqual(["demos/b.rec"]);
 });
+
+it("recognizes legacy mixed-case extensions without folding recording key identity", () => {
+  const keys = new Set([
+    "demos/MATCH.REC",
+    "demos/MATCH.REC.copy.rEc",
+    "demos/match.rec",
+  ]);
+  const result = demoDeletionObjects(keys, [
+    "demos/MATCH.REC",
+    "demos/MATCH.REC.json",
+    "demos/MATCH.REC.checkpoints.json",
+    "demos/MATCH.REC.copy.rEc",
+    "demos/MATCH.REC.copy.rEc.stats.json",
+    "demos/match.rec",
+    "demos/match.rec.stats.json",
+  ]);
+  expect(result.get("demos/MATCH.REC")).toEqual([
+    "demos/MATCH.REC",
+    "demos/MATCH.REC.json",
+    "demos/MATCH.REC.checkpoints.json",
+  ]);
+  expect(result.get("demos/MATCH.REC.copy.rEc")).toEqual([
+    "demos/MATCH.REC.copy.rEc",
+    "demos/MATCH.REC.copy.rEc.stats.json",
+  ]);
+  expect(result.get("demos/match.rec")).toEqual([
+    "demos/match.rec",
+    "demos/match.rec.stats.json",
+  ]);
+});

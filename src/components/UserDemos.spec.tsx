@@ -153,6 +153,11 @@ vi.mock("./DemoCard", () => ({
     );
   },
 }));
+vi.mock("./UserClips", () => ({
+  UserClips: ({ userId }: { userId: string }) => (
+    <section aria-label="Clips" data-creator={userId} />
+  ),
+}));
 
 const demo: DemoIndexEntry = {
   filename: key(),
@@ -281,6 +286,19 @@ function mapGeniusDemo(index: number): DemoIndexEntry {
     games: [{ ...demo.games[0], mission: `MapGenius ${index}` }],
   };
 }
+
+it("shows the creator's clips above both demo sections", () => {
+  const markup = render();
+  expect(markup).toContain(`aria-label="Clips" data-creator="${OWNER}"`);
+  expect(markup.indexOf('aria-label="Clips"')).toBeLessThan(
+    markup.indexOf('aria-label="MapGenius demos"'),
+  );
+  expect(markup.indexOf('aria-label="Clips"')).toBeLessThan(
+    markup.indexOf('aria-label="Uploaded demos"'),
+  );
+  expect(render(OTHER)).toContain(`data-creator="${OTHER}"`);
+  expect(render("invalid")).not.toContain('aria-label="Clips"');
+});
 
 it.each(["owner", "visitor"])(
   "shows the linked MapGenius demo union above uploads for the %s",

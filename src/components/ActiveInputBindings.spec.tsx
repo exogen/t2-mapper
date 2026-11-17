@@ -2,12 +2,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 import { ActiveInputBindings } from "./ActiveInputBindings";
 import type { InputMapEntry } from "./InputControls";
+import { ClipControlsContext } from "./clipControlsContext";
 
 const fixture = vi.hoisted(() => ({
   source: "demo" as "demo" | "live" | null,
   watcher: false,
   replay: false,
-  owner: "input" as "input" | "tour" | "director" | "commandCircuit",
+  owner: "input" as "input" | "tour" | "director" | "commandCircuit" | "clip",
   targetFinderOpen: false,
   orbit: false,
   inputMode: "local" as "local" | "fly" | "follow",
@@ -61,6 +62,30 @@ afterEach(() => {
   fixture.inputMode = "local";
   fixture.cameraMode = "original";
 });
+
+it.each(["input", "tour", "director", "commandCircuit", "clip"] as const)(
+  "binds R only when the recording action is available while %s owns the camera",
+  (owner) => {
+    fixture.owner = owner;
+    for (const recordAvailable of [false, true]) {
+      const html = renderToStaticMarkup(
+        <ClipControlsContext
+          value={{
+            recordButton: null,
+            editorPanel: null,
+            saving: false,
+            recordAvailable,
+          }}
+        >
+          <ActiveInputBindings />
+        </ClipControlsContext>,
+      );
+      expect(html.match(/\brecordClip\b/g) ?? []).toHaveLength(
+        Number(recordAvailable),
+      );
+    }
+  },
+);
 
 it.each([
   ["live", false, false, "follow", "original", 1, false],

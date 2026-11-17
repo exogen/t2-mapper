@@ -74,6 +74,7 @@ afterEach(() => {
 
 function restoreLegacyT2Links(database: Database.Database): void {
   database.exec(`
+    DROP TABLE "clip";
     DROP TABLE "t2PlayerDemoGuid";
     DROP TABLE "t2PlayerDemo";
     DROP TABLE "t2AccountLink";
@@ -289,11 +290,11 @@ it("adds durable demo membership to schema four without changing linked accounts
   ]);
   const links = database.prepare('SELECT * FROM "t2AccountLink"').all();
   database.exec(
-    'DROP TABLE "t2PlayerDemoGuid"; DROP TABLE "t2PlayerDemo"; PRAGMA user_version = 4',
+    'DROP TABLE "clip"; DROP TABLE "t2PlayerDemoGuid"; DROP TABLE "t2PlayerDemo"; PRAGMA user_version = 4',
   );
   expect(hasPendingAccountSchemaMigrations(database)).toBe(true);
   database.transaction(() => migrateAccountSchema(database))();
-  expect(database.pragma("user_version", { simple: true })).toBe(5);
+  expect(database.pragma("user_version", { simple: true })).toBe(8);
   expect(database.prepare('SELECT * FROM "t2AccountLink"').all()).toEqual(
     links,
   );
@@ -325,6 +326,123 @@ it("adds durable demo membership to schema four without changing linked accounts
   );
   expect(database.pragma("foreign_key_check")).toEqual([]);
   expect(hasPendingAccountSchemaMigrations(database)).toBe(false);
+});
+
+it("upgrades early clip databases without source hashes and preserves pending deletions", () => {
+  const { database } = setup();
+  database.transaction(() => migrateAccountSchema(database))();
+  database.exec(
+    'ALTER TABLE "clip" DROP COLUMN "sourceSha256"; DROP INDEX "clip_duration_jobs"; ALTER TABLE "clip" DROP COLUMN "durationMs"; PRAGMA user_version = 6',
+  );
+  const insert = database.prepare(
+    `INSERT INTO clip (id, ownerDiscordId, requestId, payloadHash, sourceDemo,
+      sourceETag, title, createdAt, startSec, endSec, state, attempts, retryAt,
+      checkpointVersion) VALUES (?, '126767979894407168', ?, 'legacy-hash',
+      'match.rec', 'source-etag', 'Old clip', 100, 2.5, 4.5, ?, 2, 456, 1)`,
+  );
+  for (const state of ["ready", "processing", "deleting"])
+    insert.run(state, state, state);
+  const readRows = () =>
+    database.prepare("SELECT * FROM clip ORDER BY id").all() as Array<
+      Record<string, unknown>
+    >;
+  const before = readRows();
+  expect(hasPendingAccountSchemaMigrations(database)).toBe(true);
+  database.transaction(() => migrateAccountSchema(database))();
+  expect(database.pragma("user_version", { simple: true })).toBe(8);
+  expect(hasPendingAccountSchemaMigrations(database)).toBe(false);
+  expect(readRows()).toEqual(
+    before.map((row) => ({
+      ...row,
+      sourceSha256: "",
+      durationMs: null,
+      ...(row.state === "deleting"
+        ? {}
+        : {
+            state: "failed",
+            error:
+              "This clip was saved by an older version. Record and save a new clip.",
+          }),
+    })),
+  );
+  database
+    .prepare(
+      `INSERT INTO clip (id, ownerDiscordId, requestId, payloadHash, sourceDemo,
+        sourceETag, sourceSha256, title, createdAt, startSec, endSec, state)
+        VALUES ('new', '126767979894407168', 'new-request', 'new-hash',
+        'match.rec', 'source-etag', ?, 'New clip', 200, 5, 6, 'receiving')`,
+    )
+    .run("a".repeat(64));
+  expect(
+    database
+      .prepare("SELECT sourceSha256 FROM clip WHERE id = 'new'")
+      .pluck()
+      .get(),
+  ).toBe("a".repeat(64));
+});
+
+it("preserves clips from schema six when their source hashes already exist", () => {
+  const { database } = setup();
+  database.transaction(() => migrateAccountSchema(database))();
+  database
+    .prepare(
+      `INSERT INTO clip (id, ownerDiscordId, requestId, payloadHash, sourceDemo,
+        sourceETag, sourceSha256, title, createdAt, startSec, endSec, state)
+        VALUES ('ready', '126767979894407168', 'request', 'payload-hash',
+        'match.rec', 'source-etag', ?, 'Saved clip', 100, 2.5, 4.5, 'ready')`,
+    )
+    .run("a".repeat(64));
+  database.exec(
+    'DROP INDEX "clip_duration_jobs"; ALTER TABLE "clip" DROP COLUMN "durationMs"',
+  );
+  const before = database.prepare("SELECT * FROM clip").all() as Array<
+    Record<string, unknown>
+  >;
+  database.pragma("user_version = 6");
+  database.transaction(() => migrateAccountSchema(database))();
+  expect(database.pragma("user_version", { simple: true })).toBe(8);
+  expect(database.prepare("SELECT * FROM clip").all()).toEqual(
+    before.map((row) => ({ ...row, durationMs: null })),
+  );
+  database.transaction(() => migrateAccountSchema(database))();
+  expect(database.prepare("SELECT * FROM clip").all()).toEqual(
+    before.map((row) => ({ ...row, durationMs: null })),
+  );
+  expect(database.pragma("foreign_key_check")).toEqual([]);
+});
+
+it("adds nullable recorded duration to existing clips and queues ready metadata once", () => {
+  const { database } = setup();
+  database.transaction(() => migrateAccountSchema(database))();
+  database.exec(
+    'DROP INDEX "clip_duration_jobs"; ALTER TABLE "clip" DROP COLUMN "durationMs"; PRAGMA user_version=7',
+  );
+  database
+    .prepare(
+      `INSERT INTO clip (id,ownerDiscordId,requestId,payloadHash,sourceDemo,
+    sourceETag,sourceSha256,title,createdAt,startSec,endSec,state,attempts,retryAt)
+    VALUES ('clip','126767979894407168','request','hash','match.rec','etag',?,
+      'Paused clip',100,10,10,'ready',2,99999)`,
+    )
+    .run("a".repeat(64));
+  database.transaction(() => migrateAccountSchema(database))();
+  expect(database.pragma("user_version", { simple: true })).toBe(8);
+  expect(database.prepare("SELECT * FROM clip").get()).toMatchObject({
+    id: "clip",
+    title: "Paused clip",
+    state: "ready",
+    durationMs: null,
+    startSec: 10,
+    endSec: 10,
+    attempts: 0,
+    retryAt: 0,
+  });
+  expect(() =>
+    database.prepare("UPDATE clip SET durationMs=?").run(-1),
+  ).toThrow(/CHECK/);
+  expect(() =>
+    database.prepare("UPDATE clip SET durationMs=?").run(60_001),
+  ).toThrow(/CHECK/);
 });
 
 it("backs up committed WAL data into a verified standalone restorable file", async () => {

@@ -73,6 +73,7 @@ export function useModeQueryState() {
   const [query, setQuery] = useQueryStates({
     mode: navigationParsers.mode,
     demo: navigationParsers.demo,
+    clip: navigationParsers.clip,
     user: navigationParsers.user,
     replay: navigationParsers.replay,
     address: navigationParsers.address,
@@ -90,6 +91,7 @@ const navigationParsers = {
   mode: parseAsStringLiteral(APP_MODES),
   mission: parseAsMissionWithType,
   demo: parseAsString,
+  clip: parseAsString,
   user: parseAsString,
   replay: parseAsString,
   t: parseAsInteger,
@@ -114,11 +116,12 @@ export function normalizeNavigationQuery(query: NavigationQuery) {
     ...(query.mode === null && mode !== "map" ? { mode } : {}),
     ...(mode !== "map" && query.mission !== null ? { mission: null } : {}),
     ...(mode !== "demo" && query.demo !== null ? { demo: null } : {}),
-    ...((mode !== "demo" || query.demo) && query.user !== null
+    ...(mode !== "demo" && query.clip !== null ? { clip: null } : {}),
+    ...((mode !== "demo" || query.demo || query.clip) && query.user !== null
       ? { user: null }
       : {}),
     ...(mode !== "replay" && query.replay !== null ? { replay: null } : {}),
-    ...((mode !== "demo" || !query.demo) && query.t !== null
+    ...((mode !== "demo" || !query.demo || query.clip) && query.t !== null
       ? { t: null }
       : {}),
     ...((mode !== "live" || query.address) && query.name !== null
@@ -135,6 +138,7 @@ export function navigationViewKey(query: NavigationQuery): string {
     query.mission?.missionName,
     query.mission?.missionType,
     query.demo,
+    query.clip,
     query.user,
     query.replay,
     query.address,
@@ -166,6 +170,7 @@ export function clearEndedServerQuery(
 export function navigationMode(query: {
   mode: AppMode | null;
   demo: string | null;
+  clip?: string | null;
   user?: string | null;
   replay?: string | null;
   address: string | null;
@@ -175,7 +180,7 @@ export function navigationMode(query: {
     query.mode ??
     (query.replay
       ? "replay"
-      : query.demo || query.user != null
+      : query.demo || query.clip || query.user != null
         ? "demo"
         : query.address || query.name
           ? "live"

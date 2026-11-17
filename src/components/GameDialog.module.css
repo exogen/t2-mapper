@@ -19,6 +19,16 @@
   -webkit-touch-callout: default;
 }
 
+.BlueDialog {
+  composes: Dialog;
+}
+
+.BlueDialog.BlueDialog {
+  background: var(--control-popover-background);
+  border-color: var(--control-border);
+  color: var(--control-text);
+}
+
 .Overlay {
   position: fixed;
   inset: 0;

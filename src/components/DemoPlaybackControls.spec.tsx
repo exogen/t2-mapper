@@ -2,13 +2,27 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { TimelineEvent } from "../state/demoTimelineStore";
 import type { TeamColorScheme } from "../iffTheme";
+import type { ClipTake } from "../../relay/clipTypes";
+import { ClipControlsContext } from "./clipControlsContext";
 import { DemoPlaybackControls } from "./DemoPlaybackControls";
 
 const state = vi.hoisted(() => ({
+  actions: new Map<string, () => void>(),
+  setSpeed: vi.fn(),
   events: [] as TimelineEvent[] | null,
   observerTeamColors: "blueOrange" as TeamColorScheme,
   recording: { duration: 100 },
+  clipRoute: null as string | null,
+  clip: {
+    draft: null as ClipTake | null,
+    active: null as ClipTake | null,
+    playing: false,
+    playheadMs: 0,
+    trimStartMs: 0,
+    trimEndMs: 0,
+  },
   playback: {
+    rate: 1,
     status: "paused",
     resumeAfterSeek: null,
     downloadComplete: true,
@@ -17,7 +31,24 @@ const state = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("./InputControls", () => ({ useInputAction() {} }));
+vi.mock("./InputControls", () => ({
+  useInputAction(action: string, callback: () => void) {
+    state.actions.set(action, callback);
+  },
+}));
+vi.mock("./useQueryParams", () => ({
+  useNavigationQueryState: () => [{ clip: state.clipRoute }],
+}));
+vi.mock("../state/clipStore", () => ({
+  clipStore: {
+    getState: () => state.clip,
+    getInitialState: () => state.clip,
+    subscribe: () => () => {},
+  },
+}));
+vi.mock("./ClipControls", () => ({
+  ClipPlaybackControls: () => null,
+}));
 vi.mock("./usePlayback", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./usePlayback")>()),
   useRecording: () => state.recording,
@@ -25,8 +56,12 @@ vi.mock("./usePlayback", async (importOriginal) => ({
   useCurrentTime: () => 0,
   useDuration: () => state.recording.duration,
   useSpeed: () => 1,
-  SPEED_OPTIONS: [1],
-  usePlaybackActions: () => ({ toggle() {}, seek() {}, setSpeed() {} }),
+  SPEED_OPTIONS: [0.5, 1, 2],
+  usePlaybackActions: () => ({
+    toggle() {},
+    seek() {},
+    setSpeed: state.setSpeed,
+  }),
 }));
 vi.mock("../state/engineStore", () => ({
   isCurrentPlayback: () => true,
@@ -54,11 +89,111 @@ vi.mock("./SettingsProvider", () => ({
 }));
 
 beforeEach(() => {
+  state.actions.clear();
+  state.setSpeed.mockClear();
+  state.playback.rate = 1;
   state.events = [];
   state.recording.duration = 100;
+  state.clipRoute = null;
+  state.clip = {
+    draft: null,
+    active: null,
+    playing: false,
+    playheadMs: 0,
+    trimStartMs: 0,
+    trimEndMs: 0,
+  };
 
   state.observerTeamColors = "blueOrange";
   state.playback.status = "paused";
+});
+
+function editingDraft() {
+  const draft = {
+    samples: [{ timeMs: 0 }, { timeMs: 5000 }],
+  } as ClipTake;
+  state.clip = {
+    draft,
+    active: draft,
+    playing: false,
+    playheadMs: 5000,
+    trimStartMs: 1000,
+    trimEndMs: 4000,
+  };
+}
+
+it("replaces demo transport with an inline clip trim timeline until saved or discarded", () => {
+  editingDraft();
+  const markup = renderToStaticMarkup(<DemoPlaybackControls />);
+  expect(markup).toContain("data-clip-editing");
+  for (const label of ["Play clip", "Clip start", "Clip end", "Seek clip"])
+    expect(markup).toContain(`aria-label="${label}"`);
+  expect(markup).not.toContain("Save clip");
+  expect(markup).not.toContain("Discard");
+  expect(markup).not.toContain("data-playback-seek");
+  expect(markup).not.toContain('aria-label="CastGenius"');
+  expect(markup).not.toContain('id="playbackSpeed"');
+});
+
+it("disables draft transport and trim controls during save", () => {
+  editingDraft();
+  const markup = renderToStaticMarkup(
+    <ClipControlsContext
+      value={{
+        recordButton: null,
+        recordAvailable: false,
+        editorPanel: null,
+        saving: true,
+      }}
+    >
+      <DemoPlaybackControls />
+    </ClipControlsContext>,
+  );
+  expect(markup).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Play clip"/);
+  expect(markup).toMatch(/aria-label="Clip start"[^>]*data-disabled=""/);
+});
+
+it("uses clip time and duration for saved clips and offers replay at the end", () => {
+  editingDraft();
+  state.clip.draft = null;
+  state.events = [
+    {
+      type: "match-start",
+      timeSec: 80,
+      description: "Another map",
+    } as TimelineEvent,
+  ];
+  const markup = renderToStaticMarkup(<DemoPlaybackControls />);
+  expect(markup).toContain('aria-label="Replay clip"');
+  expect(markup).toContain('aria-valuemax="5"');
+  expect(markup).toContain("0:05 / 0:05");
+  expect(markup).not.toContain('aria-label="CastGenius"');
+  expect(markup).not.toContain("Another map");
+});
+
+it("prevents starting CastGenius while a saved clip is being prepared", () => {
+  state.clipRoute = "clip-one";
+  const markup = renderToStaticMarkup(<DemoPlaybackControls />);
+  expect(markup).toMatch(/<button[^>]*disabled=""[^>]*aria-label="CastGenius"/);
+});
+
+it.each(["saved", "draft"])(
+  "ignores speed hotkeys during %s clip playback",
+  (mode) => {
+    editingDraft();
+    if (mode === "saved") state.clip.draft = null;
+    renderToStaticMarkup(<DemoPlaybackControls />);
+    state.actions.get("decreasePlaybackSpeed")!();
+    state.actions.get("increasePlaybackSpeed")!();
+    expect(state.setSpeed).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps speed hotkeys available for ordinary demos", () => {
+  renderToStaticMarkup(<DemoPlaybackControls />);
+  state.actions.get("decreasePlaybackSpeed")!();
+  state.actions.get("increasePlaybackSpeed")!();
+  expect(state.setSpeed.mock.calls).toEqual([[0.5], [2]]);
 });
 
 it("shows Pause while the final announcement is finishing, then Play", () => {

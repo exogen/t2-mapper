@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { cameraTourStore } from "../state/cameraTourStore";
+import { clipStore } from "../state/clipStore";
 import { engineStore } from "../state/engineStore";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import { replayConnectionStore } from "../state/replayConnectionStore";
@@ -52,6 +53,7 @@ export function useAppNavigation() {
         mode,
         mission: null,
         demo: null,
+        clip: null,
         user: null,
         replay: null,
         t: null,
@@ -76,6 +78,14 @@ export function useAppNavigation() {
 
     return {
       demoIndex,
+      exitClip() {
+        // Queue the push before stopping can trigger automatic route cleanup.
+        void setQuery(
+          (current) => (current.clip ? { clip: null, t: null } : {}),
+          { history: "push" },
+        );
+        clipStore.getState().stopPlayback();
+      },
       userDemos(discordId: string) {
         navigate({ ...destination("demo"), user: discordId });
         leaveStream(true);

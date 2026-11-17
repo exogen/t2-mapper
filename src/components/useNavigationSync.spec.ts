@@ -12,6 +12,7 @@ const test = vi.hoisted(() => ({
   setQuery: vi.fn(),
   load: vi.fn(),
   unload: vi.fn(),
+  scanEnabled: vi.fn(),
 }));
 vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
@@ -28,6 +29,7 @@ vi.mock("./useQueryParams", async (original) => ({
 vi.mock("../stream/demoFileLoader", () => ({
   loadDemoReference: test.load,
   unloadDemo: test.unload,
+  setDemoTimelineScanEnabled: test.scanEnabled,
 }));
 vi.mock("../state/engineStore", () => ({
   engineStore: {
@@ -70,6 +72,7 @@ beforeEach(() => {
   test.query = {
     mode: null,
     demo: null,
+    clip: null,
     user: null,
     replay: null,
     mission: null,
@@ -196,4 +199,19 @@ describe("demo URL loading", () => {
     expect(test.load).not.toHaveBeenCalled();
     expect(test.setQuery).not.toHaveBeenCalled();
   });
+});
+
+it("defers the timeline before loading a clip and enables it when leaving the clip", () => {
+  test.query.mode = "demo";
+  test.query.demo = "match.rec";
+  test.query.clip = "clip-one";
+  SyncNavigation();
+  expect(test.scanEnabled).toHaveBeenLastCalledWith(false);
+  expect(test.scanEnabled.mock.invocationCallOrder[0]).toBeLessThan(
+    test.load.mock.invocationCallOrder[0],
+  );
+  test.query.clip = null;
+  SyncNavigation();
+  expect(test.scanEnabled).toHaveBeenLastCalledWith(true);
+  expect(test.load).toHaveBeenCalledTimes(1);
 });

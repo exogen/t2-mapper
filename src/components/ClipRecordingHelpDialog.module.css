@@ -1,0 +1,78 @@
+.Overlay {
+  composes: Overlay from "./GameDialog.module.css";
+  z-index: 20;
+}
+
+.Dialog {
+  composes: BlueDialog from "./GameDialog.module.css";
+  width: 536px;
+  box-sizing: border-box;
+  padding: 24px 28px;
+  overflow-y: auto;
+  z-index: 21;
+}
+
+.Dialog.Dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.Title {
+  font-size: 22px;
+  font-weight: 500;
+  color: var(--control-text);
+  margin: 0 0 12px;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+}
+
+.Buttons {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.PrimaryButton {
+  composes: Button from "./Button.module.css";
+  flex: 0 0 auto;
+  font-size: 14px;
+}
+
+.SecondaryButton {
+  composes: Button from "./Button.module.css";
+  flex: 0 0 auto;
+}
+
+.Buttons .SecondaryButton {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--control-muted);
+  opacity: 0.7;
+  text-shadow: none;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  font-size: 13px;
+  padding: 4px 2px;
+}
+
+.Buttons .SecondaryButton:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--control-text);
+  opacity: 1;
+}
+
+@media (max-width: 479px) {
+  .Dialog {
+    padding: 20px;
+  }
+
+  .Buttons {
+    flex-wrap: wrap;
+  }
+}

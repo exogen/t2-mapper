@@ -15,6 +15,7 @@ const empty: NavigationQuery = {
   mode: null,
   mission: null,
   demo: null,
+  clip: null,
   user: null,
   replay: null,
   t: null,
@@ -24,6 +25,28 @@ const empty: NavigationQuery = {
 };
 
 describe("navigation URL updates", () => {
+  it("preserves clip links and leaves their starting position to the clip loader", () => {
+    expect(normalizeNavigationQuery({ ...empty, clip: "clip-id" })).toEqual({
+      mode: "demo",
+    });
+    expect(
+      normalizeNavigationQuery({
+        ...empty,
+        mode: "demo",
+        demo: "a.rec",
+        clip: "clip-id",
+        user: "123",
+        t: 30,
+      }),
+    ).toEqual({ user: null, t: null });
+    expect(
+      normalizeNavigationQuery({ ...empty, mode: "live", clip: "clip-id" }),
+    ).toEqual({ clip: null });
+    expect(navigationViewKey({ ...empty, mode: "demo", clip: "one" })).not.toBe(
+      navigationViewKey({ ...empty, mode: "demo", clip: "two" }),
+    );
+  });
+
   it("does not write an already canonical route", () => {
     for (const mode of ["map", "demo", "live", "replay"] as const) {
       expect(normalizeNavigationQuery({ ...empty, mode })).toEqual({});

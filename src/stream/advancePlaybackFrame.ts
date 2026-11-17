@@ -22,13 +22,15 @@ export function advancePlaybackFrame(
     if (current.status !== "playing") return;
     // Play explicitly retries the failed destination, using the same yielding
     // reconstruction path as a new seek rather than ordinary tick playback.
-    engineStore.getState().seekPlayback(clock.failedSeek.timeSec);
+    engineStore
+      .getState()
+      .seekPlayback(clock.failedSeek.timeSec, "reconstruction");
   }
   if (
     stream.needsReplay &&
     engineStore.getState().playback.seekNonce === clock.seekNonce
   ) {
-    engineStore.getState().seekPlayback(clock.time);
+    engineStore.getState().seekPlayback(clock.time, "reconstruction");
   }
   const playback = engineStore.getState().playback;
   if (playback.recording !== recording || playback.pendingSeekSec != null)

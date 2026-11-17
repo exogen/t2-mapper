@@ -18,8 +18,12 @@ scripts/*
 !scripts/backfill-demo-players.ts
 !scripts/backfill-demo-stats.ts
 !scripts/backfill-player-profiles.ts
+!scripts/delete-demos.ts
 !scripts/merge-demo-guids.ts
 !scripts/player-loadouts.ts
 !scripts/lib/
 scripts/lib/*
 !scripts/lib/r2.ts
+!scripts/lib/demoDeletion.ts
+!scripts/lib/demoDeletionCleanup.ts
+!scripts/lib/demoDeletionProfiles.ts

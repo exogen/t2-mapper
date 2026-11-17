@@ -1,0 +1,10 @@
+.Title {
+  composes: TileMapTitle from "./PreviewTile.module.css";
+  font-size: 13px;
+}
+.Status {
+  font-size: 12px;
+}
+.Status[data-failed="true"] {
+  color: #ffb7ad;
+}

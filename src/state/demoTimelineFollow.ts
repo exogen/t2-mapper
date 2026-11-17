@@ -65,7 +65,6 @@ export function seekToTimelineEvent(
     !Number.isFinite(event.timeSec)
   )
     return;
-  cameraTourStore.getState().cancel();
   const useOriginalView =
     event.isRecorder &&
     recording.source === "demo" &&
@@ -77,7 +76,9 @@ export function seekToTimelineEvent(
       ? event.generator
       : undefined;
   const snapshotBeforeSeek = streamSnapshotStore.getState().snapshot;
-  engineStore.getState().seekPlayback(Math.max(0, event.timeSec - 3));
+  if (!engineStore.getState().seekPlayback(Math.max(0, event.timeSec - 3)))
+    return;
+  cameraTourStore.getState().cancel();
   const { seekNonce } = engineStore.getState().playback;
   if (!useOriginalView && eventPlayerNames(event).length === 0 && !generator)
     return;

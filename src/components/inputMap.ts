@@ -57,6 +57,10 @@ export const DEMO_MODE_INPUT = [
   { name: "increasePlaybackSpeed", keys: ["Period", "Shift-Period"] },
 ] as const satisfies readonly InputMapEntry[];
 
+export const CLIP_RECORD_INPUT = [
+  { name: "recordClip", keys: ["KeyR"] },
+] as const satisfies readonly InputMapEntry[];
+
 export const LIVE_OBSERVER_INPUT = [
   { name: "toggleObserverMode", keys: ["KeyF"] },
   // Follow orbit ⇄ first person on a followed player (pointer locked).
@@ -179,6 +183,7 @@ export type ActionName =
   | (typeof POINTER_LOCKABLE_INPUT)[number]["name"]
   | (typeof MAP_MODE_INPUT)[number]["name"]
   | (typeof DEMO_MODE_INPUT)[number]["name"]
+  | (typeof CLIP_RECORD_INPUT)[number]["name"]
   | (typeof LIVE_OBSERVER_INPUT)[number]["name"]
   | (typeof TARGET_FINDER_INPUT)[number]["name"]
   | (typeof SCORE_SCREEN_INPUT)[number]["name"]

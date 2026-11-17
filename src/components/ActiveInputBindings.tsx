@@ -1,3 +1,4 @@
+import { useContext } from "react";
 import { useStore } from "zustand";
 import { useRecording } from "./usePlayback";
 import { useInputMode } from "../state/inputModeStore";
@@ -8,6 +9,7 @@ import { useIsWatchSpectator } from "./useIsWatchSpectator";
 import { InputBindings } from "./InputBindings";
 import { usePlayerOrbitAvailable } from "./usePlayerOrbitLocked";
 import { targetFinderStore } from "../state/targetFinderStore";
+import { ClipControlsContext } from "./clipControlsContext";
 import {
   CAMERA_SCROLL_INPUT,
   FREE_FLY_INPUT,
@@ -15,6 +17,7 @@ import {
   POINTER_LOCKABLE_INPUT,
   MAP_MODE_INPUT,
   DEMO_MODE_INPUT,
+  CLIP_RECORD_INPUT,
   LIVE_OBSERVER_INPUT,
   QUICK_CAM_INPUT,
   LIVE_FOLLOW_INPUT,
@@ -37,10 +40,11 @@ import {
  * unmounts, its actions are automatically cleaned up from the store.
  */
 export function ActiveInputBindings() {
+  const { recordAvailable } = useContext(ClipControlsContext);
   const recording = useRecording();
   const inputMode = useInputMode();
   const { clickToCycle } = useControls();
-  // Tour > director > command circuit > input, resolved in one place.
+  // Clip > tour > director > command circuit > input, resolved in one place.
   const cameraOwner = useCameraOwner();
   // Watch mode: client-only free-fly camera; server-observer bindings
   // (fly/follow toggle, ObserveClient) don't apply.
@@ -66,14 +70,29 @@ export function ActiveInputBindings() {
 
   if (targetFinderOpen) return null;
 
+  const recordClip = recordAvailable && (
+    <InputBindings map={CLIP_RECORD_INPUT} />
+  );
+
   const scoreScreen = (isDemo || isLive) && (
     <InputBindings map={SCORE_SCREEN_INPUT} />
   );
+
+  if (cameraOwner === "clip") {
+    return (
+      <>
+        {recordClip}
+        {isDemo && <InputBindings map={DEMO_MODE_INPUT} />}
+        {scoreScreen}
+      </>
+    );
+  }
 
   // Tours keep manual controls disabled; quick cams can interrupt them.
   if (cameraOwner === "tour") {
     return (
       <>
+        {recordClip}
         <InputBindings map={TOUR_MODE_INPUT} />
         {canFindTarget && <InputBindings map={QUICK_CAM_INPUT} />}
         {scoreScreen}
@@ -87,6 +106,7 @@ export function ActiveInputBindings() {
   if (cameraOwner === "director") {
     return (
       <>
+        {recordClip}
         <InputBindings map={DIRECTOR_MODE_INPUT} />
         {canFindTarget && <InputBindings map={QUICK_CAM_INPUT} />}
         {isDemo && <InputBindings map={DEMO_MODE_INPUT} />}
@@ -111,6 +131,7 @@ export function ActiveInputBindings() {
 
   return (
     <>
+      {recordClip}
       {showFreeFly && <InputBindings map={FREE_FLY_INPUT} />}
       {hasOrbitCamera && !showFreeFly && !isCommandCircuit && (
         <InputBindings map={CAMERA_SCROLL_INPUT} />

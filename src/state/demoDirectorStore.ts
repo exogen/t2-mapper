@@ -6,6 +6,7 @@ import { engineStore } from "./engineStore";
 import { cameraTourStore } from "./cameraTourStore";
 import { commandCircuitStore } from "./commandCircuitStore";
 import { commentaryPlayback, streamPlaybackStore } from "./streamPlaybackStore";
+import { clipStore } from "./clipStore";
 
 export { DIRECTOR_INTRO_LEAD_SEC } from "./directorStart";
 import { directorStartSec } from "./directorStart";
@@ -68,6 +69,13 @@ export function useDirector<T>(
 let demoBuffer: ArrayBuffer | null = null;
 let scanAbort: AbortController | null = null;
 let scanToken = 0;
+let directorStartToken = 0;
+let startingDirector: number | null = null;
+
+function cancelDirectorStart(): void {
+  directorStartToken += 1;
+  startingDirector = null;
+}
 
 /** Called by demoFileLoader when a demo loads, after resetDirector(). */
 export function setDirectorDemoBuffer(buffer: ArrayBuffer): void {
@@ -76,6 +84,7 @@ export function setDirectorDemoBuffer(buffer: ArrayBuffer): void {
 
 /** Cancel any scan and clear all director state (demo unload/replace). */
 export function resetDirector(): void {
+  cancelDirectorStart();
   scanToken += 1;
   scanAbort?.abort();
   scanAbort = null;
@@ -96,24 +105,25 @@ export function resetDirector(): void {
  * The auto-director play button: scan + plan on first press (cached
  * after), then enter lean-back directing from the current playback time.
  */
-let startingDirector = false;
-
 export async function startDirector(): Promise<void> {
   const { status, plan } = demoDirectorStore.getState();
   if (
-    startingDirector ||
+    startingDirector !== null ||
+    clipStore.getState().active ||
     status === "playing" ||
     status === "scanning" ||
     status === "error"
   ) {
     return;
   }
-  startingDirector = true;
+  const token = ++directorStartToken;
+  startingDirector = token;
   try {
     if (!plan) {
       const ok = await prepareDirector();
       if (!ok) return;
     }
+    if (token !== directorStartToken || clipStore.getState().active) return;
     // Audio preparation is optional and cannot delay camera startup. A
     // missing, rejected, or never-resolving preload leaves directing alone.
     if (commentaryPreload) {
@@ -124,7 +134,7 @@ export async function startDirector(): Promise<void> {
         });
     }
   } finally {
-    startingDirector = false;
+    if (startingDirector === token) startingDirector = null;
   }
   beginDirecting();
 }
@@ -143,6 +153,7 @@ export function setCommentaryPreload(
  * last shot left it (free-fly never repositions); playback keeps going.
  */
 export function exitDirector(): void {
+  cancelDirectorStart();
   if (demoDirectorStore.getState().status !== "playing") return;
   demoDirectorStore.setState({ status: "ready" });
   streamPlaybackStore.setState({ orbitTargetDamping: null });
@@ -150,17 +161,6 @@ export function exitDirector(): void {
 }
 
 function beginDirecting(): void {
-  // The director owns the whole view: no tour or command circuit.
-  cameraTourStore.getState().cancel();
-  commandCircuitStore.getState().deactivate();
-  demoDirectorStore.setState({ status: "playing" });
-  // The director's follow camera rides a loose spring: the orbit target
-  // eases through flag drops, passes and pickups instead of teleporting
-  // with them. Manual follow keeps the rigid feel (cleared on exit).
-  streamPlaybackStore.setState({
-    orbitTargetDamping: DIRECTOR_ORBIT_TARGET_DAMPING,
-    followPlayer: null,
-  });
   // Jump the dead air at the head of a recording: to a beat before the
   // commentary's first line when a track is loaded — that is where the
   // broadcast starts, on the bucket's legacy casts and the new ones
@@ -177,6 +177,7 @@ function beginDirecting(): void {
   });
   const engine = engineStore.getState();
   if (startAt != null) {
+    if (!engine.seekPlayback(startAt)) return;
     log.info(
       "Skipping to %ds (%s)",
       Math.round(startAt),
@@ -184,8 +185,18 @@ function beginDirecting(): void {
         ? "broadcast intro"
         : "past pre-match dead air",
     );
-    engine.seekPlayback(startAt);
   }
+  // The director owns the whole view: no tour or command circuit.
+  cameraTourStore.getState().cancel();
+  commandCircuitStore.getState().deactivate();
+  demoDirectorStore.setState({ status: "playing" });
+  // The director's follow camera rides a loose spring: the orbit target
+  // eases through flag drops, passes and pickups instead of teleporting
+  // with them. Manual follow keeps the rigid feel (cleared on exit).
+  streamPlaybackStore.setState({
+    orbitTargetDamping: DIRECTOR_ORBIT_TARGET_DAMPING,
+    followPlayer: null,
+  });
   engine.setPlaybackStatus("playing");
 }
 

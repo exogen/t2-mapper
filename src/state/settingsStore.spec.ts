@@ -32,6 +32,32 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("remembers clip recording help alongside the other preferences", () => {
+  const store = createSettingsStore();
+  expect(store.getState().hasSeenClipRecordingHelp).toBe(false);
+  setPreference("hasSeenClipRecordingHelp", true, store);
+  expect(store.getState().hasSeenClipRecordingHelp).toBe(true);
+  vi.advanceTimersByTime(500);
+  expect(lastSaved().hasSeenClipRecordingHelp).toBe(true);
+  stubSaved(lastSaved());
+  expect(createSettingsStore().getState().hasSeenClipRecordingHelp).toBe(true);
+});
+
+it.each([true, false])("restores the clip recording help flag %s", (value) => {
+  stubSaved({ hasSeenClipRecordingHelp: value });
+  expect(createSettingsStore().getState().hasSeenClipRecordingHelp).toBe(value);
+});
+
+it.each([null, 1, "true", {}])(
+  "ignores the invalid clip recording help flag %j",
+  (value) => {
+    stubSaved({ hasSeenClipRecordingHelp: value });
+    expect(createSettingsStore().getState().hasSeenClipRecordingHelp).toBe(
+      false,
+    );
+  },
+);
+
 it("defaults to showing the classic Match HUD and persists its preferences independently of mini scores", () => {
   const store = createSettingsStore();
   expect(store.getState().matchHudStyle).toBe("classic");

@@ -32,7 +32,9 @@ function assertSupportedSQLite(database: Database.Database): void {
  * App-owned schema changes, applied in order after Better Auth's tables exist.
  * `PRAGMA user_version` counts how many have run; only ever append here.
  */
-const ACCOUNT_SCHEMA_MIGRATIONS: readonly string[] = [
+const ACCOUNT_SCHEMA_MIGRATIONS: readonly (
+  string | ((database: Database.Database) => void)
+)[] = [
   // Tribes 2 accounts by the GUID their auth server issued, and which Discord
   // identities claim them. A person may hold several of each, so links are
   // many-to-many; an account row outlives its links.
@@ -106,6 +108,51 @@ const ACCOUNT_SCHEMA_MIGRATIONS: readonly string[] = [
     PRIMARY KEY ("guid", "filename")
   ) STRICT, WITHOUT ROWID;
   CREATE INDEX "t2PlayerDemoGuid_filename" ON "t2PlayerDemoGuid" ("filename");`,
+  `CREATE TABLE "clip" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "ownerDiscordId" TEXT NOT NULL,
+    "requestId" TEXT NOT NULL,
+    "payloadHash" TEXT NOT NULL,
+    "sourceDemo" TEXT NOT NULL,
+    "sourceETag" TEXT NOT NULL,
+    "sourceSha256" TEXT NOT NULL,
+    "title" TEXT NOT NULL,
+    "createdAt" INTEGER NOT NULL,
+    "startSec" REAL NOT NULL,
+    "endSec" REAL NOT NULL,
+    "state" TEXT NOT NULL CHECK ("state" IN ('receiving','processing','ready','failed','deleting')),
+    "attempts" INTEGER NOT NULL DEFAULT 0,
+    "retryAt" INTEGER NOT NULL DEFAULT 0,
+    "checkpointVersion" INTEGER,
+    "error" TEXT,
+    UNIQUE ("ownerDiscordId", "requestId")
+  ) STRICT;
+  CREATE INDEX "clip_owner" ON "clip" ("ownerDiscordId", "createdAt");
+  CREATE INDEX "clip_jobs" ON "clip" ("state", "retryAt");`,
+  (database) => {
+    // Earlier schema-six databases predate binding clips to the source bytes.
+    const columns = database.pragma('table_info("clip")') as {
+      name: string;
+    }[];
+    if (!columns.some((column) => column.name === "sourceSha256")) {
+      database.exec(
+        `ALTER TABLE "clip" ADD COLUMN "sourceSha256" TEXT NOT NULL DEFAULT ''`,
+      );
+    }
+    database
+      .prepare(
+        `UPDATE "clip" SET "state"='failed', "error"=?
+         WHERE "sourceSha256"='' AND "state"!='deleting'`,
+      )
+      .run(
+        "This clip was saved by an older version. Record and save a new clip.",
+      );
+  },
+  `ALTER TABLE "clip" ADD COLUMN "durationMs" REAL
+    CHECK ("durationMs" > 0 AND "durationMs" <= 60000);
+  CREATE INDEX "clip_duration_jobs" ON "clip" ("state", "retryAt", "createdAt", "id")
+    WHERE "state"='ready' AND "durationMs" IS NULL AND "attempts"<3;
+  UPDATE "clip" SET "attempts"=0, "retryAt"=0 WHERE "state"='ready';`,
 ];
 
 function accountSchemaVersion(database: Database.Database): number {
@@ -130,7 +177,9 @@ export function migrateAccountSchema(database: Database.Database): void {
     version < ACCOUNT_SCHEMA_MIGRATIONS.length;
     version++
   ) {
-    database.exec(ACCOUNT_SCHEMA_MIGRATIONS[version]);
+    const migration = ACCOUNT_SCHEMA_MIGRATIONS[version];
+    if (typeof migration === "string") database.exec(migration);
+    else migration(database);
     database.pragma(`user_version = ${version + 1}`);
   }
 }

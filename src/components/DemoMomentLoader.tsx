@@ -10,7 +10,11 @@ import {
   followFlag,
 } from "../state/watchFollow";
 import { parseDemoMoment, type DemoMomentCamera } from "./demoMoment";
-import { useDemoQueryState, useDemoTimeQueryState } from "./useQueryParams";
+import {
+  useDemoQueryState,
+  useDemoTimeQueryState,
+  useNavigationQueryState,
+} from "./useQueryParams";
 import { createLogger } from "../logger";
 import { FramePriority } from "../engine/framePriority";
 import { useEngineFrame } from "./useEngine";
@@ -33,6 +37,7 @@ const FOLLOW_ARM_TIMEOUT_MS = 30_000;
  */
 export function DemoMomentLoader() {
   const [demoParam] = useDemoQueryState();
+  const [route] = useNavigationQueryState();
   const [t] = useDemoTimeQueryState();
   const recording = useEngineSelector((s) => s.playback.recording);
   const durationMs = useEngineSelector((s) => s.playback.durationMs);
@@ -58,6 +63,7 @@ export function DemoMomentLoader() {
 
   useEffect(() => {
     if (
+      route.clip ||
       !demoParam ||
       recording?.source !== "demo" ||
       !sourceUrl ||
@@ -80,13 +86,13 @@ export function DemoMomentLoader() {
     )
       return;
     appliedRef.current = { recording, key };
+    if (!engineStore.getState().seekPlayback(moment.timeSec)) return;
     // A follow still waiting for its player belongs to the previous
     // link; a player on this demo could share the target id.
     pendingFollowRef.current = null;
     if (streamPlaybackStore.getState().followPlayer)
       streamPlaybackStore.setState({ followPlayer: null });
     log.info("Seeking to %ds (%s)", moment.timeSec, moment.camera.kind);
-    engineStore.getState().seekPlayback(moment.timeSec);
     const cam = moment.camera;
     switch (cam.kind) {
       case "original":
@@ -120,7 +126,7 @@ export function DemoMomentLoader() {
         };
         break;
     }
-  }, [demoParam, t, recording, durationMs, sourceUrl, attached]);
+  }, [demoParam, t, recording, durationMs, sourceUrl, attached, route.clip]);
 
   // A player follow can only be armed once that player has a body at
   // the new time; look for it each frame until it appears.

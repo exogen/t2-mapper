@@ -14,6 +14,7 @@ import { AccountControls } from "./AccountControls";
 import { MissionSelect } from "./MissionSelect";
 import { DemoSelect } from "./DemoSelect";
 import { StreamingMissionInfo } from "./StreamingMissionInfo";
+import { StreamingClipInfo } from "./StreamingClipInfo";
 import { ServerBrowserHeader } from "./ServerBrowserHeader";
 import { ViewModeToggle } from "./ViewModeToggle";
 import { useSettings } from "./SettingsProvider";
@@ -37,6 +38,7 @@ import {
 } from "./useQueryParams";
 import { useAppNavigation } from "./useAppNavigation";
 import { useNavigationSync } from "./useNavigationSync";
+import { ClipLoader } from "./ClipLoader";
 import { useCommandCircuitUrlSync } from "./useCommandCircuitUrlSync";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import { WatchErrorDialog } from "./WatchErrorDialog";
@@ -244,8 +246,11 @@ export function MapInspector() {
   }, [serverAddress]);
   // Share links: ?address=ip:port joins that host directly; ?name=Server
   // joins the first exact name match from the server list.
-  const [{ address: autoAddress, name: autoName }, setNavigationQuery] =
-    useNavigationQueryState();
+  const [
+    { address: autoAddress, name: autoName, clip: routeClip },
+    setNavigationQuery,
+  ] = useNavigationQueryState();
+  const clipId = mode === "demo" ? routeClip : null;
 
   const sessionActive = watchStatus !== null && watchStatus !== "ended";
 
@@ -596,7 +601,8 @@ export function MapInspector() {
               arrives — matching the dedicated watch page's behavior. */}
           <Activity
             mode={
-              (hasStreamData ||
+              (clipId ||
+                hasStreamData ||
                 sessionActive ||
                 (mode === "replay" && replayState)) &&
               !choosingMap
@@ -604,11 +610,15 @@ export function MapInspector() {
                 : "hidden"
             }
           >
-            <StreamingMissionInfo onOpenScoreScreen={handleOpenScoreScreen} />
+            {clipId ? (
+              <StreamingClipInfo clipId={clipId} />
+            ) : (
+              <StreamingMissionInfo onOpenScoreScreen={handleOpenScoreScreen} />
+            )}
           </Activity>
           <Activity
             mode={
-              (!(hasStreamData || sessionActive) &&
+              (!(clipId || hasStreamData || sessionActive) &&
                 !showJoinScreen &&
                 mode !== "replay") ||
               choosingMap
@@ -674,6 +684,7 @@ export function MapInspector() {
           </div>
         </Activity>
         <div className={styles.Content}>
+          <ClipLoader />
           {showJoinScreen ? (
             autoJoin === "pending" ? (
               <LoadingIndicator isLoading progress={null} />

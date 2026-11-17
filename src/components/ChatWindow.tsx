@@ -3,7 +3,7 @@ import { useEngineSelector } from "../state/engineStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { ChatMessage, ChatSegment } from "../stream/types";
 import styles from "./ChatWindow.module.css";
-import { useSettings } from "./SettingsProvider";
+import { type HudStyle, useSettings } from "./SettingsProvider";
 
 const ChatInput = lazy(() =>
   import("./ChatInput").then((mod) => ({ default: mod.ChatInput })),
@@ -39,8 +39,13 @@ function chatColorClass(msg: ChatMessage): string {
   return CHAT_COLOR_CLASSES[0];
 }
 
-export const ChatWindow = memo(function ChatWindow() {
-  const { chatHudStyle } = useSettings();
+export const ChatWindow = memo(function ChatWindow({
+  hudStyle,
+}: {
+  hudStyle?: HudStyle;
+}) {
+  const { chatHudStyle: preferredChatHudStyle } = useSettings();
+  const chatHudStyle = hudStyle ?? preferredChatHudStyle;
   const isLive = useEngineSelector(
     (state) => state.playback.recording?.source === "live",
   );

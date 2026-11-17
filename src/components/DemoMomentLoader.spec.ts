@@ -8,6 +8,7 @@ const test = vi.hoisted(() => ({
   findPlayer: vi.fn(),
   demoParam: "test.rec",
   sourceUrl: "/test.rec",
+  clip: null as string | null,
 }));
 vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
@@ -38,6 +39,7 @@ vi.mock("../state/demoLoadStore", () => ({
 vi.mock("./useQueryParams", () => ({
   useDemoQueryState: () => [test.demoParam],
   useDemoTimeQueryState: () => [500],
+  useNavigationQueryState: () => [{ clip: test.clip }],
 }));
 vi.mock("../stream/demoIndex", () => ({
   DEMOS_BASE_URL: "/",
@@ -49,7 +51,7 @@ vi.mock("../state/watchFollow", () => ({
   followFlag() {},
 }));
 
-import { engineStore } from "../state/engineStore";
+import { addPlaybackSeekGuard, engineStore } from "../state/engineStore";
 import {
   resetStreamPlayback,
   streamPlaybackStore,
@@ -63,6 +65,7 @@ const frame = () => test.frames.forEach((fn) => fn());
 beforeEach(() => {
   test.demoParam = "test.rec";
   test.sourceUrl = "/test.rec";
+  test.clip = null;
   now = 0;
   vi.spyOn(performance, "now").mockImplementation(() => now);
   vi.stubGlobal("window", { location: { hash: "#f7~1,2,8" } });
@@ -84,6 +87,36 @@ afterEach(() => {
   resetStreamPlayback();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+it("leaves the initial seek to the clip loader when a clip route is active", () => {
+  test.clip = "clip-id";
+  const nonce = state().playback.seekNonce;
+  DemoMomentLoader();
+  test.effects.splice(0).forEach((fn) => fn());
+  expect(state().playback.seekNonce).toBe(nonce);
+});
+
+it("leaves the camera unchanged when a timestamp seek is canceled", () => {
+  test.frames.length = 0;
+  state().completePlaybackSeek(demo, state().playback.seekNonce);
+  streamPlaybackStore.setState({
+    cameraMode: "freeFly",
+    followTargetId: 8,
+  });
+  const beforePlayback = state().playback;
+  const beforeCamera = streamPlaybackStore.getState();
+  const removeGuard = addPlaybackSeekGuard(() => false);
+  try {
+    DemoMomentLoader();
+    test.effects.splice(0).forEach((fn) => fn());
+    test.findPlayer.mockReturnValue("new-body");
+    frame();
+    expect(state().playback).toBe(beforePlayback);
+    expect(streamPlaybackStore.getState()).toBe(beforeCamera);
+  } finally {
+    removeGuard();
+  }
 });
 
 it("waits for the destination scene and gives the player its full timeout after a long seek", () => {

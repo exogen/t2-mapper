@@ -29,6 +29,7 @@ import {
   loadAppAuthConfig,
 } from "./appAuth.js";
 import { UserDemoUploads } from "./userDemoUploads.js";
+import { Clips } from "./clips.js";
 import { createRelayDemoProcessing } from "./demoProcessing.js";
 import {
   openAccountDatabase,
@@ -359,12 +360,29 @@ const demoStats =
     : null;
 demoStats?.start();
 
+const clips =
+  appAuth && appAuthConfig && accountDatabase && demoUploadConfig
+    ? new Clips({
+        database: accountDatabase,
+        config: demoUploadConfig,
+        assetRoot: GAME_BASE_PATH,
+        trustedOrigins: [
+          ...appAuthConfig.trustedOrigins,
+          appAuthConfig.baseURL,
+        ],
+        getAccount: (headers) => appAuth.getAccount(headers),
+        prepare: demoProcessing.prepareClipCheckpoint,
+      })
+    : null;
+clips?.start();
+
 /** HTTP health checks and demo downloads; WebSocket upgrades are separate. */
 const httpServer = http.createServer(async (req, res) => {
   if (
     appAuth ? await appAuth.handle(req, res) : handleDisabledAppAuth(req, res)
   )
     return;
+  if (await clips?.handle(req, res)) return;
   if (await userDemoUploads?.handle(req, res)) return;
   if (await handleReplayUpload(req, res, replaySessions)) return;
   if (await handleDemoDownload(req, res, TRUST_FLY_PROXY, demoSourceCache))
@@ -869,6 +887,7 @@ function drainSessions(timeoutMs: number): Promise<unknown> {
   appAuth?.close();
   demoStats?.stop();
   const userDemosClosing = userDemoUploads?.close();
+  const clipsClosing = clips?.close();
   patroller?.stop();
   watchSessions.shutdown();
   replaySessions.shutdown();
@@ -879,6 +898,7 @@ function drainSessions(timeoutMs: number): Promise<unknown> {
       accountBackups?.stop(),
       demoStats?.idle(),
       userDemosClosing,
+      clipsClosing,
     ]),
     new Promise((resolve) => setTimeout(resolve, timeoutMs).unref()),
   ]);

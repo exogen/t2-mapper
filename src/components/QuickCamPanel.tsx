@@ -16,6 +16,7 @@ import cameraStyles from "./QuickCamPanel.module.css";
 
 export function QuickCamPanel({ watching }: { watching: boolean }) {
   const {
+    clipPlaybackActive,
     showQuickCamHud,
     setShowQuickCamHud,
     quickCamHudPosition,
@@ -29,6 +30,7 @@ export function QuickCamPanel({ watching }: { watching: boolean }) {
         <Checkbox
           id="showQuickCamHudInput"
           checked={showQuickCamHud}
+          disabled={clipPlaybackActive}
           onChange={(event) => setShowQuickCamHud(event.target.checked)}
         />
         <label className={styles.Label} htmlFor="showQuickCamHudInput">
@@ -37,6 +39,7 @@ export function QuickCamPanel({ watching }: { watching: boolean }) {
         <div className={styles.Control}>
           <Select
             id="quickCamHudPositionInput"
+            disabled={clipPlaybackActive}
             aria-label="Quick cam HUD position"
             value={quickCamHudPosition}
             onChange={(value) => setQuickCamHudPosition(value as HudPosition)}
@@ -51,6 +54,7 @@ export function QuickCamPanel({ watching }: { watching: boolean }) {
         <Checkbox
           id="quickCamHideUnassignedSlotsInput"
           checked={quickCamHideUnassignedSlots}
+          disabled={clipPlaybackActive}
           onChange={(event) =>
             setQuickCamHideUnassignedSlots(event.target.checked)
           }
@@ -68,6 +72,7 @@ export function QuickCamPanel({ watching }: { watching: boolean }) {
 }
 
 function CameraBindings({ watching }: { watching: boolean }) {
+  const { clipPlaybackActive } = useSettings();
   const { save, restore } = useQuickCams();
   const settings = useCaster((s) => s.settings);
   const spectatorReady = useIsWatchSpectator({ requireReady: true });
@@ -80,7 +85,7 @@ function CameraBindings({ watching }: { watching: boolean }) {
   return (
     <fieldset
       className={cameraStyles.Controls}
-      disabled={watching && !spectatorReady}
+      disabled={clipPlaybackActive || (watching && !spectatorReady)}
     >
       <p className={styles.Description}>
         Press Save or <BsShiftFill className={cameraStyles.ShiftIcon} />{" "}

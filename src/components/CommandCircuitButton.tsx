@@ -16,7 +16,7 @@ import styles from "./CommandCircuitButton.module.css";
 export function CommandCircuitButton() {
   const active = useCommandCircuit((s) => s.active);
   const dataSource = useDataSource();
-  const { setSidebarOpen } = useSettings();
+  const { setSidebarOpen, clipPlaybackActive } = useSettings();
   const isTouch = useTouchDevice();
 
   const handleClick = () => {
@@ -36,7 +36,7 @@ export function CommandCircuitButton() {
         active ? "Exit the command circuit (C)" : "Open the command circuit (C)"
       }
       onClick={handleClick}
-      disabled={dataSource == null}
+      disabled={dataSource == null || clipPlaybackActive}
     >
       {active ? (
         <>

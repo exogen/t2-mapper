@@ -34,6 +34,8 @@
 export const FramePriority = {
   /** Queued shadow atlas draws, before any next-frame pose mutations. */
   ShadowAtlas: -70,
+  /** Retimed clip transport, ahead of the demo clock. */
+  ClipTransport: -65,
   /** Demo clock, tick processing, entity interpolation, snapshot publish. */
   StreamPlayback: -60,
   /** Cosmetic debris: its simulation steps and its bodies are posed. */
@@ -79,6 +81,8 @@ export const FramePriority = {
   CameraCommandCircuit: -15,
   /** Perspective FOV, after all camera-mode changes for this frame. */
   CameraProjection: -12,
+  /** Recorded clip camera, or capture of the final user view. */
+  ClipCamera: -11,
   /** Reads the finished pose to detect discontinuities. */
   CameraWatchdog: -10,
   /**

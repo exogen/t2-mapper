@@ -5,15 +5,30 @@ import {
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import type { DemoMetadata } from "../relay/demoMetadata";
+import type { DemoDeletionPlan } from "./lib/demoDeletionCleanup";
 
 const mocks = vi.hoisted(() => ({
   client: vi.fn(),
   list: vi.fn(),
   send: vi.fn(),
+  openCleanup: vi.fn(),
+  commitProfiles: vi.fn(),
+  cleanup: {
+    pending: vi.fn(),
+    plan: vi.fn(),
+    persist: vi.fn(),
+    removeDependencies: vi.fn(),
+    prepareProfiles: vi.fn(),
+    finish: vi.fn(),
+    close: vi.fn(),
+  },
 }));
 vi.mock("./lib/r2", () => ({
   r2Client: mocks.client,
   listAllObjects: mocks.list,
+}));
+vi.mock("./lib/demoDeletionCleanup", () => ({
+  openDemoDeletionCleanup: mocks.openCleanup,
 }));
 
 const originalArgv = process.argv;
@@ -45,6 +60,7 @@ let store: Map<string, string>;
 let version: number;
 let failDeletes: Set<string>;
 let beforeIndexPut: (() => void) | undefined;
+let journals: Map<string, DemoDeletionPlan>;
 
 function index(): DemoMetadata[] {
   return JSON.parse(store.get(indexKey)!);
@@ -80,6 +96,7 @@ beforeEach(() => {
   version = 1;
   failDeletes = new Set();
   beforeIndexPut = undefined;
+  journals = new Map();
   store = new Map([[indexKey, "[]"]]);
   addDemo(short);
   addDemo(kept);
@@ -96,6 +113,32 @@ beforeEach(() => {
   mocks.client.mockReturnValue({
     client: { send: mocks.send },
     config: { bucket: "bucket", prefix: "demos/" },
+  });
+  mocks.openCleanup.mockReturnValue(mocks.cleanup);
+  mocks.cleanup.prepareProfiles.mockImplementation(
+    async () => mocks.commitProfiles,
+  );
+  mocks.cleanup.pending.mockImplementation(
+    async () =>
+      new Map([...journals].map(([key, plan]) => [key, plan.metadata])),
+  );
+  mocks.cleanup.plan.mockImplementation(
+    async (demoKey: string, metadata: unknown) =>
+      ({
+        version: 1,
+        demoKey,
+        metadata,
+        sourceETag: '"source"',
+        guids: [],
+        clipIds: [],
+        privateObjects: [],
+      }) satisfies DemoDeletionPlan,
+  );
+  mocks.cleanup.persist.mockImplementation(async (plan: DemoDeletionPlan) => {
+    journals.set(plan.demoKey, plan);
+  });
+  mocks.cleanup.finish.mockImplementation(async (plan: DemoDeletionPlan) => {
+    journals.delete(plan.demoKey);
   });
   mocks.list.mockImplementation(async () =>
     [...store.keys()].map((key) => ({ key, size: 3 })),
@@ -167,6 +210,15 @@ it("defaults to a dry run and lists every associated object without any writes",
     .find((entry) => entry.action === "would-delete");
   expect(planned.objects).toContain("demos/short.rec.fr.commentary.mp3");
   expect(planned.objects).not.toContain("demos/short-extra.rec");
+  for (const method of [
+    "persist",
+    "removeDependencies",
+    "prepareProfiles",
+    "finish",
+  ] as const)
+    expect(mocks.cleanup[method]).not.toHaveBeenCalled();
+  expect(mocks.commitProfiles).not.toHaveBeenCalled();
+  expect(mocks.cleanup.close).toHaveBeenCalledOnce();
 });
 
 it("conditionally removes the index entry before deleting the recording or any sidecars", async () => {
@@ -308,15 +360,20 @@ it("shows help without requiring a filter or credentials", async () => {
   );
 });
 
-it("uses unindexed .rec.json metadata, including imported source durations", async () => {
+it("skips cached external sources while using unindexed metadata for published recordings", async () => {
   store.set("demos/sources/tribesforever/1.rec", "demo");
   store.set(
     "demos/sources/tribesforever/1.rec.json",
     JSON.stringify({ format: "t2-source-demo", durationMs: 1000 }),
   );
+  addDemo({ ...short, filename: "unindexed.rec" }, false);
   process.argv.push("--delete");
   await import("./delete-demos");
-  expect(store.has("demos/sources/tribesforever/1.rec")).toBe(false);
+  expect(store.has("demos/sources/tribesforever/1.rec")).toBe(true);
+  expect(store.has("demos/unindexed.rec")).toBe(false);
+  expect(
+    mocks.cleanup.plan.mock.calls.some(([key]) => key.startsWith("sources/")),
+  ).toBe(false);
   expect(summary().deleted).toBe(2);
 });
 
@@ -554,4 +611,200 @@ it("batches deletions at the R2 limit of 1000 objects", async () => {
     deletedObjects: 1008,
     failed: 0,
   });
+});
+
+it("includes private objects, affected GUID counts, and dependent clips in the dry-run plan", async () => {
+  const plan: DemoDeletionPlan = {
+    version: 1,
+    demoKey: short.filename,
+    metadata: short,
+    sourceETag: '"source"',
+    guids: ["101", "202"],
+    clipIds: ["11111111-1111-4111-8111-111111111111"],
+    privateObjects: [
+      "private/short.rec.guids.json",
+      "private/short.rec.stats.json",
+    ],
+  };
+  mocks.cleanup.plan.mockResolvedValueOnce(plan);
+  process.argv.push("--database=/production/accounts.sqlite");
+  await import("./delete-demos");
+  expect(mocks.openCleanup).toHaveBeenCalledWith(
+    expect.objectContaining({
+      databasePath: "/production/accounts.sqlite",
+      write: false,
+    }),
+  );
+  const preview = vi
+    .mocked(console.log)
+    .mock.calls.map(([line]) => JSON.parse(line))
+    .find((entry) => entry.action === "would-delete");
+  expect(preview).toMatchObject({
+    privateObjects: plan.privateObjects,
+    clips: plan.clipIds,
+    affectedPlayers: 2,
+  });
+  expect(mocks.cleanup.persist).not.toHaveBeenCalled();
+  expect(mocks.cleanup.removeDependencies).not.toHaveBeenCalled();
+  expect(mocks.cleanup.prepareProfiles).not.toHaveBeenCalled();
+  expect(mocks.cleanup.finish).not.toHaveBeenCalled();
+});
+
+it("persists the private plan before public changes and completes profiles before dropping retry metadata", async () => {
+  const send = mocks.send.getMockImplementation()!;
+  mocks.send.mockImplementation(async (command) => {
+    if (command instanceof PutObjectCommand && command.input.Key === indexKey)
+      expect(journals.has(short.filename)).toBe(true);
+    if (
+      command instanceof DeleteObjectsCommand &&
+      command.input.Delete!.Objects!.some(
+        ({ Key }) => Key === "demos/short.rec.json",
+      )
+    ) {
+      expect(mocks.cleanup.removeDependencies).toHaveBeenCalledOnce();
+      expect(mocks.cleanup.prepareProfiles).toHaveBeenCalledOnce();
+      expect(mocks.commitProfiles).toHaveBeenCalledOnce();
+      expect(mocks.cleanup.finish).not.toHaveBeenCalled();
+    }
+    return send(command);
+  });
+  mocks.cleanup.removeDependencies.mockImplementation(
+    async (plan: DemoDeletionPlan) => {
+      expect(store.has(`demos/${plan.demoKey}`)).toBe(false);
+      expect(index()).toEqual([kept]);
+      expect(store.has(`demos/${plan.demoKey}.json`)).toBe(true);
+    },
+  );
+  mocks.cleanup.finish.mockImplementation(async (plan: DemoDeletionPlan) => {
+    expect(store.has(`demos/${plan.demoKey}.json`)).toBe(false);
+    journals.delete(plan.demoKey);
+  });
+  process.argv.push("--delete");
+  await import("./delete-demos");
+  expect(mocks.cleanup.prepareProfiles).toHaveBeenCalledWith(
+    [expect.objectContaining({ demoKey: short.filename })],
+    [kept],
+  );
+  expect(
+    mocks.cleanup.prepareProfiles.mock.invocationCallOrder[0],
+  ).toBeLessThan(mocks.cleanup.persist.mock.invocationCallOrder[0]);
+  expect(
+    mocks.cleanup.removeDependencies.mock.invocationCallOrder[0],
+  ).toBeLessThan(mocks.commitProfiles.mock.invocationCallOrder[0]);
+  expect(journals.size).toBe(0);
+  expect(mocks.cleanup.close).toHaveBeenCalledOnce();
+});
+
+it.each(["removeDependencies", "commitProfiles"] as const)(
+  "retains metadata and the journal when %s fails, then completes on retry",
+  async (method) => {
+    if (method === "commitProfiles")
+      mocks.commitProfiles.mockImplementationOnce(() => {
+        throw new Error("Temporary cleanup failure");
+      });
+    else
+      mocks.cleanup.removeDependencies.mockRejectedValueOnce(
+        new Error("Temporary cleanup failure"),
+      );
+    process.argv.push("--delete");
+    await import("./delete-demos");
+    expect(index()).toEqual([kept]);
+    expect(store.has("demos/short.rec")).toBe(false);
+    expect(store.has("demos/short.rec.json")).toBe(true);
+    expect(journals.has(short.filename)).toBe(true);
+    expect(mocks.cleanup.finish).not.toHaveBeenCalled();
+    expect(summary()).toMatchObject({ deleted: 0, failed: 1 });
+    expect(mocks.cleanup.close).toHaveBeenCalledOnce();
+    vi.resetModules();
+    process.exitCode = undefined;
+    await import("./delete-demos");
+    expect(store.has("demos/short.rec.json")).toBe(false);
+    expect(journals.has(short.filename)).toBe(false);
+    expect(summary()).toMatchObject({ deleted: 1, failed: 0 });
+    expect(mocks.cleanup.close).toHaveBeenCalledTimes(2);
+  },
+);
+
+it("resumes a journal-only deletion after recordings, metadata, and index entry are already gone", async () => {
+  mocks.cleanup.finish.mockRejectedValueOnce(
+    new Error("Journal cleanup unavailable"),
+  );
+  process.argv.push("--delete");
+  await import("./delete-demos");
+  expect(index()).toEqual([kept]);
+  expect(
+    [...store.keys()].some((key) => key.startsWith("demos/short.rec")),
+  ).toBe(false);
+  expect(journals.has(short.filename)).toBe(true);
+  expect(summary()).toMatchObject({ deleted: 0, failed: 1 });
+  vi.resetModules();
+  process.exitCode = undefined;
+  await import("./delete-demos");
+  expect(mocks.cleanup.plan).toHaveBeenLastCalledWith(short.filename, short);
+  expect(journals.size).toBe(0);
+  expect(summary()).toMatchObject({
+    deleted: 1,
+    failed: 0,
+    plannedObjects: 0,
+    deletedObjects: 0,
+  });
+  expect(mocks.cleanup.close).toHaveBeenCalledTimes(2);
+});
+
+it.each(["Account database is missing", "Missing DEMO_PRIVATE_R2_BUCKET"])(
+  "aborts before remote writes when preflight fails: %s",
+  async (message) => {
+    mocks.openCleanup.mockImplementationOnce(() => {
+      throw new Error(message);
+    });
+    process.argv.push("--delete");
+    await expect(import("./delete-demos")).rejects.toThrow(message);
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.list).not.toHaveBeenCalled();
+    expect(mocks.cleanup.persist).not.toHaveBeenCalled();
+    expect(mocks.cleanup.close).not.toHaveBeenCalled();
+  },
+);
+
+it("closes the database when private journal inventory cannot be read", async () => {
+  mocks.cleanup.pending.mockRejectedValueOnce(
+    new Error("Private storage unavailable"),
+  );
+  process.argv.push("--delete");
+  await expect(import("./delete-demos")).rejects.toThrow(
+    "Private storage unavailable",
+  );
+  expect(mocks.cleanup.close).toHaveBeenCalledOnce();
+  expect(deletes()).toEqual([]);
+  expect(index()).toEqual([short, kept]);
+});
+
+it("does not remove index entries or public objects if persisting a private retry plan fails", async () => {
+  mocks.cleanup.persist.mockRejectedValueOnce(
+    new Error("Journal write unavailable"),
+  );
+  process.argv.push("--delete");
+  await import("./delete-demos");
+  expect(deletes()).toEqual([]);
+  expect(index()).toEqual([short, kept]);
+  expect(mocks.cleanup.removeDependencies).not.toHaveBeenCalled();
+  expect(summary()).toMatchObject({ deleted: 0, failed: 1 });
+  expect(mocks.cleanup.close).toHaveBeenCalledOnce();
+});
+
+it("leaves all storage unchanged when affected profiles cannot be prepared completely", async () => {
+  mocks.cleanup.prepareProfiles.mockRejectedValueOnce(
+    new Error("Missing current stats"),
+  );
+  const before = new Map(store);
+  process.argv.push("--delete");
+  await import("./delete-demos");
+  expect(store).toEqual(before);
+  expect(journals.size).toBe(0);
+  expect(deletes()).toEqual([]);
+  expect(mocks.cleanup.persist).not.toHaveBeenCalled();
+  expect(mocks.cleanup.removeDependencies).not.toHaveBeenCalled();
+  expect(mocks.commitProfiles).not.toHaveBeenCalled();
+  expect(summary()).toMatchObject({ deleted: 0, failed: 1 });
+  expect(mocks.cleanup.close).toHaveBeenCalledOnce();
 });

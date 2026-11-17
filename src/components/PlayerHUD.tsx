@@ -17,6 +17,7 @@ import { formatHudClock, useMatchClockMs } from "./useMatchClock";
 import { useSettings } from "./SettingsProvider";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import { MatchHUD } from "./MatchHUD";
+import { clipStore } from "../state/clipStore";
 
 function Compass({
   commandCircuitActive,
@@ -555,17 +556,21 @@ export function PlayerHUD({
     : hasControlPlayer && cameraMode !== "freeFly";
   const followed = useFollowedPlayer();
   const {
-    showChat,
+    showChat: preferredShowChat,
     showScoreHud,
     scoreHudPosition,
     showQuickCamHud,
     quickCamHudPosition,
     scoreHudStyle,
-    showMatchHud,
-    matchHudStyle,
+    showMatchHud: preferredShowMatchHud,
+    matchHudStyle: preferredMatchHudStyle,
     showReticle,
     showCompass,
   } = useSettings();
+  const clipHud = useStore(clipStore, (state) => state.active?.hud);
+  const showChat = clipHud?.showChat ?? preferredShowChat;
+  const showMatchHud = clipHud?.showMatchHud ?? preferredShowMatchHud;
+  const matchHudStyle = clipHud?.matchHudStyle ?? preferredMatchHudStyle;
   const commandCircuitActive = useCommandCircuit((s) => s.active);
   const quickCamAvailable = useCaster((s) => !!s.settings);
   const showQuickCam = showQuickCamHud && quickCamAvailable;
@@ -581,7 +586,7 @@ export function PlayerHUD({
       )}
       <div className={styles.SideHUDs}>
         <div className={styles.LeftHUD}>
-          {showChat && <ChatWindow />}
+          {showChat && <ChatWindow hudStyle={clipHud?.chatHudStyle} />}
           {showScoreHud && scoreHudPosition === "left" && (
             <ScoreHUD hudStyle={scoreHudStyle} />
           )}

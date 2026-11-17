@@ -3,7 +3,7 @@ import type { StreamRecording, StreamSnapshot } from "../stream/types";
 import type { TimelineEvent } from "./demoTimelineStore";
 import type { PlayerEntity } from "./gameEntityTypes";
 import { seekToTimelineEvent } from "./demoTimelineFollow";
-import { engineStore } from "./engineStore";
+import { addPlaybackSeekGuard, engineStore } from "./engineStore";
 import { gameEntityStore } from "./gameEntityStore";
 import { demoDirectorStore, resetDirector } from "./demoDirectorStore";
 import { cameraTourStore } from "./cameraTourStore";
@@ -80,6 +80,25 @@ afterEach(() => {
   resetDirector();
   resetStreamPlayback();
   cameraTourStore.getState().cancel();
+});
+
+it("keeps the current camera and tour when its seek is canceled", () => {
+  cameraTourStore
+    .getState()
+    .flyTo({ entityId: "old", label: "Old", position: [0, 0, 0] });
+  const beforePlayback = engine().playback;
+  const beforeCamera = camera();
+  const beforeTour = cameraTourStore.getState().animation;
+  const removeGuard = addPlaybackSeekGuard(() => false);
+  try {
+    seekToTimelineEvent(recording, event());
+    expect(engine().playback).toBe(beforePlayback);
+    expect(cameraTourStore.getState().animation).toBe(beforeTour);
+    publish(97);
+    expect(camera()).toBe(beforeCamera);
+  } finally {
+    removeGuard();
+  }
 });
 
 it.each([

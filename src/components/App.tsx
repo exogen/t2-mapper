@@ -5,6 +5,7 @@ import {
 } from "../state/appAccountStore";
 import { AppProviders } from "./AppProviders";
 import { MapInspector } from "./MapInspector";
+import { ClipControlsProvider } from "./ClipControls";
 import { NewAddressDialog } from "./NewAddressDialog";
 
 export default function App() {
@@ -18,7 +19,9 @@ export default function App() {
 
   return (
     <AppProviders>
-      <MapInspector />
+      <ClipControlsProvider>
+        <MapInspector />
+      </ClipControlsProvider>
       <NewAddressDialog />
     </AppProviders>
   );

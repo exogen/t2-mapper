@@ -1,0 +1,329 @@
+.Root {
+  flex: 0 0 auto;
+}
+.RecordButton {
+  composes: Button from "./Button.module.css";
+}
+.RecordButton[data-recording],
+.RecordButton[data-recording]:not(:disabled):hover,
+.RecordButton[data-recording]:not(:disabled):active {
+  background: rgba(213, 66, 58, 0.9);
+  border-color: rgba(255, 160, 150, 0.65);
+  color: #fff;
+}
+.RecordButton[data-recording] .RecordIcon {
+  color: inherit;
+  opacity: 1;
+  animation: recording 1s ease-in-out infinite alternate;
+}
+.StopIcon {
+  font-size: calc(1em - 4px);
+}
+.Panel {
+  composes: BlueDialog from "./GameDialog.module.css";
+  width: 420px;
+  max-width: calc(100dvw - 32px);
+  max-height: calc(100dvh - 32px);
+  box-sizing: border-box;
+  overflow-y: auto;
+  padding: 18px;
+  z-index: 20;
+}
+.Panel.Panel {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+.Panel p {
+  margin: 8px 0 14px;
+}
+.Title {
+  margin: 0 0 10px;
+  color: var(--control-text);
+  font-size: 18px;
+  font-weight: 600;
+}
+.SavedPanel {
+  composes: Panel;
+  width: 480px;
+}
+.SavedPanel .Title {
+  padding-right: 30px;
+  min-height: 2.6em;
+  max-height: 2.6em;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.PreparationStatus {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 3em;
+  color: var(--control-muted);
+}
+.StatusIcon {
+  flex: 0 0 14px;
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+}
+.SkeletonLine {
+  display: block;
+  height: 0.8em;
+  border-radius: 4px;
+  background: rgba(168, 209, 247, 0.14);
+}
+.TitleSkeleton {
+  display: grid;
+  gap: 0.5em;
+  padding-top: 0.2em;
+}
+.TitleSkeleton > :last-child {
+  width: 65%;
+}
+.ShareField {
+  display: flex;
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.LinkSkeleton {
+  composes: SkeletonLine;
+  position: absolute;
+  left: 8px;
+  right: 20%;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.Spinner {
+  flex-shrink: 0;
+  font-size: 14px;
+  animation: spin 1s linear infinite;
+}
+.ShareRow {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  margin: 14px 0;
+}
+.CopyButton {
+  composes: Button from "./Button.module.css";
+  flex: 0 0 auto;
+  width: 36px;
+  min-height: 36px;
+  padding: 4px;
+}
+.SavedActions {
+  display: flex;
+  gap: 8px;
+}
+.PlayButton {
+  composes: Button from "./Button.module.css";
+  min-height: 36px;
+  font-size: 14px;
+}
+.SavedActions .UtilityButton {
+  flex: 0 0 auto;
+}
+.CloseButton {
+  composes: Button from "./Button.module.css";
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  min-height: 28px;
+  padding: 3px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--control-muted);
+}
+.CloseButton:hover:not(:disabled) {
+  background: var(--control-hover-background);
+  border-color: var(--control-border);
+  color: var(--control-text);
+}
+.ShareLink {
+  color: #dcecff;
+  background: #0a1625;
+  border: 1px solid #3b6f9c;
+  border-radius: 3px;
+  padding: 5px;
+  font: inherit;
+  min-width: 0;
+}
+.HudOptions {
+  display: grid;
+  gap: 6px;
+}
+.DraftActions,
+.Viewing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.DraftActions {
+  align-items: stretch;
+  flex-wrap: nowrap;
+  flex: 0 0 auto;
+}
+.EditorPanel {
+  display: grid;
+  gap: 12px;
+}
+.RecordingStatus {
+  margin: 0;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.SmoothingField {
+  composes: Field from "./InspectorControls.module.css";
+  column-gap: 8px;
+  margin: 0;
+}
+.SmoothingField .SmoothingSlider {
+  grid-column: 2;
+  grid-row: 1;
+}
+.EditorPanel .DraftActions .ActionButton {
+  flex: 1;
+}
+.EditorPanel .DraftActions > button {
+  min-height: 36px;
+  font-size: 13px;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+.SmoothingStops {
+  grid-column: 2;
+  grid-row: 2;
+  position: relative;
+  height: 14px;
+  color: var(--control-muted);
+  font-size: 10px;
+  line-height: 14px;
+}
+.SmoothingStops > span {
+  position: absolute;
+  top: 0;
+}
+.SmoothingStops > :first-child {
+  left: 0;
+}
+.SmoothingStops > :nth-child(2) {
+  left: 50%;
+  transform: translateX(-50%);
+}
+.SmoothingStops > :last-child {
+  right: 0;
+}
+.SmoothingStops [data-active="true"] {
+  color: var(--control-text);
+}
+.ActionButton {
+  composes: Button from "./Button.module.css";
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.UtilityButton {
+  composes: Button from "./Button.module.css";
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.ExitButton {
+  composes: UtilityButton;
+  composes: DestructiveActionButton from "./Button.module.css";
+  min-height: 32px;
+  margin: 0;
+}
+.DiscardButton {
+  composes: DestructiveActionButton from "./Button.module.css";
+  flex: 0 0 auto;
+  margin: 0;
+}
+.Viewing .UtilityButton,
+.DraftActions .ActionButton {
+  padding: 4px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.ShareLink {
+  flex: 1 1 0;
+  box-sizing: border-box;
+  min-height: 36px;
+  font-size: 12px;
+}
+.Error {
+  color: #ffb7ad;
+  font-size: 12px;
+}
+.Viewing {
+  font-size: 12px;
+}
+.Loading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: max-content;
+  max-width: calc(100% - 32px);
+  padding: 12px 16px;
+  border: 1px solid var(--control-border);
+  border-radius: 4px;
+  background: var(--control-popover-background);
+  color: var(--control-text);
+  z-index: 5;
+  font-size: 13px;
+}
+.Loading > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+@keyframes recording {
+  to {
+    opacity: 0.35;
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (max-width: 600px) {
+  .Viewing {
+    gap: 4px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .RecordButton[data-recording] .RecordIcon,
+  .Spinner {
+    animation: none;
+  }
+}
+@media (pointer: coarse) {
+  .CopyButton {
+    width: 44px;
+    min-height: 44px;
+  }
+  .CloseButton {
+    top: 4px;
+    right: 4px;
+    width: 44px;
+    min-height: 44px;
+  }
+  .PlayButton {
+    min-height: 44px;
+  }
+}

@@ -7,6 +7,7 @@ import {
 } from "../state/engineStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { streamClock } from "../state/streamPlaybackStore";
+import { clipStore } from "../state/clipStore";
 
 export const SPEED_OPTIONS = [0.1, 0.25, 0.5, 1, 1.5, 2, 3, 4, 8];
 
@@ -56,20 +57,23 @@ export function usePlaybackActions() {
 
   const seek = useCallback(
     (timeSec: number) => {
-      if (!recording || !isCurrentPlayback(recording)) return;
-      seekPlayback(timeSec);
+      if (!recording || !isCurrentPlayback(recording)) return false;
+      return seekPlayback(timeSec);
     },
     [recording, seekPlayback],
   );
 
   const seekBy = useCallback(
     (seconds: number) => {
+      if (!recording || !isCurrentPlayback(recording)) return false;
+      const clip = clipStore.getState();
+      if (clip.active) return clip.seek(clip.playheadMs + seconds * 1000);
       const { playback } = engineStore.getState();
       const time =
         playback.status === "seeking" ? playback.seekTime : streamClock.time;
-      seek(time + seconds);
+      return seek(time + seconds);
     },
-    [seek],
+    [recording, seek],
   );
 
   const setSpeed = useCallback(

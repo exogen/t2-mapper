@@ -1,0 +1,31 @@
+.Field {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.231;
+}
+
+.Field [data-checkbox] {
+  margin-right: 1px;
+}
+
+@media (pointer: coarse) {
+  .Field {
+    margin-bottom: 16px;
+    font-size: 15px;
+  }
+
+  .Field label {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
+  .Field [data-select] {
+    width: 100%;
+    max-width: none;
+  }
+}

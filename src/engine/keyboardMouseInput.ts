@@ -193,6 +193,10 @@ export function installKeyboardMouseInput(engine: GameEngine): () => void {
       // (The director unmounts these bindings anyway — this stops
       // pointer-locked deltas from accumulating.)
       const cameraOwner = resolveCameraOwner();
+      if (cameraOwner === "clip") {
+        clearInputDeltas();
+        return;
+      }
       if (cameraOwner === "tour" || cameraOwner === "director") return;
       if (cameraOwner === "commandCircuit") {
         // Camera look/move stays suppressed, but observer triggers (player

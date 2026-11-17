@@ -1,0 +1,117 @@
+.Root {
+  position: relative;
+  min-width: 0;
+  height: 28px;
+  margin: 0 8px;
+}
+
+.Range,
+.Playhead {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 28px;
+  touch-action: none;
+  user-select: none;
+}
+
+.Range {
+  z-index: 1;
+  cursor: pointer;
+}
+
+.Track {
+  position: relative;
+  flex: 1;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 2px;
+}
+
+.Selected {
+  position: absolute;
+  height: 100%;
+  background: #3f8cff;
+}
+
+.TrimThumb,
+.PlayheadThumb {
+  position: relative;
+  display: block;
+  width: 0;
+  height: 28px;
+  outline: none;
+}
+
+.TrimThumb::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: -6px;
+  width: 12px;
+  height: 22px;
+  border: 1px solid #a8d1f7;
+  border-radius: 3px;
+  background: #1b527f;
+  box-sizing: border-box;
+  cursor: ew-resize;
+}
+
+.TrimThumb::before {
+  content: "";
+  position: absolute;
+  top: 9px;
+  left: -1px;
+  width: 2px;
+  height: 10px;
+  background: #e0efff;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.TrimThumb:focus-visible::after,
+.PlayheadThumb:focus-visible::before {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+.Playhead {
+  z-index: 2;
+  pointer-events: none;
+}
+
+.PlayheadThumb {
+  pointer-events: none;
+}
+
+.PlayheadThumb::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: -3px;
+  width: 12px;
+  height: 8px;
+  background: #fff;
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+  pointer-events: auto;
+  cursor: ew-resize;
+}
+
+.PlayheadThumb::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: -1px;
+  width: 2px;
+  height: 23px;
+  background: #fff;
+  pointer-events: none;
+  box-shadow: 0 0 2px #10273d;
+}
+
+.Root:has([data-disabled]) {
+  opacity: 0.6;
+}

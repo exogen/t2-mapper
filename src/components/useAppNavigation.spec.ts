@@ -8,6 +8,7 @@ const test = vi.hoisted(() => ({
   setQuery: vi.fn(),
   dropHash: vi.fn(),
   cancelTour: vi.fn(),
+  stopClip: vi.fn(),
   leaveReplay: vi.fn(),
   createReplay: vi.fn(),
   createLocalReplay: vi.fn(),
@@ -39,6 +40,9 @@ vi.mock("./useQueryParams", async (original) => ({
 }));
 vi.mock("../state/cameraTourStore", () => ({
   cameraTourStore: { getState: () => ({ cancel: test.cancelTour }) },
+}));
+vi.mock("../state/clipStore", () => ({
+  clipStore: { getState: () => ({ stopPlayback: test.stopClip }) },
 }));
 vi.mock("../state/engineStore", () => ({
   engineStore: { getState: () => ({ setRecording: test.setRecording }) },
@@ -94,6 +98,7 @@ beforeEach(() => {
     mode: null,
     mission: null,
     demo: null,
+    clip: null,
     user: null,
     replay: null,
     t: null,
@@ -126,6 +131,30 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("shared replay navigation", () => {
+  it("pushes a full-demo history entry when exiting a saved clip without unloading its source", () => {
+    setRoute({ mode: "demo", demo: "published.rec", clip: "clip-one" });
+    NavigationActions().exitClip();
+    expect(test.stopClip).toHaveBeenCalledOnce();
+    expect(test.patches).toEqual([{ clip: null, t: null }]);
+    expect(test.setQuery).toHaveBeenCalledWith(expect.any(Function), {
+      history: "push",
+    });
+    expect(test.setQuery.mock.invocationCallOrder[0]).toBeLessThan(
+      test.stopClip.mock.invocationCallOrder[0],
+    );
+    expect(test.query.demo).toBe("published.rec");
+    expect(test.unloadDemo).not.toHaveBeenCalled();
+  });
+
+  it("leaves an ordinary demo route intact when exiting a draft preview", () => {
+    setRoute({ mode: "demo", demo: "published.rec", t: 42 });
+    NavigationActions().exitClip();
+    expect(test.stopClip).toHaveBeenCalledOnce();
+    expect(test.patches).toEqual([{}]);
+    expect(test.query.t).toBe(42);
+    expect(test.unloadDemo).not.toHaveBeenCalled();
+  });
+
   it("starts a loaded demo at its selected tick without carrying local time/camera route state", () => {
     const navigation = NavigationActions();
     navigation.createReplay("tribesforever:22945", 12_345);
@@ -138,6 +167,7 @@ describe("shared replay navigation", () => {
         mode: "replay",
         mission: null,
         demo: null,
+        clip: null,
         user: null,
         replay: null,
         t: null,
@@ -186,6 +216,7 @@ describe("shared replay navigation", () => {
         mode: "demo",
         mission: null,
         demo: null,
+        clip: null,
         user: "126767979894407168",
         replay: null,
         t: null,

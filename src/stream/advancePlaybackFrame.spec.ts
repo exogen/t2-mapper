@@ -122,6 +122,25 @@ describe("frame publication and transport", () => {
     });
   });
 
+  it("reconstructs late collision assets without creating another navigation request", () => {
+    let needsReplay = true;
+    Object.defineProperty(demo.streamingPlayback, "needsReplay", {
+      get: () => needsReplay,
+    });
+    step.mockImplementation((time: number) => {
+      needsReplay = false;
+      return snapshot(Math.floor((time * 1000) / 32) * 0.032);
+    });
+    state().setPlaybackStatus("paused");
+    const before = state().playback;
+    frame();
+    expect(state().playback).toMatchObject({
+      status: "paused",
+      seekNonce: before.seekNonce + 1,
+      seekIntentNonce: before.seekIntentNonce,
+    });
+  });
+
   it("honors a replacement target and pause requested while waiting for assets", () => {
     let collisionReady = false;
     Object.defineProperty(demo.streamingPlayback, "canStartSeek", {

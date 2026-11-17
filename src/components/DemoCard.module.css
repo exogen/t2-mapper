@@ -59,16 +59,6 @@
   padding-bottom: 8px;
 }
 
-.Card[data-action-count="1"] .Body {
-  padding-right: calc(var(--card-action-size) + 12px);
-}
-
-.Card[data-action-count="2"] .Body {
-  padding-right: calc(
-    2 * var(--card-action-size) + var(--card-action-gap) + 12px
-  );
-}
-
 .Mission {
   margin: 1px 0 2px 0;
 }

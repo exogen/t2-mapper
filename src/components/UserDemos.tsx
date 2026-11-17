@@ -4,7 +4,6 @@ import { LuLoaderCircle } from "react-icons/lu";
 import {
   isDiscordId,
   type AccountMapGeniusDemos,
-  type AccountPublicProfile,
 } from "../../relay/accountTypes";
 import {
   MAX_USER_DEMO_BYTES,
@@ -29,6 +28,8 @@ import { PlayerProfileViewer } from "./PlayerProfileViewer";
 import { refreshDemoIndex, useDemoIndex } from "./useDemoIndex";
 import { useDemoPagination } from "./useDemoPagination";
 import { UserIdentity } from "./UserIdentity";
+import { UserClips } from "./UserClips";
+import { usePublicProfile } from "./usePublicProfile";
 import styles from "./UserDemos.module.css";
 
 const UPLOAD_LABELS: Record<UserDemoUpload["state"], string> = {
@@ -101,26 +102,7 @@ export default function UserDemos({ userId }: { userId: string }) {
   const account = useAppAccount((state) => state);
   const owner =
     account.status === "ready" && account.user?.discordId === userId;
-  const publicProfile = useQuery({
-    queryKey: ["userProfile", userId],
-    enabled: validUser && !owner,
-    queryFn: async ({ signal }): Promise<AccountPublicProfile | null> => {
-      const response = await fetch(
-        new URL(`/api/users/${encodeURIComponent(userId)}`, appApiBaseUrl),
-        {
-          credentials: "omit",
-          cache: "no-cache",
-          signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
-        },
-      );
-      if (response.status === 404) return null;
-      if (!response.ok) throw new Error("Could not load user profile");
-      return response.json();
-    },
-    staleTime: 60_000,
-    refetchOnWindowFocus: false,
-    retry: false,
-  });
+  const publicProfile = usePublicProfile(userId, !owner);
   const profile = owner ? account.user : publicProfile.data;
   const bestMap = profile?.t2Profile?.bestMap;
   const mapGenius = useQuery({
@@ -484,6 +466,15 @@ export default function UserDemos({ userId }: { userId: string }) {
               "Unknown user"
             ) : null}
           </div>
+        )}
+        {validUser && (
+          <UserClips
+            key={userId}
+            userId={userId}
+            demos={index.data}
+            creatorName={profile?.name}
+            canDelete={owner}
+          />
         )}
         {validUser && (
           <section className={styles.DemoSection} aria-label="MapGenius demos">

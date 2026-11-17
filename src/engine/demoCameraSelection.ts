@@ -1,6 +1,7 @@
 import { engineStore } from "../state/engineStore";
 import { subscribeAction } from "../state/inputControls";
 import { cycleDemoCameraMode } from "../state/watchFollow";
+import { resolveCameraOwner } from "../state/cameraOwner";
 import { isRelayRecording } from "../stream/demoDate";
 import { FramePriority } from "./framePriority";
 import { subscribeFollowActions, syncFollowCameraMode } from "./followControls";
@@ -19,15 +20,17 @@ import type { GameEngine } from "./gameEngine";
  * this only drives the `streamPlaybackStore` selection state.
  */
 export function installDemoCameraSelection(engine: GameEngine): () => void {
+  const enabled = () => resolveCameraOwner() !== "clip";
   return combineCleanups(
     // F cycles camera modes (shares the action with the live observer).
     subscribeAction("toggleObserverMode", () => {
+      if (!enabled()) return;
       const recording = engineStore.getState().playback.recording;
       cycleDemoCameraMode(!isRelayRecording(recording?.recorderName ?? null));
     }),
-    subscribeFollowActions(() => true),
+    subscribeFollowActions(enabled),
     engine.scheduler.add(FramePriority.CameraSelect, () => {
-      syncFollowCameraMode();
+      if (enabled()) syncFollowCameraMode();
     }),
   );
 }

@@ -30,6 +30,7 @@ const fixture = vi.hoisted(() => ({
   playerRoster: [] as PlayerRosterEntry[],
   teamScores: [] as TeamScore[],
   quickCamHideUnassignedSlots: false,
+  clipPlaybackActive: false,
   localSpectator: false,
   replayReady: false,
 }));
@@ -56,6 +57,7 @@ vi.mock("zustand", async (original) => ({
 }));
 vi.mock("./SettingsProvider", () => ({
   useSettings: () => ({
+    clipPlaybackActive: fixture.clipPlaybackActive,
     commentaryEnabled: true,
     commentarySubtitles: true,
     followBehindPlayer: false,
@@ -106,6 +108,7 @@ beforeEach(() => {
     playerCount: 0,
   }));
   fixture.quickCamHideUnassignedSlots = false;
+  fixture.clipPlaybackActive = false;
   gameEntityStore.getState().setAllStreamEntities([flag("1", 1), flag("2", 2)]);
   casterStore.getState().activate("test:28000", "1", "Katabatic");
 });
@@ -143,6 +146,30 @@ it("shows ten quick cams and their HUD setting without team or commentary contro
   expect(html).not.toContain("Rename team");
   expect(html).not.toContain("Play audio commentary");
 });
+
+it.each([false, true])(
+  "disables quick cam preferences and bindings during clip playback: %s",
+  (active) => {
+    fixture.clipPlaybackActive = active;
+    fixture.quickCamHideUnassignedSlots = true;
+    const html = renderToStaticMarkup(<QuickCamPanel watching={false} />);
+    for (const id of [
+      "showQuickCamHudInput",
+      "quickCamHudPositionInput",
+      "quickCamHideUnassignedSlotsInput",
+    ]) {
+      const control = html.match(new RegExp(`<[^>]*id="${id}"[^>]*>`))?.[0];
+      expect(control).toBeDefined();
+      expect(control?.includes('disabled=""')).toBe(active);
+    }
+    expect(
+      html.match(/<input[^>]*id="quickCamHideUnassignedSlotsInput"[^>]*>/)?.[0],
+    ).toContain("checked");
+    expect(html.match(/<fieldset[^>]*>/)?.[0]?.includes('disabled=""')).toBe(
+      active,
+    );
+  },
+);
 
 it("hides commentary controls when the demo has no commentary", () => {
   expect(renderToStaticMarkup(<CastPanel />)).toBe("");

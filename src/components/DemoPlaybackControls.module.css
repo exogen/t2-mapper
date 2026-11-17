@@ -31,6 +31,37 @@
   cursor: default;
 }
 
+.ClipEditor {
+  grid-template-columns: auto auto minmax(80px, 1fr);
+  grid-template-areas: "play time timeline";
+  gap: 8px;
+}
+
+/* Override the shared playback root regardless of lazy stylesheet order. */
+.ClipEditor.ClipEditor {
+  display: grid;
+}
+
+.ClipPlay {
+  grid-area: play;
+}
+
+.ClipTime {
+  grid-area: time;
+  font-size: 12px;
+}
+
+.ClipTimeline {
+  grid-area: timeline;
+  min-width: 0;
+}
+
+@media (max-width: 600px) {
+  [data-clip-playing] > .Director {
+    display: none;
+  }
+}
+
 /* Timeline mission ticks and capture markers ride above the seek control.
    The layer's bottom edge butts the root's top, so the markers hang
    entirely above the control. */

@@ -13,6 +13,7 @@ import {
 import { commentaryTracksStore } from "../state/commentaryTracksStore";
 import { casterStore } from "../state/casterStore";
 import { demoLoadStore } from "../state/demoLoadStore";
+import { clipStore } from "../state/clipStore";
 import { demoTimelineStore } from "../state/demoTimelineStore";
 import { engineStore } from "../state/engineStore";
 import { gameEntityStore } from "../state/gameEntityStore";
@@ -43,8 +44,30 @@ const log = createLogger("demoFileLoader");
 
 let parseToken = 0;
 let scanAbort: AbortController | null = null;
+let timelineScanEnabled = true;
+let timelineScan: {
+  buffer: ArrayBuffer;
+  recording: StreamRecording;
+  settled: boolean;
+} | null = null;
 let loadAbort: AbortController | null = null;
 let cancelDownload: ((preserveRecording: boolean) => void) | null = null;
+
+/** Clips use their own camera track; defer the full-demo event scan until exit. */
+export function setDemoTimelineScanEnabled(enabled: boolean): void {
+  if (timelineScanEnabled === enabled) return;
+  timelineScanEnabled = enabled;
+  if (!enabled) {
+    scanAbort?.abort();
+    scanAbort = null;
+    demoTimelineStore.getState().setScanProgress(null);
+  } else if (
+    timelineScan &&
+    engineStore.getState().playback.recording === timelineScan.recording
+  ) {
+    startTimelineScan(timelineScan.buffer, timelineScan.recording);
+  }
+}
 
 function isInstalledSource(source: LoadedDemoSource): boolean {
   return (
@@ -54,12 +77,16 @@ function isInstalledSource(source: LoadedDemoSource): boolean {
 }
 
 function cancelLoad(preserveRecording = true): number {
+  const clip = clipStore.getState();
+  if (clip.recording || clip.draft) clip.discard();
+  if (clip.active) clip.stopPlayback();
   ++parseToken;
   loadAbort?.abort();
   loadAbort = null;
   if (!preserveRecording) {
     scanAbort?.abort();
     scanAbort = null;
+    timelineScan = null;
   }
   const cancel = cancelDownload;
   cancelDownload = null;
@@ -545,6 +572,7 @@ function installRecording(
 ): void {
   scanAbort?.abort();
   scanAbort = null;
+  timelineScan = null;
   demoTimelineStore.getState().reset();
   demoLoadStore.getState().reset();
   // Leave any live session and close the relay socket before loading
@@ -632,10 +660,18 @@ function startTimelineScan(
   buffer: ArrayBuffer,
   recording: StreamRecording,
 ): void {
-  scanAbort?.abort();
+  if (timelineScan?.buffer !== buffer || timelineScan.recording !== recording) {
+    scanAbort?.abort();
+    scanAbort = null;
+    timelineScan = { buffer, recording, settled: false };
+  }
+  if (!timelineScanEnabled || timelineScan.settled || scanAbort) return;
+  const request = timelineScan;
   const abortController = new AbortController();
   scanAbort = abortController;
   const isCurrentScan = () =>
+    timelineScanEnabled &&
+    timelineScan === request &&
     !abortController.signal.aborted &&
     engineStore.getState().playback.recording === recording;
   const store = demoTimelineStore.getState();
@@ -672,6 +708,7 @@ function startTimelineScan(
     })
     .then((result) => {
       if (!result || !isCurrentScan()) return;
+      request.settled = true;
       const s = demoTimelineStore.getState();
       s.setEvents(
         result.events,
@@ -684,6 +721,7 @@ function startTimelineScan(
     .catch((err: unknown) => {
       if (!isCurrentScan()) return;
       if (err instanceof Error && err.name === "AbortError") return;
+      request.settled = true;
       log.error("Timeline scan failed: %o", err);
       demoTimelineStore
         .getState()

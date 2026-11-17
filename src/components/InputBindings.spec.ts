@@ -8,6 +8,7 @@ import {
 } from "./InputControls";
 import {
   COMMAND_CIRCUIT_STREAM_INPUT,
+  CLIP_RECORD_INPUT,
   DEMO_MODE_INPUT,
   FOLLOW_KEYBOARD_INPUT,
   FREE_FLY_INPUT,
@@ -106,6 +107,21 @@ afterEach(() => {
   for (const cleanup of test.cleanups.splice(0).reverse()) cleanup();
 });
 afterAll(() => vi.unstubAllGlobals());
+
+it("records with R without handling typing or repeating while the key is held", () => {
+  mount(CLIP_RECORD_INPUT);
+  const record = watch("recordClip");
+  Object.assign(document, { activeElement: keyboardElement("TEXTAREA") });
+  key("keydown", "KeyR");
+  expect(record).not.toHaveBeenCalled();
+  Object.assign(document, { activeElement: null });
+  key("keydown", "KeyR");
+  key("keydown", "KeyR");
+  expect(record).toHaveBeenCalledOnce();
+  key("keyup", "KeyR");
+  key("keydown", "KeyR");
+  expect(record).toHaveBeenCalledTimes(2);
+});
 
 it.each([0, 1, 2, 9])(
   "saves camera %s with Shift without also recalling it",

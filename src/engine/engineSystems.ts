@@ -1,6 +1,7 @@
 import { engineStore } from "../state/engineStore";
 import { installAudio } from "./audioSystem";
 import { installCameraRig } from "./cameraRig";
+import { installClipRecorder } from "./clipRecorder";
 import { installCameraTour } from "./cameraTour";
 import { installCameraWatchdog } from "./cameraWatchdog";
 import { installChatSounds } from "./chatSounds";
@@ -68,6 +69,7 @@ export function startEngineSystems(engine: GameEngine): () => void {
   return combineCleanups(
     // First: everything else reads the cameras.
     installCameraRig(engine),
+    installClipRecorder(engine),
     installEntityViews(engine),
     engine.ambientParticles.install(),
     engine.lightningEffects.install(),

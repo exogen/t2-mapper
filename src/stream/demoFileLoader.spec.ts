@@ -61,6 +61,7 @@ import {
   loadDemoFile,
   loadDemoUrl,
   loadDemoReference,
+  setDemoTimelineScanEnabled,
   unloadDemo,
 } from "./demoFileLoader";
 import { demoLoadStore } from "../state/demoLoadStore";
@@ -85,6 +86,7 @@ const recording = (name: string) =>
 describe("demo loads during navigation", () => {
   beforeEach(() => {
     unloadDemo();
+    setDemoTimelineScanEnabled(true);
     vi.clearAllMocks();
     mocks.readCheckpoints.mockResolvedValue([]);
     mocks.scan.mockResolvedValue({
@@ -110,6 +112,88 @@ describe("demo loads during navigation", () => {
     unloadDemo();
     expect(casterStore.getState().context).toBeNull();
     expect(casterStore.getState().settings).toBeNull();
+  });
+
+  it("defers scanning while a clip is open and scans once after returning to the full demo", async () => {
+    setDemoTimelineScanEnabled(false);
+    mocks.parse.mockResolvedValueOnce(recording("demo"));
+    await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+    expect(mocks.scan).not.toHaveBeenCalled();
+    expect(demoTimelineStore.getState()).toMatchObject({
+      events: null,
+      scanProgress: null,
+    });
+
+    setDemoTimelineScanEnabled(true);
+    await vi.waitFor(() =>
+      expect(demoTimelineStore.getState().events).toEqual([]),
+    );
+    expect(mocks.scan).toHaveBeenCalledOnce();
+    setDemoTimelineScanEnabled(false);
+    setDemoTimelineScanEnabled(true);
+    await Promise.resolve();
+    expect(mocks.scan).toHaveBeenCalledOnce();
+  });
+
+  it("cancels an in-progress scan for a clip and ignores its late callbacks and result", async () => {
+    const oldScan = deferred<{
+      events: never[];
+      players: string[];
+      recorderNames: string[];
+      playerRawNames: Record<string, string>;
+    }>();
+    mocks.scan.mockReturnValueOnce(oldScan.promise);
+    const demo = {
+      ...recording("demo"),
+      serverDisplayName: null,
+    } as StreamRecording;
+    mocks.parse.mockResolvedValueOnce(demo);
+    await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+    await vi.waitFor(() => expect(mocks.scan).toHaveBeenCalledOnce());
+    const scan = mocks.scan.mock.calls[0];
+    setDemoTimelineScanEnabled(false);
+    expect(scan[3].aborted).toBe(true);
+    scan[2](0.8);
+    scan[4]("Stale server");
+    expect(demo.serverDisplayName).toBeNull();
+    expect(demoTimelineStore.getState().scanProgress).toBeNull();
+
+    setDemoTimelineScanEnabled(true);
+    await vi.waitFor(() => expect(mocks.scan).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() =>
+      expect(demoTimelineStore.getState().events).toEqual([]),
+    );
+    oldScan.resolve({
+      events: [],
+      players: ["Stale player"],
+      recorderNames: [],
+      playerRawNames: {},
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(demoTimelineStore.getState().players).toEqual([]);
+  });
+
+  it("does not resume a deferred scan after its recording has been ejected", async () => {
+    setDemoTimelineScanEnabled(false);
+    mocks.parse.mockResolvedValueOnce(recording("demo"));
+    await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+    unloadDemo();
+    setDemoTimelineScanEnabled(true);
+    await Promise.resolve();
+    expect(mocks.scan).not.toHaveBeenCalled();
+  });
+
+  it("scans only the newest recording when several demos load while scanning is deferred", async () => {
+    setDemoTimelineScanEnabled(false);
+    mocks.parse.mockResolvedValueOnce(recording("first"));
+    await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+    mocks.parse.mockResolvedValueOnce(recording("second"));
+    const newest = new ArrayBuffer(8);
+    await loadDemoFile({ arrayBuffer: async () => newest } as File);
+    setDemoTimelineScanEnabled(true);
+    await vi.waitFor(() => expect(mocks.scan).toHaveBeenCalledOnce());
+    expect(mocks.scan.mock.calls[0].slice(0, 2)).toEqual([newest, "second"]);
   });
 
   it.each([

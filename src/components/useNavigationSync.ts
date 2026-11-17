@@ -7,7 +7,11 @@ import {
   replayConnectionStore,
   useReplaySelector,
 } from "../state/replayConnectionStore";
-import { loadDemoReference, unloadDemo } from "../stream/demoFileLoader";
+import {
+  loadDemoReference,
+  unloadDemo,
+  setDemoTimelineScanEnabled,
+} from "../stream/demoFileLoader";
 import {
   navigationMode,
   normalizeNavigationQuery,
@@ -21,6 +25,10 @@ export function useNavigationSync() {
   const previousDemo = useRef<string | null>(null);
   const previousReplay = useRef<string | null>(null);
   const replaySessionId = useReplaySelector((state) => state.sessionId);
+
+  useEffect(() => {
+    setDemoTimelineScanEnabled(!(mode === "demo" && query.clip));
+  }, [mode, query.clip]);
 
   useEffect(() => {
     if (Object.keys(normalizeNavigationQuery(query)).length > 0)

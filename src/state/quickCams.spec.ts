@@ -3,6 +3,8 @@ import { OrthographicCamera, PerspectiveCamera } from "three";
 import { casterStore } from "./casterStore";
 import { saveQuickCam, restoreQuickCam } from "./quickCams";
 import { cameraRegistry } from "./cameraRegistry";
+import { clipStore } from "./clipStore";
+import type { ClipTake } from "../../relay/clipTypes";
 import { liveConnectionStore } from "./liveConnectionStore";
 import { replayConnectionStore } from "./replayConnectionStore";
 import { gameEntityStore } from "./gameEntityStore";
@@ -53,6 +55,7 @@ function body(
 }
 
 beforeEach(() => {
+  clipStore.getState().discard();
   replayConnectionStore.getState().leave();
   const storage = new Map<string, string>();
   vi.stubGlobal("sessionStorage", {
@@ -67,6 +70,7 @@ beforeEach(() => {
   exitToFreeFly();
 });
 afterEach(() => {
+  clipStore.getState().discard();
   replayConnectionStore.getState().leave();
   casterStore.getState().suspend();
   resetStreamPlayback();
@@ -80,6 +84,66 @@ afterEach(() => {
   demoDirectorStore.setState({ status: "idle" });
   vi.unstubAllGlobals();
 });
+
+it("keeps quick cameras available while recording a clip", () => {
+  gameEntityStore.getState().beginStreaming("demo");
+  clipStore.setState({ recording: true });
+  cameraRegistry.perspective!.position.set(4, 5, 6);
+  saveQuickCam(3, true);
+  cameraRegistry.perspective!.position.set(40, 50, 60);
+  expect(restoreQuickCam(3)?.followBehindPlayer).toBe(true);
+  expect(cameraRegistry.perspective!.position.toArray()).toEqual([4, 5, 6]);
+  expect(clipStore.getState().recording).toBe(true);
+});
+
+it.each([false, true])(
+  "leaves the recorded camera and saved cameras alone during clip playback (draft: %s)",
+  (draft) => {
+    gameEntityStore.getState().beginStreaming("demo");
+    cameraRegistry.perspective!.position.set(4, 5, 6);
+    saveQuickCam(3, true);
+    const take: ClipTake = {
+      version: 1,
+      sourceDemo: "test.rec",
+      samples: [0, 1000].map((timeMs) => ({
+        timeMs,
+        demoTimeSec: timeMs / 1000,
+        position: [40, 50, 60],
+        quaternion: [0, 0, 0, 1],
+        fov: 60,
+        aspect: 2,
+        projection: "perspective",
+        cameraMode: "freeFly",
+        targetId: null,
+        flagSlot: null,
+        rate: 1,
+        playing: true,
+      })),
+    };
+    clipStore.setState({ active: take, draft: draft ? take : null });
+    cameraRegistry.perspective!.position.set(40, 50, 60);
+    commandCircuitStore.getState().activate();
+    const stream = streamPlaybackStore.getState();
+    const caster = casterStore.getState();
+    const circuit = commandCircuitStore.getState();
+
+    expect(restoreQuickCam(3)).toBeUndefined();
+    saveQuickCam(4);
+    expect(cameraRegistry.perspective!.position.toArray()).toEqual([
+      40, 50, 60,
+    ]);
+    expect(streamPlaybackStore.getState()).toBe(stream);
+    expect(casterStore.getState()).toBe(caster);
+    expect(commandCircuitStore.getState()).toBe(circuit);
+    expect(casterStore.getState().settings?.quickCams[4]).toBeUndefined();
+
+    clipStore.getState().discard();
+    expect(restoreQuickCam(3)?.followBehindPlayer).toBe(true);
+    expect(cameraRegistry.perspective!.position.toArray()).toEqual([4, 5, 6]);
+    saveQuickCam(4);
+    expect(casterStore.getState().settings?.quickCams[4]).toBeDefined();
+  },
+);
 
 it("saves and recalls replay cameras only after the current adapter is ready", () => {
   const adapter = { localSpectator: true } as ReplayStreamAdapter;

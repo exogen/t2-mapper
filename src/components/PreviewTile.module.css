@@ -88,13 +88,14 @@
 .TilePlaceholder {
   position: relative;
   font-size: 40px;
-  color: rgba(117, 255, 255, 0.4);
+  color: rgb(117, 255, 255);
+  opacity: 0.4;
   filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.8));
-  transition: color 0.3s;
+  transition: opacity 0.3s;
 }
 
 .Tile:hover .TilePlaceholder {
-  color: rgba(117, 255, 255, 0.8);
+  opacity: 0.8;
 }
 
 .TileBody {

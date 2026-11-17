@@ -21,7 +21,7 @@ export function DemoSeekFeedback() {
       !isCurrentPlayback(recording)
     )
       return;
-    seekBy(seconds);
+    if (!seekBy(seconds)) return;
     setFlash((previous) => ({
       id: (previous?.id ?? 0) + 1,
       seconds,

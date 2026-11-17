@@ -3,6 +3,7 @@ import { runDemoCheckpointProcess } from "./demoCheckpointProcess.js";
 import { runDemoUploadProcess } from "./demoUploadProcess.js";
 import { runDemoGuidProcess } from "./demoGuids.js";
 import { runDemoStatsProcess } from "./demoStats.js";
+import { prepareClipCheckpoint } from "./clipCheckpoint.js";
 
 /** Relay policy: recordings, uploads, stats, then player profile updates. */
 export function createRelayDemoProcessing() {
@@ -14,6 +15,10 @@ export function createRelayDemoProcessing() {
         () => runDemoUploadProcess(input, assetRoot, signal),
         signal,
       ),
+    prepareClipCheckpoint: (
+      options: Parameters<typeof prepareClipCheckpoint>[0],
+    ) =>
+      queue.run("upload", () => prepareClipCheckpoint(options), options.signal),
     generateCheckpoints: (
       ...args: Parameters<typeof runDemoCheckpointProcess>
     ) => queue.run("recording", () => runDemoCheckpointProcess(...args)),

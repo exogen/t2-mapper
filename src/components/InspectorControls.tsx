@@ -3,6 +3,7 @@ import { QuickCamPanel } from "./QuickCamPanel";
 import { Select } from "./Select";
 import { RangeSlider } from "./RangeSlider";
 import { Checkbox } from "./Checkbox";
+import { ChatHudControl, MatchHudControl } from "./HudControls";
 import { useCommentaryTracks } from "../state/commentaryTracksStore";
 import { memo } from "react";
 import { FaRotateRight } from "react-icons/fa6";
@@ -18,7 +19,6 @@ import {
   type CcPlayerNames,
   type IffVisibility,
   type HudStyle,
-  type MatchHudStyle,
   type ScoreStyle,
   type HudPosition,
   type TouchMode,
@@ -26,6 +26,7 @@ import {
 import { CopyCoordinatesButton } from "./CopyCoordinatesButton";
 import { CopyDemoLinkButton } from "./CopyDemoLinkButton";
 import { StartSharedReplayButton } from "./StartSharedReplayButton";
+import { ClipEditorPanel, ClipRecordButton } from "./ClipControls";
 import { CopyReplaySessionLinkButton } from "./CopyReplaySessionLinkButton";
 import { EndReplaySessionButton } from "./EndReplaySessionButton";
 import { useDemoLoad } from "../state/demoLoadStore";
@@ -41,7 +42,7 @@ import { showNewAddressDialog } from "./NewAddressDialog";
 import { useFeatures } from "./FeaturesProvider";
 import { StatsPanel } from "./StatsPanel";
 import { JigglePhysicsPanel } from "./JigglePhysicsPanel";
-import { useModeQueryState } from "./useQueryParams";
+import { useModeQueryState, useNavigationQueryState } from "./useQueryParams";
 import { useRecording } from "./usePlayback";
 import {
   isStreamingSource,
@@ -124,9 +125,13 @@ export const InspectorControls = memo(function InspectorControls({
   // Live mode without a session shows the server browser in the content
   // area — the Live button reflects that too.
   const [mode] = useModeQueryState();
+  const [route] = useNavigationQueryState();
+  const viewingClip = mode === "demo" && !!route.clip;
   const isLiveMode = isLiveConnected || mode === "live";
   const {
     canDisableFog,
+    clipPlaybackActive,
+    clipHudLocked,
     fogEnabled,
     setFogEnabled,
     fov,
@@ -247,7 +252,10 @@ export const InspectorControls = memo(function InspectorControls({
                 <CopyReplaySessionLinkButton />
               </>
             ) : recording?.source === "demo" ? (
-              <StartSharedReplayButton />
+              <>
+                <ClipRecordButton />
+                <StartSharedReplayButton />
+              </>
             ) : null}
             {recording?.source === "demo" && demoSourceUrl != null ? (
               // An indexed demo is linked by its moment — the second and
@@ -271,6 +279,7 @@ export const InspectorControls = memo(function InspectorControls({
             )}
           </div>
           <div className={styles.Accordions}>
+            <ClipEditorPanel />
             <AccordionGroup type="multiple" defaultValue={DEFAULT_PANELS}>
               {features.jiggle && (
                 <Accordion value="jiggle" label="Flap Genius">
@@ -288,7 +297,17 @@ export const InspectorControls = memo(function InspectorControls({
                 </Accordion>
               )}
               {recording?.source === "demo" && (
-                <Accordion value="timeline" label="Timeline" noPadding>
+                <Accordion
+                  value="timeline"
+                  label="Timeline"
+                  noPadding
+                  disabled={viewingClip}
+                  title={
+                    viewingClip
+                      ? "Exit clip to view the full demo timeline"
+                      : undefined
+                  }
+                >
                   <DemoTimeline filters={timelineFilters} />
                 </Accordion>
               )}
@@ -318,36 +337,19 @@ export const InspectorControls = memo(function InspectorControls({
                 </div>
                 {hasStreamData && (
                   <>
-                    <div className={styles.CheckboxField}>
-                      <Checkbox
-                        id="showChatInput"
-                        checked={showChat}
-                        onChange={(event) => {
-                          setShowChat(event.target.checked);
-                        }}
-                      />
-                      <label className={styles.Label} htmlFor="showChatInput">
-                        Chat HUD
-                      </label>
-                      <div className={styles.Control}>
-                        <Select
-                          id="chatHudStyleInput"
-                          aria-label="Chat HUD style"
-                          value={chatHudStyle}
-                          onChange={(value) =>
-                            setChatHudStyle(value as HudStyle)
-                          }
-                          options={[
-                            { value: "solid", label: "Solid" },
-                            { value: "transparent", label: "Transparent" },
-                          ]}
-                        />
-                      </div>
-                    </div>
+                    <ChatHudControl
+                      id="showChatInput"
+                      disabled={clipHudLocked}
+                      checked={showChat}
+                      onCheckedChange={setShowChat}
+                      value={chatHudStyle}
+                      onValueChange={setChatHudStyle}
+                    />
                     <div className={styles.CheckboxField}>
                       <Checkbox
                         id="showScoreHudInput"
                         checked={showScoreHud}
+                        disabled={clipPlaybackActive}
                         onChange={(event) =>
                           setShowScoreHud(event.target.checked)
                         }
@@ -361,6 +363,7 @@ export const InspectorControls = memo(function InspectorControls({
                       <div className={styles.Control}>
                         <Select
                           id="scoreHudPositionInput"
+                          disabled={clipPlaybackActive}
                           aria-label="Mini score HUD position"
                           value={scoreHudPosition}
                           onChange={(value) =>
@@ -373,6 +376,7 @@ export const InspectorControls = memo(function InspectorControls({
                         />
                         <Select
                           id="scoreHudStyleInput"
+                          disabled={clipPlaybackActive}
                           aria-label="Player scores HUD style"
                           value={scoreHudStyle}
                           onChange={(value) =>
@@ -385,35 +389,14 @@ export const InspectorControls = memo(function InspectorControls({
                         />
                       </div>
                     </div>
-                    <div className={styles.CheckboxField}>
-                      <Checkbox
-                        id="showMatchHudInput"
-                        checked={showMatchHud}
-                        onChange={(event) =>
-                          setShowMatchHud(event.target.checked)
-                        }
-                      />
-                      <label
-                        className={styles.Label}
-                        htmlFor="showMatchHudInput"
-                      >
-                        Match HUD
-                      </label>
-                      <div className={styles.Control}>
-                        <Select
-                          id="matchHudStyleInput"
-                          aria-label="Match HUD style"
-                          value={matchHudStyle}
-                          onChange={(value) =>
-                            setMatchHudStyle(value as MatchHudStyle)
-                          }
-                          options={[
-                            { value: "classic", label: "Classic" },
-                            { value: "broadcast", label: "Broadcast" },
-                          ]}
-                        />
-                      </div>
-                    </div>
+                    <MatchHudControl
+                      id="showMatchHudInput"
+                      disabled={clipHudLocked}
+                      checked={showMatchHud}
+                      onCheckedChange={setShowMatchHud}
+                      value={matchHudStyle}
+                      onValueChange={setMatchHudStyle}
+                    />
                     <div className={styles.Field}>
                       <label
                         id="scoreStyleInput-label"
@@ -473,6 +456,7 @@ export const InspectorControls = memo(function InspectorControls({
                   <Checkbox
                     id="showInputOverlayInput"
                     checked={showInputOverlay}
+                    disabled={clipPlaybackActive}
                     onChange={(event) => {
                       setShowInputOverlay(event.target.checked);
                     }}
@@ -488,6 +472,7 @@ export const InspectorControls = memo(function InspectorControls({
                   <Checkbox
                     id="followBehindPlayerInput"
                     checked={followBehindPlayer}
+                    disabled={clipPlaybackActive}
                     onChange={(event) => {
                       setFollowBehindPlayer(event.target.checked);
                     }}

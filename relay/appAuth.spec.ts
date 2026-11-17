@@ -1481,7 +1481,7 @@ it("backs up and adds Tribes 2 accounts to a database from before app-owned migr
   const backup = path.join(app.directory, "app.sqlite.pre-migration.sqlite");
   expect(fs.existsSync(backup)).toBe(false);
   app.database.exec(
-    'DROP TABLE "t2PlayerDemoGuid"; DROP TABLE "t2PlayerDemo"; DROP TABLE "t2PlayerBestMap"; DROP TABLE "t2PlayerProfile"; DROP TABLE "t2AccountLink"; DROP TABLE "t2Account"; PRAGMA user_version = 0;',
+    'DROP TABLE "clip"; DROP TABLE "t2PlayerDemoGuid"; DROP TABLE "t2PlayerDemo"; DROP TABLE "t2PlayerBestMap"; DROP TABLE "t2PlayerProfile"; DROP TABLE "t2AccountLink"; DROP TABLE "t2Account"; PRAGMA user_version = 0;',
   );
   await app.restart();
   expect(fs.existsSync(backup)).toBe(true);

@@ -3,8 +3,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PlayerHUD } from "./PlayerHUD";
 import { casterStore } from "../state/casterStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
-import type { HudPosition, MatchHudStyle } from "./SettingsProvider";
+import type { HudPosition, HudStyle, MatchHudStyle } from "./SettingsProvider";
 import type { StreamEntity } from "../stream/types";
+import { clipStore } from "../state/clipStore";
+import type { ClipHudSettings, ClipTake } from "../../relay/clipTypes";
 
 const fixture = vi.hoisted(() => ({
   replay: false,
@@ -27,6 +29,7 @@ vi.mock("../state/liveConnectionStore", async (original) => ({
 
 const settings = vi.hoisted(() => ({
   showChat: false,
+  chatHudStyle: "solid" as HudStyle,
   showCompass: false,
   showReticle: false,
   showScoreHud: false,
@@ -53,6 +56,16 @@ vi.mock("./InputControls", () => ({
 vi.mock("./ScoreHUD", () => ({
   ScoreHUD: () => <section aria-label="Player scores" />,
 }));
+vi.mock("./ChatWindow", async (original) => {
+  const { ChatWindow } = await original<typeof import("./ChatWindow")>();
+  return {
+    ChatWindow: (props: { hudStyle?: HudStyle }) => (
+      <section aria-label="Chat HUD">
+        <ChatWindow {...props} />
+      </section>
+    ),
+  };
+});
 vi.mock("./QuickCamHUD", () => ({
   QuickCamHUD: () => <nav aria-label="Quick cams" />,
 }));
@@ -85,14 +98,30 @@ beforeEach(() => {
   settings.scoreHudPosition = settings.quickCamHudPosition = "left";
   settings.matchHudStyle = "classic";
   settings.showMatchHud = true;
+  settings.showChat = false;
+  settings.chatHudStyle = "solid";
   settings.showCompass = false;
+  clipStore.setState({ active: null, draft: null, playing: false });
   streamPlaybackStore.setState({
     cameraMode: "original",
     followEntityId: null,
   });
   casterStore.getState().activate("test:28000", "1", "Katabatic");
 });
-afterEach(() => casterStore.getState().suspend());
+afterEach(() => {
+  casterStore.getState().suspend();
+  clipStore.setState({ active: null, draft: null, playing: false });
+});
+
+function activateClip(hud?: ClipHudSettings) {
+  const active: ClipTake = {
+    version: 1,
+    sourceDemo: "test.rec",
+    samples: [],
+    ...(hud && { hud }),
+  };
+  clipStore.setState({ active, playing: false });
+}
 
 it.each<[boolean, HudPosition, boolean, HudPosition, boolean]>([
   [false, "left", false, "left", true],
@@ -148,6 +177,84 @@ it("toggles either Match HUD style while preserving mini scores and showing the 
     expect(hidden).toContain('aria-label="Player scores"');
     expect(hidden.match(/02:03/g)).toHaveLength(1);
   }
+});
+
+it("uses a paused clip's HUD choices and restores viewer preferences on exit", () => {
+  settings.showCompass = true;
+  const preferences = { ...settings };
+  activateClip({
+    showChat: true,
+    showMatchHud: true,
+    matchHudStyle: "broadcast",
+  });
+  const clip = renderToStaticMarkup(<PlayerHUD onOpenScoreScreen={() => {}} />);
+  expect(clip).toContain('aria-label="Chat HUD"');
+  expect(clip.match(/aria-label="Match HUD"/g)).toHaveLength(1);
+  expect(clip).not.toContain("<table");
+  expect(clip.match(/02:03/g)).toHaveLength(1);
+  expect(settings).toEqual(preferences);
+
+  clipStore.getState().stopPlayback();
+  const ordinary = renderToStaticMarkup(
+    <PlayerHUD onOpenScoreScreen={() => {}} />,
+  );
+  expect(ordinary).not.toContain('aria-label="Chat HUD"');
+  expect(ordinary).toContain("<table");
+  expect(settings).toEqual(preferences);
+});
+
+it("honors disabled clip HUDs even when both viewer preferences are enabled", () => {
+  settings.showChat = true;
+  activateClip({
+    showChat: false,
+    showMatchHud: false,
+    matchHudStyle: "classic",
+  });
+  const html = renderToStaticMarkup(<PlayerHUD onOpenScoreScreen={() => {}} />);
+  expect(html).not.toContain('aria-label="Chat HUD"');
+  expect(html).not.toContain('aria-label="Match HUD"');
+  expect(settings.showChat).toBe(true);
+  expect(settings.showMatchHud).toBe(true);
+});
+
+it("renders the creator's chat style and restores the viewer's style on exit", () => {
+  settings.showChat = true;
+  activateClip({
+    showChat: true,
+    chatHudStyle: "transparent",
+    showMatchHud: false,
+    matchHudStyle: "classic",
+  });
+  const clip = renderToStaticMarkup(<PlayerHUD onOpenScoreScreen={() => {}} />);
+  expect(clip).toContain('data-style="transparent"');
+  expect(settings.chatHudStyle).toBe("solid");
+  clipStore.getState().stopPlayback();
+  const ordinary = renderToStaticMarkup(
+    <PlayerHUD onOpenScoreScreen={() => {}} />,
+  );
+  expect(ordinary).toContain('data-style="solid"');
+  expect(settings.chatHudStyle).toBe("solid");
+});
+
+it("uses the viewer's chat style when an older clip omits it", () => {
+  settings.chatHudStyle = "transparent";
+  activateClip({
+    showChat: true,
+    showMatchHud: false,
+    matchHudStyle: "classic",
+  });
+  const html = renderToStaticMarkup(<PlayerHUD onOpenScoreScreen={() => {}} />);
+  expect(html).toContain('data-style="transparent"');
+});
+
+it("keeps viewer HUD preferences for older clips without saved presentation", () => {
+  settings.showChat = true;
+  settings.showMatchHud = false;
+  settings.matchHudStyle = "broadcast";
+  activateClip();
+  const html = renderToStaticMarkup(<PlayerHUD onOpenScoreScreen={() => {}} />);
+  expect(html).toContain('aria-label="Chat HUD"');
+  expect(html).not.toContain('aria-label="Match HUD"');
 });
 
 it("uses the replay viewer's local compass instead of the recorder's heading", () => {

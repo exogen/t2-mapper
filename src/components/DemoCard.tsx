@@ -1,15 +1,9 @@
-import { Fragment, useState } from "react";
+import { useState } from "react";
 import { PiCassetteTapeFill, PiGlobe } from "react-icons/pi";
 import { FaMicrophoneAlt } from "react-icons/fa";
 import { FaPenToSquare } from "react-icons/fa6";
 import { IoCalendarNumberOutline } from "react-icons/io5";
-import {
-  LuClock,
-  LuLoaderCircle,
-  LuTrash2,
-  LuUser,
-  LuUsers,
-} from "react-icons/lu";
+import { LuClock, LuLoaderCircle, LuUser, LuUsers } from "react-icons/lu";
 import { MdVerified } from "react-icons/md";
 import { TbLaurelWreathFilled } from "react-icons/tb";
 import { useAppAccount } from "../state/appAccountStore";
@@ -26,40 +20,13 @@ import {
   formatRecordedTime,
   recordedDayLabel,
 } from "./demoFormat";
-import {
-  MISSION_ART_NAME_FALLBACKS,
-  missionGalleryArtUrl,
-  missionLoadScreenUrl,
-} from "./missionArt";
-import { PreviewTileArt } from "./PreviewTileArt";
+import { MissionPreviewTileArt } from "./PreviewTileArt";
+import { RecordingMatchDetails } from "./RecordingMatchDetails";
+import { RecordingDeleteButton } from "./RecordingDeleteButton";
 import { useAppNavigation } from "./useAppNavigation";
 import { GameDetailsDialog } from "./GameDetailsEditor";
 import tileStyles from "./PreviewTile.module.css";
 import styles from "./DemoCard.module.css";
-
-function DeleteButton({
-  label,
-  deleting,
-  onDelete,
-}: {
-  label: string;
-  deleting: boolean;
-  onDelete: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className={styles.DeleteButton}
-      title="Delete demo"
-      aria-label={`Delete demo: ${label}`}
-      aria-busy={deleting}
-      disabled={deleting}
-      onClick={onDelete}
-    >
-      <LuTrash2 aria-hidden />
-    </button>
-  );
-}
 
 /** A recording remains in the gallery while its playable metadata is prepared. */
 export function PendingDemoCard({
@@ -117,7 +84,8 @@ export function PendingDemoCard({
           aria-label="Demo actions"
           aria-busy={deleting}
         >
-          <DeleteButton
+          <RecordingDeleteButton
+            kind="demo"
             label={filename}
             deleting={deleting}
             onDelete={onDelete}
@@ -169,16 +137,9 @@ export function DemoCard({
             navigation.selectDemo(demo.filename);
           }}
         >
-          {/* Local load-screen art (with variant-name fallbacks), then the
-          t2-maps gallery screenshot, then the generic background. */}
-          <PreviewTileArt
-            candidates={[
-              missionLoadScreenUrl(mission, MISSION_ART_NAME_FALLBACKS),
-              missionGalleryArtUrl(mission),
-            ]}
-          >
+          <MissionPreviewTileArt mission={mission}>
             <PiCassetteTapeFill className={tileStyles.TilePlaceholder} />
-          </PreviewTileArt>
+          </MissionPreviewTileArt>
           <span className={`${tileStyles.TileBody} ${styles.Body}`}>
             <span className={`${tileStyles.TileTitle} ${styles.Mission}`}>
               <span className={tileStyles.TileMapTitle}>{demoTitle(demo)}</span>
@@ -206,26 +167,10 @@ export function DemoCard({
                 />
               )}
             </span>
-            {matchTitle && (
-              <span className={tileStyles.TileMatchTitle} title={matchTitle}>
-                {matchTitle}
-              </span>
-            )}
-            {matchups.length > 0 && (
-              <span className={tileStyles.TileTeams}>
-                {matchups.map((teams, gameIndex) => (
-                  <Fragment key={gameIndex}>
-                    {gameIndex > 0 && " → "}
-                    {teams.map(([id, name], teamIndex) => (
-                      <Fragment key={id}>
-                        {teamIndex > 0 && " vs "}
-                        <span className={tileStyles.TileTeamName}>{name}</span>
-                      </Fragment>
-                    ))}
-                  </Fragment>
-                ))}
-              </span>
-            )}
+            <RecordingMatchDetails
+              matchTitle={matchTitle}
+              matchups={matchups}
+            />
             <span className={tileStyles.TileDetails}>
               <span className={tileStyles.TileMetaItem}>
                 <IoCalendarNumberOutline
@@ -316,7 +261,8 @@ export function DemoCard({
               </button>
             )}
             {onDelete && (
-              <DeleteButton
+              <RecordingDeleteButton
+                kind="demo"
                 label={matchTitle || demoTitle(demo)}
                 deleting={deleting}
                 onDelete={onDelete}

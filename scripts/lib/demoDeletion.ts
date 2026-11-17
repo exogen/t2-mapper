@@ -118,10 +118,11 @@ export function demoDeletionObjects(
       objects.get(key)!.push(key);
       continue;
     }
+    const lowerKey = key.toLowerCase();
     for (
-      let end = key.lastIndexOf(".rec.");
+      let end = lowerKey.lastIndexOf(".rec.");
       end >= 0;
-      end = end === 0 ? -1 : key.lastIndexOf(".rec.", end - 1)
+      end = end === 0 ? -1 : lowerKey.lastIndexOf(".rec.", end - 1)
     ) {
       const demoKey = key.slice(0, end + 4);
       if (demoKeys.has(demoKey)) {

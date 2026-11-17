@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useStore } from "zustand";
+import { clipStore } from "../state/clipStore";
+import { clipDurationMs } from "../../relay/clipTypes";
+import { ClipPlaybackControls } from "./ClipControls";
+import { ClipTrimTimeline } from "./ClipTrimTimeline";
+import { useClipDraftSaving } from "./clipControlsContext";
 import { isPlaybackControl } from "../keyboard";
 import { Select } from "./Select";
 import { useInputAction } from "./InputControls";
+import { useNavigationQueryState } from "./useQueryParams";
 import {
   usePlaybackActions,
   useCurrentTime,
@@ -9,7 +16,6 @@ import {
   useIsPlaying,
   useIsSeeking,
   useRecording,
-  useSpeed,
   SPEED_OPTIONS,
 } from "./usePlayback";
 import { GrPauseFill, GrPlayFill } from "react-icons/gr";
@@ -67,20 +73,46 @@ function ScanProgressPie({ progress }: { progress: number }) {
 }
 
 export function DemoPlaybackControls() {
+  const [route] = useNavigationQueryState();
   const recording = useRecording();
-  const isPlaying = useIsPlaying();
+  const sourceIsPlaying = useIsPlaying();
+  const activeClip = useStore(clipStore, (state) => state.active);
+  const draft = useStore(clipStore, (state) => state.draft);
+  const trimStartMs = useStore(clipStore, (state) => state.trimStartMs);
+  const trimEndMs = useStore(clipStore, (state) => state.trimEndMs);
+  const clipHeadMs = useStore(clipStore, (state) =>
+    state.active ? state.playheadMs : 0,
+  );
+  const clipPlaying = useStore(clipStore, (state) => state.playing);
+  const savingClip = useClipDraftSaving();
+  const isPlaying = activeClip ? clipPlaying : sourceIsPlaying;
   const isSeeking = useIsSeeking();
   const currentTime = useCurrentTime();
   const duration = useDuration();
   // Demo time downloaded so far (progressive load), or null when the
   // whole file is local — drives the buffered bar under the seek track.
   const downloadedSec = useDemoLoad((s) => s.downloadedSec);
-  const speed = useSpeed();
+  const speed = useEngineSelector((state) =>
+    activeClip ? 1 : state.playback.rate,
+  );
   const intendsToPlay = useEngineSelector(
     (state) =>
       (state.playback.resumeAfterSeek ?? state.playback.status) === "playing",
   );
-  const { toggle, seek, setSpeed } = usePlaybackActions();
+  const { toggle: toggleSource, seek, setSpeed } = usePlaybackActions();
+  const toggle = useCallback(() => {
+    const clip = clipStore.getState();
+    if (clip.draft) {
+      if (!savingClip) {
+        if (clip.playing) clip.pause();
+        else clip.resume();
+      }
+      return;
+    }
+    if (!clip.active) return toggleSource();
+    if (clip.playing) return clip.pause();
+    clip.resume();
+  }, [toggleSource, savingClip]);
 
   // Spacebar toggles play/pause during demo playback.
   useEffect(() => {
@@ -101,11 +133,13 @@ export function DemoPlaybackControls() {
   }, [recording, toggle]);
 
   useInputAction("decreasePlaybackSpeed", () => {
+    if (clipStore.getState().active) return;
     const idx = SPEED_OPTIONS.indexOf(speed);
     if (idx > 0) setSpeed(SPEED_OPTIONS[idx - 1]);
   });
 
   useInputAction("increasePlaybackSpeed", () => {
+    if (clipStore.getState().active) return;
     const idx = SPEED_OPTIONS.indexOf(speed);
     if (idx < SPEED_OPTIONS.length - 1) setSpeed(SPEED_OPTIONS[idx + 1]);
   });
@@ -121,7 +155,7 @@ export function DemoPlaybackControls() {
   useEffect(() => {
     scrubRecording.current = null;
     setDragValue(null);
-  }, [recording]);
+  }, [recording, activeClip]);
 
   // If the drag ends without a commit (pointercancel, window losing
   // focus mid-drag), cancel the scrub instead of freezing the ghost.
@@ -168,7 +202,10 @@ export function DemoPlaybackControls() {
 
   const handleSeekCommit = useCallback(
     (time: number) => {
-      if (recording && scrubRecording.current === recording) seek(time);
+      if (recording && scrubRecording.current === recording) {
+        if (clipStore.getState().active) clipStore.getState().seek(time * 1000);
+        else seek(time);
+      }
       scrubRecording.current = null;
       setDragValue(null);
     },
@@ -184,10 +221,12 @@ export function DemoPlaybackControls() {
   const directorQueued = recording != null && queuedRecording === recording;
   useEffect(() => {
     setQueuedRecording(null);
-  }, [recording]);
+  }, [recording, activeClip, route.clip]);
   useEffect(() => {
     if (
       directorQueued &&
+      !activeClip &&
+      !route.clip &&
       downloadComplete &&
       !isSeeking &&
       isCurrentPlayback(recording!)
@@ -195,7 +234,14 @@ export function DemoPlaybackControls() {
       setQueuedRecording(null);
       void startDirector();
     }
-  }, [directorQueued, downloadComplete, isSeeking, recording]);
+  }, [
+    directorQueued,
+    downloadComplete,
+    isSeeking,
+    recording,
+    activeClip,
+    route.clip,
+  ]);
 
   const handleSpeedChange = useCallback(
     (value: string) => {
@@ -267,6 +313,100 @@ export function DemoPlaybackControls() {
       ? (downloadedSec ?? 0)
       : (replay?.currentTimeSec ?? 0);
 
+  if (draft) {
+    const selectedDuration = (trimEndMs - trimStartMs) / 1000;
+    const selectedTime = Math.max(
+      0,
+      Math.min(selectedDuration, (clipHeadMs - trimStartMs) / 1000),
+    );
+    return (
+      <div
+        className={`${playbackStyles.Root} ${styles.ClipEditor}`}
+        data-clip-editing=""
+      >
+        <button
+          type="button"
+          className={`${playbackStyles.PlayPause} ${styles.ClipPlay}`}
+          onClick={toggle}
+          disabled={savingClip}
+          aria-label={clipPlaying ? "Pause clip" : "Play clip"}
+          title={clipPlaying ? "Pause clip (Space)" : "Play clip (Space)"}
+        >
+          {isSeeking ? (
+            <span className={playbackStyles.PlaySpinner}>
+              <LoadingIndicator isLoading inline />
+            </span>
+          ) : clipPlaying ? (
+            <GrPauseFill />
+          ) : (
+            <GrPlayFill />
+          )}
+        </button>
+        <span className={`${playbackStyles.Time} ${styles.ClipTime}`}>
+          {formatPlayheadTimeAligned(selectedTime, selectedDuration)}
+          {` / ${formatPlayheadTime(selectedDuration)}`}
+        </span>
+        <div className={styles.ClipTimeline}>
+          <ClipTrimTimeline
+            durationMs={clipDurationMs(draft)}
+            startMs={trimStartMs}
+            endMs={trimEndMs}
+            playheadMs={clipHeadMs}
+            disabled={savingClip}
+            onPause={() => clipStore.getState().pause()}
+            onTrim={(start, end) =>
+              clipStore.getState().setTrimRange(start, end)
+            }
+            onSeek={(time) => clipStore.getState().seek(time)}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (activeClip) {
+    const duration = clipDurationMs(activeClip) / 1000;
+    const ended = clipHeadMs >= clipDurationMs(activeClip);
+    const label = clipPlaying
+      ? "Pause clip"
+      : ended
+        ? "Replay clip"
+        : "Play clip";
+    return (
+      <div className={playbackStyles.Root} data-clip-playing>
+        <button
+          type="button"
+          className={playbackStyles.PlayPause}
+          onClick={toggle}
+          aria-label={label}
+          title={`${label} (Space)`}
+        >
+          {isSeeking ? (
+            <LoadingIndicator isLoading inline />
+          ) : clipPlaying ? (
+            <GrPauseFill />
+          ) : (
+            <GrPlayFill />
+          )}
+        </button>
+        <span className={playbackStyles.Time}>
+          {formatPlayheadTimeAligned(clipHeadMs / 1000, duration)}
+          {` / ${formatPlayheadTime(duration)}`}
+        </span>
+        <PlaybackSeekBar
+          currentTime={clipHeadMs / 1000}
+          duration={duration}
+          dragValue={dragValue}
+          onBeginScrub={beginScrub}
+          onValueChange={handleSeekChange}
+          onValueCommit={handleSeekCommit}
+          seeking={isSeeking}
+        />
+        <ClipPlaybackControls />
+      </div>
+    );
+  }
+
   return (
     <div className={playbackStyles.Root}>
       <button
@@ -308,6 +448,7 @@ export function DemoPlaybackControls() {
         className={styles.Director}
         data-active={directorStatus === "playing"}
         disabled={
+          !!route.clip ||
           directorStatus === "scanning" ||
           directorStatus === "error" ||
           (isSeeking && directorStatus !== "playing")
