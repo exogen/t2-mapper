@@ -153,6 +153,8 @@ const ACCOUNT_SCHEMA_MIGRATIONS: readonly (
   CREATE INDEX "clip_duration_jobs" ON "clip" ("state", "retryAt", "createdAt", "id")
     WHERE "state"='ready' AND "durationMs" IS NULL AND "attempts"<3;
   UPDATE "clip" SET "attempts"=0, "retryAt"=0 WHERE "state"='ready';`,
+  `CREATE INDEX "clip_ready_newest" ON "clip" ("state", "createdAt" DESC, "id" DESC)
+    WHERE "state"='ready';`,
 ];
 
 function accountSchemaVersion(database: Database.Database): number {

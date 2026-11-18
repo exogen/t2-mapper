@@ -45,6 +45,7 @@ const UUID =
 const RETRY_MS = 30_000;
 const MAX_CLIPS = 100;
 const MAX_PENDING = 3;
+const SOURCE_UNAVAILABLE = "The clip source has changed or been removed";
 const TITLE_DATE = new Intl.DateTimeFormat("en-US", {
   weekday: "short",
   month: "short",
@@ -56,6 +57,7 @@ const TITLE_DATE = new Intl.DateTimeFormat("en-US", {
 interface ClipRow {
   id: string;
   ownerDiscordId: string;
+  creatorName?: string | null;
   requestId: string;
   payloadHash: string;
   sourceDemo: string;
@@ -158,6 +160,15 @@ export class Clips {
     return task;
   }
 
+  sourceDeleted(sourceDemo: string): void {
+    this.db
+      .prepare(
+        `UPDATE clip SET state='failed', error=? WHERE sourceDemo=?
+         AND state IN ('receiving','processing','ready')`,
+      )
+      .run(SOURCE_UNAVAILABLE, sourceDemo);
+  }
+
   private row(id: string): ClipRow | undefined {
     return this.db.prepare("SELECT * FROM clip WHERE id = ?").get(id) as
       ClipRow | undefined;
@@ -179,6 +190,7 @@ export class Clips {
       startSec: row.startSec,
       ...(row.durationMs !== null && { durationMs: row.durationMs }),
       ownerDiscordId: row.ownerDiscordId,
+      ...(row.creatorName && { creatorName: row.creatorName }),
       createdAt: row.createdAt,
       state:
         row.state === "ready"
@@ -195,31 +207,52 @@ export class Clips {
     const timeout = AbortSignal.timeout(30_000);
     return parent ? AbortSignal.any([parent, timeout]) : timeout;
   }
-  private creatorPage(
-    owner: string,
+  private listPage(
+    owner: string | null,
     pageNumber: number,
     manage = false,
   ): ClipPage {
     const visible = manage ? "state!='deleting'" : "state='ready'";
     return this.db.transaction(() => {
-      const counts = this.db
-        .prepare(
-          `SELECT coalesce(sum(${visible}),0) AS total,
+      const counts =
+        owner === null
+          ? {
+              total: this.db
+                .prepare("SELECT count(*) FROM clip WHERE state='ready'")
+                .pluck()
+                .get() as number,
+              pending: 0,
+            }
+          : (this.db
+              .prepare(
+                `SELECT coalesce(sum(${visible}),0) AS total,
             coalesce(sum(state IN ('receiving','processing') OR
               (state='ready' AND durationMs IS NULL AND attempts<3)),0) AS pending
            FROM clip WHERE ownerDiscordId=?`,
-        )
-        .get(owner) as { total: number; pending: number };
+              )
+              .get(owner) as { total: number; pending: number });
       const page = Math.min(
         pageNumber,
         Math.max(1, Math.ceil(counts.total / CLIPS_PAGE_SIZE)),
       );
+      const where =
+        owner === null ? visible : `ownerDiscordId=? AND ${visible}`;
+      const creator =
+        owner === null
+          ? `, (SELECT CASE WHEN count(*)=1 THEN min(u.name) END
+                FROM account a JOIN user u ON a.userId=u.id
+                WHERE a.providerId='discord' AND a.accountId=clip.ownerDiscordId) AS creatorName`
+          : "";
       const rows = this.db
         .prepare(
-          `SELECT * FROM clip WHERE ownerDiscordId=? AND ${visible}
+          `SELECT clip.*${creator} FROM clip WHERE ${where}
            ORDER BY createdAt DESC,id DESC LIMIT ? OFFSET ?`,
         )
-        .all(owner, CLIPS_PAGE_SIZE, (page - 1) * CLIPS_PAGE_SIZE) as ClipRow[];
+        .all(
+          ...(owner === null ? [] : [owner]),
+          CLIPS_PAGE_SIZE,
+          (page - 1) * CLIPS_PAGE_SIZE,
+        ) as ClipRow[];
       return {
         clips: rows.map((row) => this.view(row)),
         ...counts,
@@ -255,7 +288,7 @@ export class Clips {
         signal,
       );
       if (!source.ETag || source.ETag !== row.sourceETag)
-        throw new ClipError(410, "The clip source has changed or been removed");
+        throw new ClipError(410, SOURCE_UNAVAILABLE);
     } catch (error) {
       if (
         isMissingObject(error) ||
@@ -265,8 +298,8 @@ export class Clips {
           .prepare(
             "UPDATE clip SET state='failed', error=? WHERE id=? AND state!='deleting'",
           )
-          .run("The clip source has changed or been removed", row.id);
-        throw new ClipError(410, "The clip source has changed or been removed");
+          .run(SOURCE_UNAVAILABLE, row.id);
+        throw new ClipError(410, SOURCE_UNAVAILABLE);
       }
       throw error;
     }
@@ -303,20 +336,20 @@ export class Clips {
       if (req.method === "GET" && url.pathname === "/api/clips") {
         const owner = url.searchParams.get("owner");
         const requestedPage = url.searchParams.get("page") ?? "1";
-        if (!isDiscordId(owner))
+        const manage = url.searchParams.get("manage") === "1";
+        if ((owner !== null || manage) && !isDiscordId(owner))
           throw new ClipError(400, "A valid clip creator is required");
         if (!/^[1-9]\d*$/.test(requestedPage))
           throw new ClipError(400, "Invalid clip page");
         const pageNumber = Number(requestedPage);
         if (!Number.isSafeInteger(pageNumber) || pageNumber > 1_000_000)
           throw new ClipError(400, "Invalid clip page");
-        const manage = url.searchParams.get("manage") === "1";
         if (manage) {
           const user = await this.options.getAccount(req.headers);
           if (user?.discordId !== owner)
             throw new ClipError(403, "Sign in to manage your own clips");
         }
-        json(res, 200, this.creatorPage(owner, pageNumber, manage));
+        json(res, 200, this.listPage(owner, pageNumber, manage));
       } else if (req.method === "GET" && match) {
         if (!UUID.test(match[1])) throw new ClipError(404, "Clip not found");
         let row = this.visibleRow(match[1]);

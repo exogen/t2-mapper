@@ -63,6 +63,7 @@ export interface ClipView {
   /** Recorded clip time, including pauses and playback-speed changes. */
   durationMs?: number;
   ownerDiscordId: string;
+  creatorName?: string;
   createdAt: number;
   state: "processing" | "ready" | "failed";
   error?: string;

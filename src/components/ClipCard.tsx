@@ -17,7 +17,7 @@ import styles from "./ClipCard.module.css";
 export function ClipCard({
   clip,
   demo,
-  creatorName,
+  creatorName = clip.creatorName,
   onDelete,
   deleting = false,
 }: {

@@ -100,6 +100,14 @@ it("shows mission info above the saved title and teams on featured cards", () =>
   );
 });
 
+it("keeps the recent clips link available when no demos are featured", () => {
+  fixture.load.phase = "idle";
+  fixture.demos = [];
+  const markup = render();
+  expect(markup).toContain('href="/clips/">Recent clips</a>');
+  expect(markup).not.toContain("Featured recent demos");
+});
+
 it("omits default team names without hiding the mission info", () => {
   fixture.load.phase = "idle";
   fixture.demos = [
@@ -123,8 +131,10 @@ it("offers admins an edit button outside the demo playback link", () => {
   );
   expect(markup).toContain('aria-haspopup="dialog"');
   expect(markup).toContain('aria-label="Demo actions"');
-  const link = markup.match(/<a\b[^>]*>[\s\S]*?<\/a>/)?.[0];
-  expect(link).toContain("?demo=match.rec");
+  const link = markup.match(
+    /<a\b[^>]*href="[^"]*\?demo=match\.rec[^"]*"[^>]*>[\s\S]*?<\/a>/,
+  )?.[0];
+  expect(link).toBeDefined();
   expect(link).not.toContain("<button");
 });
 

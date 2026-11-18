@@ -1,0 +1,73 @@
+.Frame {
+  display: grid;
+  grid-template: "toolbar" auto "content" minmax(0, 1fr) / minmax(0, 1fr);
+  height: 100vh;
+  height: 100dvh;
+}
+
+.Toolbar {
+  composes: Toolbar from "./MapInspector.module.css";
+  min-height: 51px;
+  padding-inline: 12px;
+}
+
+.BackLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  color: inherit;
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.BackLink svg {
+  font-size: 20px;
+}
+
+.BackLink:hover {
+  text-decoration: underline;
+}
+
+.Page {
+  composes: DropZone from "./DemoDropZone.module.css";
+}
+
+.Frame > .Page {
+  grid-area: content;
+  position: relative;
+}
+
+.Content {
+  composes: DemoSection from "./UserDemos.module.css";
+  flex: 0 0 auto;
+  width: min(1200px, calc(100% - 48px));
+  padding-bottom: 40px;
+}
+
+.Header {
+  composes: Header from "./UserDemos.module.css";
+}
+
+.Title {
+  composes: Title from "./UserDemos.module.css";
+}
+
+.Grid {
+  composes: FeaturedGrid from "./DemoDropScreen.module.css";
+  /* At the page's max width, at most three 340px tracks can fit. */
+}
+
+.Message {
+  composes: Message from "./UserDemos.module.css";
+}
+
+.Error {
+  composes: Error from "./UserDemos.module.css";
+}
+
+.Retry {
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}

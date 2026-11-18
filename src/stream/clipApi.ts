@@ -68,6 +68,15 @@ export function readUserClips(
   return readClipJson(url, signal, manage ? "include" : "omit");
 }
 
+export function readPublicClips(
+  page: number,
+  signal: AbortSignal,
+): Promise<ClipPage> {
+  const url = new URL("/api/clips", appApiBaseUrl);
+  url.searchParams.set("page", String(page));
+  return readClipJson(url, signal);
+}
+
 export function clipRefetchInterval(query: {
   state: { data?: Pick<ClipView, "state">; error: unknown };
 }): number | false {

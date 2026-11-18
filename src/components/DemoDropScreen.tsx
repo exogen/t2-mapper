@@ -26,22 +26,34 @@ import styles from "./DemoDropScreen.module.css";
 const FEATURED_MIN_PLAYERS = 10;
 const FEATURED_MIN_DURATION_MS = 10 * 60_000;
 
+function DemoBrowseActions({ pager }: { pager?: ReactNode }) {
+  return (
+    <div className={styles.BrowseActions}>
+      <a
+        className={styles.BrowseAction}
+        href={`${import.meta.env.BASE_URL}clips/`}
+      >
+        Recent clips
+      </a>
+      <button
+        type="button"
+        className={styles.BrowseAction}
+        onClick={focusDemoSelect}
+      >
+        <FaSearch className={styles.SearchIcon} /> Find a demo…
+      </button>
+      {pager}
+    </div>
+  );
+}
+
 /** The section's chrome, shared by the skeleton and the loaded list so
  *  the two can never drift apart (or shift the layout between them). */
 function FeaturedHeader({ pager }: { pager?: ReactNode }) {
   return (
     <div className={styles.FeaturedHeader}>
       <h2 className={styles.FeaturedTitle}>Featured recent demos</h2>
-      <div className={styles.FeaturedPager}>
-        <button
-          type="button"
-          className={styles.SearchButton}
-          onClick={focusDemoSelect}
-        >
-          <FaSearch className={styles.SearchIcon} /> Find a demo…
-        </button>
-        {pager}
-      </div>
+      <DemoBrowseActions pager={pager} />
     </div>
   );
 }
@@ -76,20 +88,24 @@ function FeaturedSkeleton() {
 
 /**
  * The featured section. Suspends on the index behind a skeleton, and
- * an index that fails to load simply leaves the section out — it is a
- * convenience, never the only way to open a demo.
+ * keep the browse actions available when there are no featured demos.
  */
 function FeaturedDemos() {
+  const empty = (
+    <div className={styles.Featured} data-demo-cards>
+      <DemoBrowseActions />
+    </div>
+  );
   return (
-    <QuietErrorBoundary label="Featured demos">
+    <QuietErrorBoundary label="Featured demos" fallback={empty}>
       <Suspense fallback={<FeaturedSkeleton />}>
-        <FeaturedList />
+        <FeaturedList empty={empty} />
       </Suspense>
     </QuietErrorBoundary>
   );
 }
 
-function FeaturedList() {
+function FeaturedList({ empty }: { empty: ReactNode }) {
   const { data: demos } = useDemoIndexSuspense();
   const matching = useMemo(
     () =>
@@ -107,7 +123,7 @@ function FeaturedList() {
     [demos],
   );
   const pagination = useDemoPagination(matching);
-  if (pagination.items.length === 0) return null;
+  if (pagination.items.length === 0) return empty;
   return (
     <div className={styles.Featured} data-demo-cards>
       <FeaturedHeader

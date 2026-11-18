@@ -88,7 +88,7 @@ async function fixture() {
   const database = new Database(":memory:");
   database.pragma("foreign_keys=ON");
   database.exec(
-    'CREATE TABLE "user" ("id" TEXT PRIMARY KEY); CREATE TABLE "account" ("userId" TEXT, "providerId" TEXT, "accountId" TEXT);',
+    'CREATE TABLE "user" ("id" TEXT PRIMARY KEY, "name" TEXT NOT NULL); CREATE TABLE "account" ("userId" TEXT, "providerId" TEXT, "accountId" TEXT);',
   );
   database.transaction(() => migrateAccountSchema(database))();
   const objects = new Map<string, { body: string; etag: string }>([
@@ -245,8 +245,15 @@ async function save(f: Awaited<ReturnType<typeof fixture>>, body = payload()) {
   return clip;
 }
 
-it("lists only a creator's ready clips publicly with independent pagination and pending counts", async () => {
+it("paginates ready clips globally and by creator, limiting management to the owner", async () => {
   const f = await fixture();
+  f.database.exec(`
+    INSERT INTO user (id, name) VALUES
+      ('owner', 'Clip Creator'), ('other', 'Another Creator'), ('unrelated', 'Unrelated');
+    INSERT INTO account (userId, providerId, accountId) VALUES
+      ('owner', 'discord', '${OWNER}'), ('other', 'discord', '${OTHER}'),
+      ('unrelated', 'other', '${OTHER}');
+  `);
   const insert = f.database.prepare(
     `INSERT INTO clip (id,ownerDiscordId,requestId,payloadHash,sourceDemo,sourceETag,
       sourceSha256,title,createdAt,startSec,endSec,durationMs,state,checkpointVersion)
@@ -273,19 +280,19 @@ it("lists only a creator's ready clips publicly with independent pagination and 
   };
   for (let index = 1; index <= 8; index++)
     ids.push(seed(index, OWNER, "ready", Math.min(index, 7)));
-  seed(9, OTHER);
+  const otherClip = seed(9, OTHER);
   seed(10, OWNER, "receiving");
   seed(11, OWNER, "processing");
   seed(12, OWNER, "failed");
   seed(13, OWNER, "deleting");
   f.getAccount.mockResolvedValue(null);
-  const read = async (owner: string, page?: number) => {
-    const response = await f.request(
-      "GET",
-      `/api/clips?owner=${owner}${page ? `&page=${page}` : ""}`,
-      undefined,
-      { Origin: "" },
-    );
+  const read = async (owner?: string, page?: number) => {
+    const params = new URLSearchParams();
+    if (owner) params.set("owner", owner);
+    if (page) params.set("page", String(page));
+    const response = await f.request("GET", `/api/clips?${params}`, undefined, {
+      Origin: "",
+    });
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     return response.json() as Promise<ClipPage>;
@@ -323,6 +330,23 @@ it("lists only a creator's ready clips publicly with independent pagination and 
     page: 1,
     pageSize: 6,
   });
+  const feed = await read();
+  expect(feed).toMatchObject({ total: 9, pending: 0, page: 1, pageSize: 6 });
+  const allIds = [otherClip, ...ids.toReversed()];
+  expect(feed.clips.map((clip) => clip.id)).toEqual(allIds.slice(0, 6));
+  expect(feed.clips.map((clip) => clip.creatorName)).toEqual([
+    "Another Creator",
+    ...Array(5).fill("Clip Creator"),
+  ]);
+  const lastFeed = await read(undefined, 2);
+  expect(lastFeed.clips.map((clip) => clip.id)).toEqual(allIds.slice(6));
+  expect(await read(undefined, 999)).toEqual(lastFeed);
+  f.database
+    .prepare("INSERT INTO account VALUES ('unrelated', 'discord', ?)")
+    .run(OTHER);
+  const ambiguous = await read();
+  expect(ambiguous.clips.map((clip) => clip.id)).toEqual(allIds.slice(0, 6));
+  expect(ambiguous.clips[0]).not.toHaveProperty("creatorName");
   expect(f.getAccount).not.toHaveBeenCalled();
   expect(f.send).not.toHaveBeenCalled();
 
@@ -350,14 +374,15 @@ it("lists only a creator's ready clips publicly with independent pagination and 
 });
 
 it.each([
-  "",
+  "?manage=1",
   "?owner=bad",
+  "?page=0",
   `?owner=${OWNER}&page=0`,
   `?owner=${OWNER}&page=-1`,
   `?owner=${OWNER}&page=1.5`,
   `?owner=${OWNER}&page=nope`,
   `?owner=${OWNER}&page=1000001`,
-])("rejects invalid creator clip pagination %s", async (query) => {
+])("rejects invalid clip pagination or ownership %s", async (query) => {
   const f = await fixture();
   expect((await f.request("GET", `/api/clips${query}`)).status).toBe(400);
   expect(f.send).not.toHaveBeenCalled();
@@ -776,6 +801,51 @@ it("continues queued cleanup past a full batch of in-flight timeline uploads", a
   ).toBe(true);
   await f.service.idle();
   expect(f.rows().every((row) => row.state === "ready")).toBe(true);
+});
+
+it("unlists clips for a deleted upload and prevents a pending job from relisting them", async () => {
+  const f = await fixture();
+  const sourceDemo = `users/${OWNER}/upload.rec`;
+  const sourceKey = `demos/${sourceDemo}`;
+  f.objects.set(sourceKey, f.objects.get("demos/match.rec")!);
+  const ready = await save(f, payload(sourceDemo));
+  const unrelated = await save(f);
+
+  const validating = deferred();
+  const release = deferred();
+  const send = f.send.getMockImplementation()!;
+  f.send.mockImplementation(async (command, options) => {
+    const response = await send(command, options);
+    if (
+      command instanceof HeadObjectCommand &&
+      command.input.Key === sourceKey &&
+      f.prepare.mock.calls.length === 3
+    ) {
+      validating.resolve();
+      await release.promise;
+    }
+    return response;
+  });
+  const pending = await f.request("POST", "/api/clips", payload(sourceDemo));
+  expect(pending.status).toBe(202);
+  const { id } = (await pending.json()) as ClipView;
+  await validating.promise;
+
+  f.objects.delete(sourceKey);
+  f.service.sourceDeleted(sourceDemo);
+  release.resolve();
+  await f.service.idle();
+
+  const feed = (await (await f.request("GET")).json()) as ClipPage;
+  expect(feed.total).toBe(1);
+  expect(feed.clips.map((clip) => clip.id)).toEqual([unrelated.id]);
+  for (const clipId of [ready.id, id]) {
+    expect(f.rows().find((row) => row.id === clipId)).toMatchObject({
+      state: "failed",
+      error: "The clip source has changed or been removed",
+    });
+    expect(f.objects.has(`demos/clips/${clipId}/checkpoint.json`)).toBe(true);
+  }
 });
 
 it.each(["changed", "deleted"])(

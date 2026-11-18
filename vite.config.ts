@@ -15,7 +15,7 @@ function pageEntryDevRewrite(): Plugin {
     name: "page-entry-dev-rewrite",
     configureServer(server) {
       const directoryPaths = new Set(
-        ["watch", "account/sign-in"].map(
+        ["watch", "account/sign-in", "clips"].map(
           (entry) => `${server.config.base}${entry}`,
         ),
       );
@@ -221,6 +221,7 @@ export default defineConfig(({ mode }) => {
         input: {
           main: fileURLToPath(new URL("index.html", import.meta.url)),
           watch: fileURLToPath(new URL("watch/index.html", import.meta.url)),
+          clips: fileURLToPath(new URL("clips/index.html", import.meta.url)),
           signIn: fileURLToPath(
             new URL("account/sign-in/index.html", import.meta.url),
           ),

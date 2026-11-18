@@ -294,7 +294,7 @@ it("adds durable demo membership to schema four without changing linked accounts
   );
   expect(hasPendingAccountSchemaMigrations(database)).toBe(true);
   database.transaction(() => migrateAccountSchema(database))();
-  expect(database.pragma("user_version", { simple: true })).toBe(8);
+  expect(database.pragma("user_version", { simple: true })).toBe(9);
   expect(database.prepare('SELECT * FROM "t2AccountLink"').all()).toEqual(
     links,
   );
@@ -332,7 +332,7 @@ it("upgrades early clip databases without source hashes and preserves pending de
   const { database } = setup();
   database.transaction(() => migrateAccountSchema(database))();
   database.exec(
-    'ALTER TABLE "clip" DROP COLUMN "sourceSha256"; DROP INDEX "clip_duration_jobs"; ALTER TABLE "clip" DROP COLUMN "durationMs"; PRAGMA user_version = 6',
+    'ALTER TABLE "clip" DROP COLUMN "sourceSha256"; DROP INDEX "clip_ready_newest"; DROP INDEX "clip_duration_jobs"; ALTER TABLE "clip" DROP COLUMN "durationMs"; PRAGMA user_version = 6',
   );
   const insert = database.prepare(
     `INSERT INTO clip (id, ownerDiscordId, requestId, payloadHash, sourceDemo,
@@ -349,7 +349,7 @@ it("upgrades early clip databases without source hashes and preserves pending de
   const before = readRows();
   expect(hasPendingAccountSchemaMigrations(database)).toBe(true);
   database.transaction(() => migrateAccountSchema(database))();
-  expect(database.pragma("user_version", { simple: true })).toBe(8);
+  expect(database.pragma("user_version", { simple: true })).toBe(9);
   expect(hasPendingAccountSchemaMigrations(database)).toBe(false);
   expect(readRows()).toEqual(
     before.map((row) => ({
@@ -393,14 +393,14 @@ it("preserves clips from schema six when their source hashes already exist", () 
     )
     .run("a".repeat(64));
   database.exec(
-    'DROP INDEX "clip_duration_jobs"; ALTER TABLE "clip" DROP COLUMN "durationMs"',
+    'DROP INDEX "clip_ready_newest"; DROP INDEX "clip_duration_jobs"; ALTER TABLE "clip" DROP COLUMN "durationMs"',
   );
   const before = database.prepare("SELECT * FROM clip").all() as Array<
     Record<string, unknown>
   >;
   database.pragma("user_version = 6");
   database.transaction(() => migrateAccountSchema(database))();
-  expect(database.pragma("user_version", { simple: true })).toBe(8);
+  expect(database.pragma("user_version", { simple: true })).toBe(9);
   expect(database.prepare("SELECT * FROM clip").all()).toEqual(
     before.map((row) => ({ ...row, durationMs: null })),
   );
@@ -415,7 +415,7 @@ it("adds nullable recorded duration to existing clips and queues ready metadata 
   const { database } = setup();
   database.transaction(() => migrateAccountSchema(database))();
   database.exec(
-    'DROP INDEX "clip_duration_jobs"; ALTER TABLE "clip" DROP COLUMN "durationMs"; PRAGMA user_version=7',
+    'DROP INDEX "clip_ready_newest"; DROP INDEX "clip_duration_jobs"; ALTER TABLE "clip" DROP COLUMN "durationMs"; PRAGMA user_version=7',
   );
   database
     .prepare(
@@ -426,7 +426,7 @@ it("adds nullable recorded duration to existing clips and queues ready metadata 
     )
     .run("a".repeat(64));
   database.transaction(() => migrateAccountSchema(database))();
-  expect(database.pragma("user_version", { simple: true })).toBe(8);
+  expect(database.pragma("user_version", { simple: true })).toBe(9);
   expect(database.prepare("SELECT * FROM clip").get()).toMatchObject({
     id: "clip",
     title: "Paused clip",

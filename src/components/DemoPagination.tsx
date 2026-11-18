@@ -6,11 +6,13 @@ export function DemoPagination({
   pageCount,
   onPageChange,
   label = "Demo pages",
+  disabled = false,
 }: {
   page: number;
   pageCount: number;
   onPageChange: (page: number) => void;
   label?: string;
+  disabled?: boolean;
 }) {
   if (pageCount <= 1) return null;
   return (
@@ -19,7 +21,7 @@ export function DemoPagination({
         type="button"
         className={styles.Button}
         aria-label="Previous page"
-        disabled={page === 0}
+        disabled={disabled || page === 0}
         onClick={() => onPageChange(page - 1)}
       >
         <LuChevronLeft />
@@ -28,7 +30,7 @@ export function DemoPagination({
         type="button"
         className={styles.Button}
         aria-label="Next page"
-        disabled={page >= pageCount - 1}
+        disabled={disabled || page >= pageCount - 1}
         onClick={() => onPageChange(page + 1)}
       >
         <LuChevronRight />

@@ -683,7 +683,10 @@ const userDemoUploads =
             metadata,
             checkpoints,
           ),
-        deleteDemo: (key) => demoUploader.deleteUserDemo(key),
+        deleteDemo: async (key) => {
+          await demoUploader.deleteUserDemo(key);
+          clips?.sourceDeleted(key);
+        },
       })
     : null;
 await userDemoUploads?.start();
