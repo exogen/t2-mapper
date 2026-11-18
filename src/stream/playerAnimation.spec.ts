@@ -149,6 +149,28 @@ describe("samplePlayerPose", () => {
     expect(sample(19, spam)[0].name).toBe("run");
   });
 
+  it("exposes the first-person flag only for the action currently in the slot", () => {
+    const actions = slot(
+      18,
+      { timeSec: 10, firstPerson: true },
+      { timeSec: 11 },
+      { timeSec: 20 },
+    );
+    expect(sample(9, actions)[0].firstPerson).toBeUndefined();
+    expect(sample(10, actions)[0]).toMatchObject({
+      name: "pda",
+      firstPerson: true,
+      weight: 0,
+    });
+    expect(sample(11.5, actions)[0].firstPerson).toBe(true);
+    const [current, previous] = sample(12.1, actions);
+    expect(current.name).toBe("run");
+    expect(current.firstPerson).toBeUndefined();
+    expect(previous.name).toBe("pda");
+    expect(previous.firstPerson).toBeUndefined();
+    expect(sample(20.5, actions)[0].firstPerson).toBeUndefined();
+  });
+
   it("snaps an at-end re-send to the clip's end, then lets movement pick", () => {
     const pda = slot(18, { timeSec: 10 }, { timeSec: 10.5, atEnd: true });
     expect(sample(10.5, pda)[0]).toMatchObject({ name: "run" });

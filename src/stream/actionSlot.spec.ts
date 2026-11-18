@@ -50,6 +50,22 @@ describe("setActionThread", () => {
       calls: [{ timeSec: 1, pickHeldUntilSec: 2.2 }],
     });
   });
+
+  it("keeps the first-person flag from the accepted action during a same-action snap", () => {
+    const original = setActionThread(undefined, 29, {
+      timeSec: 1,
+      hold: true,
+      firstPerson: true,
+    });
+    const snapped = setActionThread(original, 29, {
+      timeSec: 1.3,
+      atEnd: true,
+    });
+    expect(resolveActionSlot(snapped, 2, 1.4)).toMatchObject({
+      atEnd: true,
+      firstPerson: true,
+    });
+  });
 });
 
 describe("pick hold and parking", () => {

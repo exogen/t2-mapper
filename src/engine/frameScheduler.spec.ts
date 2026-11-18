@@ -11,8 +11,19 @@ it("runs stages lowest first, and a stage's callbacks in the order added", () =>
   scheduler.add(FramePriority.StreamPlayback, () => order.push("playback"));
   scheduler.add(FramePriority.CameraSelect, () => order.push("select 1"));
   scheduler.add(FramePriority.CameraSelect, () => order.push("select 2"));
+  scheduler.add(FramePriority.PlayerView, () => order.push("view"));
+  scheduler.add(FramePriority.ShapeAnimation, () => order.push("animate"));
+  scheduler.add(FramePriority.CameraStream, () => order.push("eye"));
   scheduler.runAll(frame);
-  expect(order).toEqual(["playback", "select 1", "select 2", "labels"]);
+  expect(order).toEqual([
+    "playback",
+    "select 1",
+    "select 2",
+    "view",
+    "animate",
+    "eye",
+    "labels",
+  ]);
 });
 
 it("skips a callback removed earlier in the same pass", () => {

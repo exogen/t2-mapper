@@ -124,12 +124,21 @@ it("applies a new action after unmounting when both arrive in one ghost update",
     mountObject: -1,
     action: 20,
     actionHoldAtEnd: true,
+    actionFirstPerson: true,
     damageState: 1,
   });
   expect(stream.player.mountObjectGhostIndex).toBeUndefined();
   expect(stream.player.actionSlot).toEqual({
     action: 20,
-    calls: [{ timeSec: 0.032, hold: true, atEnd: false, parked: true }],
+    calls: [
+      {
+        timeSec: 0.032,
+        hold: true,
+        atEnd: false,
+        parked: true,
+        firstPerson: true,
+      },
+    ],
   });
 
   // An ordinary unmount still clears a stale seat pose.

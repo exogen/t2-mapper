@@ -18,6 +18,8 @@ export interface ActionCall {
   timeSec: number;
   /** holdAtEnd: the action stays until another replaces it. */
   hold?: boolean;
+  /** Let this action animate the spine even in first person. */
+  firstPerson?: boolean;
   /**
    * The ghost update said the thread was at its end; unpackUpdate snaps
    * the thread there even when setActionThread ignores the call.
@@ -111,6 +113,8 @@ export interface ResolvedAction {
   /** Clip position (0..1) at `timeSec`. */
   startPos: number;
   atEnd: boolean;
+  /** The flag belongs to the call that took the slot. */
+  firstPerson: boolean;
   /**
    * When pickActionAnimation replaces it (Infinity: never); the slot
    * holds no action from then on.
@@ -141,6 +145,7 @@ export function resolveActionSlot(
       timeSec: call.timeSec,
       startPos,
       atEnd: !!call.atEnd,
+      firstPerson: !!call.firstPerson,
       endSec:
         call.hold || call.parked
           ? Infinity

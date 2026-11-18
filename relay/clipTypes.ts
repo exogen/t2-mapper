@@ -29,6 +29,8 @@ export interface ClipSample {
   projection: "perspective" | "orthographic";
   /** Orthographic vertical span in world units. */
   viewHeight?: number;
+  /** First-person freelook relative to the body, in radians. */
+  headYaw?: number;
   cameraMode: string;
   targetId: number | null;
   flagSlot: number | null;
@@ -164,6 +166,8 @@ export function readClipTake(value: unknown): ClipTake {
       !["perspective", "orthographic"].includes(sample.projection) ||
       (sample.projection === "orthographic" &&
         !finite(sample.viewHeight, 0.001, 1e7)) ||
+      (sample.headYaw !== undefined &&
+        !finite(sample.headYaw, -Math.PI, Math.PI)) ||
       !MODES.has(sample.cameraMode) ||
       !identity(sample.targetId) ||
       !identity(sample.flagSlot) ||
@@ -190,6 +194,7 @@ export function readClipTake(value: unknown): ClipTake {
       ...(sample.projection === "orthographic" && {
         viewHeight: sample.viewHeight,
       }),
+      ...(sample.headYaw !== undefined && { headYaw: sample.headYaw }),
       cameraMode: sample.cameraMode,
       targetId: sample.targetId,
       flagSlot: sample.flagSlot,
@@ -269,6 +274,11 @@ export function sampleClipTake(take: ClipTake, timeMs: number): ClipSample {
     ...(a.viewHeight !== undefined &&
       b.viewHeight !== undefined && {
         viewHeight: cut ? a.viewHeight : blend(a.viewHeight, b.viewHeight),
+      }),
+    ...(a.headYaw !== undefined &&
+      b.headYaw !== undefined &&
+      !cut && {
+        headYaw: blend(a.headYaw, b.headYaw),
       }),
   };
   // A cut belongs to its exact sample, not a point interpolated after it.

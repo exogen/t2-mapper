@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AdditiveAnimationBlendMode,
   AnimationMixer,
+  Group,
   PerspectiveCamera,
   Vector3,
 } from "three";
@@ -10,6 +11,8 @@ import { buildDTS } from "./dtsBuilder";
 import { createDTSSequence, createDTSTestShape } from "./dtsTestFixtures";
 import { dtsTriangles } from "./dtsGeometry";
 import { DTSMesh, DTSShape, DTSObject } from "./dtsModel";
+import { DTSSequenceFlags } from "./dtsTypes";
+import { getOwnNodePosition } from "../sceneNodes";
 
 const camera = new PerspectiveCamera();
 camera.position.z = 10;
@@ -90,6 +93,69 @@ describe("native DTS Three objects", () => {
     expect(position.x).toBeCloseTo(0);
     expect(position.y).toBeCloseTo(0);
     expect(position.z).toBeCloseTo(-1);
+  });
+  it("masks only base rotation and translation through animation and mount updates", () => {
+    const data = createDTSTestShape();
+    data.defaultTranslations = new Float32Array([0, 0, 2]);
+    data.defaultRotations = new Int16Array([0, 0, 23170, 23170]);
+    data.translations = new Float32Array([0, 0, 5, 0, 0, 7, 1, 0, 0]);
+    data.rotations = new Int16Array([0, 0, 0, 32767, 0, 0, 0, 32767]);
+    data.uniformScales = new Float32Array([2, 2]);
+    data.sequences = [
+      createDTSSequence({
+        numKeyframes: 2,
+        translationMatters: [0],
+        rotationMatters: [0],
+        scaleMatters: [0],
+        flags: DTSSequenceFlags.UniformScale,
+      }),
+      createDTSSequence({
+        numKeyframes: 1,
+        translationMatters: [0],
+        baseTranslation: 2,
+        flags: DTSSequenceFlags.Blend,
+      }),
+    ];
+    const { scene, nodes, animations } = buildDTS(data);
+    const [node] = nodes;
+    const mixer = new AnimationMixer(scene);
+    for (const clip of animations) mixer.clipAction(clip).play();
+    mixer.update(0);
+    const mountedImage = new Group();
+    mountedImage.matrixAutoUpdate = false;
+    node.add(mountedImage);
+    const position = new Vector3();
+    expect(getOwnNodePosition(scene, node, position)!.toArray()).toEqual([
+      -2, 5, 0,
+    ]);
+
+    scene.setNodePoseMasked(0, true);
+    // The camera can sample the local eye pose before the render traversal.
+    getOwnNodePosition(scene, node, position);
+    expect(position.x).toBeCloseTo(0);
+    expect(position.y).toBeCloseTo(2);
+    expect(position.z).toBeCloseTo(-2);
+    scene.updateMatrixWorld();
+    expect(
+      new Vector3().setFromMatrixPosition(mountedImage.matrixWorld),
+    ).toEqual(position);
+    mixer.setTime(0.5);
+    scene.updateMatrixWorld();
+    expect(
+      new Vector3().setFromMatrixPosition(mountedImage.matrixWorld),
+    ).toEqual(position);
+
+    const copy = clone(scene) as DTSShape;
+    copy.setNodePoseMasked(0, false);
+    expect(
+      getOwnNodePosition(copy, copy.getNode(0)!, new Vector3())!.toArray(),
+    ).toEqual([-2, 6, 0]);
+    expect(getOwnNodePosition(scene, node, new Vector3())).toEqual(position);
+    scene.setNodePoseMasked(0, false);
+    scene.updateMatrixWorld();
+    expect(
+      new Vector3().setFromMatrixPosition(mountedImage.matrixWorld).toArray(),
+    ).toEqual([-2, 6, 0]);
   });
   it("clones geometry buffers but isolates instance animation state", () => {
     const data = createDTSTestShape();

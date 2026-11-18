@@ -427,7 +427,7 @@ export interface StreamEntity {
    * full-precision control data drives this player.
    */
   viewQuantized?: boolean;
-  /** Camera-only view estimate from a demo player's packed angle and move. */
+  /** Render-time aim estimate from a demo player's packed angle and move. */
   reconstructedAim?: import("./quantizedPlayerAim").QuantizedAimEstimate;
   /** Arm blend animation action index from Player ghost (networked). */
   armAction?: number;
@@ -767,7 +767,7 @@ export interface StreamingPlayback {
   ): () => void;
   reset(): void;
   getSnapshot(): StreamSnapshot;
-  /** Camera-only lookahead for the followed body at the current demo tick. */
+  /** Aim lookahead for the observed player at the current demo tick. */
   getPlayerAim?(entityId: string): DemoPlayerAim | undefined;
   /** Demo work can be bounded in ticks or wall time; a partial snapshot resumes
    *  on the next call. Budgets yield between complete simulation ticks. */

@@ -74,6 +74,26 @@ export class DTSHierarchy {
     return this.targets;
   }
 
+  setNodePoseMasked(index: number, masked: boolean): void {
+    this.index();
+    if (masked) this.node(index);
+    const transform = this.targets[transformName(index)];
+    if (
+      !(transform instanceof DTSAnimationTransform) ||
+      !!transform.maskedPose === masked
+    )
+      return;
+    const { defaultTranslations, defaultRotations } = this.shape.data;
+    transform.setPoseMask(
+      masked
+        ? {
+            position: dtsVector(defaultTranslations, index * 3),
+            quaternion: dtsQuaternion(defaultRotations, index * 4),
+          }
+        : undefined,
+    );
+  }
+
   node(index: number): DTSNode | undefined {
     this.index();
     const existing = this.nodes.get(index);

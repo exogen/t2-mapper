@@ -20,6 +20,7 @@ import { createSkyView } from "./skyView";
 import { createPlayerView, createShapeView } from "./shapeViews";
 import type { Cleanup } from "./storeReaction";
 import type { StreamSnapshot } from "../stream/types";
+import type { ClipSample } from "../../relay/clipTypes";
 
 /** What renders the engine's scene (see mountEngineCanvas). */
 export interface EngineHost {
@@ -79,6 +80,8 @@ export class GameEngine {
   });
   /** The frame in progress (or the last one, between frames). */
   frame: FrameContext | null = null;
+  /** The clip view chosen for the current frame, before player animation. */
+  clipCameraSample: ClipSample | null = null;
   /** The playing stream's latest snapshot, every tick (the store's
    *  published snapshot can lag it while assets load). */
   readonly streamSnapshot: { current: StreamSnapshot | null } = {

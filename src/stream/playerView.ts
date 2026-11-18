@@ -13,6 +13,11 @@ export interface PlayerViewAngles {
   pitch: number;
 }
 
+/** Total view yaw, plus the head turn needed to recover the body's yaw. */
+export interface PlayerRenderAim extends PlayerViewAngles {
+  headYaw: number;
+}
+
 /**
  * Head pitch and yaw as fractions of maxLookAngle, in [-1, 1].
  */
@@ -36,9 +41,11 @@ type PlayerView = PlayerTickView & Pick<StreamEntity, "playerDelta">;
  */
 const HALF_YAW_STEP = PACKED_BODY_YAW_STEP / 2;
 const HALF_HEAD_STEP = PACKED_HEAD_STEP / 2;
+const LOOK_THREAD_LIMIT = (80 * Math.PI) / 180;
 
 const _head: PlayerHeadAngles = { pitch: 0, yaw: 0 };
 const _tickRotation = new Quaternion();
+const _renderAim: PlayerRenderAim = { yaw: 0, pitch: 0, headYaw: 0 };
 
 function interpolateYaw(from: number, to: number, t: number): number {
   const delta = to - from;
@@ -79,6 +86,16 @@ export function getPlayerHeadAngles(
   return out;
 }
 
+/** Player::updateLookAnimation (0x5d4cf0) samples the arm and vertical
+ * head threads over ±80°, independently of PlayerData::maxLookAngle. */
+export function playerLookPitchPosition(pitchRadians: number): number {
+  return clamp(
+    (pitchRadians + LOOK_THREAD_LIMIT) / (2 * LOOK_THREAD_LIMIT),
+    0,
+    1,
+  );
+}
+
 /**
  * The yaw `aimCorrection` adds to a player's rendered body: half a packed
  * step, when a ghost update packed its rotation.
@@ -90,13 +107,6 @@ export function playerBodyYawCorrection(
   return aimCorrection && player?.viewQuantized ? HALF_YAW_STEP : 0;
 }
 
-/**
- * Player::getEyeTransform view angles, without the eye bone's animation.
- * `bodyRotation` is the body as rendered, which already carries
- * playerBodyYawCorrection, or the vehicle a mounted player rides.
- * A previous tick view lets demo first-person cameras interpolate packet
- * corrections too, without changing the body's rendered transform.
- */
 export function getPlayerViewAngles(
   bodyRotation: Quaternion,
   player: PlayerView | undefined,
@@ -106,6 +116,34 @@ export function getPlayerViewAngles(
   previousTickView?: PlayerTickView,
   fittedAim?: DemoPlayerAim,
 ): PlayerViewAngles {
+  const aim = getPlayerRenderAim(
+    bodyRotation,
+    player,
+    interpT,
+    _renderAim,
+    aimCorrection,
+    previousTickView,
+    fittedAim,
+  );
+  out.yaw = aim.yaw;
+  out.pitch = aim.pitch;
+  return out;
+}
+
+/**
+ * Player::getRenderEyeTransform angles, shared by the eye and mounted weapon.
+ * The rendered body's heading already includes playerBodyYawCorrection.
+ * A previous completed tick lets replay interpolate packet corrections.
+ */
+export function getPlayerRenderAim(
+  bodyRotation: Quaternion,
+  player: PlayerView | undefined,
+  interpT: number,
+  out: PlayerRenderAim,
+  aimCorrection = false,
+  previousTickView?: PlayerTickView,
+  fittedAim?: DemoPlayerAim,
+): PlayerRenderAim {
   const lifeChanged =
     player &&
     previousTickView &&
@@ -121,6 +159,7 @@ export function getPlayerViewAngles(
     if (currentAim) {
       out.yaw = currentAim.bodyYaw + currentAim.headYaw;
       out.pitch = clamp(currentAim.pitch, -MAX_PITCH, MAX_PITCH);
+      out.headYaw = currentAim.headYaw;
       return out;
     }
   }
@@ -148,6 +187,9 @@ export function getPlayerViewAngles(
         -MAX_PITCH,
         MAX_PITCH,
       );
+      out.headYaw =
+        previousAim.headYaw +
+        (currentAim.headYaw - previousAim.headYaw) * interpT;
       return out;
     }
     const { pitch: currentPitch, yaw: currentHeadYaw } = getPlayerHeadAngles(
@@ -166,6 +208,7 @@ export function getPlayerViewAngles(
       previous.pitch + (currentPitch - previous.pitch) * interpT;
     let previousYaw = previous.yaw * MAX_LOOK_ANGLE;
     let currentYaw = currentHeadYaw * MAX_LOOK_ANGLE;
+    out.headYaw = previousYaw + (currentYaw - previousYaw) * interpT;
     const baseYaw = player.mountObjectId
       ? threeForwardHeading(bodyRotation)
       : playerBodyYawCorrection(player, aimCorrection);
@@ -194,7 +237,9 @@ export function getPlayerViewAngles(
     _head,
     aimCorrection,
   );
-  out.yaw = bodyYaw + head.yaw * MAX_LOOK_ANGLE;
-  out.pitch = clamp(head.pitch * MAX_LOOK_ANGLE, -MAX_PITCH, MAX_PITCH);
+  const lookScale = player?.playerDelta?.maxLookAngle ?? MAX_LOOK_ANGLE;
+  out.headYaw = head.yaw * lookScale;
+  out.yaw = bodyYaw + out.headYaw;
+  out.pitch = clamp(head.pitch * lookScale, -MAX_PITCH, MAX_PITCH);
   return out;
 }

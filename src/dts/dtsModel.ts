@@ -262,19 +262,41 @@ export function isDTSMesh(object: Object3D): object is DTSRenderable {
   return (object as DTSMesh).isDTSMesh === true;
 }
 
+type NodePose = Pick<Object3D, "position" | "quaternion">;
+
 /** Internal pose helpers are driven by native PropertyBindings, which mark
  * matrixWorldNeedsUpdate when a track writes TRS. Resting helpers stay fixed. */
 export class DTSAnimationTransform extends Bone {
   /** The pose last composed into `matrix`. */
   readonly composedPose = new ComposedPose();
+  private poseMask?: NodePose;
   constructor() {
     super();
     this.matrixAutoUpdate = false;
     this.matrixWorldNeedsUpdate = true;
   }
+  get maskedPose(): NodePose | undefined {
+    return this.poseMask;
+  }
+  setPoseMask(pose: NodePose | undefined): void {
+    this.poseMask = pose;
+    this.matrixWorldNeedsUpdate = true;
+  }
   override updateMatrix(): void {
-    super.updateMatrix();
+    if (this.poseMask) {
+      this.matrix.compose(
+        this.poseMask.position,
+        this.poseMask.quaternion,
+        this.scale,
+      );
+      this.matrixWorldNeedsUpdate = true;
+    } else super.updateMatrix();
     recordCompose(this, this.composedPose);
+  }
+  override copy(source: this, recursive = true): this {
+    super.copy(source, recursive);
+    this.poseMask = source.poseMask;
+    return this;
   }
   override updateMatrixWorld(force?: boolean): void {
     updateChangedMatrixWorld(this, this.composedPose, POSE_HELPER, force);
@@ -536,9 +558,15 @@ class ComposedPose {
   sy = NaN;
   sz = NaN;
 }
+function effectiveNodePose(object: Object3D): NodePose {
+  return (
+    (object instanceof DTSAnimationTransform && object.maskedPose) || object
+  );
+}
 /** Whether the object's pose differs from the one last composed. */
 function poseDiffers(object: Object3D, pose: ComposedPose): boolean {
-  const { position: p, quaternion: q, scale: s } = object;
+  const { position: p, quaternion: q } = effectiveNodePose(object);
+  const { scale: s } = object;
   return !(
     p.x === pose.px &&
     p.y === pose.py &&
@@ -559,7 +587,8 @@ function poseDiffers(object: Object3D, pose: ComposedPose): boolean {
  */
 function recordCompose(object: Object3D, pose: ComposedPose): void {
   if (!poseDiffers(object, pose)) return;
-  const { position: p, quaternion: q, scale: s } = object;
+  const { position: p, quaternion: q } = effectiveNodePose(object);
+  const { scale: s } = object;
   pose.px = p.x;
   pose.py = p.y;
   pose.pz = p.z;
@@ -1056,6 +1085,11 @@ export class DTSShape extends LOD {
   }
   getNode(index: number): DTSNode | undefined {
     return this.hierarchy.node(index);
+  }
+  /** Use the DTS defaults for a node's base translation and rotation.
+   * Mixer bindings, scale, and additive animation are independent. */
+  setNodePoseMasked(index: number, masked: boolean): void {
+    this.hierarchy.setNodePoseMasked(index, masked);
   }
   /** Torque node names are case insensitive; lookup creates only this path. */
   getNodeByName(name: string): DTSNode | undefined {

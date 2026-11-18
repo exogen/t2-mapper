@@ -17,6 +17,7 @@ import { findLivingEntityByTargetId } from "../state/watchFollow";
 import { exitDirector } from "../state/demoDirectorStore";
 import { cameraTourStore } from "../state/cameraTourStore";
 import { FramePriority } from "./framePriority";
+import { streamRenderFrame } from "../stream/interpolateEntity";
 import type { GameEngine } from "./gameEngine";
 import { combineCleanups } from "./storeReaction";
 
@@ -53,11 +54,19 @@ export function installClipRecorder(engine: GameEngine): () => void {
       planned = { take, sample: sampleClipTake(take, plannedMs) };
     return planned.sample;
   };
+  const playbackSample = (take: ClipTake, playheadMs: number): ClipSample => {
+    const intended = plannedSample(take);
+    return engineStore.getState().playback.status !== "seeking" &&
+      Math.abs(streamClock.time - intended.demoTimeSec) < 0.033
+      ? intended
+      : sampleClipTake(take, playheadMs);
+  };
   let sourceTransport: Pick<PlaybackSliceState, "recording" | "rate"> | null =
     null;
   return combineCleanups(
     installClipStateGuards(),
     clipStore.subscribe((state, previous) => {
+      if (state.active !== previous.active) engine.clipCameraSample = null;
       if (state.recording && !previous.recording) recording = false;
       if (previous.recording && !state.recording && document.pointerLockElement)
         document.exitPointerLock();
@@ -114,12 +123,8 @@ export function installClipRecorder(engine: GameEngine): () => void {
     engine.scheduler.add(FramePriority.CameraSelect, () => {
       const clip = clipStore.getState();
       if (!clip.active) return;
-      const intended = plannedSample(clip.active);
-      const target =
-        engineStore.getState().playback.status !== "seeking" &&
-        Math.abs(streamClock.time - intended.demoTimeSec) < 0.033
-          ? intended
-          : sampleClipTake(clip.active, clip.playheadMs);
+      const target = playbackSample(clip.active, clip.playheadMs);
+      engine.clipCameraSample = target;
       const orthographic = target.projection === "orthographic";
       if (commandCircuitStore.getState().active !== orthographic)
         commandCircuitStore.setState({ active: orthographic });
@@ -151,12 +156,11 @@ export function installClipRecorder(engine: GameEngine): () => void {
     engine.scheduler.add(FramePriority.ClipCamera, ({ delta }) => {
       const state = clipStore.getState();
       if (state.active) {
-        const intended = plannedSample(state.active);
-        const ready =
-          engineStore.getState().playback.status !== "seeking" &&
-          Math.abs(streamClock.time - intended.demoTimeSec) < 0.033;
-        const time = ready ? plannedMs : state.playheadMs;
-        const sample = ready ? intended : sampleClipTake(state.active, time);
+        const sample =
+          engine.clipCameraSample ??
+          playbackSample(state.active, state.playheadMs);
+        engine.clipCameraSample = null;
+        const time = sample.timeMs;
         const camera =
           sample.projection === "orthographic"
             ? engine.cameras.ortho
@@ -177,8 +181,7 @@ export function installClipRecorder(engine: GameEngine): () => void {
         } else camera.zoom = (camera.top - camera.bottom) / sample.viewHeight!;
         camera.updateProjectionMatrix();
         camera.updateMatrixWorld();
-        if (ready && time !== state.playheadMs)
-          clipStore.setState({ playheadMs: time });
+        if (time !== state.playheadMs) clipStore.setState({ playheadMs: time });
         const endMs = state.draft
           ? state.trimEndMs
           : clipDurationMs(state.active);
@@ -217,6 +220,11 @@ export function installClipRecorder(engine: GameEngine): () => void {
       const followedBody =
         followedEntity?.renderType === "Player" ? followedEntity : undefined;
       const followedBodyDead = (followedBody?.damageState ?? 0) !== 0;
+      const aim =
+        mode === "firstPersonOverride" &&
+        streamRenderFrame.firstPersonPlayerId === followedBody?.id
+          ? streamRenderFrame.firstPersonAim
+          : null;
       const sample: ClipSample = {
         timeMs: rounded(elapsedMs, 3),
         demoTimeSec: rounded(streamClock.time),
@@ -236,6 +244,7 @@ export function installClipRecorder(engine: GameEngine): () => void {
         ...(camera instanceof OrthographicCamera && {
           viewHeight: (camera.top - camera.bottom) / camera.zoom,
         }),
+        ...(aim && { headYaw: rounded(aim.headYaw) }),
         cameraMode: mode,
         targetId: stream.followTargetId,
         flagSlot: stream.followFlagSlot,

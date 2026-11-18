@@ -8,22 +8,12 @@ import { Quaternion, Vector3 } from "three";
 import type { Object3D } from "three";
 import { findOwnNode } from "../sceneNodes";
 import { gameEntityStore } from "../state/gameEntityStore";
-import {
-  MAX_PITCH,
-  threeForwardHeading,
-  yawPitchToQuaternion,
-} from "../stream/streamHelpers";
+import { yawPitchToQuaternion } from "../stream/streamHelpers";
 import { streamRenderFrame } from "../stream/interpolateEntity";
-import {
-  getPlayerHeadAngles,
-  type PlayerHeadAngles,
-} from "../stream/playerView";
-
-/** PlayerData::maxLookAngle — 1.5 rad in every Tribes 2 armor. */
-const LINK_MAX_LOOK_ANGLE = 1.5;
+import { getPlayerViewAngles } from "../stream/playerView";
 
 const _aimQuat = new Quaternion();
-const _headAngles: PlayerHeadAngles = { pitch: 0, yaw: 0 };
+const _aimAngles = { pitch: 0, yaw: 0 };
 
 const imageMuzzles = new Map<string, Map<number, Object3D>>();
 
@@ -77,22 +67,19 @@ export function sourceAimDirection(
     // Native DTS +Y becomes model +Z; an unmounted source uses world +X.
     return out.set(1, 0, 0).transformDirection(source.matrixWorld);
   }
-  // The rendered body already carries its share of the aim correction.
-  const head = getPlayerHeadAngles(
-    streamRenderFrame.current?.get(srcEntity.id) ?? srcEntity,
-    streamRenderFrame.interpT,
-    _headAngles,
-    streamRenderFrame.aimCorrection,
-  );
-  const bodyYaw = threeForwardHeading(source.quaternion);
-  const pitch = Math.max(
-    -MAX_PITCH,
-    Math.min(MAX_PITCH, head.pitch * LINK_MAX_LOOK_ANGLE),
-  );
-  const [rx, ry, rz, rw] = yawPitchToQuaternion(
-    bodyYaw + head.yaw * LINK_MAX_LOOK_ANGLE,
-    pitch,
-  );
-  _aimQuat.set(rx, ry, rz, rw);
+  const sharedAim =
+    streamRenderFrame.firstPersonPlayerId === srcEntity.id
+      ? streamRenderFrame.firstPersonAim
+      : null;
+  const { yaw, pitch } =
+    sharedAim ??
+    getPlayerViewAngles(
+      source.quaternion,
+      streamRenderFrame.current?.get(srcEntity.id) ?? srcEntity,
+      streamRenderFrame.interpT,
+      _aimAngles,
+      streamRenderFrame.aimCorrection,
+    );
+  _aimQuat.fromArray(yawPitchToQuaternion(yaw, pitch));
   return out.set(0, 0, -1).applyQuaternion(_aimQuat);
 }

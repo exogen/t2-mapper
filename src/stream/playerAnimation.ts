@@ -98,6 +98,8 @@ export interface PlayerPose<Key extends string | number = string> {
   name: string | Key;
   position: number;
   weight: number;
+  /** The active action allows full spine animation in first person. */
+  firstPerson?: boolean;
 }
 
 /** Sample the body's action and its transition from stream time. Loading a
@@ -149,7 +151,13 @@ export function samplePlayerPose<Key extends string | number = string>(
     const position = resolved.atEnd
       ? 1
       : Math.min(1, resolved.startPos + elapsed);
-    current = { name: name!, position, phase: position, weight: 1 };
+    current = {
+      name: name!,
+      position,
+      phase: position,
+      weight: 1,
+      ...(resolved.firstPerson && { firstPerson: true }),
+    };
     changedAt = resolved.sinceSec;
     previous = movementPose(move, move.timeSec, changedAt);
   } else {

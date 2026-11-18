@@ -12,9 +12,10 @@
  *    before interpolation or bone queries start changing world transforms;
  * 1. playback advances the demo clock and interpolates entity transforms;
  *    debris and projectiles are posed from the same frame;
- * 2. shapes animate their skeletons on those transforms (eye nodes are
+ * 2. camera selection settles who is followed and which player needs
+ *    the first-person pose;
+ * 3. shapes animate their skeletons on those transforms (eye nodes are
  *    read from that pose);
- * 3. camera *selection* settles who is followed and in which mode;
  * 4. the director picks the shot and writes its orbit parameters;
  * 5. the stream applies the resulting pose (recorded, orbit, first person);
  * 6. tour, input and the command circuit override it in turn. Input runs
@@ -42,10 +43,12 @@ export const FramePriority = {
   Debris: -52,
   /** The projectile pool syncs with the store and poses its visuals. */
   ProjectilePose: -51,
+  /** Follow target and camera mode resolution. */
+  CameraSelect: -50,
+  /** Select the player whose skeleton is posed for first person. */
+  PlayerView: -45,
   /** Shape mixers: body, mounted images, turret aim, vehicle jets. */
-  ShapeAnimation: -50,
-  /** Follow target and camera mode resolution (no pose writes). */
-  CameraSelect: -40,
+  ShapeAnimation: -40,
   /** The auto-director's shot: orbit parameters and its own poses. */
   CameraDirector: -35,
   /** The stream's pose: recorded view, orbit follow, first person. */

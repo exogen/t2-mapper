@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { Quaternion, Vector3 } from "three";
 import {
   getPlayerHeadAngles,
+  getPlayerRenderAim,
   getPlayerViewAngles,
   playerBodyYawCorrection,
+  playerLookPitchPosition,
 } from "./playerView";
 import {
   MAX_PITCH,
@@ -11,6 +13,21 @@ import {
   playerYawToQuaternion,
   yawPitchToQuaternion,
 } from "./streamHelpers";
+
+it("samples the retail arm and head pitch range and clamps at ±80°", () => {
+  for (const [degrees, phase] of [
+    [-86, 0],
+    [-80, 0],
+    [-60, 0.125],
+    [0, 0.5],
+    [60, 0.875],
+    [80, 1],
+    [86, 1],
+  ])
+    expect(playerLookPitchPosition((degrees * Math.PI) / 180)).toBeCloseTo(
+      phase,
+    );
+});
 
 describe("player view direction", () => {
   describe("demo first-person tick endpoints", () => {
@@ -155,6 +172,32 @@ describe("player view direction", () => {
       );
       expect(fittedView.yaw).toBeCloseTo(0.015, 12);
       expect(fittedView.pitch).toBeCloseTo(0.03, 12);
+    });
+
+    it("shares one fitted aim for the body, head, and first-person camera", () => {
+      const previousAim = {
+        bodyYaw: 3.1,
+        headYaw: 0.2,
+        pitch: -0.3,
+      };
+      const currentAim = {
+        bodyYaw: 3.2 - 2 * Math.PI,
+        headYaw: 0.3,
+        pitch: 0.1,
+      };
+      const aim = getPlayerRenderAim(
+        body,
+        current,
+        0.5,
+        { yaw: 0, pitch: 0, headYaw: 0 },
+        true,
+        previous,
+        { previous: previousAim, current: currentAim },
+      );
+      expect(aim.pitch).toBeCloseTo(-0.1);
+      expect(aim.headYaw).toBeCloseTo(0.25);
+      expect(aim.yaw - aim.headYaw).toBeCloseTo(3.15);
+      expect(aim.yaw).toBeCloseTo(3.4);
     });
 
     it("keeps the mount's rendered heading and interpolates only the player's head", () => {

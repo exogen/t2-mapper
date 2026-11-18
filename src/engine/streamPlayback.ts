@@ -21,7 +21,13 @@ import { demoLoadStore } from "../state/demoLoadStore";
 import { syncDemoCaster } from "../state/demoCaster";
 import { cameraRegistry } from "../state/cameraRegistry";
 import { isPlayerOrbitLocked, resolveCameraOwner } from "../state/cameraOwner";
-import { getPlayerViewAngles } from "../stream/playerView";
+import { commandCircuitStore } from "../state/commandCircuitStore";
+import {
+  getPlayerRenderAim,
+  getPlayerViewAngles,
+  type PlayerRenderAim,
+  type PlayerViewAngles,
+} from "../stream/playerView";
 import { PlayerOrbitSpring } from "../stream/PlayerOrbitSpring";
 import {
   OrbitDistanceSpring,
@@ -62,20 +68,28 @@ import { sameImageMounts } from "../stream/imageMount";
 import {
   yawPitchToQuaternion,
   orbitPullbackDir,
+  playerYawToQuaternion,
 } from "../stream/streamHelpers";
 import type {
   StreamRecording,
   StreamEntity,
   StreamSnapshot,
   StreamingPlayback,
-  PlayerTickView,
-  DemoPlayerAim,
+  StreamCamera,
 } from "../stream/types";
 import type { GameEntity } from "../state/gameEntityTypes";
 import { isSceneEntity } from "../state/gameEntityTypes";
 import { torqueVecToThree } from "../scene/coordinates";
+import { firstPersonPlayerId, readClipViewAngles } from "./firstPersonPlayer";
+import { markTransformChanged } from "../transformChanges";
 
 type EntityById = Map<string, StreamEntity>;
+
+interface StreamFrame {
+  renderCurrent: StreamSnapshot;
+  renderPrev: StreamSnapshot;
+  interpT: number;
+}
 
 const camlog = createLogger("camdbg");
 
@@ -230,6 +244,8 @@ const _orbitTarget = new Vector3();
 const _orbitCandidate = new Vector3();
 const _orbitFeedForward = new Vector3();
 const _playerView = { yaw: 0, pitch: 0 };
+const _followAim: PlayerRenderAim = { yaw: 0, pitch: 0, headYaw: 0 };
+const _viewBodyRotation = new Quaternion();
 
 /**
  * Compute first-person camera transform from entity state, matching
@@ -248,25 +264,12 @@ function computeFirstPersonCamera(
   camera: { position: Vector3; quaternion: Quaternion },
   playerGroup: { position: Vector3; quaternion: Quaternion },
   eyePos: Vector3,
-  player: (PlayerTickView & Pick<StreamEntity, "playerDelta">) | undefined,
-  interpT: number,
-  aimCorrection: boolean,
-  previousTickView?: PlayerTickView,
-  fittedAim?: DemoPlayerAim,
+  { yaw, pitch }: PlayerViewAngles,
 ): void {
   // Position: body position + body rotation * eye offset.
   _tmpVec.copy(eyePos).applyQuaternion(playerGroup.quaternion);
   camera.position.copy(playerGroup.position).add(_tmpVec);
 
-  const { yaw, pitch } = getPlayerViewAngles(
-    playerGroup.quaternion,
-    player,
-    interpT,
-    _playerView,
-    aimCorrection,
-    previousTickView,
-    fittedAim,
-  );
   const [rx, ry, rz, rw] = yawPitchToQuaternion(yaw, pitch);
   camera.quaternion.set(rx, ry, rz, rw);
 }
@@ -312,11 +315,12 @@ export class StreamPlaybackSession {
    * What the playback pass resolved this frame, for the camera pass: the
    * tick pair being blended and how far between them the playhead sits.
    */
-  private renderFrame: {
-    renderCurrent: StreamSnapshot;
-    renderPrev: StreamSnapshot;
-    interpT: number;
-  } | null = null;
+  private renderFrame: StreamFrame | null = null;
+  private readonly firstPersonAim: PlayerRenderAim = {
+    yaw: 0,
+    pitch: 0,
+    headYaw: 0,
+  };
   private readonly clock = new PlaybackClock();
   private readonly lockedOrbit = new PlayerOrbitSpring();
   private readonly orbitDistance = new OrbitDistanceSpring();
@@ -341,6 +345,9 @@ export class StreamPlaybackSession {
     this.removeFrameCallbacks = combineCleanups(
       engine.scheduler.add(FramePriority.StreamPlayback, (ctx) =>
         this.playbackPass(ctx),
+      ),
+      engine.scheduler.add(FramePriority.PlayerView, () =>
+        this.selectFirstPersonPose(),
       ),
       engine.scheduler.add(FramePriority.CameraStream, (ctx) =>
         this.cameraPass(ctx),
@@ -756,6 +763,142 @@ export class StreamPlaybackSession {
       this.engine.invalidate();
   }
 
+  private cameraSelection(camera: StreamCamera | null) {
+    const { cameraMode, followEntityId } = streamPlaybackStore.getState();
+    const isLive = this.recording.source === "live";
+    // The relay’s own server camera stays in fly mode. Watchers and demo
+    // follow overrides use the target selected in the browser.
+    const isWatcher =
+      isLive &&
+      (liveConnectionStore.getState().role === "watcher" ||
+        this.stream?.localSpectator === true);
+    const userFollowing =
+      isWatcher ||
+      (!isLive &&
+        (cameraMode === "orbitOverride" ||
+          cameraMode === "firstPersonOverride"));
+    const orbitTargetId =
+      (userFollowing ? followEntityId : null) ??
+      camera?.orbitTargetId ??
+      undefined;
+    const firstPersonFollowId =
+      cameraMode === "firstPersonOverride" && (!isLive || isWatcher)
+        ? orbitTargetId
+        : undefined;
+    return {
+      cameraMode,
+      isLive,
+      isWatcher,
+      orbitTargetId,
+      firstPersonFollowId,
+    };
+  }
+
+  /** Select the view rig before evaluating the eye and mount nodes. */
+  private selectFirstPersonPose(): void {
+    const frame = this.renderFrame;
+    const playback = engineStore.getState().playback;
+    if (
+      !frame ||
+      playback.recording !== this.recording ||
+      this.stream !== this.recording.streamingPlayback ||
+      playback.status === "seeking"
+    )
+      return;
+    streamRenderFrame.firstPersonAim = null;
+    const owner = resolveCameraOwner();
+    if (
+      (owner !== "input" && owner !== "clip") ||
+      commandCircuitStore.getState().active
+    ) {
+      streamRenderFrame.firstPersonPlayerId = null;
+      return;
+    }
+    const { renderCurrent } = frame;
+    const camera = renderCurrent.camera;
+    const { cameraMode, firstPersonFollowId } = this.cameraSelection(camera);
+    const entities = getEntityMap(renderCurrent);
+    const id = firstPersonPlayerId(
+      entities,
+      camera,
+      cameraMode,
+      firstPersonFollowId,
+    );
+    streamRenderFrame.firstPersonPlayerId = id;
+    if (!id || !firstPersonFollowId) return;
+    const clipSample = owner === "clip" ? this.engine.clipCameraSample : null;
+    const group = streamPlaybackStore
+      .getState()
+      .root?.children.find((child) => child.name === id);
+    if (!group) return;
+
+    const aim = this.sampleFollowAim(
+      frame,
+      id,
+      group.quaternion,
+      streamRenderFrame.aimCorrection,
+      owner !== "clip",
+      this.firstPersonAim,
+    );
+    if (clipSample) {
+      readClipViewAngles(clipSample.quaternion, aim);
+      aim.headYaw = clipSample.headYaw ?? aim.headYaw;
+    }
+    streamRenderFrame.firstPersonAim = aim;
+
+    // Keep freelook in the head. The eye rotates by body yaw + head yaw;
+    // the held weapon follows the body, even when the player looks aside.
+    _viewBodyRotation.fromArray(playerYawToQuaternion(aim.yaw - aim.headYaw));
+    if (!group.quaternion.equals(_viewBodyRotation)) {
+      group.quaternion.copy(_viewBodyRotation);
+      markTransformChanged(group);
+    }
+  }
+
+  private sampleFollowAim(
+    { renderCurrent, interpT }: StreamFrame,
+    id: string,
+    bodyRotation: Quaternion,
+    aimCorrection: boolean,
+    useLookahead: boolean,
+    out: PlayerRenderAim,
+  ): PlayerRenderAim {
+    const player = getEntityMap(renderCurrent).get(id);
+    const interpolateAim = this.recording.source === "demo" && aimCorrection;
+    const tailView = interpolateAim
+      ? renderCurrent.bufferingPlayerViews?.get(id)
+      : undefined;
+    const bufferingView =
+      this.stream?.streamComplete === false || tailView?.aimCut
+        ? tailView
+        : undefined;
+    // At the download frontier, packets can arrive before their move
+    // tick. Hold the last complete aim so resuming starts at that angle.
+    const heldView =
+      player?.viewQuantized &&
+      bufferingView?.viewQuantized &&
+      !bufferingView.aimCut &&
+      !player.damageState &&
+      !bufferingView.damageState &&
+      player.mountObjectId === bufferingView.mountObjectId &&
+      player.mountNode === bufferingView.mountNode
+        ? bufferingView
+        : undefined;
+    return getPlayerRenderAim(
+      bodyRotation,
+      heldView ?? player,
+      interpT,
+      out,
+      aimCorrection,
+      interpolateAim
+        ? (bufferingView ?? renderCurrent.previousPlayerViews?.get(id))
+        : undefined,
+      interpolateAim && useLookahead && !bufferingView
+        ? this.stream?.getPlayerAim?.(id)
+        : undefined,
+    );
+  }
+
   // ── The stream's camera pose: the recorded view, the orbit follow, or
   // first person. Runs after the shapes have animated (the first-person
   // eye node) and after the director has set its orbit parameters.
@@ -786,15 +929,17 @@ export class StreamPlaybackSession {
         ? renderPrev.camera
         : null;
 
-    // Camera mode override for demo playback. "freeFly" lets
-    // ObserverControls drive the camera; "orbitOverride" uses
-    // user-controlled yaw/pitch for orbit instead of stream data.
-    const cameraMode = streamPlaybackStore.getState().cameraMode;
+    const {
+      cameraMode,
+      isLive,
+      isWatcher,
+      orbitTargetId,
+      firstPersonFollowId,
+    } = this.cameraSelection(currentCamera);
     // In live mode, InputConsumer owns camera position and rotation
     // (moves are applied locally, matching how the real Tribes 2 client
     // handles its control Camera). StreamPlaybackSession still handles
     // entity interpolation and orbit target positioning.
-    const isLive = this.recording.source === "live";
     const controlDelta =
       !isLive && currentCamera?.controlEntityId
         ? currentEntities.get(currentCamera.controlEntityId)?.playerDelta
@@ -893,22 +1038,6 @@ export class StreamPlaybackSession {
     // the relay's server camera never enters orbit mode).
     // In orbitOverride mode with a valid orbit target, use user-controlled
     // yaw/pitch instead of stream data.
-    const isWatcher =
-      isLive &&
-      (liveConnectionStore.getState().role === "watcher" ||
-        this.stream?.localSpectator === true);
-    // The follow target is chosen client-side (followEntityId) in watch
-    // AND in demo camera overrides — it wins over the recorder's own
-    // orbitTargetId, which is only meaningful for original-mode playback.
-    const userFollowing =
-      isWatcher ||
-      (!isLive &&
-        (cameraMode === "orbitOverride" ||
-          cameraMode === "firstPersonOverride"));
-    const orbitTargetId =
-      (userFollowing ? streamPlaybackStore.getState().followEntityId : null) ??
-      currentCamera?.orbitTargetId ??
-      undefined;
     const orbitOverride =
       cameraMode === "orbitOverride" &&
       (!isLive || isWatcher) &&
@@ -1141,16 +1270,11 @@ export class StreamPlaybackSession {
     // getEyeTransform) — position from the eye bone, orientation from
     // body yaw plus the player's replicated head pitch/yaw. The base
     // stream-camera write above is fully overwritten here.
-    if (
-      cameraMode === "firstPersonOverride" &&
-      (!isLive || isWatcher) &&
-      root &&
-      orbitTargetId
-    ) {
+    if (root && firstPersonFollowId) {
       const resolvedTarget = resolveCameraTarget(
         root,
         currentEntities,
-        orbitTargetId,
+        firstPersonFollowId,
       );
       if (resolvedTarget) {
         // Head angles always come from the followed PLAYER; the body
@@ -1158,47 +1282,27 @@ export class StreamPlaybackSession {
         // mirroring the authoritative piloted view, which is
         // vehicle-based). Yaw extraction ignores vehicle pitch/roll,
         // keeping the horizon stable like the real vehicle look.
-        const followedEntity = currentEntities.get(orbitTargetId);
-        const mounted = resolvedTarget.entity?.id !== orbitTargetId;
-        const interpolateAim = !isLive && aimCorrection;
-        const tailView = interpolateAim
-          ? renderCurrent.bufferingPlayerViews?.get(orbitTargetId)
-          : undefined;
-        const bufferingView =
-          this.stream?.streamComplete === false || tailView?.aimCut
-            ? tailView
-            : undefined;
-        // At the download frontier, packets can arrive before their move
-        // tick. Hold the last complete aim so resuming starts at that angle.
-        const heldView =
-          followedEntity?.viewQuantized &&
-          bufferingView?.viewQuantized &&
-          !bufferingView.aimCut &&
-          !followedEntity.damageState &&
-          !bufferingView.damageState &&
-          followedEntity.mountObjectId === bufferingView.mountObjectId &&
-          followedEntity.mountNode === bufferingView.mountNode
-            ? bufferingView
-            : undefined;
-        const fittedAim =
-          interpolateAim && !bufferingView && resolveCameraOwner() !== "clip"
-            ? this.stream?.getPlayerAim?.(orbitTargetId)
-            : undefined;
+        const mounted = resolvedTarget.entity?.id !== firstPersonFollowId;
+        const sharedAim =
+          streamRenderFrame.firstPersonPlayerId === firstPersonFollowId
+            ? streamRenderFrame.firstPersonAim
+            : null;
         computeFirstPersonCamera(
           streamCamera,
           resolvedTarget.group,
           mounted
             ? _tmpVec.set(0, DEFAULT_EYE_HEIGHT, 0)
-            : (readEyePosition(orbitTargetId, _tmpVec) ??
+            : (readEyePosition(firstPersonFollowId, _tmpVec) ??
                 _tmpVec.set(0, DEFAULT_EYE_HEIGHT, 0)),
-          heldView ?? followedEntity,
-          interpT,
-          aimCorrection,
-          interpolateAim
-            ? (bufferingView ??
-                renderCurrent.previousPlayerViews?.get(orbitTargetId))
-            : undefined,
-          fittedAim,
+          sharedAim ??
+            this.sampleFollowAim(
+              frame,
+              firstPersonFollowId,
+              resolvedTarget.group.quaternion,
+              aimCorrection,
+              resolveCameraOwner() !== "clip",
+              _followAim,
+            ),
         );
       }
     }

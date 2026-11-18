@@ -2854,6 +2854,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         timeSec: now,
         hold: !!data.actionHoldAtEnd,
         atEnd: !!data.actionAtEnd,
+        ...(data.actionFirstPerson === true && { firstPerson: true }),
         startPos:
           typeof data.actionAnimPos === "number"
             ? data.actionAnimPos

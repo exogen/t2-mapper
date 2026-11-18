@@ -151,6 +151,8 @@ export function resetStreamPlayback(): void {
   streamRenderFrame.previous = null;
   streamRenderFrame.interpT = 0;
   streamRenderFrame.camera = null;
+  streamRenderFrame.firstPersonPlayerId = null;
+  streamRenderFrame.firstPersonAim = null;
   streamPlaybackStore.setState({
     playback: null,
     cameraMode: "original",

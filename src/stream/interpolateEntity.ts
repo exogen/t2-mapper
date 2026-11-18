@@ -3,7 +3,7 @@ import { markTransformChanged } from "../transformChanges";
 import type { Camera, Object3D } from "three";
 import type { GameEntity } from "../state/gameEntityTypes";
 import type { StreamCamera, StreamEntity } from "./types";
-import { playerBodyYawCorrection } from "./playerView";
+import { playerBodyYawCorrection, type PlayerRenderAim } from "./playerView";
 import { torqueVecToThree } from "../scene/coordinates";
 
 const quatB = new Quaternion(),
@@ -20,12 +20,18 @@ export const streamRenderFrame: {
   aimCorrection: boolean;
   /** Recorded view used by the camera pass; held during incomplete seeks. */
   camera: StreamCamera | null;
+  /** Player whose eye and weapon use the first-person animation mask. */
+  firstPersonPlayerId: string | null;
+  /** Shared camera and arm aim for the followed first-person player. */
+  firstPersonAim: PlayerRenderAim | null;
 } = {
   current: null,
   previous: null,
   interpT: 0,
   aimCorrection: false,
   camera: null,
+  firstPersonPlayerId: null,
+  firstPersonAim: null,
 };
 
 /**

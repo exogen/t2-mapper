@@ -1,7 +1,8 @@
 import type { Object3D, Vector3 } from "three";
+import type { DTSShape } from "../dts/dtsModel";
 import { getOwnNodePosition } from "../sceneNodes";
 
-const eyeNodes = new Map<string, { root: Object3D; node: Object3D }>();
+const eyeNodes = new Map<string, { root: DTSShape; node: Object3D }>();
 
 /**
  * The entity's animated "Eye" node position in entity-local Three.js
@@ -14,7 +15,10 @@ export function readEyePosition(
   target: Vector3,
 ): Vector3 | null {
   const eye = eyeNodes.get(entityId);
-  if (!eye || !getOwnNodePosition(eye.root, eye.node, target)) return null;
+  if (!eye) return null;
+  // The first frame following a dormant shape needs its new pose before draw.
+  eye.root.catchUpPose?.();
+  if (!getOwnNodePosition(eye.root, eye.node, target)) return null;
   // DTS model-local position → entity-local Three.js space through the
   // shape's 90° Y rotation (same swizzle as the static eye extraction).
   return target.set(target.z, target.y, -target.x);
@@ -28,7 +32,7 @@ export function readEyePosition(
 export function registerEyeNode(
   entityId: string | undefined,
   eyeBone: Object3D | null,
-  root: Object3D,
+  root: DTSShape,
 ): () => void {
   if (!eyeBone || !entityId) return () => {};
   const eye = { root, node: eyeBone };

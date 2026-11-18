@@ -418,8 +418,10 @@ it("uses a replacement clip's camera track even at the same playhead time", () =
       );
     engine.scheduler.run(FramePriority.ClipTransport, frame(0));
     engine.scheduler.run(FramePriority.CameraSelect, frame(0));
+    expect(engine.clipCameraSample?.position).toEqual([x, 2, 3]);
     engine.scheduler.run(FramePriority.ClipCamera, frame(0));
     expect(engine.cameras.active.position.toArray()).toEqual([x, 2, 3]);
+    expect(engine.clipCameraSample).toBeNull();
   }
 });
 

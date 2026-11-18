@@ -47,6 +47,28 @@ it("accepts hosted source keys, normalizes quaternion data, and strips unknown f
   expect(input.samples[0].position[0]).toBe(0);
 });
 
+it("preserves first-person freelook through trimming and camera cuts", () => {
+  const clip = readClipTake(
+    take([
+      frame(0, 10, { cameraMode: "firstPersonOverride", headYaw: 0 }),
+      frame(1000, 11, { cameraMode: "firstPersonOverride", headYaw: 0.6 }),
+      frame(2000, 12, {
+        cameraMode: "firstPersonOverride",
+        headYaw: -0.6,
+        cut: true,
+      }),
+    ]),
+  );
+  expect(sampleClipTake(clip, 500).headYaw).toBeCloseTo(0.3);
+  expect(sampleClipTake(clip, 1500).headYaw).toBe(0.6);
+  expect(sampleClipTake(clip, 2000).headYaw).toBe(-0.6);
+  expect(trimClipTake(clip, 500, 1800).samples[0].headYaw).toBeCloseTo(0.3);
+  expect(readClipTake(take()).samples[0]).not.toHaveProperty("headYaw");
+  expect(() =>
+    readClipTake(take([frame(0, 10, { headYaw: 4 }), frame(1000, 11)])),
+  ).toThrow("Invalid clip camera sample");
+});
+
 it("retains the creator's four interpolation values through validation and trimming", () => {
   const settings = {
     maxLatencyTicks: 1.5,

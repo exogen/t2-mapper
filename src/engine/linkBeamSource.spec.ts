@@ -9,6 +9,7 @@ import {
 } from "./linkBeamSource";
 import { gameEntityStore } from "../state/gameEntityStore";
 import type { PlayerEntity } from "../state/gameEntityTypes";
+import { streamRenderFrame } from "../stream/interpolateEntity";
 
 it.each([
   "weapon_repair",
@@ -151,6 +152,7 @@ it("aims non-player beams along the selected mounted muzzle, including parent pi
 
 it("preserves the player's look-direction override instead of following the gun's animated tilt", () => {
   const previous = gameEntityStore.getState().streamEntities;
+  const { firstPersonPlayerId, firstPersonAim } = streamRenderFrame;
   const player: PlayerEntity = {
     id: "player",
     className: "Player",
@@ -174,8 +176,17 @@ it("preserves the player's look-direction override instead of following the gun'
         expected,
       ),
     ).toBeLessThan(1e-8);
+
+    streamRenderFrame.firstPersonPlayerId = player.id;
+    streamRenderFrame.firstPersonAim = { yaw: 0, pitch: 0, headYaw: 0.2 };
+    expect(
+      sourceAimDirection(player.id, root, 0, new Vector3()).distanceTo(
+        new Vector3(1, 0, 0),
+      ),
+    ).toBeLessThan(1e-8);
   } finally {
     unregister();
     gameEntityStore.setState({ streamEntities: previous });
+    Object.assign(streamRenderFrame, { firstPersonPlayerId, firstPersonAim });
   }
 });

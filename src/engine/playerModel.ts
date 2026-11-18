@@ -17,8 +17,12 @@ import {
 import {
   getPlayerHeadAngles,
   playerBodyYawCorrection,
+  playerLookPitchPosition,
   type PlayerHeadAngles,
 } from "../stream/playerView";
+import { MAX_LOOK_ANGLE } from "../stream/quantizedPlayerAim";
+import { MAX_PITCH } from "../stream/streamHelpers";
+import { clamp } from "../mathUtils";
 import {
   ANIM_TRANSITION_TIME,
   getKeyframeAtTime,
@@ -65,6 +69,7 @@ import { showShapeDebugBounds } from "./shapeModel";
 import { combineCleanups, type Cleanup } from "./storeReaction";
 import { FramePriority } from "./framePriority";
 import { createPlayerPresentation } from "./playerPresentation";
+import { firstPersonSpineNodes } from "./firstPersonPlayer";
 import { markTransformChanged } from "../transformChanges";
 import type { GameEngine } from "./gameEngine";
 
@@ -152,12 +157,17 @@ export function createPlayerModel(
     skinUrl: options.skinUrl,
   });
   const { root, rotated, scene: clonedScene, mixer } = presentation;
+  const spineNodes = firstPersonSpineNodes(gltf.data);
+  let spineMasked = false;
+  let firstPersonAction = false;
   const cleanups: Cleanup[] = [];
 
   const db =
     initial.dataBlockId != null
       ? streamingPlayback()?.getDataBlockData(initial.dataBlockId)
       : undefined;
+  const maxLookAngle =
+    typeof db?.maxLookAngle === "number" ? db.maxLookAngle : MAX_LOOK_ANGLE;
   const box = db?.boxSize as { x: number; y: number; z: number } | undefined;
   cleanups.push(
     renderShapeRaycast.register(
@@ -329,6 +339,7 @@ export function createPlayerModel(
           );
         },
       );
+      firstPersonAction = poses[0]?.firstPerson === true;
       const selected: AnimationAction[] = [];
       for (const pose of poses) {
         const action = actions.get(pose.name);
@@ -340,6 +351,17 @@ export function createPlayerModel(
       for (const action of bodyActions)
         if (!selected.includes(action)) action.stop();
       bodyActions = selected;
+    }
+
+    // Player::updateAnimationTree (Tribes2.exe 0x5d6590): for the viewed
+    // player, use bind position/rotation on the spine before additive
+    // aim and recoil. Scripted first-person actions use their full pose.
+    const isFirstPerson = streamRenderFrame.firstPersonPlayerId === entityId;
+    const maskSpine = isFirstPerson && !firstPersonAction;
+    if (maskSpine !== spineMasked) {
+      spineMasked = maskSpine;
+      for (const node of spineNodes)
+        clonedScene.setNodePoseMasked(node, maskSpine);
     }
 
     // Switch arm blend animation based on the networked arm action index.
@@ -359,8 +381,16 @@ export function createPlayerModel(
       headAngles,
       streamRenderFrame.aimCorrection,
     );
-    const pitchPos = (look.pitch + 1) / 2;
-    const yawPos = (look.yaw + 1) / 2;
+    // The control-camera fallback stores pitch in units of MAX_PITCH.
+    const pitchScale =
+      current?.playerDelta?.maxLookAngle ??
+      (current?.viewQuantized === false ? MAX_PITCH : maxLookAngle);
+    const aim = isFirstPerson ? streamRenderFrame.firstPersonAim : null;
+    const pitchPos = playerLookPitchPosition(
+      aim?.pitch ?? look.pitch * pitchScale,
+    );
+    const headYaw = aim ? aim.headYaw / maxLookAngle : look.yaw;
+    const yawPos = clamp((headYaw + 1) / 2, 0, 1);
     if (activeArm) {
       holdDtsAction(activeArm, pitchPos);
       activeArm.weight = blendWeight;
