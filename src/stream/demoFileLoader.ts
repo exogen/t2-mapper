@@ -79,7 +79,7 @@ function isInstalledSource(source: LoadedDemoSource): boolean {
 function cancelLoad(preserveRecording = true): number {
   const clip = clipStore.getState();
   if (clip.recording || clip.draft) clip.discard();
-  if (clip.active) clip.stopPlayback();
+  else if (clip.active) clip.stopPlayback();
   ++parseToken;
   loadAbort?.abort();
   loadAbort = null;

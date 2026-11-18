@@ -70,6 +70,34 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("captures and trims using the creator's effective interpolation without seeking", () => {
+  const { recording, seekNonce } = engineStore.getState().playback;
+  const interpolation = {
+    maxLatencyTicks: 2,
+    maxPredictionTicks: 8,
+    minWarpTicks: 1,
+    maxWarpTicks: 2,
+  };
+  const release = vi.fn();
+  const hold = vi.fn(() => release);
+  Object.assign(recording!.streamingPlayback, {
+    currentPlayerInterpolation: interpolation,
+    holdPlayerInterpolation: hold,
+  });
+  expect(clipStore.getState().start()).toBe(true);
+  expect(hold).toHaveBeenCalledWith(interpolation);
+  expect(engineStore.getState().playback.seekNonce).toBe(seekNonce);
+  clipStore.getState().appendSample(sample(0));
+  clipStore.getState().appendSample(sample(200));
+  clipStore.getState().stop();
+  expect(clipStore.getState().draft?.playerInterpolation).toEqual(
+    interpolation,
+  );
+  expect(release).not.toHaveBeenCalled();
+  clipStore.getState().discard();
+  expect(release).toHaveBeenCalledOnce();
+});
+
 it.each(["unattached", "opening-frame", "collision-assets", "reconstruction"])(
   "does not begin capture before the demo is ready: %s",
   (reason) => {

@@ -11,6 +11,7 @@ import {
   type DemoCheckpointSidecar,
 } from "./demoCheckpoints";
 import type { TimelineEvent } from "../state/demoTimelineStore";
+import { DEFAULT_PLAYER_INTERPOLATION } from "./playerInterpolation";
 
 const event = (
   timeSec: number,
@@ -194,6 +195,7 @@ describe("checkpoint sidecar loading", () => {
     18, // May restore an outdated fade or static Sky state after a seek.
     19, // Before displayed mission identity survived debrief and map loading.
     20, // Compacted weapon-image states lost their native indices irreversibly.
+    21, // Older checkpoints could skip prediction for initial player ghosts.
     DEMO_CHECKPOINT_VERSION + 1,
     DEMO_CHECKPOINT_VERSION - 0.5,
     String(DEMO_CHECKPOINT_VERSION),
@@ -216,6 +218,31 @@ describe("checkpoint sidecar loading", () => {
       1: 30,
     });
   });
+  it.each([
+    { version: 22 },
+    {
+      version: 23,
+      playerInterpolation: {
+        ...DEFAULT_PLAYER_INTERPOLATION,
+        maxLatencyTicks: 2,
+        maxPredictionTicks: 16,
+      },
+    },
+  ])(
+    "loads existing v$version checkpoints regardless of their generation settings",
+    async (legacy) => {
+      const buffer = new ArrayBuffer(3);
+      const original = await sidecar(buffer);
+      const [checkpoint] = await readDemoCheckpoints(
+        JSON.stringify({ ...original, ...legacy }),
+        buffer,
+      );
+      expect(checkpoint.cursor.moveTicks).toBe(1000);
+      expect(checkpoint.simulation.predictionLimit).toBe(
+        legacy.playerInterpolation?.maxPredictionTicks,
+      );
+    },
+  );
   it("rejects changed timestamps and corrupt payloads", async () => {
     const buffer = new ArrayBuffer(3);
     const original = await sidecar(buffer);

@@ -19,6 +19,7 @@ import {
   DEMO_MODE_INPUT,
   CLIP_RECORD_INPUT,
   LIVE_OBSERVER_INPUT,
+  REVERSE_OBSERVER_INPUT,
   QUICK_CAM_INPUT,
   LIVE_FOLLOW_INPUT,
   FOLLOW_KEYBOARD_INPUT,
@@ -156,6 +157,9 @@ export function ActiveInputBindings() {
           (spectatorCamera), demos too (demoCameraSelection). */}
       {(isLive || isDemo) && !isCommandCircuit && (
         <InputBindings map={LIVE_OBSERVER_INPUT} />
+      )}
+      {(isDemo || (isLive && isWatcher)) && !isCommandCircuit && (
+        <InputBindings map={REVERSE_OBSERVER_INPUT} />
       )}
       {/* N / Shift-N and optional pointer-locked clicks cycle players. inputMode is
           "follow" during orbit/first-person in both live and demo —

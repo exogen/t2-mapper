@@ -76,6 +76,11 @@ export function DemoPlaybackControls() {
   const [route] = useNavigationQueryState();
   const recording = useRecording();
   const sourceIsPlaying = useIsPlaying();
+  const recordingClip = useStore(clipStore, (state) => state.recording);
+  const playPauseButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (recordingClip) playPauseButton.current?.focus({ preventScroll: true });
+  }, [recordingClip]);
   const activeClip = useStore(clipStore, (state) => state.active);
   const draft = useStore(clipStore, (state) => state.draft);
   const trimStartMs = useStore(clipStore, (state) => state.trimStartMs);
@@ -410,6 +415,7 @@ export function DemoPlaybackControls() {
   return (
     <div className={playbackStyles.Root}>
       <button
+        ref={playPauseButton}
         className={playbackStyles.PlayPause}
         onClick={toggle}
         aria-label={

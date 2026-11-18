@@ -67,6 +67,10 @@ export const LIVE_OBSERVER_INPUT = [
   { name: "toggleFollowFirstPerson", keys: ["Tab"] },
 ] as const satisfies readonly InputMapEntry[];
 
+export const REVERSE_OBSERVER_INPUT = [
+  { name: "toggleObserverModeBackward", keys: ["Shift-KeyF"] },
+] as const satisfies readonly InputMapEntry[];
+
 export const TARGET_FINDER_INPUT = [
   { name: "findTarget", keys: ["KeyT"] },
 ] as const satisfies readonly InputMapEntry[];
@@ -185,6 +189,7 @@ export type ActionName =
   | (typeof DEMO_MODE_INPUT)[number]["name"]
   | (typeof CLIP_RECORD_INPUT)[number]["name"]
   | (typeof LIVE_OBSERVER_INPUT)[number]["name"]
+  | (typeof REVERSE_OBSERVER_INPUT)[number]["name"]
   | (typeof TARGET_FINDER_INPUT)[number]["name"]
   | (typeof SCORE_SCREEN_INPUT)[number]["name"]
   | (typeof ORBIT_CAMERA_INPUT)[number]["name"]

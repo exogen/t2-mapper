@@ -143,6 +143,8 @@ type DebugContextType = {
   setShowFpsMeter: StateSetter<boolean>;
   aimCorrection: boolean;
   setAimCorrection: StateSetter<boolean>;
+  playerInterpolation: Preferences["playerInterpolation"];
+  setPlayerInterpolation: StateSetter<Preferences["playerInterpolation"]>;
 };
 
 type ControlsContextType = {
@@ -262,6 +264,7 @@ const debugActions = {
   setLodEnabled: setter("lodEnabled"),
   setShowFpsMeter: setter("showFpsMeter"),
   setAimCorrection: setter("aimCorrection"),
+  setPlayerInterpolation: setter("playerInterpolation"),
 };
 
 function selectDebug(state: SettingsState): DebugContextType {
@@ -274,6 +277,7 @@ function selectDebug(state: SettingsState): DebugContextType {
     lodEnabled: state.lodEnabled,
     showFpsMeter: state.showFpsMeter,
     aimCorrection: state.aimCorrection,
+    playerInterpolation: state.playerInterpolation,
   };
 }
 

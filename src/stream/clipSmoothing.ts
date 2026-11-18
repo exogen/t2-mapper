@@ -13,6 +13,11 @@ const kernels = new Map<
   readonly { offset: number; weight: number }[]
 >();
 
+/** First-person and the demo recorder's original view keep their exact camera motion. */
+export function canSmoothClipCamera(cameraMode: string): boolean {
+  return cameraMode !== "firstPersonOverride" && cameraMode !== "original";
+}
+
 function kernel(steps: number) {
   let result = kernels.get(steps);
   if (!result) {
@@ -39,13 +44,10 @@ function startsSegment(previous: ClipSample, sample: ClipSample): boolean {
 }
 
 function copySample(sample: ClipSample): ClipSample {
-  const length = Math.hypot(...sample.quaternion);
   return {
     ...sample,
     position: [...sample.position],
-    quaternion: sample.quaternion.map(
-      (value) => value / length,
-    ) as ClipSample["quaternion"],
+    quaternion: [...sample.quaternion],
   };
 }
 
@@ -63,6 +65,10 @@ export function smoothClipTake(
       !startsSegment(take.samples[end - 1], take.samples[end])
     )
       continue;
+    if (!canSmoothClipCamera(take.samples[start].cameraMode)) {
+      start = end;
+      continue;
+    }
     for (let index = start + 1; index < end - 1; index++) {
       const original = take.samples[index];
       const radius = Math.min(

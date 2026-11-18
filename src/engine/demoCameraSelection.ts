@@ -11,7 +11,7 @@ import type { GameEngine } from "./gameEngine";
 /**
  * Demo-playback camera selection — the client-side companion to the
  * stream's camera pass, active only during demo playback (the non-live
- * counterpart to spectatorCamera). Wires the F key to cycle camera
+ * counterpart to spectatorCamera). Wires F and Shift+F to cycle camera
  * modes (original → free-fly → follow → first-person → original) and
  * N / Shift-N or pointer-locked clicks to cycle players, then keeps the
  * follow target re-locked onto the player across respawns each frame.
@@ -21,13 +21,17 @@ import type { GameEngine } from "./gameEngine";
  */
 export function installDemoCameraSelection(engine: GameEngine): () => void {
   const enabled = () => resolveCameraOwner() !== "clip";
+  const cycle = (direction: 1 | -1) => {
+    if (!enabled()) return;
+    const recording = engineStore.getState().playback.recording;
+    cycleDemoCameraMode(
+      !isRelayRecording(recording?.recorderName ?? null),
+      direction,
+    );
+  };
   return combineCleanups(
-    // F cycles camera modes (shares the action with the live observer).
-    subscribeAction("toggleObserverMode", () => {
-      if (!enabled()) return;
-      const recording = engineStore.getState().playback.recording;
-      cycleDemoCameraMode(!isRelayRecording(recording?.recorderName ?? null));
-    }),
+    subscribeAction("toggleObserverMode", () => cycle(1)),
+    subscribeAction("toggleObserverModeBackward", () => cycle(-1)),
     subscribeFollowActions(enabled),
     engine.scheduler.add(FramePriority.CameraSelect, () => {
       if (enabled()) syncFollowCameraMode();

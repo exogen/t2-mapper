@@ -180,6 +180,35 @@ it("leaves number keys to the target finder while it is open", () => {
   expect(renderToStaticMarkup(<ActiveInputBindings />)).toBe("");
 });
 
+it.each([
+  ["demo", false, false, true],
+  ["live", true, false, true],
+  ["live", false, true, true],
+  ["live", false, false, false],
+  [null, false, false, false],
+] as const)(
+  "offers reverse camera cycling for %s, watcher %s, replay %s: %s",
+  (source, watcher, replay, enabled) => {
+    Object.assign(fixture, { source, watcher, replay });
+    expect(
+      renderToStaticMarkup(<ActiveInputBindings />).includes(
+        "toggleObserverModeBackward",
+      ),
+    ).toBe(enabled);
+    for (const owner of [
+      "commandCircuit",
+      "clip",
+      "director",
+      "tour",
+    ] as const) {
+      fixture.owner = owner;
+      expect(renderToStaticMarkup(<ActiveInputBindings />)).not.toContain(
+        "toggleObserverModeBackward",
+      );
+    }
+  },
+);
+
 it("mounts local camera movement, target finding and quick cams for replay viewers without demo transport", () => {
   fixture.source = "live";
   fixture.replay = true;

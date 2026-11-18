@@ -22,6 +22,10 @@ import type {
   PlayerDataBlock,
 } from "t2-demo-parser";
 import { withCollisionQueryBatch } from "../collision/worldCollision";
+import {
+  DEFAULT_PLAYER_INTERPOLATION,
+  RETAIL_PLAYER_INTERPOLATION,
+} from "./playerInterpolation";
 import { collisionState } from "../collision/collisionContext";
 // Imported from the module rather than the `../scene` barrel: the
 // barrel re-exports misToScene, which pulls the entire TorqueScript
@@ -227,6 +231,8 @@ export interface MutableEntity extends Omit<
   /** pickActionAnimation is held off until then (a ski jump's +0x98c). */
   pickHeldUntilSec?: number;
   playerPrediction?: PlayerPrediction;
+  /** Demo tick of reconstructedAim's last packet observation. */
+  aimObservationTick?: number;
   projectilePhysics?: "linear" | "ballistic" | "seeker";
   simulatedVelocity?: [number, number, number];
   gravityMod?: number;
@@ -543,12 +549,17 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected lastClientMoveId = 0;
   protected playerPredictionEnabled = false;
   protected skippedPlayerPrediction = false;
+  protected playerInterpolation = DEFAULT_PLAYER_INTERPOLATION;
   /** False when a demo's input history cannot safely be replayed. */
   protected controlMovesAvailable = true;
 
   /** Rendering opts in; timeline/director scanners retain recorded packet poses. */
   setPlayerPredictionEnabled(enabled: boolean): void {
     this.playerPredictionEnabled = enabled;
+  }
+
+  protected getPlayerLatencyTicks(): number {
+    return 0;
   }
 
   // ── Camera ──
@@ -909,6 +920,12 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (playerPrediction) players.set(id, playerPrediction.saveState());
     }
     return {
+      // Persisted checkpoints use the stock budget. Session snapshots can
+      // carry a different limit so remaining prediction ticks can be rebased.
+      ...(this.playerInterpolation.maxPredictionTicks !==
+        RETAIL_PLAYER_INTERPOLATION.maxPredictionTicks && {
+        predictionLimit: this.playerInterpolation.maxPredictionTicks,
+      }),
       state: structuredClone({
         entities,
         entityIdByGhostIndex: this.entityIdByGhostIndex,
@@ -1035,7 +1052,12 @@ export abstract class StreamEngine implements StreamingPlayback {
       }
       this.entities.set(entity.id, entity);
       const player = checkpoint.players.get(oldId);
-      if (player) this.ensurePlayerPrediction(entity)?.restoreState(player);
+      if (player)
+        this.ensurePlayerPrediction(entity)?.restoreState(
+          player,
+          checkpoint.predictionLimit ??
+            RETAIL_PLAYER_INTERPOLATION.maxPredictionTicks,
+        );
       const images = checkpoint.images.get(oldId);
       if (images)
         this.imageAnimations.set(
@@ -1707,20 +1729,24 @@ export abstract class StreamEngine implements StreamingPlayback {
         PlayerDataBlock | undefined;
       if (data?.boxSize) {
         if (!entity.playerPrediction)
-          entity.playerPrediction = new PlayerPrediction(data, (id) => {
-            const field = this.entities.get(id);
-            if (!field || field.forceFieldState === ForceFieldState.Open)
-              return false;
-            const fieldData =
-              field.dataBlockId != null
-                ? this.getDataBlockData(field.dataBlockId)
-                : undefined;
-            const sameGroup =
-              (field.sensorGroup ?? 0) === (entity.sensorGroup ?? 0);
-            return !(sameGroup
-              ? fieldData?.teamPermiable
-              : fieldData?.otherPermiable);
-          });
+          entity.playerPrediction = new PlayerPrediction(
+            data,
+            (id) => {
+              const field = this.entities.get(id);
+              if (!field || field.forceFieldState === ForceFieldState.Open)
+                return false;
+              const fieldData =
+                field.dataBlockId != null
+                  ? this.getDataBlockData(field.dataBlockId)
+                  : undefined;
+              const sameGroup =
+                (field.sensorGroup ?? 0) === (entity.sensorGroup ?? 0);
+              return !(sameGroup
+                ? fieldData?.teamPermiable
+                : fieldData?.otherPermiable);
+            },
+            this.playerInterpolation,
+          );
         else if (entity.playerPrediction.data !== data)
           entity.playerPrediction.setDataBlock(data);
       }
@@ -1906,6 +1932,10 @@ export abstract class StreamEngine implements StreamingPlayback {
     prediction.mounted = entity.mountObjectGhostIndex != null;
     prediction.allowFreelook = !this.firstPerson;
     prediction.readPacketData(data);
+    // Observer recordings without usable control moves extrapolate from each
+    // exact control packet, using the same budget as remote players.
+    if (!this.controlMovesAvailable)
+      prediction.predictionCount = this.playerInterpolation.maxPredictionTicks;
     if (this.playerCollisionReady())
       withCollisionQueryBatch(() => {
         for (const { move, firstPerson } of moves) {
@@ -2953,7 +2983,16 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (prediction) {
         prediction.damageState = entity.damageState ?? 0;
         prediction.mounted = entity.mountObjectGhostIndex != null;
-        prediction.unpackUpdate(data as PlayerGhostData);
+        const latencyTicks =
+          data.position && data.allowWarp && !prediction.mounted
+            ? this.getPlayerLatencyTicks()
+            : 0;
+        prediction.unpackUpdate(
+          data as PlayerGhostData,
+          false,
+          latencyTicks,
+          this.worldGravity,
+        );
         this.publishPlayerPrediction(entity, prediction);
       }
     }
@@ -4242,6 +4281,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         headPitch: entity.headPitch,
         headYaw: entity.headYaw,
         viewQuantized: entity.viewQuantized,
+        reconstructedAim: entity.reconstructedAim,
         label: entity.label,
         audioFileName: entity.audioFileName,
         audioVolume: entity.audioVolume,

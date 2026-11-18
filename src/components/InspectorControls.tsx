@@ -5,8 +5,9 @@ import { RangeSlider } from "./RangeSlider";
 import { Checkbox } from "./Checkbox";
 import { ChatHudControl, MatchHudControl } from "./HudControls";
 import { useCommentaryTracks } from "../state/commentaryTracksStore";
-import { memo } from "react";
+import { memo, useState } from "react";
 import { FaRotateRight } from "react-icons/fa6";
+import { useStore } from "zustand";
 import {
   MAX_JOYSTICK_OPACITY,
   MAX_SPEED_MULTIPLIER,
@@ -50,7 +51,13 @@ import {
   useMissionName,
 } from "../state/gameEntityStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
+import { clipStore, type ClipState } from "../state/clipStore";
 import { useIsWatchSpectator } from "./useIsWatchSpectator";
+import {
+  RETAIL_PLAYER_INTERPOLATION,
+  normalizePlayerInterpolation,
+  PLAYER_INTERPOLATION_RANGES,
+} from "../stream/playerInterpolation";
 import { hasMission } from "../manifest";
 import { ChooseMapButton } from "./ChooseMapButton";
 import { MapInfoButton } from "./MapInfoButton";
@@ -72,6 +79,55 @@ const DEFAULT_PANELS = [
   "stats",
   "jiggle",
 ];
+
+const INTERPOLATION_FIELDS = [
+  ["maxLatencyTicks", "Max latency ticks"],
+  ["maxPredictionTicks", "Max prediction ticks"],
+  ["maxWarpTicks", "Max warp ticks"],
+  ["minWarpTicks", "Min warp ticks"],
+] as const;
+
+function isClipInUse({ recording, draft, active }: ClipState): boolean {
+  return recording || draft !== null || active !== null;
+}
+
+function InterpolationTickField({
+  name,
+  label,
+  value,
+  onCommit,
+}: {
+  name: (typeof INTERPOLATION_FIELDS)[number][0];
+  label: string;
+  value: number;
+  onCommit: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const id = `interpolation-${name}`;
+  return (
+    <div className={styles.Field}>
+      <label htmlFor={id}>{label}</label>
+      <div className={styles.Control}>
+        <input
+          id={id}
+          className={styles.InterpolationInput}
+          type="number"
+          {...PLAYER_INTERPOLATION_RANGES[name]}
+          value={draft ?? value}
+          onChange={(event) => setDraft(event.currentTarget.value)}
+          onBlur={(event) => {
+            const next = event.currentTarget.valueAsNumber;
+            setDraft(null);
+            if (Number.isFinite(next)) onCommit(next);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+          }}
+        />
+      </div>
+    </div>
+  );
+}
 
 export const InspectorControls = memo(function InspectorControls({
   missionName,
@@ -127,6 +183,12 @@ export const InspectorControls = memo(function InspectorControls({
   const [mode] = useModeQueryState();
   const [route] = useNavigationQueryState();
   const viewingClip = mode === "demo" && !!route.clip;
+  const interpolationLocked = useStore(clipStore, isClipInUse) || viewingClip;
+  const activeInterpolation = useStore(
+    clipStore,
+    (s) =>
+      s.active && (s.active.playerInterpolation ?? RETAIL_PLAYER_INTERPOLATION),
+  );
   const isLiveMode = isLiveConnected || mode === "live";
   const {
     canDisableFog,
@@ -212,6 +274,8 @@ export const InspectorControls = memo(function InspectorControls({
     setShowFpsMeter,
     aimCorrection,
     setAimCorrection,
+    playerInterpolation,
+    setPlayerInterpolation,
   } = useDebug();
   const watching = useIsWatchSpectator();
   const showCasterControls =
@@ -924,11 +988,8 @@ export const InspectorControls = memo(function InspectorControls({
                     id="aimCorrectionInput-description"
                     className={styles.Description}
                   >
-                    Other players’ angles arrive rounded down in steps of about
-                    3°, causing minor discrepancies in aiming. When enabled,
-                    this attempts to compensate by rounding differently,
-                    pointing closer to where the player was probably aiming in
-                    most cases.
+                    Estimate other players’ aim more precisely. The server
+                    rounds aim angles down in roughly 3° steps.
                   </p>
                 </div>
                 {canShowDebugVisuals && (
@@ -976,6 +1037,37 @@ export const InspectorControls = memo(function InspectorControls({
                   </p>
                 </div>
                 {engine && <DebugRendererInfo engine={engine} />}
+                {recording?.source === "demo" && (
+                  <fieldset
+                    className={styles.PlayerInterpolation}
+                    disabled={interpolationLocked}
+                  >
+                    <legend>Interpolation</legend>
+                    {INTERPOLATION_FIELDS.map(([name, label]) => (
+                      <InterpolationTickField
+                        key={`${name}:${interpolationLocked}`}
+                        name={name}
+                        label={label}
+                        value={
+                          (activeInterpolation ?? playerInterpolation)[name]
+                        }
+                        onCommit={(value) => {
+                          if (viewingClip || isClipInUse(clipStore.getState()))
+                            return;
+                          setPlayerInterpolation((previous) => {
+                            const next = normalizePlayerInterpolation({
+                              ...previous,
+                              [name]: value,
+                            });
+                            return next[name] === previous[name]
+                              ? previous
+                              : next;
+                          });
+                        }}
+                      />
+                    ))}
+                  </fieldset>
+                )}
                 <DebugNetworkInfo />
                 {canShowEntityList && <DebugEntityList />}
                 <div className={styles.DebugActionField}>

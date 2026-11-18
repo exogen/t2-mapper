@@ -300,10 +300,10 @@ describe("offline checkpoint generation", () => {
     await expect(fs.access(output)).rejects.toThrow();
   });
 
-  it("regenerates output from the previous checkpoint version", async () => {
+  it("regenerates output with obsolete prediction state", async () => {
     await generateDemoCheckpoints(file, output, "/absent-assets");
     const sidecar = JSON.parse(await fs.readFile(output, "utf8"));
-    sidecar.version = checkpoints.DEMO_CHECKPOINT_VERSION - 1;
+    sidecar.version = 21;
     await fs.writeFile(output, JSON.stringify(sidecar));
     const scan = vi.spyOn(timelineScanner, "scanDemoTimelineParser");
     expect(

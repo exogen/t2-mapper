@@ -1,5 +1,6 @@
 /** Node-only offline replay; invoked in a child process by the relay. */
 import fs from "node:fs/promises";
+import { RETAIL_PLAYER_INTERPOLATION } from "../src/stream/playerInterpolation.js";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
 import { setImmediate } from "node:timers/promises";
@@ -168,7 +169,10 @@ export async function generateDemoCheckpoints(
     try {
       await world.run(async () => {
         const stream = recording.streamingPlayback as DemoStreamAdapter;
+        // Every viewer resumes from the same stock player poses.
+        stream.setPlayerInterpolation(RETAIL_PLAYER_INTERPOLATION);
         stream.setPlayerPredictionEnabled(true);
+        stream.reset();
         const loadedShapes = new Set<string>();
         const collisionClasses = new Set([
           ...OCCLUDER_SHAPE_TYPES,

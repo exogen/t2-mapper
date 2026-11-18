@@ -71,6 +71,7 @@ it.each([0.065, 0.09])(
         bytes.byteOffset + bytes.byteLength,
       ) as ArrayBuffer;
       const loaded = await readDemoCheckpoints(checkpoint.text, buffer);
+      expect(loaded[0].cursor.latency?.sendTicks).toHaveLength(32);
       expect(loaded.map((entry) => entry.cursor.moveTicks)).toEqual([2]);
       expect(checkpoint.sourceBytes).toBe(bytes.length);
       expect(checkpoint.sourceSha256).toMatch(/^[a-f0-9]{64}$/);

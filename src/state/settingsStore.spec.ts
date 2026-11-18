@@ -9,6 +9,10 @@ import {
   type HudPosition,
   type SettingsStore,
 } from "./settingsStore";
+import {
+  DEFAULT_PLAYER_INTERPOLATION,
+  RETAIL_PLAYER_INTERPOLATION,
+} from "../stream/playerInterpolation";
 
 function stubSaved(saved: object) {
   vi.stubGlobal("localStorage", {
@@ -57,6 +61,72 @@ it.each([null, 1, "true", {}])(
     );
   },
 );
+
+it("retains the aim correction preference and drops the old smoothing flag on save", () => {
+  stubSaved({ aimCorrection: false, aimSmoothing: true });
+  const store = createSettingsStore();
+  expect(store.getState().aimCorrection).toBe(false);
+  setPreference("aimCorrection", true, store);
+  vi.advanceTimersByTime(500);
+  expect(lastSaved().aimCorrection).toBe(true);
+  expect(lastSaved()).not.toHaveProperty("aimSmoothing");
+});
+
+it("defaults to the tuned interpolation and persists the selected settings", () => {
+  const store = createSettingsStore();
+  expect(store.getState().playerInterpolation).toEqual({
+    maxLatencyTicks: 0,
+    maxPredictionTicks: 30,
+    maxWarpTicks: 2,
+    minWarpTicks: 0,
+  });
+  const next = {
+    maxLatencyTicks: 1.5,
+    maxPredictionTicks: 4,
+    maxWarpTicks: 1,
+    minWarpTicks: 0.25,
+  };
+  setPreference("playerInterpolation", next, store);
+  vi.advanceTimersByTime(500);
+  expect(lastSaved().playerInterpolationOverride).toEqual(next);
+  stubSaved(lastSaved());
+  expect(createSettingsStore().getState().playerInterpolation).toEqual(next);
+});
+
+it("upgrades the previous implicit defaults and remembers an explicit retail override", () => {
+  stubSaved({ playerInterpolation: RETAIL_PLAYER_INTERPOLATION });
+  const store = createSettingsStore();
+  expect(store.getState().playerInterpolation).toBe(
+    DEFAULT_PLAYER_INTERPOLATION,
+  );
+  setPreference("playerInterpolation", RETAIL_PLAYER_INTERPOLATION, store);
+  vi.advanceTimersByTime(500);
+  stubSaved(lastSaved());
+  expect(createSettingsStore().getState().playerInterpolation).toEqual(
+    RETAIL_PLAYER_INTERPOLATION,
+  );
+  setPreference("playerInterpolation", DEFAULT_PLAYER_INTERPOLATION, store);
+  vi.advanceTimersByTime(500);
+  expect(lastSaved()).not.toHaveProperty("playerInterpolationOverride");
+  expect(lastSaved()).not.toHaveProperty("playerInterpolation");
+});
+
+it("restores safe values for invalid or partial player interpolation settings", () => {
+  stubSaved({
+    playerInterpolation: {
+      maxLatencyTicks: 1.4,
+      maxPredictionTicks: "20",
+      maxWarpTicks: 0,
+      minWarpTicks: 2.8,
+    },
+  });
+  expect(createSettingsStore().getState().playerInterpolation).toEqual({
+    maxLatencyTicks: 1.4,
+    maxPredictionTicks: 30,
+    maxWarpTicks: 1,
+    minWarpTicks: 2.8,
+  });
+});
 
 it("defaults to showing the classic Match HUD and persists its preferences independently of mini scores", () => {
   const store = createSettingsStore();

@@ -36,6 +36,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.stubEnv("DEMO_CHECKPOINT_COUNT", undefined);
   vi.stubEnv("DEMO_CHECKPOINT_INTERVAL_MINUTES", undefined);
+  vi.stubEnv("GAME_BASE_PATH", undefined);
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
   process.exitCode = undefined;
@@ -98,6 +99,16 @@ it.each([1, 2, 8])(
     });
   },
 );
+
+it.each([
+  [undefined, "/data/t2-mapper/docs/base"],
+  ["custom-assets", path.resolve("custom-assets")],
+])("resolves the relay asset root with override %s", async (arg, expected) => {
+  vi.stubEnv("GAME_BASE_PATH", "/data/t2-mapper/docs/base");
+  if (arg !== undefined) process.argv.push(`--asset-root=${arg}`);
+  await import("./backfill-demo-checkpoints");
+  expect(mocks.construct.mock.calls[0][2]).toBe(expected);
+});
 
 it("finishes other jobs and reports both worker and upload failures", async () => {
   process.argv.push("--concurrency=2");

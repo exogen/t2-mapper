@@ -4,6 +4,8 @@ import {
   BlockTypeInfo,
   BlockTypeMove,
   BlockTypePacket,
+  BlockTypeSendPacket,
+  type DemoBlock,
   type DemoParser,
 } from "t2-demo-parser";
 import type { ParsedData } from "t2-demo-parser";
@@ -25,7 +27,13 @@ import {
   torqueQuatToThreeJS,
 } from "./streamHelpers";
 import type { Vec3 } from "./streamHelpers";
-import type { StreamRecording, StreamSnapshot, TeamScore } from "./types";
+import type {
+  PlayerTickView,
+  DemoPlayerAim,
+  StreamRecording,
+  StreamSnapshot,
+  TeamScore,
+} from "./types";
 import { StreamEngine, type MutableEntity } from "./StreamEngine";
 import { assertDemoBlockParsed } from "./demoParseError";
 import { loadDemoParser } from "./loadDemoParser";
@@ -33,6 +41,38 @@ import { collisionState } from "../collision/collisionContext";
 import { decodeFlagStatus } from "../../relay/serverMessageDecode";
 import { refreshFlagCarriers, type FlagState } from "../../relay/flagState";
 import { cloneData } from "../cloneData";
+import type { PrecipitationState } from "../weather/types";
+import {
+  reconstructQuantizedAim,
+  type QuantizedAimSample,
+} from "./quantizedPlayerAim";
+import {
+  DEMO_AIM_LOOKAHEAD_TICKS,
+  fitDemoAim,
+  type DemoAimTick,
+} from "./demoAimFit";
+import {
+  DemoAimLookahead,
+  isDemoAimCut,
+  readDemoAimSample,
+} from "./demoAimLookahead";
+import {
+  DEFAULT_PLAYER_INTERPOLATION,
+  normalizePlayerInterpolation,
+  samePlayerInterpolation,
+  type PlayerInterpolationSettings,
+} from "./playerInterpolation";
+
+interface DemoAimObservations {
+  observations: QuantizedAimSample[];
+  cut?: boolean;
+}
+
+interface DemoAimFrame {
+  tick: number;
+  players: ReadonlyMap<string, DemoAimObservations>;
+  previousViews: ReadonlyMap<string, PlayerTickView> | undefined;
+}
 
 interface DemoMissionInfo {
   /** Mission display name from readplayerinfo row 2 (e.g. "S5-WoodyMyrk"). */
@@ -399,6 +439,8 @@ export interface DemoStreamingOptions {
   checkpoints?: boolean;
   /** Headless director scans do not render transient ground effects. */
   groundEffects?: boolean;
+  /** Headless consumers that never pose a camera can skip player view data. */
+  playerViews?: boolean;
 }
 
 export type DemoSeekCheckpoint = ReturnType<
@@ -408,13 +450,26 @@ export type DemoSeekCheckpoint = ReturnType<
 export class DemoStreamAdapter extends StreamEngine {
   lastStepStartTimeSec = 0;
   private readonly checkpointsEnabled: boolean;
+  private readonly playerViewsEnabled: boolean;
+  private pendingAimObservations = new Map<string, DemoAimObservations>();
+  private readonly aimHistory: DemoAimFrame[] = [];
+  private readonly aimLookahead = new DemoAimLookahead();
+  private aimResult?: { tick: number; entityId: string; view: DemoPlayerAim };
   private readonly checkpoints = new Map<
     number,
     ReturnType<DemoStreamAdapter["captureCheckpoint"]>
   >();
-  private readonly importedCheckpointTicks = new Set<number>();
   private readonly persistedCheckpoints = new Map<number, DemoSeekCheckpoint>();
   private predictionModeChanged = false;
+  private preferredInterpolation = DEFAULT_PLAYER_INTERPOLATION;
+  private readonly interpolationOverrides = new Map<
+    symbol,
+    Readonly<PlayerInterpolationSettings>
+  >();
+
+  get currentPlayerInterpolation() {
+    return this.playerInterpolation;
+  }
   private pendingCheckpointCollision: ReturnType<
     DemoStreamAdapter["captureCollisionWorld"]
   > | null = null;
@@ -465,35 +520,116 @@ export class DemoStreamAdapter extends StreamEngine {
     return Array.from(this.checkpoints.keys());
   }
 
-  private clearCheckpoints(preserveImported = false): void {
-    if (preserveImported) {
-      for (const tick of this.checkpoints.keys()) {
-        if (!this.importedCheckpointTicks.has(tick))
-          this.checkpoints.delete(tick);
-      }
-    } else {
-      this.checkpoints.clear();
-      this.importedCheckpointTicks.clear();
-    }
-    if (preserveImported) this.activateImportedCheckpoints();
-  }
-
-  private activateImportedCheckpoints(): void {
-    if (!this.playerPredictionEnabled) return;
-    for (const [tick, checkpoint] of this.persistedCheckpoints) {
-      this.checkpoints.set(tick, checkpoint);
-      this.importedCheckpointTicks.add(tick);
+  private clearSessionCheckpoints(): void {
+    this.checkpoints.clear();
+    if (this.playerPredictionEnabled) {
+      for (const [tick, checkpoint] of this.persistedCheckpoints)
+        this.checkpoints.set(tick, checkpoint);
     }
   }
 
   override setPlayerPredictionEnabled(enabled: boolean): void {
-    if (enabled !== this.playerPredictionEnabled) {
-      this.clearCheckpoints();
-      this.pendingCheckpointCollision = null;
-      this.predictionModeChanged = this.moveTicks > 0;
-    }
+    if (enabled === this.playerPredictionEnabled) return;
     super.setPlayerPredictionEnabled(enabled);
-    this.activateImportedCheckpoints();
+    this.clearSessionCheckpoints();
+    this.pendingCheckpointCollision = null;
+    this.predictionModeChanged = this.moveTicks > 0;
+  }
+
+  setPlayerInterpolation(
+    settings: Readonly<PlayerInterpolationSettings>,
+  ): void {
+    if (samePlayerInterpolation(this.preferredInterpolation, settings)) return;
+    this.preferredInterpolation = normalizePlayerInterpolation(settings);
+    this.applyPlayerInterpolation();
+  }
+
+  holdPlayerInterpolation(
+    settings: Readonly<PlayerInterpolationSettings>,
+  ): () => void {
+    const token = Symbol();
+    this.interpolationOverrides.set(
+      token,
+      normalizePlayerInterpolation(settings),
+    );
+    this.applyPlayerInterpolation();
+    return () => {
+      if (this.interpolationOverrides.delete(token))
+        this.applyPlayerInterpolation();
+    };
+  }
+
+  private applyPlayerInterpolation(): void {
+    const settings =
+      Array.from(this.interpolationOverrides.values()).at(-1) ??
+      this.preferredInterpolation;
+    if (samePlayerInterpolation(this.playerInterpolation, settings)) return;
+    this.playerInterpolation = settings;
+    this.clearSessionCheckpoints();
+    this.pendingCheckpointCollision = null;
+    this.collisionReplayComplete = false;
+    if (this.playerPredictionEnabled) this.predictionModeChanged = true;
+  }
+
+  // PacketNotify::sendTime is not stored in the demo. Timestamp recorded sends
+  // and acknowledgments on its 32 ms move clock (NetConnection::handleNotify).
+  private latency?: {
+    roundTripMs: number;
+    lastSend: number;
+    lastAck: number;
+    sendTicks: (number | null)[];
+  };
+
+  private resetDemoLatency(sequences: {
+    lastSendSeq: number;
+    highestAckedSeq: number;
+  }): void {
+    const { roundTripTime } = this.parser.initialBlock;
+    this.latency = {
+      roundTripMs: Number.isFinite(roundTripTime) ? roundTripTime : 0,
+      lastSend: sequences?.lastSendSeq ?? 0,
+      lastAck: sequences?.highestAckedSeq ?? 0,
+      sendTicks: Array(32).fill(null),
+    };
+  }
+
+  private updateDemoLatency(block: DemoBlock): void {
+    const latency = this.latency;
+    if (!latency) return;
+    if (block.type === BlockTypeSendPacket) {
+      latency.sendTicks[++latency.lastSend & 31] = this.moveTicks;
+    } else if (
+      block.type === BlockTypePacket &&
+      block.parsed &&
+      "dnetHeader" in block.parsed
+    ) {
+      const { highestAck, ackMask } = block.parsed.dnetHeader;
+      // The packet parser has already validated this 9-bit sequence number.
+      const end = latency.lastAck + ((highestAck - latency.lastAck) & 511);
+      for (
+        let seq = Math.max(latency.lastAck + 1, end - 31);
+        seq <= end;
+        seq++
+      ) {
+        const sent = latency.sendTicks[seq & 31];
+        if (sent != null && ackMask & (1 << (end - seq))) {
+          const elapsedMs = (this.moveTicks - sent) * TICK_DURATION_MS;
+          latency.roundTripMs = Math.fround(
+            (latency.roundTripMs + elapsedMs) * 0.5,
+          );
+        }
+        latency.sendTicks[seq & 31] = null;
+      }
+      latency.lastAck = end;
+    }
+  }
+
+  protected override getPlayerLatencyTicks(): number {
+    // Retail stores a float but truncates the cap for whole-tick prediction.
+    const maxTicks = Math.trunc(this.playerInterpolation.maxLatencyTicks);
+    const rtt = this.latency?.roundTripMs ?? 0;
+    if (!maxTicks || rtt <= 0 || !this.playerCollisionReady()) return 0;
+    return Math.min(maxTicks, Math.ceil(rtt / (2 * TICK_DURATION_MS)));
   }
 
   captureCheckpoint() {
@@ -502,6 +638,7 @@ export class DemoStreamAdapter extends StreamEngine {
       simulation: this.captureSimulationState(),
       cursor: structuredClone({
         moveTicks: this.moveTicks,
+        ...(this.latency && { latency: this.latency }),
         lastRecordedMoveAck: this.lastRecordedMoveAck,
         absoluteYaw: this.absoluteYaw,
         absolutePitch: this.absolutePitch,
@@ -551,9 +688,10 @@ export class DemoStreamAdapter extends StreamEngine {
         parser: { ...checkpoint.parser, owner },
       });
     }
-    for (const [tick, checkpoint] of imported)
+    for (const [tick, checkpoint] of imported) {
       this.persistedCheckpoints.set(tick, checkpoint);
-    this.activateImportedCheckpoints();
+      if (this.playerPredictionEnabled) this.checkpoints.set(tick, checkpoint);
+    }
   }
 
   /** Offline generation loads new collision geometry before simulating each tick. */
@@ -580,9 +718,15 @@ export class DemoStreamAdapter extends StreamEngine {
   private restoreCheckpoint(
     checkpoint: ReturnType<DemoStreamAdapter["captureCheckpoint"]>,
   ): void {
+    this.previousPlayerViews = this.pendingPlayerViews = undefined;
+    this.resetAimHistory();
     this.parser.restoreCheckpoint(checkpoint.parser);
     this.ghostTracker = this.parser.getGhostTracker();
     Object.assign(this, cloneData(checkpoint.cursor));
+    // Older checkpoints may have no pending-send history. Resume at their
+    // packet sequence so future ACKs measure sends made after the seek.
+    if (!checkpoint.cursor.latency)
+      this.resetDemoLatency(checkpoint.parser.packetState);
     // Recording attribution belongs to the first discovery, not the seek
     // position. Apply it before restoration publishes mission metadata.
     const info = this.initialMissionInfo;
@@ -663,11 +807,14 @@ export class DemoStreamAdapter extends StreamEngine {
   private _cachedSnapshot: StreamSnapshot | null = null;
   private _cachedSnapshotTick = -1;
   private _cachedSnapshotGen = -1;
+  private previousPlayerViews: ReadonlyMap<string, PlayerTickView> | undefined;
+  private pendingPlayerViews: ReadonlyMap<string, PlayerTickView> | undefined;
 
   constructor(parser: DemoParser, options: DemoStreamingOptions) {
     super();
     this.checkpointsEnabled = options.checkpoints !== false;
     this.groundEffectsEnabled = options.groundEffects !== false;
+    this.playerViewsEnabled = options.playerViews !== false;
     this.parser = parser;
     this.registry = parser.getRegistry();
     this.ghostTracker = parser.getGhostTracker();
@@ -762,13 +909,15 @@ export class DemoStreamAdapter extends StreamEngine {
 
   reset(): void {
     this.pendingCheckpointCollision = null;
-    this.clearCheckpoints(true);
+    this.clearSessionCheckpoints();
     this.predictionModeChanged = false;
     this.collisionReplayComplete = false;
     this.resetToStart();
   }
 
   private resetToStart(): void {
+    this.previousPlayerViews = this.pendingPlayerViews = undefined;
+    this.resetAimHistory();
     this.skippedPlayerPrediction = false;
     this.parser.reset();
     // parser.reset() creates a fresh GhostTracker internally — refresh our
@@ -802,6 +951,7 @@ export class DemoStreamAdapter extends StreamEngine {
 
     // Demo-specific state
     this.moveTicks = 0;
+    this.resetDemoLatency(this.parser.initialBlock.connectionState);
     this.absoluteYaw = 0;
     this.absolutePitch = 0;
     this.lastAbsYaw = 0;
@@ -1095,8 +1245,85 @@ export class DemoStreamAdapter extends StreamEngine {
     return this.currentSnapshot() ?? this.rebuildSnapshot();
   }
 
+  getPlayerAim(entityId: string): DemoPlayerAim | undefined {
+    if (
+      !this.playerViewsEnabled ||
+      !this.parser.isComplete ||
+      this.pendingPlayerViews ||
+      this.aimHistory.at(-1)?.tick !== this.moveTicks
+    )
+      return undefined;
+
+    if (
+      this.aimResult?.tick === this.moveTicks &&
+      this.aimResult.entityId === entityId
+    )
+      return this.aimResult.view;
+
+    const entity = this.entities.get(entityId);
+    const previous = this.previousPlayerViews?.get(entityId);
+    if (
+      !entity?.viewQuantized ||
+      entity.damageState ||
+      entity.mountObjectGhostIndex != null ||
+      entity.ghostIndex === this.latestControl.ghostIndex ||
+      !entity.reconstructedAim ||
+      !previous?.viewQuantized ||
+      previous.damageState ||
+      previous.mountObjectId ||
+      !previous.reconstructedAim
+    )
+      return undefined;
+
+    const tick = this.moveTicks;
+    const ticks = this.aimHistory.map((frame, index): DemoAimTick => {
+      const data = frame.players.get(entityId);
+      const nextFrame = this.aimHistory[index + 1];
+      const estimate = nextFrame
+        ? nextFrame.previousViews?.get(entityId)?.reconstructedAim
+        : entity.reconstructedAim;
+      return {
+        tick: frame.tick,
+        estimate,
+        observations: data?.observations ?? [],
+        cut: data?.cut || !estimate,
+      };
+    });
+    const future = this.aimLookahead.read(
+      this.parser,
+      tick,
+      entity.ghostIndex,
+      this.latestControl.ghostIndex,
+    );
+    ticks.push(...future);
+    const current = fitDemoAim(ticks, tick) ?? entity.reconstructedAim;
+    const cut = this.aimHistory.at(-1)?.players.get(entityId)?.cut;
+    const view = {
+      current,
+      previous: cut
+        ? current
+        : (fitDemoAim(ticks, tick - 1) ?? previous.reconstructedAim),
+    };
+    this.aimResult = { tick, entityId, view };
+    return view;
+  }
+
+  private resetAimHistory(): void {
+    this.pendingAimObservations.clear();
+    this.aimHistory.length = 0;
+    this.aimLookahead.reset();
+    this.aimResult = undefined;
+  }
+
   /** The cached snapshot, unless the tick or the entity set has moved on. */
   private currentSnapshot(): StreamSnapshot | null {
+    // A download may finish with packets after its final move tick.
+    if (
+      this.exhausted &&
+      this.parser.isComplete &&
+      this.pendingAimObservations.size
+    )
+      return null;
     return this._cachedSnapshotTick === this.moveTicks &&
       this._cachedSnapshotGen === this.entityGeneration
       ? this._cachedSnapshot
@@ -1104,7 +1331,13 @@ export class DemoStreamAdapter extends StreamEngine {
   }
 
   private rebuildSnapshot(): StreamSnapshot {
+    if (this.exhausted && this.parser.isComplete) this.commitAimObservations();
     const snapshot = this.buildSnapshot(this.exhausted);
+    snapshot.previousPlayerViews = this.previousPlayerViews?.size
+      ? this.previousPlayerViews
+      : undefined;
+    if (this.exhausted && this.pendingPlayerViews?.size)
+      snapshot.bufferingPlayerViews = this.pendingPlayerViews;
     this._cachedSnapshot = snapshot;
     this._cachedSnapshotTick = this.moveTicks;
     this._cachedSnapshotGen = this.entityGeneration;
@@ -1117,9 +1350,9 @@ export class DemoStreamAdapter extends StreamEngine {
     return collectPreloadShapeNames(this.initialBlock.dataBlocks.values());
   }
 
-  // A cold seek can precede collision asset loading. Reconstruct once those
-  // assets arrive; later React collider remounts during rewinds must not cause
-  // an endless cycle of replay -> remount -> replay.
+  // A cold seek can precede collision asset loading. Allow one repair after
+  // assets arrive so collider remounts cannot cause an endless replay loop.
+  // A change to the effective interpolation settings starts a new repair cycle.
   private collisionReplayComplete = false;
   get canStartSeek(): boolean {
     if (!this.checkpointCollisionReady()) return false;
@@ -1163,7 +1396,7 @@ export class DemoStreamAdapter extends StreamEngine {
       if (!this.predictionModeChanged) this.collisionReplayComplete = true;
       this.predictionModeChanged = false;
       // A pass without prediction/collision cannot seed accurate later seeks.
-      this.clearCheckpoints(true);
+      this.clearSessionCheckpoints();
       this.resetToStart();
       didReset = true;
     }
@@ -1187,7 +1420,8 @@ export class DemoStreamAdapter extends StreamEngine {
             : this.checkpoints.get(checkpointTick);
         const imported =
           checkpointTick !== undefined &&
-          this.importedCheckpointTicks.has(checkpointTick);
+          this.playerPredictionEnabled &&
+          this.persistedCheckpoints.has(checkpointTick);
         const previousCollision = imported
           ? this.captureCollisionWorld()
           : null;
@@ -1311,6 +1545,19 @@ export class DemoStreamAdapter extends StreamEngine {
   private finishMoveTick(): void {
     this.moveTicks += 1;
     this.processTick();
+    if (this.playerViewsEnabled) {
+      const players = this.pendingAimObservations;
+      this.commitAimObservations();
+      this.aimHistory.push({
+        tick: this.moveTicks,
+        players,
+        previousViews: this.pendingPlayerViews,
+      });
+      if (this.aimHistory.length > DEMO_AIM_LOOKAHEAD_TICKS + 2)
+        this.aimHistory.shift();
+    }
+    this.previousPlayerViews = this.pendingPlayerViews;
+    this.pendingPlayerViews = undefined;
     if (
       this.checkpointsEnabled &&
       this.moveTicks % DEMO_CHECKPOINT_TICKS === 0 &&
@@ -1321,6 +1568,28 @@ export class DemoStreamAdapter extends StreamEngine {
   }
 
   private readMoveTick(blockLimit?: number): boolean {
+    // A partial download may deliver packets before their move tick. Preserve
+    // the pre-packet endpoint until that tick completes, including its retries.
+    if (this.playerViewsEnabled && !this.pendingPlayerViews) {
+      const views = new Map<string, PlayerTickView>();
+      for (const entity of this.entities.values()) {
+        if (entity.type !== "Player") continue;
+        views.set(entity.id, {
+          rotation: entity.rotation ? [...entity.rotation] : undefined,
+          headPitch: entity.headPitch,
+          headYaw: entity.headYaw,
+          damageState: entity.damageState,
+          viewQuantized: entity.viewQuantized,
+          reconstructedAim: entity.reconstructedAim,
+          mountObjectId:
+            entity.mountObjectGhostIndex != null
+              ? this.entityIdByGhostIndex.get(entity.mountObjectGhostIndex)
+              : undefined,
+          mountNode: entity.mountNode,
+        });
+      }
+      this.pendingPlayerViews = views;
+    }
     const packets = this.parser.getPacketParser();
     while (true) {
       if (
@@ -1347,11 +1616,9 @@ export class DemoStreamAdapter extends StreamEngine {
 
       // Recorded packets use the same ConnectionProtocol dispatch gate as live
       // packets. Keepalives/duplicates must not apply the parser's empty game state.
-      if (
-        packets.protocolRejected > rejected ||
-        packets.protocolNoDispatch > noDispatch
-      )
-        continue;
+      if (packets.protocolRejected > rejected) continue;
+      if (this.playerPredictionEnabled) this.updateDemoLatency(block);
+      if (packets.protocolNoDispatch > noDispatch) continue;
       this.handleBlock(block);
 
       if (block.type === BlockTypeMove) {
@@ -1360,11 +1627,91 @@ export class DemoStreamAdapter extends StreamEngine {
     }
   }
 
+  protected override applyGhostData(
+    entity: MutableEntity,
+    data: ParsedData | undefined,
+    precipitationSeed?: PrecipitationState,
+  ): void {
+    const wasAlive = !entity.damageState;
+    super.applyGhostData(entity, data, precipitationSeed);
+    if (!this.playerViewsEnabled || entity.type !== "Player") return;
+    const unavailable =
+      !entity.viewQuantized ||
+      entity.mountObjectGhostIndex != null ||
+      entity.damageState;
+    if (unavailable || isDemoAimCut(data)) this.cutAim(entity);
+    if (data?.allowWarp === false || (wasAlive && entity.damageState)) {
+      const previous = this.pendingPlayerViews?.get(entity.id);
+      if (previous && !previous.aimCut) {
+        // A progressive snapshot may still reference the pre-packet views.
+        this.pendingPlayerViews = new Map(this.pendingPlayerViews).set(
+          entity.id,
+          { ...previous, aimCut: true },
+        );
+      }
+    }
+    if (unavailable) return;
+    const observation = readDemoAimSample(data);
+    if (!observation) return;
+    const pending = this.pendingAimObservations.get(entity.id);
+    if (pending) pending.observations.push(observation);
+    else
+      this.pendingAimObservations.set(entity.id, {
+        observations: [observation],
+      });
+  }
+
+  private cutAim(entity: MutableEntity): void {
+    entity.reconstructedAim = undefined;
+    entity.aimObservationTick = undefined;
+    this.pendingAimObservations.set(entity.id, { observations: [], cut: true });
+  }
+
+  private cutAimForGhost(ghostIndex: number): void {
+    const id = this.entityIdByGhostIndex.get(ghostIndex);
+    const entity = id ? this.entities.get(id) : undefined;
+    if (entity?.type === "Player") this.cutAim(entity);
+  }
+
+  private commitAimObservations(): void {
+    const pending = this.pendingAimObservations;
+    this.pendingAimObservations = new Map();
+    for (const [id, { observations }] of pending) {
+      const entity = this.entities.get(id);
+      if (!entity) continue;
+      const latest = observations.at(-1);
+      if (!entity.viewQuantized || !latest?.move) {
+        entity.reconstructedAim = undefined;
+        entity.aimObservationTick = undefined;
+        continue;
+      }
+      // Causal estimate uses the latest Move once. The camera fit also sees
+      // the ordered pose observations from this tick.
+      entity.reconstructedAim = reconstructQuantizedAim(
+        entity.reconstructedAim,
+        latest,
+        entity.aimObservationTick === undefined
+          ? 1
+          : this.moveTicks - entity.aimObservationTick,
+      );
+      entity.aimObservationTick = this.moveTicks;
+    }
+  }
+
   private handleBlock(block: { type: number; parsed?: unknown }): void {
     if (block.type === BlockTypePacket && this.isPacketData(block.parsed)) {
       const packet = block.parsed;
 
       // Process control object
+      const controlIndex = packet.gameState.controlObjectGhostIndex;
+      if (
+        this.playerViewsEnabled &&
+        controlIndex != null &&
+        controlIndex !== this.latestControl.ghostIndex
+      ) {
+        this.cutAimForGhost(this.latestControl.ghostIndex);
+        this.cutAimForGhost(controlIndex);
+      }
       this.processControlObject(packet.gameState);
 
       // Apply ghost rotation to absolute tracking. This must happen before

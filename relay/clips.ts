@@ -29,7 +29,10 @@ import {
   type ClipTake,
   type ClipView,
 } from "./clipTypes.js";
-import { DEMO_CHECKPOINT_VERSION } from "../src/stream/demoCheckpoints.js";
+import {
+  DEMO_CHECKPOINT_VERSION,
+  isSupportedDemoCheckpointVersion,
+} from "../src/stream/demoCheckpoints.js";
 import type { DemoUploadConfig } from "./demoUpload.js";
 import type { prepareClipCheckpoint } from "./clipCheckpoint.js";
 import { isMissingObject } from "./privateDemoStore.js";
@@ -321,7 +324,7 @@ export class Clips {
         row = this.visibleRow(row.id);
         if (
           row.state === "ready" &&
-          row.checkpointVersion !== DEMO_CHECKPOINT_VERSION
+          !isSupportedDemoCheckpointVersion(row.checkpointVersion ?? 0)
         ) {
           this.db
             .prepare(

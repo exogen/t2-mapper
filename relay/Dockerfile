@@ -22,7 +22,8 @@ COPY scripts/link-t2-account.ts scripts/link-t2-account.ts
 COPY scripts/link-t2-accounts.ts scripts/link-t2-accounts.ts
 COPY scripts/list-discord-users.ts scripts/list-discord-users.ts
 COPY scripts/set-account-role.ts scripts/set-account-role.ts
-COPY scripts/backfill-demo-guids.ts \
+COPY scripts/backfill-demo-checkpoints.ts \
+     scripts/backfill-demo-guids.ts \
      scripts/backfill-demo-players.ts \
      scripts/backfill-demo-stats.ts \
      scripts/backfill-player-profiles.ts \

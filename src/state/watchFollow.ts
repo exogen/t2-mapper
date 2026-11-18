@@ -8,7 +8,10 @@ import { createLogger } from "../logger";
 import { gameEntityStore } from "./gameEntityStore";
 import type { GameEntity } from "./gameEntityTypes";
 import { liveConnectionStore } from "./liveConnectionStore";
-import { streamPlaybackStore } from "./streamPlaybackStore";
+import {
+  streamPlaybackStore,
+  type DemoCameraMode,
+} from "./streamPlaybackStore";
 import { threeForwardHeading } from "../stream/streamHelpers";
 import { resolveFlagTeam, flagLabel } from "./flagTeam";
 
@@ -330,12 +333,14 @@ function resumeFollowTarget(players: string[]): string | undefined {
 /** Follow a specific player, or resume the last-followed one when omitted. */
 export function enterWatchFollow(targetId?: string): void {
   const current = streamPlaybackStore.getState().followEntityId;
-  const players = getFollowablePlayerIds();
-  const target =
-    targetId ??
-    (current && players.includes(current)
-      ? current
-      : resumeFollowTarget(players));
+  let target = targetId;
+  if (target === undefined) {
+    const players = getFollowablePlayerIds();
+    target =
+      current && players.includes(current)
+        ? current
+        : resumeFollowTarget(players);
+  }
   if (!target) return;
   const entity = gameEntityStore.getState().streamEntities.get(target);
   seedOrbitBehindTarget(target);
@@ -532,28 +537,13 @@ export function toggleWatchFollow(): void {
  * extending the real observer's fly↔follow toggle with an eye-mounted
  * view of the followed player.
  */
-export function cycleWatchObserverMode(): void {
-  const state = streamPlaybackStore.getState();
-  if (state.followPlayer && !state.followEntityId) {
-    exitWatchFollow();
-    return;
-  }
-  if (!state.followEntityId) {
-    streamPlaybackStore.setState({ followCameraMode: "orbitOverride" });
-    enterWatchFollow();
-  } else if (
-    state.followCameraMode === "orbitOverride" &&
-    // First person only applies to player follows — a flag follow (its
-    // own mode, outside this cycle) exits straight back to free-fly.
-    isFollowingPlayer()
-  ) {
-    streamPlaybackStore.setState({
-      followCameraMode: "firstPersonOverride",
-      cameraMode: "firstPersonOverride",
-    });
-  } else {
-    exitWatchFollow();
-  }
+export function cycleWatchObserverMode(direction: 1 | -1 = 1): void {
+  const { followEntityId, followCameraMode } = streamPlaybackStore.getState();
+  cycleCameraMode(
+    followEntityId ? followCameraMode : "freeFly",
+    false,
+    direction,
+  );
 }
 
 /**
@@ -589,35 +579,55 @@ export function toggleFollowFirstPerson(): void {
  * camera is only used for initial placement. Exiting follow detaches
  * in place, without visiting the recorder's position along the way.
  */
-export function cycleDemoCameraMode(hasOriginalView = true): void {
+export function cycleDemoCameraMode(
+  hasOriginalView = true,
+  direction: 1 | -1 = 1,
+): void {
+  cycleCameraMode(
+    streamPlaybackStore.getState().cameraMode,
+    hasOriginalView,
+    direction,
+  );
+}
+
+const CAMERA_MODE_ORDER = [
+  "original",
+  "freeFly",
+  "orbitOverride",
+  "firstPersonOverride",
+] as const;
+
+function cycleCameraMode(
+  mode: DemoCameraMode,
+  hasOriginalView: boolean,
+  direction: 1 | -1,
+): void {
   const state = streamPlaybackStore.getState();
-  if (state.followPlayer && !state.followEntityId) {
-    exitWatchFollow();
+  const followingPlayer = isFollowingPlayer();
+  // Pending follows and flag follows rejoin the cycle in free-fly.
+  if (
+    (state.followPlayer && !state.followEntityId) ||
+    (mode === "orbitOverride" && !followingPlayer) ||
+    (mode === "original" && !hasOriginalView && direction === 1)
+  ) {
+    exitToFreeFly();
     return;
   }
-  const mode = state.cameraMode;
-  if (mode === "original") {
+
+  const target = followingPlayer
+    ? state.followEntityId
+    : resumeFollowTarget(getFollowablePlayerIds());
+  const modes = CAMERA_MODE_ORDER.filter((candidate) => {
+    if (candidate === "original") return hasOriginalView;
+    return candidate === "freeFly" || target != null;
+  });
+  const index = modes.indexOf(mode);
+  const current = index === -1 ? modes.indexOf("freeFly") : index;
+  const next = modes[(current + direction + modes.length) % modes.length];
+
+  if (next === "freeFly") {
     exitToFreeFly();
-  } else if (mode === "freeFly") {
-    streamPlaybackStore.setState({ followCameraMode: "orbitOverride" });
-    enterWatchFollow();
-    // Without players, stay detached unless there is a real recorded view.
-    if (hasOriginalView && !streamPlaybackStore.getState().followEntityId) {
-      streamPlaybackStore.setState({ cameraMode: "original" });
-    }
-  } else if (mode === "orbitOverride" && isFollowingPlayer()) {
-    streamPlaybackStore.setState({
-      followCameraMode: "firstPersonOverride",
-      cameraMode: "firstPersonOverride",
-    });
-  } else if (mode === "orbitOverride") {
-    // Flag follow is a "secret" cycle slot between original and free-fly:
-    // only the number keys enter it, and F resumes the cycle at free-fly
-    // (no first person on a flag).
-    exitToFreeFly();
-  } else if (!hasOriginalView) {
-    exitToFreeFly();
-  } else {
+  } else if (next === "original") {
     streamPlaybackStore.setState({
       cameraMode: "original",
       followEntityId: null,
@@ -625,6 +635,11 @@ export function cycleDemoCameraMode(hasOriginalView = true): void {
       followPlayer: null,
       followFlagSlot: null,
     });
+  } else if (followingPlayer) {
+    streamPlaybackStore.setState({ followCameraMode: next, cameraMode: next });
+  } else if (target) {
+    streamPlaybackStore.setState({ followCameraMode: next });
+    enterWatchFollow(target);
   }
 }
 

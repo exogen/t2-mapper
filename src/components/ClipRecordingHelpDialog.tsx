@@ -1,15 +1,18 @@
 import { Dialog, DialogHeading } from "@ariakit/react";
-import { useEffect } from "react";
+import { useEffect, type RefObject } from "react";
 import { inputControlsStore } from "../state/inputControls";
+import { clipStore } from "../state/clipStore";
 import styles from "./ClipRecordingHelpDialog.module.css";
 
 export function ClipRecordingHelpDialog({
   onCancel,
   onStart,
+  finalFocus,
   disabled = false,
 }: {
   onCancel: () => void;
   onStart: () => void;
+  finalFocus: RefObject<HTMLButtonElement | null>;
   disabled?: boolean;
 }) {
   useEffect(() => {
@@ -24,6 +27,10 @@ export function ClipRecordingHelpDialog({
       className={styles.Dialog}
       backdrop={<div className={styles.Overlay} />}
       onClose={onCancel}
+      finalFocus={finalFocus}
+      autoFocusOnHide={() => {
+        return !clipStore.getState().recording;
+      }}
       onKeyDown={(event) => event.stopPropagation()}
     >
       <DialogHeading className={styles.Title}>Record a clip</DialogHeading>

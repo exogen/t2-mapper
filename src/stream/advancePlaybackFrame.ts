@@ -90,9 +90,10 @@ export function advancePlaybackFrame(
     if (isCurrentPlayback(recording, nonce)) {
       // A failed slice must not retry itself indefinitely on every frame.
       clock.stopAfterError(nonce, retryTime);
-      engineStore.getState().completePlaybackSeek(recording, nonce, "paused");
-      if (isCurrentPlayback(recording, nonce))
-        engineStore.getState().setPlaybackStatus("paused");
+      const state = engineStore.getState();
+      if (playback.status === "seeking")
+        state.failPlaybackSeek(recording, nonce);
+      else state.setPlaybackStatus("paused");
     }
     throw error;
   }

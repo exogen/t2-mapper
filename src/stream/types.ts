@@ -1,4 +1,5 @@
 import type { FlagState } from "../../relay/flagState";
+import type { PlayerInterpolationSettings } from "./playerInterpolation";
 import type { PlayerRecord } from "../../relay/playerReference";
 import type { ChatSegment } from "../../relay/shared";
 import type { FlagDropTimes } from "../../relay/flagReturnState";
@@ -426,6 +427,8 @@ export interface StreamEntity {
    * full-precision control data drives this player.
    */
   viewQuantized?: boolean;
+  /** Camera-only view estimate from a demo player's packed angle and move. */
+  reconstructedAim?: import("./quantizedPlayerAim").QuantizedAimEstimate;
   /** Arm blend animation action index from Player ghost (networked). */
   armAction?: number;
   /** ShapeBase sound slots (4 max, from ghost SoundMask), including
@@ -504,6 +507,28 @@ export interface StreamCamera {
   pitch?: number;
   /** Explicit orbit pullback direction in Three.js space (overrides yaw/pitch). */
   orbitDirection?: [number, number, number];
+}
+
+/** A player's completed-tick view, before the next tick's packet corrections. */
+export type PlayerTickView = Pick<
+  StreamEntity,
+  | "rotation"
+  | "headPitch"
+  | "headYaw"
+  | "damageState"
+  | "viewQuantized"
+  | "reconstructedAim"
+  | "mountObjectId"
+  | "mountNode"
+> & {
+  /** A hard pose change followed this view, so its aim must not blend forward. */
+  aimCut?: boolean;
+};
+
+/** Fitted demo aim endpoints for the same body and render interval. */
+export interface DemoPlayerAim {
+  previous: import("./quantizedPlayerAim").QuantizedAimEstimate;
+  current: import("./quantizedPlayerAim").QuantizedAimEstimate;
 }
 
 /** A colored text segment from inline \c color switching. */
@@ -640,6 +665,10 @@ export interface StreamSnapshot {
   exhausted: boolean;
   camera: StreamCamera | null;
   entities: StreamEntity[];
+  /** Demo-only aim endpoints from the preceding tick, keyed by body lifetime ID. */
+  previousPlayerViews?: ReadonlyMap<string, PlayerTickView>;
+  /** Last completed aim when playback has read packets for an unfinished tick. */
+  bufferingPlayerViews?: ReadonlyMap<string, PlayerTickView>;
   /** Original flag targets, independently of their current carrier/ghost. */
   flagTargets: FlagTargetInfo[];
   flags?: FlagState[];
@@ -729,8 +758,17 @@ export interface StreamingPlayback {
   /** A restored scene that must mount its collision assets during a pending seek. */
   readonly seekSceneSnapshot?: StreamSnapshot | null;
   setPlayerPredictionEnabled?(enabled: boolean): void;
+  setPlayerInterpolation?(
+    settings: Readonly<PlayerInterpolationSettings>,
+  ): void;
+  readonly currentPlayerInterpolation?: Readonly<PlayerInterpolationSettings>;
+  holdPlayerInterpolation?(
+    settings: Readonly<PlayerInterpolationSettings>,
+  ): () => void;
   reset(): void;
   getSnapshot(): StreamSnapshot;
+  /** Camera-only lookahead for the followed body at the current demo tick. */
+  getPlayerAim?(entityId: string): DemoPlayerAim | undefined;
   /** Demo work can be bounded in ticks or wall time; a partial snapshot resumes
    *  on the next call. Budgets yield between complete simulation ticks. */
   stepToTime(

@@ -36,6 +36,8 @@ export interface PlaybackSliceState {
   /** Desired transport state after the current seek completes. */
   resumeAfterSeek: SettledPlaybackStatus | null;
   seekProgress: SeekProgress | null;
+  /** The current seek ended without publishing its target scene. */
+  seekFailed: boolean;
   /** Seek target in seconds. Written by UI seek actions, read by
    *  StreamPlaybackSession to detect and execute seeks. */
   seekTime: number;
@@ -97,6 +99,7 @@ export interface EngineStoreState {
     nonce: number,
     status?: SettledPlaybackStatus,
   ): void;
+  failPlaybackSeek(recording: StreamRecording, nonce: number): void;
   setPlaybackStatus(status: SettledPlaybackStatus | "ending"): void;
   togglePlayback(recording: StreamRecording): void;
   setPlaybackRate(rate: number): void;
@@ -188,6 +191,7 @@ const initialState: Omit<
   | "fulfillPendingSeek"
   | "updateSeekProgress"
   | "completePlaybackSeek"
+  | "failPlaybackSeek"
   | "setPlaybackStatus"
   | "togglePlayback"
   | "setPlaybackRate"
@@ -206,6 +210,7 @@ const initialState: Omit<
     status: "stopped",
     resumeAfterSeek: null,
     seekProgress: null,
+    seekFailed: false,
     seekTime: 0,
     seekNonce: 0,
     seekIntentNonce: 0,
@@ -361,6 +366,7 @@ export const engineStore = createStore<EngineStoreState>()(
               : state.playback.status,
           resumeAfterSeek: null,
           seekProgress: null,
+          seekFailed: false,
           seekTime: recording ? 0 : state.playback.seekTime,
           // Monotonic across recordings; the controller re-syncs its
           // ref at mount, so this never reads as a phantom seek.
@@ -418,6 +424,7 @@ export const engineStore = createStore<EngineStoreState>()(
           ...state.playback,
           status: "seeking",
           seekProgress: null,
+          seekFailed: false,
           resumeAfterSeek:
             state.playback.status === "seeking"
               ? state.playback.resumeAfterSeek
@@ -497,6 +504,22 @@ export const engineStore = createStore<EngineStoreState>()(
             status: status ?? playback.resumeAfterSeek ?? "paused",
             resumeAfterSeek: null,
             seekProgress: null,
+          },
+        };
+      });
+    },
+
+    failPlaybackSeek(recording, nonce) {
+      set((state) => {
+        const playback = state.playback;
+        if (!isPendingReplay(playback, recording, nonce)) return state;
+        return {
+          playback: {
+            ...playback,
+            status: "paused",
+            resumeAfterSeek: null,
+            seekProgress: null,
+            seekFailed: true,
           },
         };
       });

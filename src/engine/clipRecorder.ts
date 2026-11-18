@@ -11,6 +11,7 @@ import { engineStore, type PlaybackSliceState } from "../state/engineStore";
 import { streamClock, streamPlaybackStore } from "../state/streamPlaybackStore";
 import { resolveCameraOwner } from "../state/cameraOwner";
 import { commandCircuitStore } from "../state/commandCircuitStore";
+import { gameEntityStore } from "../state/gameEntityStore";
 import { clearInputDeltas } from "../state/inputControls";
 import { findLivingEntityByTargetId } from "../state/watchFollow";
 import { exitDirector } from "../state/demoDirectorStore";
@@ -43,6 +44,8 @@ export function installClipRecorder(engine: GameEngine): () => void {
   let elapsedMs = 0;
   let lastSampleMs = -Infinity;
   let lastSample: ClipSample | null = null;
+  let lastFollowedBodyId: string | undefined;
+  let lastFollowedBodyDead = false;
   let plannedMs = 0;
   let planned: { take: ClipTake; sample: ClipSample } | null = null;
   const plannedSample = (take: ClipTake): ClipSample => {
@@ -85,9 +88,9 @@ export function installClipRecorder(engine: GameEngine): () => void {
       engine.invalidate();
     }),
     () => {
-      if (clipStore.getState().recording || clipStore.getState().draft)
-        clipStore.getState().discard();
-      clipStore.getState().stopPlayback();
+      const clip = clipStore.getState();
+      if (clip.recording || clip.draft) clip.discard();
+      else clip.stopPlayback();
     },
     engine.scheduler.add(FramePriority.ClipTransport, ({ delta }) => {
       const clip = clipStore.getState();
@@ -204,6 +207,16 @@ export function installClipRecorder(engine: GameEngine): () => void {
       const stream = streamPlaybackStore.getState();
       const owner = resolveCameraOwner();
       const mode = owner === "input" ? stream.cameraMode : owner;
+      // A player's target ID stays the same when their body changes.
+      const followedEntity =
+        (mode === "firstPersonOverride" || mode === "orbitOverride") &&
+        stream.followFlagSlot == null &&
+        stream.followEntityId
+          ? gameEntityStore.getState().streamEntities.get(stream.followEntityId)
+          : undefined;
+      const followedBody =
+        followedEntity?.renderType === "Player" ? followedEntity : undefined;
+      const followedBodyDead = (followedBody?.damageState ?? 0) !== 0;
       const sample: ClipSample = {
         timeMs: rounded(elapsedMs, 3),
         demoTimeSec: rounded(streamClock.time),
@@ -234,7 +247,9 @@ export function installClipRecorder(engine: GameEngine): () => void {
         (sample.cameraMode !== lastSample.cameraMode ||
           sample.targetId !== lastSample.targetId ||
           sample.flagSlot !== lastSample.flagSlot ||
-          sample.projection !== lastSample.projection);
+          sample.projection !== lastSample.projection ||
+          followedBody?.id !== lastFollowedBodyId ||
+          followedBodyDead !== lastFollowedBodyDead);
       if (
         elapsedMs - lastSampleMs >= SAMPLE_INTERVAL_MS ||
         cut ||
@@ -244,6 +259,8 @@ export function installClipRecorder(engine: GameEngine): () => void {
         state.appendSample(sample);
         lastSampleMs = elapsedMs;
         lastSample = sample;
+        lastFollowedBodyId = followedBody?.id;
+        lastFollowedBodyDead = followedBodyDead;
       }
       if (elapsedMs >= MAX_CLIP_DURATION_MS) state.stop();
     }),

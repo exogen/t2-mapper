@@ -264,6 +264,97 @@ it("records the final camera pose and movement while source playback is paused",
   expect(draft.samples[1].fov).toBe(engine.cameras.perspective.fov);
 });
 
+it.each(["firstPersonOverride", "orbitOverride"] as const)(
+  "cuts recorded %s at death and at a new body for the same player",
+  (cameraMode) => {
+    const { engine, frame } = fixture();
+    const player = {
+      id: "player-body",
+      renderType: "Player" as const,
+      className: "Player",
+      targetId: 7,
+    };
+    const camera = engine.cameras.perspective;
+    gameEntityStore.getState().setStreamEntity(player);
+    streamPlaybackStore.setState({
+      cameraMode,
+      followEntityId: player.id,
+      followTargetId: player.targetId,
+    });
+    expect(clipStore.getState().start()).toBe(true);
+    camera.position.set(1, 2, 3);
+    camera.quaternion.identity();
+    engine.scheduler.run(FramePriority.ClipCamera, frame());
+
+    gameEntityStore.getState().setStreamEntity({ ...player, damageState: 1 });
+    camera.position.set(10, 2, 3);
+    camera.quaternion.set(0, 1, 0, 0);
+    engine.scheduler.run(FramePriority.ClipCamera, frame(0.01));
+
+    const respawn = { ...player, id: "respawned-body" };
+    gameEntityStore.getState().setStreamEntity(respawn);
+    streamPlaybackStore.setState({ followEntityId: respawn.id });
+    camera.position.set(100, 2, 3);
+    camera.quaternion.set(0, 0, 0, 1);
+    engine.scheduler.run(FramePriority.ClipCamera, frame(0.01));
+
+    // The old body's death and the replacement can arrive in one frame.
+    const nextBody = { ...player, id: "next-body" };
+    gameEntityStore.getState().setStreamEntity(nextBody);
+    streamPlaybackStore.setState({ followEntityId: nextBody.id });
+    camera.position.set(200, 2, 3);
+    engine.scheduler.run(FramePriority.ClipCamera, frame(0.01));
+    clipStore.getState().stop();
+
+    const recorded = clipStore.getState().draft!;
+    expect(recorded.samples).toMatchObject([
+      { timeMs: 0, targetId: 7 },
+      { timeMs: 10, targetId: 7, cut: true },
+      { timeMs: 20, targetId: 7, cut: true },
+      { timeMs: 30, targetId: 7, cut: true },
+    ]);
+    for (const [time, x, yaw] of [
+      [5, 1, 0],
+      [10, 10, 1],
+      [15, 10, 1],
+      [20, 100, 0],
+      [25, 100, 0],
+      [30, 200, 0],
+    ]) {
+      const pose = sampleClipTake(recorded, time);
+      expect(pose.position).toEqual([x, 2, 3]);
+      expect(pose.quaternion).toEqual([0, yaw, 0, 1 - yaw]);
+    }
+  },
+);
+
+it("preserves interpolation during a recorded flag hand-off", () => {
+  const { engine, frame } = fixture();
+  const carrier = {
+    id: "carrier",
+    renderType: "Player" as const,
+    className: "Player",
+  };
+  gameEntityStore.getState().setStreamEntity(carrier);
+  streamPlaybackStore.setState({
+    cameraMode: "orbitOverride",
+    followFlagSlot: 1,
+    followEntityId: carrier.id,
+  });
+  expect(clipStore.getState().start()).toBe(true);
+  engine.cameras.perspective.position.set(1, 2, 3);
+  engine.scheduler.run(FramePriority.ClipCamera, frame());
+
+  streamPlaybackStore.setState({ followEntityId: "flag" });
+  engine.cameras.perspective.position.set(3, 2, 3);
+  engine.scheduler.run(FramePriority.ClipCamera, frame());
+  clipStore.getState().stop();
+
+  const recorded = clipStore.getState().draft!;
+  expect(recorded.samples[1].cut).toBeUndefined();
+  expect(sampleClipTake(recorded, 20).position).toEqual([2, 2, 3]);
+});
+
 it("starts a fresh time origin after discarding a take between rendered frames", () => {
   const { engine, frame } = fixture();
   clipStore.getState().start();

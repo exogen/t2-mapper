@@ -98,7 +98,7 @@ const take: ClipTake = {
     fov: 90,
     aspect: 16 / 9,
     projection: "perspective",
-    cameraMode: "original",
+    cameraMode: "freeFly",
     targetId: null,
     flagSlot: null,
     rate: timeMs < 450 ? 1 : timeMs < 750 ? 0.25 : 2,
@@ -303,6 +303,31 @@ it("offers smoothing and save/discard in the default-open clip accordion", () =>
   fixture.playback.downloadComplete = false;
   expect(render()).toMatch(/<button[^>]*disabled=""[^>]*>Save clip<\/button>/);
 });
+
+it.each(["firstPersonOverride", "original"])(
+  "disables smoothing in %s sections without losing the setting for other views",
+  (cameraMode) => {
+    fixture.clip.draft = {
+      ...take,
+      samples: take.samples.map((sample, index) => ({
+        ...sample,
+        cameraMode: index < 2 ? cameraMode : "freeFly",
+        cut: index === 2,
+      })),
+    };
+    fixture.clip.active = fixture.clip.draft;
+    fixture.clip.smoothingLevel = 2;
+    fixture.clip.playheadMs = 450;
+    const firstPerson = render();
+    expect(firstPerson).toMatch(/id="clipCameraSmoothing"[^>]*disabled=""/);
+    expect(firstPerson).toContain('aria-valuetext="Off"');
+    fixture.clip.playheadMs = 750;
+    const freeCamera = render();
+    expect(freeCamera).not.toMatch(/id="clipCameraSmoothing"[^>]*disabled=""/);
+    expect(freeCamera).toContain('aria-valuetext="High"');
+    expect(fixture.clip.smoothingLevel).toBe(2);
+  },
+);
 
 it("offers the current HUD settings in the accordion before saving", () => {
   vi.spyOn(settingsStore, "getInitialState").mockImplementation(() =>

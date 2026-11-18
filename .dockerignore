@@ -14,6 +14,7 @@ scripts/*
 !scripts/link-t2-accounts.ts
 !scripts/list-discord-users.ts
 !scripts/set-account-role.ts
+!scripts/backfill-demo-checkpoints.ts
 !scripts/backfill-demo-guids.ts
 !scripts/backfill-demo-players.ts
 !scripts/backfill-demo-stats.ts

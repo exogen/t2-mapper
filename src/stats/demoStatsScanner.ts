@@ -21,6 +21,7 @@ export async function scanDemoStats(
   const recording = await createDemoStreamingRecording(buffer, {
     checkpoints: false,
     groundEffects: false,
+    playerViews: false,
     allowPartial: true,
   });
   signal?.throwIfAborted();

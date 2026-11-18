@@ -1,3 +1,8 @@
+import {
+  normalizePlayerInterpolation,
+  samePlayerInterpolation,
+  type PlayerInterpolationSettings,
+} from "../src/stream/playerInterpolation.js";
 import { isPublishedDemoKey } from "./demoKeys.js";
 
 export const CLIP_VERSION = 1;
@@ -36,6 +41,8 @@ export interface ClipTake {
   version: 1;
   sourceDemo: string;
   samples: ClipSample[];
+  /** Older takes used stock player interpolation. */
+  playerInterpolation?: Readonly<PlayerInterpolationSettings>;
   /** Omitted by older clips, which retain the viewer's HUD preferences. */
   hud?: ClipHudSettings;
 }
@@ -126,6 +133,15 @@ export function readClipTake(value: unknown): ClipTake {
     throw new Error("Invalid clip recording");
   const hud =
     take.hud === undefined ? undefined : readClipHudSettings(take.hud);
+  const playerInterpolation = normalizePlayerInterpolation(
+    take.playerInterpolation,
+  );
+  if (
+    take.playerInterpolation !== undefined &&
+    (!take.playerInterpolation ||
+      !samePlayerInterpolation(take.playerInterpolation, playerInterpolation))
+  )
+    throw new Error("Invalid clip player interpolation");
   let previousMs = -1;
   let previousDemoSec = -1;
   const samples = take.samples.map((value) => {
@@ -188,6 +204,7 @@ export function readClipTake(value: unknown): ClipTake {
     sourceDemo: take.sourceDemo,
     samples,
     ...(hud && { hud }),
+    ...(take.playerInterpolation && { playerInterpolation }),
   };
 }
 
@@ -273,6 +290,9 @@ export function trimClipTake(
     version: CLIP_VERSION,
     sourceDemo: take.sourceDemo,
     ...(take.hud && { hud: { ...take.hud } }),
+    ...(take.playerInterpolation && {
+      playerInterpolation: { ...take.playerInterpolation },
+    }),
     samples: [
       sampleClipTake(take, startMs),
       ...take.samples.filter(

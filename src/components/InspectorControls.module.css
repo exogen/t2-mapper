@@ -129,6 +129,43 @@
   margin-top: 4px;
 }
 
+.PlayerInterpolation {
+  composes: Root from "./DebugInfoPanel.module.css";
+  min-inline-size: 0;
+}
+
+.PlayerInterpolation > .Field {
+  margin-bottom: 6px;
+}
+
+.PlayerInterpolation > .Field:last-child {
+  margin-bottom: 0;
+}
+
+.InterpolationInput {
+  composes: Surface from "./Select.module.css";
+  box-sizing: border-box;
+  width: 64px;
+  min-height: 28px;
+  padding: 4px 5px 4px 7px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.InterpolationInput:hover:not(:disabled) {
+  border-color: var(--control-hover-border);
+  background: var(--control-hover-background);
+}
+
+.InterpolationInput:focus-visible {
+  outline: 2px solid var(--control-focus);
+  outline-offset: 2px;
+}
+
+.InterpolationInput:disabled {
+  opacity: 0.5;
+}
+
 .RadioLabel {
   display: inline-flex;
   align-items: center;
@@ -239,5 +276,10 @@
   .Field [data-range-slider] {
     width: 100%;
     max-width: none;
+  }
+
+  .InterpolationInput {
+    min-height: 44px;
+    font-size: 16px;
   }
 }

@@ -6,6 +6,7 @@ import {
   registerInteriorCollider,
 } from "../collision/worldCollision";
 import { setTerrainCollisionData } from "../collision/terrainCollision";
+import { setWaterInfo } from "../collision/waterLevel";
 import {
   PlayerPrediction,
   PLAYER_TICK_SEC,
@@ -13,6 +14,11 @@ import {
   unclampMove,
 } from "./playerPrediction";
 import { applyStreamEntityPose } from "./interpolateEntity";
+import {
+  DEFAULT_PLAYER_INTERPOLATION,
+  RETAIL_PLAYER_INTERPOLATION,
+  type PlayerInterpolationSettings,
+} from "./playerInterpolation";
 import type { StreamEntity } from "./types";
 
 const armor: PlayerDataBlock = {
@@ -53,8 +59,11 @@ const neutral = {
   freeLook: false,
   trigger: [],
 };
-function player(update: PlayerGhostData = {}) {
-  const p = new PlayerPrediction(armor);
+function player(
+  update: PlayerGhostData = {},
+  interpolation?: Readonly<PlayerInterpolationSettings>,
+) {
+  const p = new PlayerPrediction(armor, undefined, interpolation);
   p.unpackUpdate({
     position: { x: 0, y: 0, z: 10 },
     velocity: { x: 16, y: 0, z: 0 },
@@ -79,6 +88,7 @@ function box(
 afterEach(() => {
   clearWorldColliders();
   setTerrainCollisionData(null);
+  setWaterInfo(null);
 });
 
 describe("retail player prediction", () => {
@@ -117,7 +127,7 @@ describe("retail player prediction", () => {
     const last = p.position.clone();
     p.processTick(0);
     expect(p.position).toEqual(last);
-    expect(p.posVec.length()).toBe(0);
+    expect(p.posVec.x).toBe(-16 * PLAYER_TICK_SEC);
     expect(p.contactTimer).toBe(MAX_PREDICTION_TICKS);
   });
   it("resets contact on runnable slopes, but not merely jumpable slopes", () => {
@@ -266,26 +276,207 @@ describe("retail player prediction", () => {
     expect(p.position.x).toBeGreaterThan(1.5);
     expect(p.position.z).toBeGreaterThanOrEqual(0.5);
   });
-  it("warps a correction for at most three ticks and wraps yaw by the shortest arc", () => {
-    const p = player({ rotationZ: Math.PI * 2 - 0.1 });
-    p.contactTimer = 12;
-    p.unpackUpdate({
-      position: { x: 6, y: 0, z: 10 },
-      velocity: { x: 16, y: 0, z: 0 },
-      rotationZ: 0.1,
-      allowWarp: true,
-    });
-    expect(p.warpTicks).toBe(3);
-    p.processTick(0);
+  it.each([
+    [DEFAULT_PLAYER_INTERPOLATION, 2],
+    [RETAIL_PLAYER_INTERPOLATION, 3],
+  ] as const)(
+    "caps a correction at the configured warp duration and wraps yaw by the shortest arc",
+    (settings, ticks) => {
+      const p = player({ rotationZ: Math.PI * 2 - 0.1 }, settings);
+      p.contactTimer = 12;
+      p.unpackUpdate({
+        position: { x: 6, y: 0, z: 10 },
+        velocity: { x: 16, y: 0, z: 0 },
+        rotationZ: 0.1,
+        allowWarp: true,
+      });
+      expect(p.warpTicks).toBe(ticks);
+      p.processTick(0);
+      expect(p.position.x).toBe(6 / ticks);
+      expect(Math.abs(p.rotVec)).toBeCloseTo(0.2 / ticks);
+      for (let tick = 1; tick < ticks; tick++) p.processTick(0);
+      expect(p.position.x).toBe(6);
+      expect(p.contactTimer).toBe(12);
+      p.processTick(0);
+      expect(p.position.x).toBe(6.5);
+      expect(p.contactTimer).toBe(13);
+    },
+  );
+  it("uses custom prediction and warp limits for remote players", () => {
+    const p = player(
+      {},
+      {
+        ...DEFAULT_PLAYER_INTERPOLATION,
+        maxPredictionTicks: 2,
+        maxWarpTicks: 1,
+        minWarpTicks: 3,
+      },
+    );
+    p.unpackUpdate({ position: { x: 1, y: 0, z: 10 }, allowWarp: true });
+    expect(p.warpTicks).toBe(0);
+    expect(p.position.x).toBe(1);
+    for (let i = 0; i < 3; i++) p.processTick(0);
     expect(p.position.x).toBe(2);
-    expect(Math.abs(p.rotVec)).toBeLessThan(0.1);
+
+    p.unpackUpdate({ position: { x: 8, y: 0, z: 10 }, allowWarp: true });
+    expect(p.warpTicks).toBe(1);
+    expect(p.position.x).toBe(2);
     p.processTick(0);
+    expect(p.position.x).toBe(8);
+  });
+  it("takes the projected endpoint without double-counting the distance to it", () => {
+    const p = player(
+      {},
+      {
+        ...DEFAULT_PLAYER_INTERPOLATION,
+        maxLatencyTicks: 2,
+        maxWarpTicks: 1,
+      },
+    );
+    p.unpackUpdate(
+      { position: { x: 6, y: 0, z: 10 }, allowWarp: true },
+      false,
+      2,
+      -20,
+    );
+    expect(p.velocity.toArray()).toEqual([16, 0, -40 * PLAYER_TICK_SEC]);
+    expect(p.warpTicks).toBe(0);
+    expect(p.posVec.toArray()).toEqual([-7, 0, 60 * PLAYER_TICK_SEC ** 2]);
+    expect(p.position.toArray()).toEqual([
+      7,
+      0,
+      10 - 60 * PLAYER_TICK_SEC ** 2,
+    ]);
+    p.processTick(-20);
+    expect(p.position.toArray()).toEqual([
+      7.5,
+      0,
+      10 - 120 * PLAYER_TICK_SEC ** 2,
+    ]);
+  });
+  it("uses projected velocity to choose an immediate correction", () => {
+    const velocity = { x: 0, y: 0, z: 0 };
+    const p = player({ velocity });
+    p.unpackUpdate(
+      { position: { x: 0, y: 0, z: 10.05 }, velocity, allowWarp: true },
+      false,
+      2,
+      -20,
+    );
+    expect(p.warpTicks).toBe(0);
+    expect(p.predictionCount).toBe(MAX_PREDICTION_TICKS);
+    expect(p.position.z).toBeCloseTo(10.05 - 60 * PLAYER_TICK_SEC ** 2, 12);
+    p.processTick(-20);
+    expect(p.position.z).toBeCloseTo(10.05 - 120 * PLAYER_TICK_SEC ** 2, 12);
+  });
+  it("carries landing and head state through the forecast and reconciles body yaw", () => {
+    box(0, 0, -1, 100, 100, 2);
+    const position = { x: 0, y: 0, z: 0.3 };
+    const velocity = { x: 0, y: 0, z: -8 };
+    const update = { position, velocity, rotationZ: 1, headX: 0.25 };
+    const p = player(update, {
+      ...DEFAULT_PLAYER_INTERPOLATION,
+      minWarpTicks: 30,
+    });
+    const expected = player(update);
+    for (let i = 0; i < 3; i++) expected.processTick(-20);
+    p.unpackUpdate(
+      {
+        ...update,
+        move: { ...neutral, pyaw: 128, ppitch: 512 },
+        allowWarp: true,
+      },
+      false,
+      3,
+      -20,
+    );
+    expect(p.position.toArray()).toEqual(expected.position.toArray());
+    expect(p.velocity.toArray()).toEqual(expected.velocity.toArray());
+    expect(p.contactTimer).toBe(expected.contactTimer);
+    expect(p.jumpSurfaceLastContact).toBe(expected.jumpSurfaceLastContact);
+    expect(p.yaw).toBe(update.rotationZ);
+    expect(p.headPitch).toBeCloseTo(
+      update.headX * (Math.PI / 2) + (3 * 512 * 2 * Math.PI) / 65536,
+      12,
+    );
+  });
+  it("applies the packet energy after forecasting jet thrust", () => {
+    const p = player({ velocity: { x: 0, y: 0, z: 0 } });
+    p.unpackUpdate(
+      {
+        position: { x: 0, y: 0, z: 10 },
+        move: { ...neutral, trigger: [false, false, false, true] },
+        allowWarp: true,
+        energy: 0,
+      },
+      false,
+      1,
+    );
+    expect(p.velocity.z).toBeGreaterThan(0);
+    expect(p.energy).toBe(0);
+    expect(p.jetting).toBe(true);
     p.processTick(0);
-    expect(p.position.x).toBe(6);
-    expect(p.contactTimer).toBe(12);
+    expect(p.jetting).toBe(false);
+  });
+  it("uses the native zero-speed warp fallback even after a stationary forecast", () => {
+    const p = player({ velocity: { x: 0, y: 0, z: 0 } });
+    p.unpackUpdate(
+      { position: { x: 20, y: 0, z: 10 }, allowWarp: true },
+      false,
+      2,
+    );
+    expect(p.warpTicks).toBe(DEFAULT_PLAYER_INTERPOLATION.maxWarpTicks);
     p.processTick(0);
-    expect(p.position.x).toBe(6.5);
-    expect(p.contactTimer).toBe(13);
+    expect(p.position.x).toBe(0);
+  });
+  it("forecasts water drag from the packet's position", () => {
+    setWaterInfo({
+      surfaceZ: 12,
+      waveMagnitude: 0,
+      liquidType: 0,
+      minX: 1027,
+      minY: 1020,
+      sizeX: 32,
+      sizeY: 8,
+    });
+    const p = player({}, { ...DEFAULT_PLAYER_INTERPOLATION, minWarpTicks: 30 });
+    p.setDataBlock({ ...armor, density: 1, drag: 0.3 });
+    p.unpackUpdate(
+      { position: { x: 3, y: 0, z: 10 }, allowWarp: true },
+      false,
+      2,
+      -20,
+    );
+    const drag = 1 - 0.3 * 15 * PLAYER_TICK_SEC;
+    expect(p.position.x).toBeCloseTo(3 + 0.5 * (drag + drag ** 2), 12);
+    expect(p.position.z).toBe(10);
+    expect(p.velocity.toArray()).toEqual([16 * drag ** 2, 0, 0]);
+  });
+  it("preserves immediate packet poses for teleports, initial updates, and control sync", () => {
+    const p = player(
+      {},
+      {
+        ...DEFAULT_PLAYER_INTERPOLATION,
+        maxLatencyTicks: 2,
+        maxPredictionTicks: 2,
+      },
+    );
+    const position = { x: 5, y: 0, z: 10 };
+    p.unpackUpdate({ position, allowWarp: false }, false, 2, -20);
+    expect(p.position.toArray()).toEqual([5, 0, 10]);
+    p.unpackUpdate({ position, allowWarp: true }, true, 2, -20);
+    expect(p.position.toArray()).toEqual([5, 0, 10]);
+    p.processTick(0);
+    const backstep = p.posVec.x;
+    p.jumpDelay = 7;
+    p.readPacketData({ position, rotationZ: 1, headX: 0.25 });
+    expect(p.position.toArray()).toEqual([5, 0, 10]);
+    expect(p.warpTicks).toBe(0);
+    expect(p.exactView).toBe(true);
+    expect(p.headPitch).toBe(0.25);
+    expect(p.posVec.x).toBe(backstep);
+    expect(p.predictionCount).toBe(1);
+    expect(p.jumpDelay).toBe(0);
   });
   it("counts mounted movement ticks without moving the mount-owned position", () => {
     box(0, 0, -1, 100, 100, 2);

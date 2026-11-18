@@ -68,6 +68,8 @@ import type {
   StreamEntity,
   StreamSnapshot,
   StreamingPlayback,
+  PlayerTickView,
+  DemoPlayerAim,
 } from "../stream/types";
 import type { GameEntity } from "../state/gameEntityTypes";
 import { isSceneEntity } from "../state/gameEntityTypes";
@@ -246,9 +248,11 @@ function computeFirstPersonCamera(
   camera: { position: Vector3; quaternion: Quaternion },
   playerGroup: { position: Vector3; quaternion: Quaternion },
   eyePos: Vector3,
-  player: StreamEntity | undefined,
+  player: (PlayerTickView & Pick<StreamEntity, "playerDelta">) | undefined,
   interpT: number,
   aimCorrection: boolean,
+  previousTickView?: PlayerTickView,
+  fittedAim?: DemoPlayerAim,
 ): void {
   // Position: body position + body rotation * eye offset.
   _tmpVec.copy(eyePos).applyQuaternion(playerGroup.quaternion);
@@ -260,6 +264,8 @@ function computeFirstPersonCamera(
     interpT,
     _playerView,
     aimCorrection,
+    previousTickView,
+    fittedAim,
   );
   const [rx, ry, rz, rw] = yawPitchToQuaternion(yaw, pitch);
   camera.quaternion.set(rx, ry, rz, rw);
@@ -519,6 +525,9 @@ export class StreamPlaybackSession {
     // and has accumulated protocol state (net strings, target info, sensor
     // group colors) that the server won't re-send.
     if (this.recording.source !== "live") {
+      stream.setPlayerInterpolation?.(
+        settingsStore.getState().playerInterpolation,
+      );
       stream.setPlayerPredictionEnabled?.(true);
       stream.reset();
     }
@@ -569,7 +578,22 @@ export class StreamPlaybackSession {
     setStreamSnapshot(snapshot);
     this.publishedSnapshot = snapshot;
 
+    // Aim comparisons should redraw immediately, including paused on-demand views.
+    const unsubscribeAimSettings = settingsStore.subscribe(
+      (state) => state.aimCorrection,
+      () => this.engine.invalidate(),
+    );
+    const unsubscribeInterpolation = settingsStore.subscribe(
+      (state) => state.playerInterpolation,
+      (settings) => {
+        stream.setPlayerInterpolation?.(settings);
+        this.engine.invalidate();
+      },
+    );
+
     return () => {
+      unsubscribeAimSettings();
+      unsubscribeInterpolation();
       if (stream.onMissionInfoChange === onMissionInfoChange) {
         stream.onMissionInfoChange = undefined;
       }
@@ -1136,6 +1160,30 @@ export class StreamPlaybackSession {
         // keeping the horizon stable like the real vehicle look.
         const followedEntity = currentEntities.get(orbitTargetId);
         const mounted = resolvedTarget.entity?.id !== orbitTargetId;
+        const interpolateAim = !isLive && aimCorrection;
+        const tailView = interpolateAim
+          ? renderCurrent.bufferingPlayerViews?.get(orbitTargetId)
+          : undefined;
+        const bufferingView =
+          this.stream?.streamComplete === false || tailView?.aimCut
+            ? tailView
+            : undefined;
+        // At the download frontier, packets can arrive before their move
+        // tick. Hold the last complete aim so resuming starts at that angle.
+        const heldView =
+          followedEntity?.viewQuantized &&
+          bufferingView?.viewQuantized &&
+          !bufferingView.aimCut &&
+          !followedEntity.damageState &&
+          !bufferingView.damageState &&
+          followedEntity.mountObjectId === bufferingView.mountObjectId &&
+          followedEntity.mountNode === bufferingView.mountNode
+            ? bufferingView
+            : undefined;
+        const fittedAim =
+          interpolateAim && !bufferingView && resolveCameraOwner() !== "clip"
+            ? this.stream?.getPlayerAim?.(orbitTargetId)
+            : undefined;
         computeFirstPersonCamera(
           streamCamera,
           resolvedTarget.group,
@@ -1143,9 +1191,14 @@ export class StreamPlaybackSession {
             ? _tmpVec.set(0, DEFAULT_EYE_HEIGHT, 0)
             : (readEyePosition(orbitTargetId, _tmpVec) ??
                 _tmpVec.set(0, DEFAULT_EYE_HEIGHT, 0)),
-          followedEntity,
+          heldView ?? followedEntity,
           interpT,
           aimCorrection,
+          interpolateAim
+            ? (bufferingView ??
+                renderCurrent.previousPlayerViews?.get(orbitTargetId))
+            : undefined,
+          fittedAim,
         );
       }
     }

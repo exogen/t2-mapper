@@ -333,6 +333,7 @@ export const replayConnectionStore = createStore<ReplayConnectionState>(
                 seekTime: replay.tick * STREAM_TICK_SEC,
                 seekNonce: playback.seekNonce + 1,
                 seekProgress: null,
+                seekFailed: false,
                 resumeAfterSeek: null,
                 pendingSeekSec: null,
               },

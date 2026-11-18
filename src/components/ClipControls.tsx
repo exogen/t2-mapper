@@ -34,7 +34,10 @@ import { Select } from "./Select";
 import { useInputAction } from "./InputControls";
 import { Accordion, AccordionGroup } from "./Accordion";
 import { RangeSlider } from "./RangeSlider";
-import type { ClipSmoothingLevel } from "../stream/clipSmoothing";
+import {
+  canSmoothClipCamera,
+  type ClipSmoothingLevel,
+} from "../stream/clipSmoothing";
 import buttonStyles from "./Button.module.css";
 import playbackStyles from "./DemoPlaybackControls.module.css";
 import inspectorStyles from "./InspectorControls.module.css";
@@ -60,14 +63,19 @@ function selectClipHud({
 function useClipControlsState() {
   return useStoreWithEqualityFn(
     clipStore,
-    (state) => ({
-      ...state,
-      elapsedMs: Math.floor(state.elapsedMs / 100) * 100,
-      playheadMs: Math.floor(state.playheadMs / 100) * 100,
-      recordedRate: state.active
-        ? sampleClipTake(state.active, state.playheadMs).rate
-        : 1,
-    }),
+    (state) => {
+      const sample = state.active
+        ? sampleClipTake(state.active, state.playheadMs)
+        : null;
+      return {
+        ...state,
+        elapsedMs: Math.floor(state.elapsedMs / 100) * 100,
+        playheadMs: Math.floor(state.playheadMs / 100) * 100,
+        recordedRate: sample?.rate ?? 1,
+        cameraSmoothingAvailable:
+          sample === null || canSmoothClipCamera(sample.cameraMode),
+      };
+    },
     shallow,
   );
 }
@@ -86,8 +94,8 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
   const account = useAppAccount((state) => state);
   const source = publishedDemoFilename(useDemoLoad((state) => state.sourceUrl));
   const recording = useEngineSelector((state) => state.playback.recording);
-  const seeking = useEngineSelector(
-    (state) => state.playback.status === "seeking",
+  const captureBlocked = useEngineSelector(
+    (state) => state.playback.status === "seeking" || state.playback.seekFailed,
   );
   const sourceReady = useEngineSelector(
     (state) =>
@@ -100,6 +108,7 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [showRecordingHelp, setShowRecordingHelp] = useState(false);
+  const recordButtonRef = useRef<HTMLButtonElement>(null);
   const [copied, setCopied] = useState(false);
   const transfer = useRef<AbortController | null>(null);
   const request = useRef<{
@@ -155,7 +164,7 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
     showSaved ||
     !!draft ||
     showRecordingHelp ||
-    (!clip.recording && (seeking || !captureReady));
+    (!clip.recording && (captureBlocked || !captureReady));
   const recordAvailable = showRecordButton && !recordDisabled;
 
   function toggleRecording() {
@@ -170,7 +179,9 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
   }
 
   function startRecording() {
-    if (clip.start()) setPreference("sidebarOpen", true);
+    if (!clip.start()) return false;
+    setPreference("sidebarOpen", true);
+    return true;
   }
 
   useInputAction("recordClip", toggleRecording);
@@ -261,7 +272,6 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
           "The clip, demo, or account changed. Review the clip before saving.",
         );
       setSaved(result);
-      clipStore.getState().stopPlayback();
       clipStore.getState().discard();
     } catch (cause) {
       if (!controller.signal.aborted)
@@ -337,6 +347,7 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
 
   const recordButton = showRecordButton ? (
     <button
+      ref={recordButtonRef}
       type="button"
       className={styles.RecordButton}
       data-recording={clip.recording || undefined}
@@ -347,7 +358,7 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
       title={
         clip.recording
           ? "Stop clip recording (R)"
-          : !captureReady
+          : captureBlocked || !captureReady
             ? "Wait for the demo to finish preparing"
             : "Record clip (R)"
       }
@@ -358,6 +369,9 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
   ) : null;
 
   const smoothingLabels = ["Off", "Low", "High"] as const;
+  const displayedSmoothingLevel = clip.cameraSmoothingAvailable
+    ? clip.smoothingLevel
+    : 0;
   const editorPanel =
     eligible && (clip.recording || draft) ? (
       <AccordionGroup type="multiple" defaultValue={["clip"]}>
@@ -386,7 +400,14 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
                 </button>
               </>
             )}
-            <div className={styles.SmoothingField}>
+            <div
+              className={styles.SmoothingField}
+              title={
+                clip.cameraSmoothingAvailable
+                  ? undefined
+                  : "First-person and original views keep their recorded camera movement."
+              }
+            >
               <label
                 id="clipCameraSmoothing-label"
                 htmlFor="clipCameraSmoothing"
@@ -396,11 +417,11 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
               <RangeSlider
                 id="clipCameraSmoothing"
                 aria-labelledby="clipCameraSmoothing-label"
-                aria-valuetext={smoothingLabels[clip.smoothingLevel]}
+                aria-valuetext={smoothingLabels[displayedSmoothingLevel]}
                 min={0}
                 max={smoothingLabels.length - 1}
-                value={clip.smoothingLevel}
-                disabled={!draft || saving}
+                value={displayedSmoothingLevel}
+                disabled={!draft || saving || !clip.cameraSmoothingAvailable}
                 onValueChange={(value) =>
                   clip.setSmoothingLevel(value as ClipSmoothingLevel)
                 }
@@ -408,7 +429,10 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
               />
               <div className={styles.SmoothingStops} aria-hidden>
                 {smoothingLabels.map((label, index) => (
-                  <span key={label} data-active={index === clip.smoothingLevel}>
+                  <span
+                    key={label}
+                    data-active={index === displayedSmoothingLevel}
+                  >
                     {label}
                   </span>
                 ))}
@@ -459,15 +483,19 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
       {children}
       {showRecordingHelp && eligible && (
         <ClipRecordingHelpDialog
+          finalFocus={recordButtonRef}
           onCancel={() => setShowRecordingHelp(false)}
           disabled={
-            seeking || !captureReady || saving || !!draft || !!clip.active
+            captureBlocked ||
+            !captureReady ||
+            saving ||
+            !!draft ||
+            !!clip.active
           }
           onStart={() => {
             setShowRecordingHelp(false);
-            if (clip.start()) {
+            if (startRecording()) {
               setPreference("hasSeenClipRecordingHelp", true);
-              setPreference("sidebarOpen", true);
             }
           }}
         />

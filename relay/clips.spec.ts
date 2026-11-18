@@ -1054,9 +1054,19 @@ it("applies the pending-work quota when a failed clip is retried", async () => {
 it("rebuilds obsolete or missing checkpoint artifacts", async () => {
   const f = await fixture();
   const clip = await save(f);
-  f.database
-    .prepare("UPDATE clip SET checkpointVersion=? WHERE id=?")
-    .run(DEMO_CHECKPOINT_VERSION - 1, clip.id);
+  const setVersion = f.database.prepare(
+    "UPDATE clip SET checkpointVersion=? WHERE id=?",
+  );
+  setVersion.run(22, clip.id);
+  expect(
+    (
+      (await (
+        await f.request("GET", `/api/clips/${clip.id}`)
+      ).json()) as ClipView
+    ).state,
+  ).toBe("ready");
+  expect(f.prepare).toHaveBeenCalledOnce();
+  setVersion.run(21, clip.id);
   const rebuilding = await f.request("GET", `/api/clips/${clip.id}`);
   expect(((await rebuilding.json()) as ClipView).state).toBe("processing");
   await f.service.idle();

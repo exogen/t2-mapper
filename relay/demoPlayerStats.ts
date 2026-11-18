@@ -713,6 +713,7 @@ export async function computeDemoPlayerStats(
   const recording = createRecordingFromParser(parser, {
     checkpoints: false,
     groundEffects: false,
+    playerViews: false,
   });
   if (!Number.isFinite(recording.duration) || recording.duration < 0)
     throw new Error("Recording duration must be finite and nonnegative");

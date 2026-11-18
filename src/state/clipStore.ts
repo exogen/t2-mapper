@@ -1,4 +1,5 @@
 import { createStore } from "zustand/vanilla";
+import { DEFAULT_PLAYER_INTERPOLATION } from "../stream/playerInterpolation";
 import {
   clipDurationMs,
   MAX_CLIP_SAMPLES,
@@ -46,7 +47,14 @@ export interface ClipState {
 let samples: ClipSample[] = [];
 let sourceDemo: string | null = null;
 let recordingOwner: string | null = null;
+let captureInterpolation = DEFAULT_PLAYER_INTERPOLATION;
+let releaseCaptureInterpolation: (() => void) | undefined;
 let clipSeekDepth = 0;
+
+function releaseCapture(): void {
+  releaseCaptureInterpolation?.();
+  releaseCaptureInterpolation = undefined;
+}
 
 /** Wait for the opening scene and its collision reconstruction before capturing. */
 export function canStartClipRecording(): boolean {
@@ -55,6 +63,7 @@ export function canStartClipRecording(): boolean {
   return (
     playback.recording?.source === "demo" &&
     playback.status !== "seeking" &&
+    !playback.seekFailed &&
     !!stream &&
     streamPlaybackStore.getState().playback === stream &&
     streamSnapshotStore.getState().snapshot !== null &&
@@ -90,9 +99,11 @@ export const clipStore = createStore<ClipState>((set, get) => ({
     if (get().recording) return false;
     const account = appAccountStore.getState();
     const filename = publishedDemoFilename(demoLoadStore.getState().sourceUrl);
+    const stream = engineStore.getState().playback.recording?.streamingPlayback;
     if (
       !account.user ||
       account.pending ||
+      !stream ||
       !canStartClipRecording() ||
       !filename ||
       get().active ||
@@ -102,24 +113,28 @@ export const clipStore = createStore<ClipState>((set, get) => ({
     samples = [];
     sourceDemo = filename;
     recordingOwner = account.user.discordId;
-    set({
-      recording: true,
-      draft: null,
-      elapsedMs: 0,
-      smoothingLevel: 0,
-      error: null,
-    });
+    captureInterpolation =
+      stream.currentPlayerInterpolation ?? DEFAULT_PLAYER_INTERPOLATION;
+    releaseCaptureInterpolation =
+      stream.holdPlayerInterpolation?.(captureInterpolation);
+    set({ recording: true, elapsedMs: 0, smoothingLevel: 0, error: null });
     return true;
   },
   stop() {
     if (!get().recording) return;
     const draft =
       sourceDemo && samples.length > 1 && samples.at(-1)!.timeMs > 0
-        ? { version: 1 as const, sourceDemo, samples: [...samples] }
+        ? {
+            version: 1 as const,
+            sourceDemo,
+            playerInterpolation: captureInterpolation,
+            samples: [...samples],
+          }
         : null;
     samples = [];
     sourceDemo = null;
     recordingOwner = null;
+    if (!draft) releaseCapture();
     set({
       recording: false,
       draft,
@@ -134,6 +149,7 @@ export const clipStore = createStore<ClipState>((set, get) => ({
     if (draft) engineStore.getState().setPlaybackStatus("paused");
   },
   discard() {
+    releaseCapture();
     samples = [];
     sourceDemo = null;
     recordingOwner = null;
@@ -249,7 +265,7 @@ export function installClipStateGuards(): () => void {
   const stopForNavigation = (discardDraft = false) => {
     const state = clipStore.getState();
     if (state.recording || (discardDraft && state.draft)) state.discard();
-    if (state.active) state.stopPlayback();
+    else if (state.active) state.stopPlayback();
   };
   const stopEngine = engineStore.subscribe((state, previous) => {
     if (state.playback.recording !== previous.playback.recording)
@@ -274,10 +290,11 @@ export function installClipStateGuards(): () => void {
       stopForNavigation(true);
   });
   const stopAccount = appAccountStore.subscribe((state, previous) => {
+    const clip = clipStore.getState();
     if (
-      (clipStore.getState().recording &&
+      (clip.recording &&
         (state.pending || state.user?.discordId !== recordingOwner)) ||
-      (clipStore.getState().draft &&
+      (clip.draft &&
         (state.pending || state.user?.discordId !== previous.user?.discordId))
     )
       clipStore.getState().discard();

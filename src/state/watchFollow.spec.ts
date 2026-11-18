@@ -98,6 +98,55 @@ describe("free-fly transitions", () => {
     expect(streamPlaybackStore.getState().cameraMode).toBe("freeFly");
   });
 
+  it.each([
+    {
+      source: "a player-recorded demo",
+      cycle: () => cycleDemoCameraMode(true, -1),
+      start: "original",
+      order: ["firstPersonOverride", "orbitOverride", "freeFly", "original"],
+    },
+    {
+      source: "a MapGenius demo",
+      cycle: () => cycleDemoCameraMode(false, -1),
+      start: "freeFly",
+      order: ["firstPersonOverride", "orbitOverride", "freeFly"],
+    },
+    {
+      source: "live watching",
+      cycle: () => cycleWatchObserverMode(-1),
+      start: "freeFly",
+      order: ["firstPersonOverride", "orbitOverride", "freeFly"],
+    },
+  ] as const)("cycles backward through $source", ({ cycle, start, order }) => {
+    gameEntityStore
+      .getState()
+      .setAllStreamEntities([player("100", 32), player("101", 33)]);
+    enterWatchFollow("101");
+    exitToFreeFly();
+    streamPlaybackStore.setState({ cameraMode: start });
+
+    for (const mode of order) {
+      cycle();
+      expect(streamPlaybackStore.getState()).toMatchObject({
+        cameraMode: mode,
+        followEntityId:
+          mode === "firstPersonOverride" || mode === "orbitOverride"
+            ? "101"
+            : null,
+      });
+    }
+  });
+
+  it("skips player views when cycling backward without a player", () => {
+    streamPlaybackStore.setState({ cameraMode: "original" });
+    cycleDemoCameraMode(true, -1);
+    expect(streamPlaybackStore.getState().cameraMode).toBe("freeFly");
+    cycleDemoCameraMode(false, -1);
+    expect(streamPlaybackStore.getState().cameraMode).toBe("freeFly");
+    cycleDemoCameraMode(true, -1);
+    expect(streamPlaybackStore.getState().cameraMode).toBe("original");
+  });
+
   it("clears live/watch follow when detaching from first person or a flag", () => {
     gameEntityStore
       .getState()

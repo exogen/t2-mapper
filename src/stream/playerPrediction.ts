@@ -8,13 +8,17 @@ import type {
 import { PlayerCollision } from "../collision/playerCollision";
 import { waterLevelAt } from "../collision/waterLevel";
 import { cloneData } from "../cloneData";
+import { withCollisionQueryBatch } from "../collision/worldCollision";
+import {
+  DEFAULT_PLAYER_INTERPOLATION,
+  type PlayerInterpolationSettings,
+} from "./playerInterpolation";
 
 // Retail constants: 0x79c140 (TickSec), 0x79b400/404/408 (warp/prediction).
 // TickMs is 32; retail physics nevertheless uses 1/32, not TickMs / 1000.
 export const PLAYER_TICK_SEC = 1 / 32;
-export const MAX_PREDICTION_TICKS = 30;
-const MIN_WARP_TICKS = 0.5;
-const MAX_WARP_TICKS = 3;
+export const MAX_PREDICTION_TICKS =
+  DEFAULT_PLAYER_INTERPOLATION.maxPredictionTicks;
 const MOVE_STATE = 1,
   RECOVER_STATE = 2;
 const SKI_HOLD_TICKS = 22;
@@ -96,7 +100,7 @@ export class PlayerPrediction {
   /** A controlling client in third person can turn its head with freeLook. */
   allowFreelook = false;
   disableMove = false;
-  predictionCount = 0;
+  predictionCount: number;
   warpTicks = 0;
   actionState = MOVE_STATE;
   recoverTicks = 0;
@@ -127,6 +131,10 @@ export class PlayerPrediction {
   private readonly firstNormal = new Vector3();
   private readonly travel = new Vector3();
   private initialized = false;
+  // Demo packets are applied at tick boundaries. updatePos sets delta.dt
+  // to one and an unwarped packet (initial position or teleport) clears it.
+  private hasMovementDelta = false;
+  private readonly interpolation: Readonly<PlayerInterpolationSettings>;
 
   data: PlayerDataBlock;
 
@@ -137,8 +145,11 @@ export class PlayerPrediction {
   constructor(
     data: PlayerDataBlock,
     collideWithField?: (id: string) => boolean,
+    interpolation = DEFAULT_PLAYER_INTERPOLATION,
   ) {
     this.data = data;
+    this.interpolation = interpolation;
+    this.predictionCount = interpolation.maxPredictionTicks;
     this.collision = new PlayerCollision(collideWithField);
     const box = data.boxSize;
     this.size = new Vector3(box?.x ?? 1, box?.y ?? 1, box?.z ?? 2);
@@ -180,12 +191,16 @@ export class PlayerPrediction {
         contactTimer: this.contactTimer,
         rotOffset: this.rotOffset,
         initialized: this.initialized,
+        hasMovementDelta: this.hasMovementDelta,
         move: structuredClone(this.move),
       },
     };
   }
 
-  restoreState(state: ReturnType<PlayerPrediction["saveState"]>): void {
+  restoreState(
+    state: ReturnType<PlayerPrediction["saveState"]>,
+    savedPredictionLimit = this.interpolation.maxPredictionTicks,
+  ): void {
     this.position.fromArray(state.position);
     this.velocity.fromArray(state.velocity);
     this.posVec.fromArray(state.posVec);
@@ -193,6 +208,17 @@ export class PlayerPrediction {
     this.warpOffset.fromArray(state.warpOffset);
     this.jumpSurfaceNormal.fromArray(state.jumpSurfaceNormal);
     Object.assign(this, cloneData(state.values));
+    // A shared checkpoint may have been captured with a longer prediction
+    // budget or warp. Keep its pose and the outstanding warp's destination.
+    const { maxPredictionTicks, maxWarpTicks } = this.interpolation;
+    const ticksUsed = savedPredictionLimit - this.predictionCount;
+    this.predictionCount = maxPredictionTicks - ticksUsed;
+    if (this.warpTicks > maxWarpTicks) {
+      const scale = this.warpTicks / maxWarpTicks;
+      this.warpOffset.multiplyScalar(scale);
+      this.rotOffset *= scale;
+      this.warpTicks = maxWarpTicks;
+    }
   }
 
   /** Armor changes preserve the player's current simulation state. */
@@ -203,12 +229,36 @@ export class PlayerPrediction {
   }
 
   /** Packet values are authoritative. allowWarp=false is a teleport, not a lerp. */
-  unpackUpdate(update: PlayerGhostData, initial = false): void {
+  unpackUpdate(
+    update: PlayerGhostData,
+    initial = false,
+    latencyTicks = 0,
+    gravity = 0,
+  ): void {
+    if (update.position)
+      this.unpackMovement(
+        update,
+        update.position,
+        initial,
+        latencyTicks,
+        gravity,
+      );
+    // Retail reads energy after movement, including any latency forecast.
     if (typeof update.energy === "number")
       this.energy = update.energy * (this.data.maxEnergy ?? 0);
-    if (!update.position) return;
+  }
+
+  private unpackMovement(
+    update: PlayerGhostData,
+    packetPosition: NonNullable<PlayerGhostData["position"]>,
+    initial: boolean,
+    latencyTicks: number,
+    gravity: number,
+  ): void {
     const oldSpeed = this.velocity.length();
-    this.predictionCount = MAX_PREDICTION_TICKS;
+    const { maxPredictionTicks, minWarpTicks, maxWarpTicks } =
+      this.interpolation;
+    this.predictionCount = maxPredictionTicks;
     if (update.velocity) this.velocity.copy(update.velocity);
     if (update.move) this.move = unclampMove(update.move);
     this.actionState = update.actionState ?? this.actionState;
@@ -224,43 +274,72 @@ export class PlayerPrediction {
     this.headPitchVec = this.headYawVec = 0;
     this.warpTicks = 0;
     if (this.initialized && !initial && update.allowWarp) {
-      this.warpOffset.copy(update.position).sub(this.position);
+      const { x, y, z } = this.position;
+      const previousYaw = this.yaw;
+      let position = packetPosition;
+      if (latencyTicks > 0 && !this.mounted) {
+        this.position.copy(packetPosition);
+        this.yaw = yaw;
+        withCollisionQueryBatch(() => {
+          for (let i = 0; i < latencyTicks; i++) this.advanceMove(gravity, 0);
+        });
+        // updatePos wrote delta.pos at the projected endpoint. Retail compares
+        // the projected position against that delta, even after it restores
+        // the pre-packet transform (Player::unpackUpdate, 0x5dbac7).
+        position = this.position;
+      }
+      this.warpOffset.copy(position).sub(this.position);
       const distancePerTick =
         (oldSpeed + this.velocity.length()) * 0.5 * PLAYER_TICK_SEC;
       const ticks =
         distancePerTick > 0.00001
           ? this.warpOffset.length() / distancePerTick
-          : MAX_WARP_TICKS;
-      if (ticks > MIN_WARP_TICKS) {
+          : maxWarpTicks;
+      if (ticks > minWarpTicks) {
         this.warpTicks = Math.min(
-          MAX_WARP_TICKS,
+          maxWarpTicks,
           Math.max(1, Math.floor(ticks + 0.5)),
         );
         this.warpOffset.divideScalar(this.warpTicks);
         this.rotOffset = angleDifference(yaw, this.yaw) / this.warpTicks;
+        this.position.set(x, y, z);
         return;
       }
+      if (this.hasMovementDelta) {
+        this.posVec.set(x, y, z).sub(position);
+        this.rotVec = angleDifference(previousYaw, yaw);
+      } else {
+        this.posVec.set(0, 0, 0);
+        this.rotVec = 0;
+      }
+      this.position.copy(position);
+    } else {
+      this.position.copy(packetPosition);
+      this.posVec.set(0, 0, 0);
+      this.rotVec = 0;
+      this.hasMovementDelta = false;
     }
     this.initialized = true;
-    this.position.copy(update.position);
     this.yaw = yaw;
-    this.posVec.set(0, 0, 0);
-    this.rotVec = 0;
   }
 
   /** Control sync uses full precision packet data rather than the ghost MoveMask. */
   readPacketData(update: PlayerPacketData): void {
-    this.unpackUpdate({
-      ...update,
-      headX: undefined,
-      headZ: undefined,
-      allowWarp: false,
-    });
+    // Player::readPacketData (0x5dab20) replaces exact control state without
+    // restarting the ghost prediction budget or discarding its render delta.
+    this.actionState = update.actionState ?? this.actionState;
+    this.recoverTicks = update.recoverTicks ?? this.recoverTicks;
+    if (update.position) {
+      this.position.copy(update.position);
+      this.initialized = true;
+    }
+    if (update.velocity) this.velocity.copy(update.velocity);
+    if (update.rotationZ != null) this.yaw = update.rotationZ;
     if (update.headX != null) this.headPitch = update.headX;
     if (update.headZ != null) this.headYaw = update.headZ;
     this.exactView = true;
     if (update.energyLevel != null) this.energy = update.energyLevel;
-    if (update.jumpDelay != null) this.jumpDelay = update.jumpDelay;
+    this.jumpDelay = update.jumpDelay ?? 0;
     if (update.jumpSurfaceLastContact != null)
       this.jumpSurfaceLastContact = update.jumpSurfaceLastContact;
     this.disableMove = update.disableMove ?? false;
@@ -280,9 +359,6 @@ export class PlayerPrediction {
 
   processTick(gravity: number, move?: PlayerMove, rechargeRate = 0): void {
     this.jumpAction = undefined;
-    this.posVec.set(0, 0, 0);
-    this.rotVec = 0;
-    this.headPitchVec = this.headYawVec = 0;
     if (!this.initialized) return;
     if (this.warpTicks > 0) {
       this.warpTicks--;
@@ -299,6 +375,10 @@ export class PlayerPrediction {
       this.contactTimer++;
       return;
     }
+    this.advanceMove(gravity, rechargeRate);
+  }
+
+  private advanceMove(gravity: number, rechargeRate: number): void {
     this.energy = Math.min(
       this.data.maxEnergy ?? 0,
       this.energy + rechargeRate,
@@ -319,6 +399,7 @@ export class PlayerPrediction {
     this.updateMove(gravity);
     this.updatePos();
     this.posVec.copy(this.initial).sub(this.position);
+    this.hasMovementDelta = true;
   }
 
   /**

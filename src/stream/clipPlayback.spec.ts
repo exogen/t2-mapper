@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import type { ClipTake } from "../../relay/clipTypes";
 import type { StreamRecording } from "./types";
+import { RETAIL_PLAYER_INTERPOLATION } from "./playerInterpolation";
 
 const fixture = vi.hoisted(() => ({
   state: {} as {
@@ -9,17 +10,20 @@ const fixture = vi.hoisted(() => ({
       status: string;
       seekNonce: number;
       seekIntentNonce: number;
+      seekFailed: boolean;
       downloadComplete: boolean;
       demoBuffer: ArrayBuffer | null;
     };
   },
   listeners: new Set<() => void>(),
+  clipListeners: new Set<(state: { active: ClipTake | null }) => void>(),
   events: [] as string[],
   source: "test.rec",
   read: vi.fn(),
   play: vi.fn(),
   stop: vi.fn(),
   draft: null as ClipTake | null,
+  active: null as ClipTake | null,
   seek: vi.fn(),
   exitDirector: vi.fn(),
 }));
@@ -33,7 +37,12 @@ vi.mock("../state/clipStore", () => ({
       play: fixture.play,
       stopPlayback: fixture.stop,
       draft: fixture.draft,
+      active: fixture.active,
     }),
+    subscribe(listener: (state: { active: ClipTake | null }) => void) {
+      fixture.clipListeners.add(listener);
+      return () => fixture.clipListeners.delete(listener);
+    },
   },
   seekClipSource: (...args: unknown[]) => fixture.seek(...args),
 }));
@@ -70,9 +79,11 @@ let imported: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   vi.resetAllMocks();
   fixture.listeners.clear();
+  fixture.clipListeners.clear();
   fixture.events = [];
   fixture.source = "test.rec";
   fixture.draft = null;
+  fixture.active = null;
   imported = vi.fn(() => fixture.events.push("import"));
   recording = {
     source: "demo",
@@ -84,6 +95,7 @@ beforeEach(() => {
       status: "paused",
       seekNonce: 1,
       seekIntentNonce: 1,
+      seekFailed: false,
       downloadComplete: true,
       demoBuffer: new ArrayBuffer(4),
     },
@@ -94,9 +106,13 @@ beforeEach(() => {
     fixture.state.playback.status = "seeking";
     fixture.state.playback.seekNonce++;
     fixture.state.playback.seekIntentNonce++;
+    fixture.state.playback.seekFailed = false;
     return true;
   });
-  fixture.play.mockImplementation(() => fixture.events.push("play"));
+  fixture.play.mockImplementation((active: ClipTake) => {
+    fixture.events.push("play");
+    fixture.active = active;
+  });
 });
 
 function settle() {
@@ -105,6 +121,8 @@ function settle() {
 }
 
 it("imports the clip checkpoint before seeking and waits for the target scene before starting the camera track", async () => {
+  const hold = vi.fn(() => () => {});
+  recording.streamingPlayback.holdPlayerInterpolation = hold;
   const task = startClipPlayback(
     take,
     recording,
@@ -112,6 +130,8 @@ it("imports the clip checkpoint before seeking and waits for the target scene be
     "checkpoint",
   );
   await vi.waitFor(() => expect(fixture.seek).toHaveBeenCalledWith(100));
+  expect(hold).toHaveBeenCalledWith(RETAIL_PLAYER_INTERPOLATION);
+  expect(imported).toHaveBeenCalledWith(expect.any(Array));
   expect(fixture.exitDirector).toHaveBeenCalledOnce();
   expect(fixture.events).toEqual(["import", "seek"]);
   expect(fixture.play).not.toHaveBeenCalled();
@@ -119,6 +139,36 @@ it("imports the clip checkpoint before seeking and waits for the target scene be
   await task;
   expect(fixture.events).toEqual(["import", "seek", "play"]);
   expect(fixture.listeners.size).toBe(0);
+});
+
+it("holds the creator's interpolation through checkpoint restore and playback", async () => {
+  const settings = {
+    maxLatencyTicks: 0,
+    maxPredictionTicks: 25,
+    maxWarpTicks: 2,
+    minWarpTicks: 1,
+  };
+  const release = vi.fn();
+  recording.streamingPlayback.holdPlayerInterpolation = (value) => {
+    expect(value).toEqual(settings);
+    fixture.events.push("creator");
+    return release;
+  };
+  const task = startClipPlayback(
+    { ...take, playerInterpolation: settings },
+    recording,
+    new AbortController().signal,
+    "checkpoint",
+  );
+  await vi.waitFor(() => expect(fixture.seek).toHaveBeenCalledWith(100));
+  expect(imported).toHaveBeenCalledWith(expect.any(Array));
+  expect(fixture.events).toEqual(["creator", "import", "seek"]);
+  settle();
+  await task;
+  expect(release).not.toHaveBeenCalled();
+  for (const listener of fixture.clipListeners) listener({ active: null });
+  expect(release).toHaveBeenCalledOnce();
+  expect(fixture.clipListeners.size).toBe(0);
 });
 
 it("does not seek or start a replaced demo after asynchronous checkpoint validation", async () => {
@@ -229,12 +279,15 @@ it("lets a newer start replace an earlier request still validating its checkpoin
 });
 
 it("removes pending seek listeners on cancellation", async () => {
+  const release = vi.fn();
+  recording.streamingPlayback.holdPlayerInterpolation = () => release;
   const abort = new AbortController();
   const task = startClipPlayback(take, recording, abort.signal);
   abort.abort(new Error("Canceled"));
   await expect(task).rejects.toThrow("Canceled");
   expect(fixture.play).not.toHaveBeenCalled();
   expect(fixture.listeners.size).toBe(0);
+  expect(release).toHaveBeenCalledOnce();
 });
 
 it("does not start its camera track when the starting seek is canceled", async () => {
@@ -244,6 +297,18 @@ it("does not start its camera track when the starting seek is canceled", async (
   ).rejects.toThrow(/canceled/);
   expect(fixture.play).not.toHaveBeenCalled();
   expect(fixture.listeners.size).toBe(0);
+});
+
+it("rejects a failed starting seek and releases the interpolation hold", async () => {
+  const release = vi.fn();
+  recording.streamingPlayback.holdPlayerInterpolation = () => release;
+  const task = startClipPlayback(take, recording, new AbortController().signal);
+  fixture.state.playback.seekFailed = true;
+  settle();
+  await expect(task).rejects.toThrow(/restore the clip's starting view/);
+  expect(fixture.play).not.toHaveBeenCalled();
+  expect(fixture.listeners.size).toBe(0);
+  expect(release).toHaveBeenCalledOnce();
 });
 
 it("waits for complete source bytes and rejects previews from a different source", async () => {

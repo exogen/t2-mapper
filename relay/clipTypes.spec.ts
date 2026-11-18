@@ -47,6 +47,29 @@ it("accepts hosted source keys, normalizes quaternion data, and strips unknown f
   expect(input.samples[0].position[0]).toBe(0);
 });
 
+it("retains the creator's four interpolation values through validation and trimming", () => {
+  const settings = {
+    maxLatencyTicks: 1.5,
+    maxPredictionTicks: 10,
+    maxWarpTicks: 1,
+    minWarpTicks: 1.25,
+  };
+  const clip = readClipTake({ ...take(), playerInterpolation: settings });
+  expect(trimClipTake(clip, 100, 900).playerInterpolation).toEqual(settings);
+  expect(readClipTake(take())).not.toHaveProperty("playerInterpolation");
+  for (const invalid of [
+    null,
+    {},
+    { ...settings, maxLatencyTicks: -1 },
+    { ...settings, maxWarpTicks: 1.25 },
+    { ...settings, maxWarpTicks: "3" },
+  ]) {
+    expect(() =>
+      readClipTake({ ...take(), playerInterpolation: invalid }),
+    ).toThrow("Invalid clip player interpolation");
+  }
+});
+
 it("preserves and copies creator HUD settings through validation and trimming", () => {
   const input = {
     ...take(),

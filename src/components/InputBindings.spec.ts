@@ -13,9 +13,11 @@ import {
   FOLLOW_KEYBOARD_INPUT,
   FREE_FLY_INPUT,
   LIVE_FOLLOW_INPUT,
+  LIVE_OBSERVER_INPUT,
   MOVABLE_CAMERA_INPUT,
   PLAYER_ORBIT_INPUT,
   QUICK_CAM_INPUT,
+  REVERSE_OBSERVER_INPUT,
 } from "./inputMap";
 
 const test = vi.hoisted(() => {
@@ -121,6 +123,23 @@ it("records with R without handling typing or repeating while the key is held", 
   key("keyup", "KeyR");
   key("keydown", "KeyR");
   expect(record).toHaveBeenCalledTimes(2);
+});
+
+it("cycles in only one direction per F press, even if Shift is released first", () => {
+  mount(LIVE_OBSERVER_INPUT);
+  mount(REVERSE_OBSERVER_INPUT);
+  const forward = watch("toggleObserverMode");
+  const backward = watch("toggleObserverModeBackward");
+  key("keydown", "ShiftRight");
+  key("keydown", "KeyF");
+  key("keydown", "KeyF");
+  key("keyup", "ShiftRight");
+  key("keyup", "KeyF");
+  expect(backward).toHaveBeenCalledOnce();
+  expect(forward).not.toHaveBeenCalled();
+  key("keydown", "KeyF");
+  expect(forward).toHaveBeenCalledOnce();
+  expect(backward).toHaveBeenCalledOnce();
 });
 
 it.each([0, 1, 2, 9])(
@@ -374,7 +393,7 @@ it("preserves camera arrows on the playback scrubber even when Radix stepping wa
   });
 });
 
-it("preserves letter shortcuts on ordinary buttons while reserving their native arrow keys", () => {
+it("preserves camera and letter shortcuts on ordinary buttons", () => {
   mount(MOVABLE_CAMERA_INPUT.slice(0, 4));
   mount(FOLLOW_KEYBOARD_INPUT);
   Object.assign(document, { activeElement: keyboardElement("BUTTON") });
@@ -384,8 +403,32 @@ it("preserves letter shortcuts on ordinary buttons while reserving their native 
   expect(next).toHaveBeenCalledOnce();
   key("keyup", "KeyN");
   key("keydown", "ArrowUp");
+  expect(look).toHaveBeenCalledOnce();
+  for (const activationKey of ["Space", "Enter", "NumpadEnter"]) {
+    key("keydown", activationKey);
+    expect(inputControlsStore.getState().keys.has(activationKey)).toBe(false);
+  }
+});
+
+it("keeps arrows consumed by a focus-moving widget out of camera controls", () => {
+  mount(MOVABLE_CAMERA_INPUT.slice(0, 4));
+  const trigger = keyboardElement("BUTTON");
+  Object.assign(document, { activeElement: keyboardElement("BUTTON") });
+  const look = watch("lookUp");
+  key("keydown", "ArrowUp", { target: trigger, preventDefault: true });
   expect(look).not.toHaveBeenCalled();
 });
+
+it.each(["radio", "range"])(
+  "lets a native %s input own its arrow keys",
+  (type) => {
+    mount(MOVABLE_CAMERA_INPUT.slice(0, 4));
+    Object.assign(document, { activeElement: { tagName: "INPUT", type } });
+    const look = watch("lookUp");
+    key("keydown", "ArrowUp");
+    expect(look).not.toHaveBeenCalled();
+  },
+);
 
 it("releases a held game key after focus moves into a keyboard widget", () => {
   mount(FREE_FLY_INPUT.slice(0, -1));

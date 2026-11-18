@@ -246,6 +246,23 @@ describe("frame publication and transport", () => {
     expect(state().playback.status).toBe("playing");
   });
 
+  it("does not mark a replacement seek as failed", () => {
+    state().seekPlayback(10);
+    step.mockImplementationOnce(() => {
+      state().seekPlayback(20);
+      throw new Error("broken frame");
+    });
+    expect(() => frame()).toThrow("broken frame");
+    expect(state().playback).toMatchObject({
+      status: "seeking",
+      seekTime: 20,
+      seekFailed: false,
+    });
+    frame();
+    expect(clock.time).toBe(20);
+    expect(state().playback.status).toBe("playing");
+  });
+
   it.each(["step", "publish"])(
     "clears loading and pauses if %s fails, then accepts another seek",
     (phase) => {
@@ -261,6 +278,7 @@ describe("frame publication and transport", () => {
         status: "paused",
         resumeAfterSeek: null,
         seekProgress: null,
+        seekFailed: true,
       });
       step.mockClear();
       const publish = vi.fn();
@@ -269,9 +287,11 @@ describe("frame publication and transport", () => {
       expect(step).not.toHaveBeenCalled();
       expect(publish).not.toHaveBeenCalled();
       state().seekPlayback(20);
+      expect(state().playback.seekFailed).toBe(false);
       frame();
       expect(clock.time).toBe(20);
       expect(state().playback.status).toBe("paused");
+      expect(state().playback.seekFailed).toBe(false);
     },
   );
 

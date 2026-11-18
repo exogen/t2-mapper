@@ -1,7 +1,12 @@
-import type { Quaternion } from "three";
-import type { StreamEntity } from "./types";
+import { Quaternion } from "three";
+import type { DemoPlayerAim, PlayerTickView, StreamEntity } from "./types";
 import { MAX_PITCH, threeForwardHeading } from "./streamHelpers";
 import { clamp } from "../mathUtils";
+import {
+  MAX_LOOK_ANGLE,
+  PACKED_BODY_YAW_STEP,
+  PACKED_HEAD_STEP,
+} from "./quantizedPlayerAim";
 
 export interface PlayerViewAngles {
   yaw: number;
@@ -16,13 +21,7 @@ export interface PlayerHeadAngles {
   yaw: number;
 }
 
-type PlayerView = Pick<
-  StreamEntity,
-  "playerDelta" | "headPitch" | "headYaw" | "viewQuantized"
->;
-
-/** All Tribes 2 armor datablocks use a maxLookAngle of 1.5 radians. */
-const MAX_LOOK_ANGLE = 1.5;
+type PlayerView = PlayerTickView & Pick<StreamEntity, "playerDelta">;
 
 /**
  * Half a packed step of a ghost's view. Player::packUpdate (FUN_005dae80)
@@ -35,10 +34,16 @@ const MAX_LOOK_ANGLE = 1.5;
  * step, and on a demo's 345 laser rifle shots it moved the view from 2.7°
  * left of and 1.3° above the shots to within 0.1°.
  */
-const HALF_YAW_STEP = Math.PI / 127;
-const HALF_HEAD_STEP = 1 / 63;
+const HALF_YAW_STEP = PACKED_BODY_YAW_STEP / 2;
+const HALF_HEAD_STEP = PACKED_HEAD_STEP / 2;
 
 const _head: PlayerHeadAngles = { pitch: 0, yaw: 0 };
+const _tickRotation = new Quaternion();
+
+function interpolateYaw(from: number, to: number, t: number): number {
+  const delta = to - from;
+  return from + Math.atan2(Math.sin(delta), Math.cos(delta)) * t;
+}
 
 /**
  * A player's head angles at `interpT`. With `aimCorrection`, a view a ghost
@@ -89,6 +94,8 @@ export function playerBodyYawCorrection(
  * Player::getEyeTransform view angles, without the eye bone's animation.
  * `bodyRotation` is the body as rendered, which already carries
  * playerBodyYawCorrection, or the vehicle a mounted player rides.
+ * A previous tick view lets demo first-person cameras interpolate packet
+ * corrections too, without changing the body's rendered transform.
  */
 export function getPlayerViewAngles(
   bodyRotation: Quaternion,
@@ -96,9 +103,98 @@ export function getPlayerViewAngles(
   interpT: number,
   out: PlayerViewAngles,
   aimCorrection = false,
+  previousTickView?: PlayerTickView,
+  fittedAim?: DemoPlayerAim,
 ): PlayerViewAngles {
-  const head = getPlayerHeadAngles(player, interpT, _head, aimCorrection);
-  out.yaw = threeForwardHeading(bodyRotation) + head.yaw * MAX_LOOK_ANGLE;
+  const lifeChanged =
+    player &&
+    previousTickView &&
+    !!player.damageState !== !!previousTickView.damageState;
+  const aimCut = previousTickView?.aimCut;
+  if (
+    aimCut &&
+    player?.viewQuantized &&
+    !player.mountObjectId &&
+    !player.damageState
+  ) {
+    const currentAim = fittedAim?.current ?? player.reconstructedAim;
+    if (currentAim) {
+      out.yaw = currentAim.bodyYaw + currentAim.headYaw;
+      out.pitch = clamp(currentAim.pitch, -MAX_PITCH, MAX_PITCH);
+      return out;
+    }
+  }
+  if (
+    !aimCut &&
+    player?.viewQuantized &&
+    previousTickView?.viewQuantized &&
+    !player.damageState &&
+    !previousTickView.damageState &&
+    player.mountObjectId === previousTickView.mountObjectId &&
+    player.mountNode === previousTickView.mountNode &&
+    (player.mountObjectId || (player.rotation && previousTickView.rotation))
+  ) {
+    const currentAim = fittedAim?.current ?? player.reconstructedAim;
+    const previousAim =
+      fittedAim?.previous ?? previousTickView.reconstructedAim;
+    if (!player.mountObjectId && currentAim && previousAim) {
+      out.yaw = interpolateYaw(
+        previousAim.bodyYaw + previousAim.headYaw,
+        currentAim.bodyYaw + currentAim.headYaw,
+        interpT,
+      );
+      out.pitch = clamp(
+        previousAim.pitch + (currentAim.pitch - previousAim.pitch) * interpT,
+        -MAX_PITCH,
+        MAX_PITCH,
+      );
+      return out;
+    }
+    const { pitch: currentPitch, yaw: currentHeadYaw } = getPlayerHeadAngles(
+      player,
+      1,
+      _head,
+      aimCorrection,
+    );
+    const previous = getPlayerHeadAngles(
+      previousTickView,
+      1,
+      _head,
+      aimCorrection,
+    );
+    const headPitch =
+      previous.pitch + (currentPitch - previous.pitch) * interpT;
+    let previousYaw = previous.yaw * MAX_LOOK_ANGLE;
+    let currentYaw = currentHeadYaw * MAX_LOOK_ANGLE;
+    const baseYaw = player.mountObjectId
+      ? threeForwardHeading(bodyRotation)
+      : playerBodyYawCorrection(player, aimCorrection);
+    if (!player.mountObjectId) {
+      previousYaw += threeForwardHeading(
+        _tickRotation.fromArray(previousTickView.rotation!),
+      );
+      currentYaw += threeForwardHeading(
+        _tickRotation.fromArray(player.rotation!),
+      );
+    }
+    out.yaw = baseYaw + interpolateYaw(previousYaw, currentYaw, interpT);
+    out.pitch = clamp(headPitch * MAX_LOOK_ANGLE, -MAX_PITCH, MAX_PITCH);
+    return out;
+  }
+  // The rendered body can still interpolate through an aim discontinuity.
+  const snap = lifeChanged || aimCut;
+  const bodyYaw =
+    snap && player?.rotation && !player.mountObjectId
+      ? threeForwardHeading(_tickRotation.fromArray(player.rotation)) +
+        playerBodyYawCorrection(player, aimCorrection)
+      : threeForwardHeading(bodyRotation);
+  const head = getPlayerHeadAngles(
+    player,
+    snap ? 1 : interpT,
+    _head,
+    aimCorrection,
+  );
+  out.yaw = bodyYaw + head.yaw * MAX_LOOK_ANGLE;
   out.pitch = clamp(head.pitch * MAX_LOOK_ANGLE, -MAX_PITCH, MAX_PITCH);
   return out;
 }

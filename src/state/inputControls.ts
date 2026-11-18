@@ -261,16 +261,8 @@ export function notifySubscribers(action: string) {
 // InputBindings instances subscribe to key changes to derive actions,
 // instead of each attaching their own keyboard listeners.
 
-// Keys that interactive (non-text) elements use natively.
-const INTERACTIVE_KEYS = new Set([
-  "Space",
-  "Enter",
-  "NumpadEnter",
-  "ArrowUp",
-  "ArrowDown",
-  "ArrowLeft",
-  "ArrowRight",
-]);
+const ACTIVATION_KEYS = new Set(["Space", "Enter", "NumpadEnter"]);
+const ARROW_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
 
 function shouldIgnoreForFocus(e: KeyboardEvent): boolean {
   // Tab: capture when pointer is locked (prevent focus shift), otherwise
@@ -292,12 +284,25 @@ function shouldIgnoreForFocus(e: KeyboardEvent): boolean {
     return true;
   }
 
+  const isArrow = ARROW_KEYS.has(e.code);
+  // Composite widgets such as accordion headers consume arrows for focus
+  // navigation. The playback scrubber prevents its own stepping for camera look.
+  if (
+    isArrow &&
+    e.defaultPrevented &&
+    !(e.target as HTMLElement | null)?.closest?.("[data-playback-seek]")
+  ) {
+    return true;
+  }
+
   const el = document.activeElement;
   if (!el || el === document.body) return false;
 
   const tag = el.tagName;
+  if (isArrow)
+    return tag === "INPUT" && (el as HTMLInputElement).type === "radio";
   if (tag === "INPUT" || tag === "BUTTON" || tag === "A" || tag === "SUMMARY") {
-    return INTERACTIVE_KEYS.has(e.code);
+    return ACTIVATION_KEYS.has(e.code);
   }
   return false;
 }

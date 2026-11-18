@@ -104,6 +104,54 @@ it("progressively damps jitter while preserving endpoint poses and transport", (
   }
 });
 
+it.each(["firstPersonOverride", "original"])(
+  "keeps %s samples exact while smoothing the surrounding camera segments",
+  (cameraMode) => {
+    const input = take(
+      Array.from({ length: 63 }, (_, index) =>
+        sample(index * 50, {
+          cameraMode: index >= 21 && index < 42 ? cameraMode : "freeFly",
+          cut: index === 21 || index === 42,
+          position: [index % 2 ? 10 : 0, 2, 3],
+          quaternion: index % 2 ? [0, 0.7071068, 0, 0.7071068] : [0, 0, 0, 1],
+          fov: index % 2 ? 100 : 75,
+        }),
+      ),
+    );
+    for (const level of [1, 2] as const) {
+      const result = smoothClipTake(input, level);
+      expect(result.samples.slice(21, 42)).toEqual(input.samples.slice(21, 42));
+      for (const index of [10, 52]) {
+        expect(result.samples[index].position).not.toEqual(
+          input.samples[index].position,
+        );
+        expect(result.samples[index].quaternion).not.toEqual(
+          input.samples[index].quaternion,
+        );
+        expect(result.samples[index].fov).not.toBe(input.samples[index].fov);
+      }
+      for (const time of [1050, 1123, 1555, 2049]) {
+        expect(sampleClipTake(result, time)).toEqual(
+          sampleClipTake(input, time),
+        );
+      }
+      const protectedTake = take(
+        input.samples.slice(21, 42).map((sample) => ({
+          ...sample,
+          timeMs: sample.timeMs - 1050,
+        })),
+      );
+      const protectedResult = smoothClipTake(protectedTake, level);
+      expect(protectedResult).toEqual(protectedTake);
+      expect(readClipTake(trimClipTake(result, 1050, 2050))).toEqual(
+        readClipTake(trimClipTake(input, 1050, 2050)),
+      );
+      protectedResult.samples[1].quaternion[0] = 1;
+      expect(protectedTake.samples[1].quaternion[0]).toBe(0);
+    }
+  },
+);
+
 it("preserves straight motion with uneven sample spacing instead of favoring dense frames", () => {
   const input = take(
     [0, 2, 5, 25, 50, 100, 220, 250, 400, 1000].map((timeMs) => sample(timeMs)),

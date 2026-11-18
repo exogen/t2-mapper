@@ -1,4 +1,5 @@
 import type { ClipTake } from "../../relay/clipTypes";
+import { RETAIL_PLAYER_INTERPOLATION } from "./playerInterpolation";
 import { clipStore, seekClipSource } from "../state/clipStore";
 import { engineStore } from "../state/engineStore";
 import { demoLoadStore } from "../state/demoLoadStore";
@@ -16,6 +17,7 @@ export async function startClipPlayback(
   signal: AbortSignal,
   checkpointText?: string,
 ): Promise<void> {
+  const interpolation = take.playerInterpolation ?? RETAIL_PLAYER_INTERPOLATION;
   const generation = ++startGeneration;
   let expectedSeekIntent = engineStore.getState().playback.seekIntentNonce;
   const ensureCurrent = () => {
@@ -40,49 +42,67 @@ export async function startClipPlayback(
   exitDirector();
   clipStore.getState().stopPlayback();
   engineStore.getState().setPlaybackStatus("paused");
+  let checkpoints: Awaited<ReturnType<typeof readDemoCheckpoints>> | undefined;
   if (checkpointText !== undefined) {
     const buffer = engineStore.getState().playback.demoBuffer;
     if (!buffer || !engineStore.getState().playback.downloadComplete)
       throw new Error("Wait for the source demo to finish downloading.");
-    const checkpoints = await readDemoCheckpoints(
-      checkpointText,
-      buffer,
-      signal,
-    );
+    checkpoints = await readDemoCheckpoints(checkpointText, buffer, signal);
     ensureCurrent();
     if (!recording.streamingPlayback.importCheckpoints || !checkpoints.length)
       throw new Error("The clip's starting checkpoint is unavailable.");
-    recording.streamingPlayback.importCheckpoints(checkpoints);
   }
   ensureCurrent();
   const first = take.samples[0];
   if (!first) throw new Error("The clip has no camera recording.");
-  if (!seekClipSource(first.demoTimeSec))
-    throw new Error("Clip playback was canceled.");
-  expectedSeekIntent = engineStore.getState().playback.seekIntentNonce;
-  await new Promise<void>((resolve, reject) => {
-    let unsubscribe = () => {};
-    const finish = (error?: unknown) => {
-      unsubscribe();
-      signal.removeEventListener("abort", aborted);
-      if (error) reject(error);
-      else resolve();
-    };
-    const aborted = () => finish(signal.reason);
-    const inspect = () => {
-      const { playback } = engineStore.getState();
-      if (signal.aborted) return finish(signal.reason);
-      if (
-        playback.recording !== recording ||
-        playback.seekIntentNonce !== expectedSeekIntent
-      )
-        return finish(new Error("Clip playback was interrupted."));
-      if (playback.status !== "seeking") finish();
-    };
-    unsubscribe = engineStore.subscribe(inspect);
-    signal.addEventListener("abort", aborted, { once: true });
-    inspect();
-  });
-  ensureCurrent();
-  clipStore.getState().play(take);
+  const releaseInterpolation =
+    recording.streamingPlayback.holdPlayerInterpolation?.(interpolation);
+  let holdingForPlayback = false;
+  try {
+    if (checkpoints)
+      recording.streamingPlayback.importCheckpoints?.(checkpoints);
+    if (!seekClipSource(first.demoTimeSec))
+      throw new Error("Clip playback was canceled.");
+    expectedSeekIntent = engineStore.getState().playback.seekIntentNonce;
+    await new Promise<void>((resolve, reject) => {
+      let unsubscribe = () => {};
+      const finish = (error?: unknown) => {
+        unsubscribe();
+        signal.removeEventListener("abort", aborted);
+        if (error) reject(error);
+        else resolve();
+      };
+      const aborted = () => finish(signal.reason);
+      const inspect = () => {
+        const { playback } = engineStore.getState();
+        if (signal.aborted) return finish(signal.reason);
+        if (
+          playback.recording !== recording ||
+          playback.seekIntentNonce !== expectedSeekIntent
+        )
+          return finish(new Error("Clip playback was interrupted."));
+        if (playback.seekFailed)
+          return finish(
+            new Error("Could not restore the clip's starting view."),
+          );
+        if (playback.status !== "seeking") finish();
+      };
+      unsubscribe = engineStore.subscribe(inspect);
+      signal.addEventListener("abort", aborted, { once: true });
+      inspect();
+    });
+    ensureCurrent();
+    clipStore.getState().play(take);
+    const active = clipStore.getState().active;
+    if (releaseInterpolation && active) {
+      holdingForPlayback = true;
+      const unsubscribe = clipStore.subscribe((state) => {
+        if (state.active === active) return;
+        unsubscribe();
+        releaseInterpolation();
+      });
+    }
+  } finally {
+    if (!holdingForPlayback) releaseInterpolation?.();
+  }
 }

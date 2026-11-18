@@ -7,7 +7,6 @@ import {
 } from "./InputControls";
 import { useRecording } from "./usePlayback";
 import { usePlayerOrbitLocked } from "./usePlayerOrbitLocked";
-import { isRelayRecording } from "../stream/demoDate";
 import { useStore } from "zustand";
 import { useInputMode } from "../state/inputModeStore";
 import {
@@ -34,7 +33,6 @@ import {
 import { BsShiftFill } from "react-icons/bs";
 import { CSSProperties, ReactNode, useEffect, useRef, useState } from "react";
 import { usePointerLocked } from "./usePointerLocked";
-import { isFollowingPlayer } from "../state/watchFollow";
 import styles from "./KeyboardOverlay.module.css";
 import {
   MAX_SPEED_MULTIPLIER,
@@ -363,6 +361,26 @@ function CyclePlayerRow() {
   );
 }
 
+function CycleCameraModeRow() {
+  return (
+    <div className={styles.Row}>
+      <Key
+        action="toggleObserverMode"
+        input="F"
+        actionAfter="toggleObserverModeBackward"
+        inputAfter={
+          <span className={styles.KeyChord} aria-label="Shift F">
+            <BsShiftFill className={styles.ShiftIcon} aria-hidden="true" />F
+          </span>
+        }
+        label="Cycle camera mode"
+        labelPosition="right"
+        inputSize="auto"
+      />
+    </div>
+  );
+}
+
 /** Number keys recall views; Shift saves the current camera. */
 export function QuickCamKey() {
   const flags = useFlagCameras().filter((flag) =>
@@ -574,38 +592,14 @@ function CommandCircuitOverlay({
 }
 
 /**
- * Demo-playback camera controls. F cycles original → free-fly → follow →
- * first-person → original; each mode shows only the inputs it uses. (The
- * behavior lives in demoCameraSelection — this only visualizes it.)
- * Relay (MapGenius) recordings have no original view to return to —
- * their mode cycle skips "original" and detaches in place instead.
+ * Demo-playback camera controls. Each mode shows the inputs it uses.
  */
 function DemoCameraOverlay() {
-  const recording = useRecording();
-  const relayRecording = isRelayRecording(recording?.recorderName ?? null);
   const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
-  const followEntityId = useStore(streamPlaybackStore, (s) => s.followEntityId);
   const followFlagSlot = useStore(streamPlaybackStore, (s) => s.followFlagSlot);
   const isFly = cameraMode === "freeFly";
   const isFollow = cameraMode === "orbitOverride";
   const following = isFollow || cameraMode === "firstPersonOverride";
-  // Label names the mode F switches TO (same copy as ObserverOverlay).
-  // Flag follow is a "secret" cycle slot between original and free-fly
-  // (number keys only) — from it, F resumes the cycle at free-fly.
-  const playerFollow =
-    followEntityId != null && followFlagSlot == null && isFollowingPlayer();
-  const nextModeLabel =
-    cameraMode === "original"
-      ? "Free-fly mode"
-      : cameraMode === "freeFly"
-        ? "Follow mode"
-        : cameraMode === "orbitOverride"
-          ? playerFollow
-            ? "First-person mode"
-            : "Free-fly mode"
-          : relayRecording
-            ? "Free-fly mode"
-            : "Original view";
   return (
     <>
       {isFly ? <MoveKeys /> : null}
@@ -633,15 +627,7 @@ function DemoCameraOverlay() {
         ) : (
           <QuickCamKey />
         )}
-        <div className={styles.Row}>
-          <Key
-            action="toggleObserverMode"
-            label={nextModeLabel}
-            input="F"
-            labelPosition="right"
-            inputSize="auto"
-          />
-        </div>
+        <CycleCameraModeRow />
       </div>
     </>
   );
@@ -713,22 +699,7 @@ function ObserverOverlay({
   const inputMode = mode ?? contextMode;
   const following = inputMode === "follow" || inputMode === "firstPerson";
   const isPointerLocked = usePointerLocked();
-  const followEntityId = useStore(streamPlaybackStore, (s) => s.followEntityId);
   const followFlagSlot = useStore(streamPlaybackStore, (s) => s.followFlagSlot);
-  // The observer key cycles fly → follow → first person (watch mode);
-  // the label names the NEXT mode. Live observers only toggle fly↔follow.
-  // Flag follow is a "secret" cycle slot (number keys only) — from it, F
-  // goes back to free-fly, never first person.
-  const playerFollow =
-    followEntityId != null && followFlagSlot == null && isFollowingPlayer();
-  const nextModeLabel =
-    inputMode === "fly"
-      ? "Follow mode"
-      : inputMode === "firstPerson"
-        ? "Free-fly mode"
-        : mode != null && playerFollow
-          ? "First-person mode"
-          : "Free-fly mode";
   return (
     <>
       {inputMode === "fly" ? <MoveKeys /> : null}
@@ -756,15 +727,19 @@ function ObserverOverlay({
         ) : !isPointerLocked ? (
           <RotateCameraRow />
         ) : null}
-        <div className={styles.Row}>
-          <Key
-            action="toggleObserverMode"
-            label={nextModeLabel}
-            input="F"
-            labelPosition="right"
-            inputSize="auto"
-          />
-        </div>
+        {mode != null ? (
+          <CycleCameraModeRow />
+        ) : (
+          <div className={styles.Row}>
+            <Key
+              action="toggleObserverMode"
+              label={inputMode === "fly" ? "Follow mode" : "Free-fly mode"}
+              input="F"
+              labelPosition="right"
+              inputSize="auto"
+            />
+          </div>
+        )}
       </div>
     </>
   );

@@ -134,11 +134,14 @@ export function installSpectator(engine: GameEngine): () => void {
       },
     ),
     // Client-side fly↔follow controls, mirroring the real observer's:
-    // F toggles modes, N / Shift-N or captured clicks cycle players
+    // F / Shift-F cycle modes, N / Shift-N or captured clicks cycle players
     // while following (fire and jet triggers), with the same keys in the
     // command circuit to observe the next/previous player.
     subscribeAction("toggleObserverMode", () => {
       if (isWatching()) cycleWatchObserverMode();
+    }),
+    subscribeAction("toggleObserverModeBackward", () => {
+      if (isWatching()) cycleWatchObserverMode(-1);
     }),
     subscribeFollowActions(isWatching),
     engine.scheduler.add(FramePriority.CameraSelect, () => {

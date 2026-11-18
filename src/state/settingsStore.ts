@@ -5,6 +5,13 @@ import {
   TEAM_COLOR_SCHEMES,
   type TeamColorScheme,
 } from "../iffTheme";
+import {
+  DEFAULT_PLAYER_INTERPOLATION,
+  RETAIL_PLAYER_INTERPOLATION,
+  normalizePlayerInterpolation,
+  samePlayerInterpolation,
+  type PlayerInterpolationSettings,
+} from "../stream/playerInterpolation";
 
 /** When to show player names under command circuit dot markers. */
 export type CcPlayerNames = "always" | "hover" | "never";
@@ -120,11 +127,9 @@ export interface Preferences {
   renderOnDemand: boolean;
   lodEnabled: boolean;
   showFpsMeter: boolean;
-  /**
-   * Read other players' packed view angles at the middle of their step
-   * wherever they're drawn: models, beams and follow cameras (playerView.ts).
-   */
+  /** Estimate other players' aim from their packed angles and available moves. */
   aimCorrection: boolean;
+  playerInterpolation: Readonly<PlayerInterpolationSettings>;
 }
 
 /** What the current app mode allows (see modeFeatureAccess). */
@@ -188,6 +193,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   lodEnabled: true,
   showFpsMeter: false,
   aimCorrection: true,
+  playerInterpolation: DEFAULT_PLAYER_INTERPOLATION,
 };
 
 /** The localStorage shape (flat HUD preferences, no session-only keys). */
@@ -198,6 +204,7 @@ type PersistedSettings = Partial<
   scoreHudPosition?: HudPosition;
   showQuickCamHud?: boolean;
   quickCamHudPosition?: HudPosition;
+  playerInterpolationOverride?: Readonly<PlayerInterpolationSettings>;
 };
 
 const STORAGE_KEY = "settings";
@@ -234,6 +241,15 @@ export function restorePreferences(
   copy("debugMode");
   copy("showFpsMeter");
   copy("aimCorrection", isBoolean);
+  // Older saves included the retail defaults even when only another preference changed.
+  const previous = saved.playerInterpolation;
+  const legacyOverride =
+    previous && !samePlayerInterpolation(previous, RETAIL_PLAYER_INTERPOLATION)
+      ? previous
+      : undefined;
+  restored.playerInterpolation = normalizePlayerInterpolation(
+    saved.playerInterpolationOverride ?? legacyOverride,
+  );
   copy("audioEnabled");
   copy("animationEnabled");
   copy("shadowsEnabled");
@@ -310,12 +326,19 @@ export function restorePreferences(
 function toPersisted(state: Preferences): PersistedSettings {
   const {
     hudPreferences,
+    playerInterpolation,
     renderOnDemand: _renderOnDemand,
     lodEnabled: _lodEnabled,
     ...rest
   } = state;
   return {
     ...rest,
+    playerInterpolationOverride: samePlayerInterpolation(
+      playerInterpolation,
+      DEFAULT_PLAYER_INTERPOLATION,
+    )
+      ? undefined
+      : playerInterpolation,
     showScoreHud: hudPreferences.score.enabled,
     scoreHudPosition: hudPreferences.score.position,
     showQuickCamHud: hudPreferences.quickCam.enabled,
