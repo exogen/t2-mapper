@@ -1,5 +1,9 @@
 import { Vector2, Vector3, type Object3D } from "three";
-import { labelDpr, type CanvasLabel } from "./canvasLabel";
+import {
+  labelDpr,
+  subscribeLabelIconReady,
+  type CanvasLabel,
+} from "./canvasLabel";
 import type { GameEngine } from "./gameEngine";
 
 /**
@@ -121,6 +125,9 @@ export function installLabelOverlay(engine: GameEngine): () => void {
     canvas.style.pointerEvents = "none";
     parent.appendChild(canvas);
     const ctx = canvas.getContext("2d")!;
+    const unsubscribeIconReady = subscribeLabelIconReady(() =>
+      engine.invalidate(),
+    );
 
     const unsubscribe = engine.onAfterRender((renderer, _scene, camera) => {
       const size = renderer.getSize(_size);
@@ -281,6 +288,7 @@ export function installLabelOverlay(engine: GameEngine): () => void {
 
     return () => {
       unsubscribe();
+      unsubscribeIconReady();
       glCanvas.removeEventListener("pointermove", handleMove);
       glCanvas.removeEventListener("mousedown", handleDown, true);
       window.removeEventListener("mouseup", handleUp);

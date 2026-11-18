@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { GameEngine } from "../engine/gameEngine";
 import styles from "./DebugInfoPanel.module.css";
+import fieldsetStyles from "./SidebarFieldset.module.css";
 
 const SAMPLE_INTERVAL_MS = 500;
 
@@ -73,7 +74,7 @@ export function DebugRendererInfo({ engine }: { engine: GameEngine }) {
   if (!sample) return null;
 
   return (
-    <fieldset className={styles.Root}>
+    <fieldset className={`${fieldsetStyles.Fieldset} ${styles.Root}`}>
       <legend>Renderer</legend>
       <dl>
         <dt>CPU per frame</dt>

@@ -166,6 +166,7 @@ export interface FollowTarget {
   rawName?: string;
   entityId: string;
   flagSlot: number | null;
+  flagTeamId?: number | null;
 }
 
 /** Searchable targets use the same identities and eligibility as F / number keys. */
@@ -180,6 +181,7 @@ export function getFollowTargets(
       label: flag.label,
       entityId: flag.entityId,
       flagSlot: flag.slot,
+      flagTeamId: flag.teamId,
     });
   }
   for (const id of getFollowablePlayerIds()) {

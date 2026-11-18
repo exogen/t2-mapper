@@ -2,13 +2,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MatchHUD } from "./MatchHUD";
 import { casterStore } from "../state/casterStore";
-import { streamClock } from "../state/streamPlaybackStore";
+import { streamClock, streamPlaybackStore } from "../state/streamPlaybackStore";
 import type {
   PlayerRosterEntry,
   StreamSnapshot,
   TeamScore,
 } from "../stream/types";
-import type { TeamColorScheme } from "../iffTheme";
+import { settingsStore } from "../state/settingsStore";
 import type { ScoreStyle } from "./SettingsProvider";
 
 const state = vi.hoisted(() => ({
@@ -21,7 +21,7 @@ const state = vi.hoisted(() => ({
     flagReturnDelaySec: 45 as number | null,
     matchEndedAtSec: null as number | null,
   },
-  observerTeamColors: "blueOrange" as TeamColorScheme,
+  entities: new Map<string, { renderType: "Player"; teamId: number }>(),
   scoreStyle: "classic" as ScoreStyle,
   missionType: "CTF" as string | null,
 }));
@@ -44,6 +44,7 @@ vi.mock("../state/streamSnapshotStore", async (original) => ({
   },
 }));
 vi.mock("../state/gameEntityStore", () => ({
+  gameEntityStore: { getState: () => ({ streamEntities: state.entities }) },
   useDataSource: () => "demo",
   useMissionType: () => state.missionType,
 }));
@@ -86,7 +87,12 @@ beforeEach(() => {
   state.snapshot.flagReturnDelaySec = 45;
   state.snapshot.matchEndedAtSec = null;
   streamClock.time = 0;
-  state.observerTeamColors = "blueOrange";
+  streamPlaybackStore.setState({
+    cameraMode: "original",
+    followEntityId: null,
+  });
+  state.entities.clear();
+  settingsStore.setState(settingsStore.getInitialState());
   state.scoreStyle = "classic";
   state.missionType = "CTF";
   casterStore.getState().activate("test:28000", "1", "Katabatic");
@@ -276,7 +282,7 @@ it.each(["classic", "broadcast"] as const)(
         ["greenRed", ["rgb(0, 212, 71)", "rgb(255, 60, 10)"]],
         ["redGreen", ["rgb(255, 60, 10)", "rgb(0, 212, 71)"]],
       ] as const) {
-        state.observerTeamColors = scheme;
+        settingsStore.setState({ observerTeamColors: scheme });
         expect(colors(render())).toEqual(expected);
       }
     }
@@ -292,6 +298,33 @@ it.each(["classic", "broadcast"] as const)(
     } else {
       expect(colors(html)).toEqual(["rgb(0, 212, 71)", "rgb(255, 60, 10)"]);
     }
+  },
+);
+
+it.each(["classic", "broadcast"] as const)(
+  "colors the followed team green and keeps the recorder's team first in %s",
+  (variant) => {
+    state.snapshot.playerSensorGroup = 2;
+    settingsStore.setState({ followTeamIff: true });
+    state.entities.set("followed", { renderType: "Player", teamId: 1 });
+    streamPlaybackStore.setState({
+      cameraMode: "orbitOverride",
+      followEntityId: "followed",
+    });
+    const html = renderToStaticMarkup(
+      <MatchHUD onOpenScoreScreen={() => {}} variant={variant} />,
+    );
+    expect(html.indexOf("Rename team 2")).toBeLessThan(
+      html.indexOf("Rename team 1"),
+    );
+    const pattern =
+      variant === "classic"
+        ? /style="color:(rgb\([^)]+\))"/g
+        : /--team-color:(rgb\([^)]+\))/g;
+    expect([...html.matchAll(pattern)].map((match) => match[1])).toEqual([
+      "rgb(255, 60, 10)",
+      "rgb(0, 212, 71)",
+    ]);
   },
 );
 

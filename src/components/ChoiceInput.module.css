@@ -1,4 +1,5 @@
-.Input {
+.Checkbox,
+.Radio {
   appearance: none;
   display: inline-block;
   flex: 0 0 auto;
@@ -8,8 +9,6 @@
   padding: 0;
   margin: 0;
   border: 1px solid transparent;
-  border-radius: 0.25em;
-  /* The fill defines the unchecked box without a visible border. */
   background-color: var(--control-border);
   background-repeat: no-repeat;
   background-position: center;
@@ -19,43 +18,59 @@
   cursor: pointer;
 }
 
-.Input:checked,
-.Input:indeterminate {
+.Checkbox {
+  border-radius: 0.25em;
+}
+
+.Radio {
+  border-radius: 50%;
+}
+
+:is(.Checkbox, .Radio):checked,
+.Checkbox:indeterminate {
   background-color: var(--control-active-background);
 }
 
 /* A pale mark on dark blue keeps the checked state legible by shape as well
    as color. Keep this on the real input so form reset also resets its look. */
-.Input:checked {
+.Checkbox:checked {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23e1edff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m2 6 2.5 2.5L10 3'/%3E%3C/svg%3E");
 }
 
 /* Native indeterminate state remains available through the forwarded ref. */
-.Input:indeterminate {
+.Checkbox:indeterminate {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23e1edff' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M2 6h8'/%3E%3C/svg%3E");
 }
 
-.Input:focus-visible {
+.Radio:checked {
+  background-image: radial-gradient(
+    circle,
+    var(--control-text) 0.23em,
+    transparent 0.27em
+  );
+}
+
+:is(.Checkbox, .Radio):focus-visible {
   outline: 2px solid var(--control-focus);
   outline-offset: 2px;
 }
 
-.Input:disabled {
+:is(.Checkbox, .Radio):disabled {
   opacity: 0.5;
   cursor: default;
 }
 
 @media (hover: hover) and (forced-colors: none) {
-  .Input:hover:not(:checked):not(:indeterminate):not(:disabled) {
+  :is(.Checkbox, .Radio):hover:not(:checked, :indeterminate, :disabled) {
     background-color: var(--control-hover-border);
   }
 }
 
 /* Let the OS draw its own check/mixed/disabled indicators in high contrast. */
 @media (forced-colors: active) {
-  .Input,
-  .Input:checked,
-  .Input:indeterminate {
+  :is(.Checkbox, .Radio),
+  :is(.Checkbox, .Radio):checked,
+  .Checkbox:indeterminate {
     appearance: auto;
     border: revert;
     border-radius: revert;
@@ -63,11 +78,11 @@
     accent-color: auto;
   }
 
-  .Input:focus-visible {
+  :is(.Checkbox, .Radio):focus-visible {
     outline-color: Highlight;
   }
 
-  .Input:disabled {
+  :is(.Checkbox, .Radio):disabled {
     opacity: 1;
   }
 }

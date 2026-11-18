@@ -1,9 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import type { ComponentProps } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CastPanel } from "./CastPanel";
 import { QuickCamPanel } from "./QuickCamPanel";
 import { QuickCamHUD } from "./QuickCamHUD";
 import { QuickCamIcon } from "./QuickCamIcon";
+import { useIffView } from "./useIffView";
 import { QuickCamKey } from "./KeyboardOverlay";
 import { LuUser } from "react-icons/lu";
 import { BiSolidCameraHome } from "react-icons/bi";
@@ -17,15 +19,14 @@ import type {
   TeamScore,
 } from "../stream/types";
 import { setStreamSnapshot } from "../state/streamSnapshotStore";
-import { streamClock } from "../state/streamPlaybackStore";
-import type { TeamColorScheme } from "../iffTheme";
+import { streamClock, streamPlaybackStore } from "../state/streamPlaybackStore";
+import { settingsStore } from "../state/settingsStore";
 import { commentaryTracksStore } from "../state/commentaryTracksStore";
 
 const fixture = vi.hoisted(() => ({
   liveReady: true,
   role: "watcher",
   source: "live" as "live" | "demo",
-  observerTeamColors: "blueOrange" as TeamColorScheme,
   playerSensorGroup: 0,
   playerRoster: [] as PlayerRosterEntry[],
   teamScores: [] as TeamScore[],
@@ -61,7 +62,6 @@ vi.mock("./SettingsProvider", () => ({
     commentaryEnabled: true,
     commentarySubtitles: true,
     followBehindPlayer: false,
-    observerTeamColors: fixture.observerTeamColors,
     showQuickCamHud: false,
     setShowQuickCamHud: vi.fn(),
     quickCamHudPosition: "left",
@@ -98,7 +98,7 @@ beforeEach(() => {
   fixture.localSpectator = fixture.replayReady = false;
   fixture.liveReady = true;
   fixture.source = "live";
-  fixture.observerTeamColors = "blueOrange";
+  settingsStore.setState(settingsStore.getInitialState());
   fixture.playerSensorGroup = 0;
   fixture.playerRoster = [];
   fixture.teamScores = ["Storm", "Inferno", "Starwolf"].map((name, index) => ({
@@ -117,9 +117,16 @@ afterEach(async () => {
   casterStore.getState().suspend();
   gameEntityStore.getState().clearStreamEntities();
   setStreamSnapshot(null);
+  streamPlaybackStore.setState(streamPlaybackStore.getInitialState());
   streamClock.time = 0;
   await commentaryTracksStore.getState().load(null);
 });
+
+function TestQuickCamIcon(
+  props: Omit<ComponentProps<typeof QuickCamIcon>, "view">,
+) {
+  return <QuickCamIcon {...props} view={useIffView()} />;
+}
 
 function flag(id: string, teamId: number, playerName?: string) {
   return streamEntityToGameEntity({
@@ -221,7 +228,7 @@ it("shows default flags, saved views and empty slot shortcuts in the quick cam H
   expect(html).not.toContain("Not set");
   expect(html.match(/<button/g)).toHaveLength(10);
   expect(html.match(/aria-label="Shift"/g)).toHaveLength(7);
-  expect(html).toContain('title="Press Shift+3 to set camera 3"');
+  expect(html).toContain('title="Click or press Shift+3 to set camera 3"');
 });
 
 it("hides the quick cam HUD after leaving the mission", () => {
@@ -354,7 +361,7 @@ it.each(["live", "demo"] as const)(
     expect(panel).toContain('title="Recall camera 1: Rabbit Flag"');
     expect(panel).toContain('title="Recall camera 2: Not set"');
     expect(hud.match(/aria-label="Shift"/g)).toHaveLength(9);
-    expect(hud).toContain('title="Press Shift+2 to set camera 2"');
+    expect(hud).toContain('title="Click or press Shift+2 to set camera 2"');
     const hint = renderToStaticMarkup(<QuickCamKey />);
     expect(hint).toContain("Follow flag");
     expect(hint).not.toContain("Follow flags");
@@ -444,7 +451,7 @@ it("uses actual flag teams, custom names and all available number bindings", () 
   const hud = renderToStaticMarkup(<QuickCamHUD />);
   expect(hud).toContain("Red Flag");
   expect(hud).toContain("Knights Flag");
-  expect(hud).toContain('title="Press Shift+1 to set camera 1"');
+  expect(hud).toContain('title="Click or press Shift+1 to set camera 1"');
   const hint = renderToStaticMarkup(<QuickCamKey />);
   expect(hint).toContain("Follow flags");
   expect(hint).not.toContain(">1<");
@@ -482,7 +489,7 @@ it.each([
 ] as const)(
   "colors quick cam flags using the %s observer palette in both surfaces",
   (scheme, first, second) => {
-    fixture.observerTeamColors = scheme;
+    settingsStore.setState({ observerTeamColors: scheme });
     for (const html of [
       renderToStaticMarkup(<QuickCamHUD />),
       renderToStaticMarkup(<QuickCamPanel watching />),
@@ -498,12 +505,11 @@ it.each([1, 2])(
   (teamId) => {
     fixture.source = "demo";
     fixture.playerSensorGroup = teamId;
-    fixture.observerTeamColors = "blueOrange";
     const friendly = renderToStaticMarkup(
-      <QuickCamIcon flagTeamId={teamId} camera={undefined} Icon={LuUser} />,
+      <TestQuickCamIcon flagTeamId={teamId} camera={undefined} Icon={LuUser} />,
     );
     const enemy = renderToStaticMarkup(
-      <QuickCamIcon
+      <TestQuickCamIcon
         flagTeamId={teamId === 1 ? 2 : 1}
         camera={undefined}
         Icon={LuUser}
@@ -513,6 +519,32 @@ it.each([1, 2])(
     expect(enemy).toContain("color:rgb(255, 60, 10)");
   },
 );
+
+it("colors quick cam flags from the followed player's team in both surfaces", () => {
+  fixture.playerSensorGroup = 1;
+  settingsStore.setState({ followTeamIff: true });
+  gameEntityStore.getState().setStreamEntity(
+    streamEntityToGameEntity({
+      id: "followed",
+      type: "Player",
+      className: "Player",
+      teamId: 2,
+    }),
+  );
+  streamPlaybackStore.setState({
+    cameraMode: "orbitOverride",
+    followEntityId: "followed",
+  });
+  for (const html of [
+    renderToStaticMarkup(<QuickCamHUD />),
+    renderToStaticMarkup(<QuickCamPanel watching />),
+  ]) {
+    expect(html.match(/color:rgb\([^)]+\)/g)).toEqual([
+      "color:rgb(255, 60, 10)",
+      "color:rgb(0, 212, 71)",
+    ]);
+  }
+});
 
 const playerCamera = {
   kind: "player",
@@ -592,7 +624,9 @@ it("updates player icon affiliation in place and honors the engine's viewer-rela
   });
   gameEntityStore.getState().setStreamEntity(entity);
   const render = () =>
-    renderToStaticMarkup(<QuickCamIcon camera={playerCamera} Icon={LuUser} />);
+    renderToStaticMarkup(
+      <TestQuickCamIcon camera={playerCamera} Icon={LuUser} />,
+    );
   expect(render()).toContain("color:rgb(40, 152, 255)");
   if (entity.renderType !== "Player") throw Error("Expected player");
   entity.teamId = 2;
@@ -616,7 +650,9 @@ it("keeps a waiting player's team color using their current roster entry", () =>
     },
   ];
   const render = () =>
-    renderToStaticMarkup(<QuickCamIcon camera={playerCamera} Icon={LuUser} />);
+    renderToStaticMarkup(
+      <TestQuickCamIcon camera={playerCamera} Icon={LuUser} />,
+    );
   expect(render()).toContain("color:rgb(255, 100, 15)");
   fixture.playerSensorGroup = 2;
   expect(render()).toContain("color:rgb(0, 212, 71)");
@@ -634,11 +670,11 @@ it("does not tint free-fly or unset icons", () => {
   };
   expect(
     renderToStaticMarkup(
-      <QuickCamIcon camera={camera} Icon={BiSolidCameraHome} />,
+      <TestQuickCamIcon camera={camera} Icon={BiSolidCameraHome} />,
     ),
   ).not.toContain('style="color:');
   expect(
-    renderToStaticMarkup(<QuickCamIcon camera={undefined} Icon={LuUser} />),
+    renderToStaticMarkup(<TestQuickCamIcon camera={undefined} Icon={LuUser} />),
   ).not.toContain('style="color:');
 });
 
@@ -656,9 +692,7 @@ it.each<["live" | "demo", boolean, boolean]>([
     );
     expect(buttons).toHaveLength(10);
     for (const button of buttons!) {
-      const slot = Number(button.match(/data-slot="(\d)"/)![1]);
-      const empty = slot !== 1 && slot !== 2;
-      expect(button.includes("disabled")).toBe(!enabled || empty);
+      expect(button.includes("disabled")).toBe(!enabled);
     }
   },
 );

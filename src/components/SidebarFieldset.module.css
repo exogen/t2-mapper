@@ -1,0 +1,17 @@
+.Fieldset {
+  min-inline-size: 0;
+  margin: 8px 0 2px;
+  padding: 8px 12px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+/* Adjacent sidebar fieldsets have collapsing vertical margins. */
+.Fieldset + .Fieldset {
+  margin-top: 10px;
+}
+
+.Fieldset > legend {
+  font-size: calc(1em - 1px);
+  font-weight: 500;
+}

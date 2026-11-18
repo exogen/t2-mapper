@@ -9,6 +9,7 @@ import { useFlagCameras } from "./useFlagCameras";
 import { quickCamDisplay } from "./quickCamDisplay";
 import { QuickCamIcon } from "./QuickCamIcon";
 import { useQuickCams } from "./useQuickCams";
+import { useIffView } from "./useIffView";
 import { useSettings, type HudPosition } from "./SettingsProvider";
 import { Select } from "./Select";
 import styles from "./InspectorControls.module.css";
@@ -78,6 +79,7 @@ function CameraBindings({ watching }: { watching: boolean }) {
   const spectatorReady = useIsWatchSpectator({ requireReady: true });
   const flags = useFlagCameras();
   const players = useStreamSnapshot(getPlayerResolver);
+  const iffView = useIffView();
   if (!settings)
     return (
       <p className={styles.Description}>Waiting for mission information…</p>
@@ -116,6 +118,7 @@ function CameraBindings({ watching }: { watching: boolean }) {
                     Icon={Icon}
                     className={cameraStyles.CameraIcon}
                     flagTeamId={flagTeamId}
+                    view={iffView}
                   />
                 )}
                 <span className={cameraStyles.CameraLabel}>{label}</span>

@@ -39,7 +39,7 @@
   grid-row: 1;
 }
 
-.CheckboxField input[type="checkbox"] {
+.CheckboxField input:is([type="checkbox"], [type="radio"]) {
   margin-left: 0;
   margin-right: 1px;
   grid-column: 1;
@@ -64,7 +64,7 @@
   padding: 0;
 }
 
-.CheckboxField .Description {
+.CheckboxField > .Description {
   grid-column: 2 / -1;
   grid-row: 2;
 }
@@ -129,17 +129,73 @@
   margin-top: 4px;
 }
 
-.PlayerInterpolation {
-  composes: Root from "./DebugInfoPanel.module.css";
+.IffOptions > .Field {
+  margin-bottom: 8px;
+}
+
+.IffDistanceValue {
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  white-space: nowrap;
+}
+
+/* Reserve the widest readout so it cannot move the slider during a drag. */
+.IffDistanceValue::after {
+  display: block;
+  block-size: 0;
+  visibility: hidden;
+  content: attr(data-max-value);
+}
+
+.IffChoiceList {
+  margin: 10px 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.IffChoiceList > :last-child {
+  margin-bottom: 0;
+}
+
+.FlagColorModes {
   min-inline-size: 0;
+  margin: 8px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.FlagColorModes > legend {
+  padding: 0;
+}
+
+.FlagColorModes .CheckboxField,
+.FlagColorModes .Label {
+  align-items: start;
+}
+
+.FlagColorModes input[type="radio"] {
+  margin-top: 1px;
 }
 
 .PlayerInterpolation > .Field {
   margin-bottom: 6px;
 }
 
-.PlayerInterpolation > .Field:last-child {
-  margin-bottom: 0;
+.InterpolationPresets {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.InterpolationPreset {
+  composes: SmallButton from "./Button.module.css";
+  min-height: 22px;
+  padding: 0 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .InterpolationInput {
@@ -232,6 +288,11 @@
 }
 
 @media (pointer: coarse) {
+  .InterpolationPreset {
+    min-height: 32px;
+    font-size: 12px;
+  }
+
   .Tools {
     padding-top: 12px;
     padding-bottom: 13px;

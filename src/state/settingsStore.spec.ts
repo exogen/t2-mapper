@@ -72,6 +72,70 @@ it("retains the aim correction preference and drops the old smoothing flag on sa
   expect(lastSaved()).not.toHaveProperty("aimSmoothing");
 });
 
+it("persists followed team IFF separately for each view mode", () => {
+  const store = createSettingsStore();
+  expect(store.getState()).toMatchObject({
+    followTeamIff: false,
+    firstPersonTeamIff: false,
+  });
+  setPreference("followTeamIff", true, store);
+  vi.advanceTimersByTime(500);
+  stubSaved(lastSaved());
+  const restored = createSettingsStore();
+  expect(restored.getState()).toMatchObject({
+    followTeamIff: true,
+    firstPersonTeamIff: false,
+  });
+  setPreference("firstPersonTeamIff", true, restored);
+  vi.advanceTimersByTime(500);
+  stubSaved(lastSaved());
+  expect(createSettingsStore().getState()).toMatchObject({
+    followTeamIff: true,
+    firstPersonTeamIff: true,
+  });
+});
+
+it("rejects inherited keys as saved observer palettes", () => {
+  stubSaved({ observerTeamColors: "toString" });
+  expect(createSettingsStore().getState().observerTeamColors).toBe(
+    "blueOrange",
+  );
+});
+
+it("defaults to matching flag teams and persists the possession choice", () => {
+  const store = createSettingsStore();
+  expect(store.getState().flagColorMode).toBe("matchTeam");
+  setPreference("flagColorMode", "possession", store);
+  vi.advanceTimersByTime(500);
+  stubSaved(lastSaved());
+  expect(createSettingsStore().getState().flagColorMode).toBe("possession");
+});
+
+it("ignores an unknown saved flag color mode", () => {
+  stubSaved({ flagColorMode: "observer" });
+  expect(createSettingsStore().getState().flagColorMode).toBe("matchTeam");
+});
+
+it("defaults to the existing IFF distance and restores the slider value", () => {
+  const store = createSettingsStore();
+  expect(store.getState().iffMaxDistance).toBe(150);
+  setPreference("iffMaxDistance", 400, store);
+  vi.advanceTimersByTime(500);
+  stubSaved(lastSaved());
+  expect(createSettingsStore().getState().iffMaxDistance).toBe(400);
+});
+
+it.each([
+  [40, 50],
+  [420, 400],
+  [425, 450],
+  [1200, 1000],
+  ["500", 150],
+])("restores saved IFF distance %s as %s", (value, expected) => {
+  stubSaved({ iffMaxDistance: value });
+  expect(createSettingsStore().getState().iffMaxDistance).toBe(expected);
+});
+
 it("defaults to the tuned interpolation and persists the selected settings", () => {
   const store = createSettingsStore();
   expect(store.getState().playerInterpolation).toEqual({

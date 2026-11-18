@@ -1,13 +1,14 @@
 import { CastPanel } from "./CastPanel";
 import { QuickCamPanel } from "./QuickCamPanel";
+import { IffOptions } from "./IffOptions";
+import { InterpolationControls } from "./InterpolationControls";
 import { Select } from "./Select";
 import { RangeSlider } from "./RangeSlider";
 import { Checkbox } from "./Checkbox";
 import { ChatHudControl, MatchHudControl } from "./HudControls";
 import { useCommentaryTracks } from "../state/commentaryTracksStore";
-import { memo, useState } from "react";
+import { memo } from "react";
 import { FaRotateRight } from "react-icons/fa6";
-import { useStore } from "zustand";
 import {
   MAX_JOYSTICK_OPACITY,
   MAX_SPEED_MULTIPLIER,
@@ -18,7 +19,6 @@ import {
   useDebug,
   useSettings,
   type CcPlayerNames,
-  type IffVisibility,
   type HudStyle,
   type ScoreStyle,
   type HudPosition,
@@ -51,13 +51,7 @@ import {
   useMissionName,
 } from "../state/gameEntityStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
-import { clipStore, type ClipState } from "../state/clipStore";
 import { useIsWatchSpectator } from "./useIsWatchSpectator";
-import {
-  RETAIL_PLAYER_INTERPOLATION,
-  normalizePlayerInterpolation,
-  PLAYER_INTERPOLATION_RANGES,
-} from "../stream/playerInterpolation";
 import { hasMission } from "../manifest";
 import { ChooseMapButton } from "./ChooseMapButton";
 import { MapInfoButton } from "./MapInfoButton";
@@ -66,7 +60,6 @@ import { DebugEntityList } from "./DebugEntityList";
 import { DebugNetworkInfo } from "./DebugNetworkInfo";
 import { DebugRendererInfo } from "./DebugRendererInfo";
 import type { GameEngine } from "../engine/gameEngine";
-import { TEAM_COLOR_SCHEMES, type TeamColorScheme } from "../iffTheme";
 import buttonStyles from "./Button.module.css";
 import styles from "./InspectorControls.module.css";
 
@@ -79,55 +72,6 @@ const DEFAULT_PANELS = [
   "stats",
   "jiggle",
 ];
-
-const INTERPOLATION_FIELDS = [
-  ["maxLatencyTicks", "Max latency ticks"],
-  ["maxPredictionTicks", "Max prediction ticks"],
-  ["maxWarpTicks", "Max warp ticks"],
-  ["minWarpTicks", "Min warp ticks"],
-] as const;
-
-function isClipInUse({ recording, draft, active }: ClipState): boolean {
-  return recording || draft !== null || active !== null;
-}
-
-function InterpolationTickField({
-  name,
-  label,
-  value,
-  onCommit,
-}: {
-  name: (typeof INTERPOLATION_FIELDS)[number][0];
-  label: string;
-  value: number;
-  onCommit: (value: number) => void;
-}) {
-  const [draft, setDraft] = useState<string | null>(null);
-  const id = `interpolation-${name}`;
-  return (
-    <div className={styles.Field}>
-      <label htmlFor={id}>{label}</label>
-      <div className={styles.Control}>
-        <input
-          id={id}
-          className={styles.InterpolationInput}
-          type="number"
-          {...PLAYER_INTERPOLATION_RANGES[name]}
-          value={draft ?? value}
-          onChange={(event) => setDraft(event.currentTarget.value)}
-          onBlur={(event) => {
-            const next = event.currentTarget.valueAsNumber;
-            setDraft(null);
-            if (Number.isFinite(next)) onCommit(next);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") event.currentTarget.blur();
-          }}
-        />
-      </div>
-    </div>
-  );
-}
 
 export const InspectorControls = memo(function InspectorControls({
   missionName,
@@ -183,12 +127,6 @@ export const InspectorControls = memo(function InspectorControls({
   const [mode] = useModeQueryState();
   const [route] = useNavigationQueryState();
   const viewingClip = mode === "demo" && !!route.clip;
-  const interpolationLocked = useStore(clipStore, isClipInUse) || viewingClip;
-  const activeInterpolation = useStore(
-    clipStore,
-    (s) =>
-      s.active && (s.active.playerInterpolation ?? RETAIL_PLAYER_INTERPOLATION),
-  );
   const isLiveMode = isLiveConnected || mode === "live";
   const {
     canDisableFog,
@@ -234,10 +172,6 @@ export const InspectorControls = memo(function InspectorControls({
     setShowReticle,
     showCompass,
     setShowCompass,
-    showIffs,
-    setShowIffs,
-    observerTeamColors,
-    setObserverTeamColors,
     ccPlayerNames,
     setCcPlayerNames,
     followBehindPlayer,
@@ -274,8 +208,6 @@ export const InspectorControls = memo(function InspectorControls({
     setShowFpsMeter,
     aimCorrection,
     setAimCorrection,
-    playerInterpolation,
-    setPlayerInterpolation,
   } = useDebug();
   const watching = useIsWatchSpectator();
   const showCasterControls =
@@ -549,28 +481,6 @@ export const InspectorControls = memo(function InspectorControls({
                   </label>
                 </div>
                 <div className={styles.Field}>
-                  <label id="showIffsInput-label" htmlFor="showIffsInput">
-                    IFFs &amp; nameplates
-                  </label>
-                  <div className={styles.Control}>
-                    <Select
-                      id="showIffsInput"
-                      aria-labelledby="showIffsInput-label"
-                      value={showIffs}
-                      onChange={(value) => setShowIffs(value as IffVisibility)}
-                      options={[
-                        { value: "always", label: "Always" },
-                        { value: "followed", label: "Only followed player" },
-                        {
-                          value: "exceptFollowed",
-                          label: "Except followed player",
-                        },
-                        { value: "never", label: "Never" },
-                      ]}
-                    />
-                  </div>
-                </div>
-                <div className={styles.Field}>
                   <label
                     id="ccPlayerNamesInput-label"
                     htmlFor="ccPlayerNamesInput"
@@ -593,31 +503,7 @@ export const InspectorControls = memo(function InspectorControls({
                     />
                   </div>
                 </div>
-                <div className={styles.Field}>
-                  <label
-                    id="observerTeamColorsInput-label"
-                    htmlFor="observerTeamColorsInput"
-                  >
-                    Observer team colors
-                  </label>
-                  <div className={styles.Control}>
-                    <Select
-                      id="observerTeamColorsInput"
-                      aria-labelledby="observerTeamColorsInput-label"
-                      value={observerTeamColors}
-                      onChange={(value) =>
-                        setObserverTeamColors(value as TeamColorScheme)
-                      }
-                      options={Object.entries(TEAM_COLOR_SCHEMES).map(
-                        ([value, scheme]) => ({ value, label: scheme.label }),
-                      )}
-                    />
-                  </div>
-                  <p className={styles.Description}>
-                    Colors that will be used to distinguish teams
-                    (Storm&thinsp;/&thinsp;Inferno) when spectating.
-                  </p>
-                </div>
+                <IffOptions />
               </Accordion>
               {showCasterControls && (
                 <Accordion value="quickCam" label="Quick cam">
@@ -1038,35 +924,7 @@ export const InspectorControls = memo(function InspectorControls({
                 </div>
                 {engine && <DebugRendererInfo engine={engine} />}
                 {recording?.source === "demo" && (
-                  <fieldset
-                    className={styles.PlayerInterpolation}
-                    disabled={interpolationLocked}
-                  >
-                    <legend>Interpolation</legend>
-                    {INTERPOLATION_FIELDS.map(([name, label]) => (
-                      <InterpolationTickField
-                        key={`${name}:${interpolationLocked}`}
-                        name={name}
-                        label={label}
-                        value={
-                          (activeInterpolation ?? playerInterpolation)[name]
-                        }
-                        onCommit={(value) => {
-                          if (viewingClip || isClipInUse(clipStore.getState()))
-                            return;
-                          setPlayerInterpolation((previous) => {
-                            const next = normalizePlayerInterpolation({
-                              ...previous,
-                              [name]: value,
-                            });
-                            return next[name] === previous[name]
-                              ? previous
-                              : next;
-                          });
-                        }}
-                      />
-                    ))}
-                  </fieldset>
+                  <InterpolationControls viewingClip={viewingClip} />
                 )}
                 <DebugNetworkInfo />
                 {canShowEntityList && <DebugEntityList />}

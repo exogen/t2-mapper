@@ -41,7 +41,7 @@
   border-radius: 50%;
   background: var(--control-text);
   box-shadow: 0 1px 4px rgb(0 0 0 / 50%);
-  cursor: grab;
+  cursor: inherit;
 }
 
 @media (forced-colors: none) {
@@ -57,16 +57,11 @@
 }
 
 .Thumb:active:not(:disabled) {
-  cursor: grabbing;
   background: var(--control-focus);
 }
 
 .Root[data-disabled] {
   opacity: 0.5;
-  cursor: default;
-}
-
-.Thumb:disabled {
   cursor: default;
 }
 

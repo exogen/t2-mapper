@@ -11,14 +11,12 @@ import { type MatchHudStyle, useSettings } from "./SettingsProvider";
 import { formatHudClock, useMatchClockMs } from "./useMatchClock";
 import { matchHudLayout as layout, matchHudStyle } from "./matchHudLayout";
 import {
-  IFF_ENEMY,
-  IFF_FRIENDLY,
-  IFF_NEUTRAL,
   IFF_PALETTE,
-  resolveIffDisplay,
+  resolveTeamIffDisplay,
   rgbString,
-  type TeamColorScheme,
+  type IffView,
 } from "../iffTheme";
+import { useIffView } from "./useIffView";
 import styles from "./MatchHUD.module.css";
 
 // Leave room around SVG strokes. Layout dimensions otherwise map 1:1 to pixels.
@@ -83,20 +81,8 @@ function BroadcastClock() {
   );
 }
 
-function teamColor(
-  team: TeamScore,
-  playerSensorGroup: number | undefined,
-  scheme: TeamColorScheme,
-) {
-  const color =
-    playerSensorGroup == null || team.teamId <= 0
-      ? IFF_NEUTRAL
-      : playerSensorGroup === 0
-        ? resolveIffDisplay(team, true, scheme)
-        : team.teamId === playerSensorGroup
-          ? IFF_FRIENDLY
-          : IFF_ENEMY;
-  return rgbString(color.color);
+function teamColor(team: TeamScore, iffView: IffView) {
+  return rgbString(resolveTeamIffDisplay(team.teamId, iffView).color);
 }
 
 /**
@@ -313,15 +299,13 @@ function useBroadcastSize(contentKey: string) {
 
 function BroadcastMatchHUD({
   teams,
-  playerSensorGroup,
-  colorScheme,
+  iffView,
   competitionScores,
   onOpenScoreScreen,
   onFollowFlag,
 }: {
   teams: readonly TeamScore[];
-  playerSensorGroup: number | undefined;
-  colorScheme: TeamColorScheme;
+  iffView: IffView;
   competitionScores: boolean;
 } & MatchHUDActions) {
   const customNames = useCaster((state) => state.teamNames);
@@ -391,7 +375,7 @@ function BroadcastMatchHUD({
                 teams={teams}
                 side="left"
                 competitionScores={competitionScores}
-                color={teamColor(left, playerSensorGroup, colorScheme)}
+                color={teamColor(left, iffView)}
                 frameWidth={frameWidth}
                 panelInner={panelInner}
                 onOpenScoreScreen={onOpenScoreScreen}
@@ -404,7 +388,7 @@ function BroadcastMatchHUD({
                 teams={teams}
                 side="right"
                 competitionScores={competitionScores}
-                color={teamColor(right, playerSensorGroup, colorScheme)}
+                color={teamColor(right, iffView)}
                 frameWidth={frameWidth}
                 panelInner={panelInner}
                 onOpenScoreScreen={onOpenScoreScreen}
@@ -446,17 +430,16 @@ export function MatchHUD({
 }) {
   const { enabled, followFlag } = useFollowCamera();
   const teamScores = useStreamSnapshot((snap) => snap?.teamScores);
-  const playerSensorGroup = useStreamSnapshot(
-    (snap) => snap?.playerSensorGroup,
-  );
-  const { observerTeamColors, scoreStyle } = useSettings();
+  const iffView = useIffView();
+  const { playerSensorGroup } = iffView;
+  const { scoreStyle } = useSettings();
   const missionType = useMissionType();
   const competitionScores =
     scoreStyle === "competition" &&
     missionType != null &&
     CAPTURE_SCORED_MISSION_TYPES.has(missionType);
   if (variant === "classic" && !teamScores?.length) return null;
-  // Sort: friendly team first (if known), then by teamId.
+  // Keep the recorder's team first so changing the followed team leaves the layout stable.
   const sorted = [...(teamScores ?? [])].sort((a, b) => {
     if (playerSensorGroup) {
       if (a.teamId === playerSensorGroup) return -1;
@@ -468,8 +451,7 @@ export function MatchHUD({
     return (
       <BroadcastMatchHUD
         teams={sorted}
-        playerSensorGroup={playerSensorGroup}
-        colorScheme={observerTeamColors}
+        iffView={iffView}
         competitionScores={competitionScores}
         onOpenScoreScreen={onOpenScoreScreen}
         onFollowFlag={enabled ? followFlag : undefined}
@@ -479,7 +461,7 @@ export function MatchHUD({
   return (
     <ClassicMatchHUD
       teams={sorted}
-      playerSensorGroup={playerSensorGroup}
+      iffView={iffView}
       competitionScores={competitionScores}
       onOpenScoreScreen={onOpenScoreScreen}
       onFollowFlag={enabled ? followFlag : undefined}
@@ -489,13 +471,13 @@ export function MatchHUD({
 
 function ClassicMatchHUD({
   teams,
-  playerSensorGroup,
+  iffView,
   competitionScores,
   onOpenScoreScreen,
   onFollowFlag,
 }: {
   teams: readonly TeamScore[];
-  playerSensorGroup: number | undefined;
+  iffView: IffView;
   competitionScores: boolean;
 } & MatchHUDActions) {
   const observerCount = useStreamSnapshot(
@@ -507,6 +489,7 @@ function ClassicMatchHUD({
   );
   // Keep the column aligned when only some teams have known flag state.
   const hasFlags = teams.some((team) => team.flag != null);
+  const alliedTeamId = iffView.followedTeamId ?? iffView.playerSensorGroup;
   return (
     <table
       className={styles.TeamScores}
@@ -534,14 +517,19 @@ function ClassicMatchHUD({
       <tbody>
         {teams.map((team) => {
           const isFriendly =
-            playerSensorGroup != null &&
-            playerSensorGroup > 0 &&
-            team.teamId === playerSensorGroup;
+            alliedTeamId != null &&
+            alliedTeamId > 0 &&
+            team.teamId === alliedTeamId;
           return (
             <tr key={team.teamId} className={styles.TeamRow}>
               <td
                 className={
                   isFriendly ? styles.TeamNameFriendly : styles.TeamNameEnemy
+                }
+                style={
+                  iffView.followedTeamId === undefined
+                    ? undefined
+                    : { color: teamColor(team, iffView) }
                 }
               >
                 <EditableTeamName teamId={team.teamId} teams={teams} />

@@ -244,6 +244,7 @@ describe("target finder follow targets", () => {
       label: "Storm Flag",
       entityId: "90",
       flagSlot: 1,
+      flagTeamId: 1,
     });
     followFlag(chosen.flagSlot!);
     gameEntityStore.getState().setAllStreamEntities([
@@ -262,8 +263,11 @@ describe("target finder follow targets", () => {
       flag("91", 2),
     ]);
     const targets = getFollowTargets();
-    expect(targets.find((t) => t.key === chosen.key)?.entityId).toBe("100");
-    expect(targets.find((t) => t.key === chosen.key)?.label).toBe("Storm Flag");
+    expect(targets.find((t) => t.key === chosen.key)).toMatchObject({
+      entityId: "100",
+      label: "Storm Flag",
+      flagTeamId: 1,
+    });
     expect(targets.find((t) => t.key === "player:32")?.label).toBe("Alice");
     expect(resolveWatchFollowTarget()).toBe("100");
     expect(streamPlaybackStore.getState().followFlagSlot).toBe(1);
@@ -276,6 +280,7 @@ describe("target finder follow targets", () => {
       label: "Flag",
       entityId: "90",
       flagSlot: 1,
+      flagTeamId: null,
     });
     followFlag(1);
     expect(streamPlaybackStore.getState().followEntityId).toBe("90");

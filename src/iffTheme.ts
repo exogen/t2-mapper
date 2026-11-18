@@ -1,9 +1,8 @@
-import { streamSnapshotStore } from "./state/streamSnapshotStore";
-
 /**
  * Central IFF/team color theme.
  *
- * Two coloring regimes exist:
+ * IFF can use these sources:
+ * - **Followed player**: the followed player's team determines friend or foe.
  * - **Teamed viewer**: the engine's viewer-relative `iffColor` only
  *   CLASSIFIES the side (friend vs foe); the rendered color always comes
  *   from the IFF_* constants below, so palette edits apply everywhere.
@@ -94,37 +93,54 @@ export const TEAM_COLOR_SCHEMES: Record<
 
 export const DEFAULT_TEAM_COLOR_SCHEME: TeamColorScheme = "blueOrange";
 
-/**
- * Whether the stream is viewed from the observer "team" (sensor group 0 —
- * no inherent friend/foe side). False outside streaming.
- */
-export function isObserverView(): boolean {
-  const snapshot = streamSnapshotStore.getState().snapshot;
-  return snapshot != null && snapshot.playerSensorGroup === 0;
+export interface IffView {
+  playerSensorGroup: number | undefined;
+  followedTeamId: number | undefined;
+  scheme: TeamColorScheme;
+}
+
+export function usesObserverPalette(view: IffView): boolean {
+  return view.followedTeamId === undefined && view.playerSensorGroup === 0;
+}
+
+export function resolveObserverTeamColor(
+  teamId: number | null | undefined,
+  scheme: TeamColorScheme,
+): IffDisplayColor {
+  return teamId === 1 || teamId === 2
+    ? TEAM_COLOR_SCHEMES[scheme].teams[teamId - 1]
+    : IFF_NEUTRAL;
+}
+
+/** Resolve team-only indicators such as flag shortcuts and broadcast panels. */
+export function resolveTeamIffDisplay(
+  teamId: number | null | undefined,
+  view: IffView,
+): IffDisplayColor {
+  if (teamId == null || teamId <= 0) return IFF_NEUTRAL;
+  const alliedTeamId = view.followedTeamId ?? view.playerSensorGroup;
+  if (alliedTeamId === undefined) return IFF_NEUTRAL;
+  if (alliedTeamId > 0)
+    return teamId === alliedTeamId ? IFF_FRIENDLY : IFF_ENEMY;
+  return resolveObserverTeamColor(teamId, view.scheme);
 }
 
 /**
  * Resolve the display color for an entity's affiliation.
  *
- * Observer view: color by team via the selected scheme. Teamed view:
- * classify the engine's viewer-relative iffColor (red channel dominant =
- * enemy — the same test PlayerNameplate has always used to pick its
- * triangle texture); entities without one read as friendly, matching the
- * historical fallback.
+ * The followed team's affiliation takes priority over the recorder's IFF.
+ * A teamed recording otherwise classifies its stored IFF by the dominant
+ * channel, and each indicator chooses how to display missing metadata.
  */
 export function resolveIffDisplay(
-  entity: { iffColor?: IffRgb; teamId?: number },
-  observerView: boolean,
-  scheme: TeamColorScheme,
+  entity: { iffColor?: IffRgb; teamId?: number | null },
+  view: IffView,
+  fallback = IFF_FRIENDLY,
 ): IffDisplayColor {
-  if (observerView) {
-    const teams = TEAM_COLOR_SCHEMES[scheme].teams;
-    if (entity.teamId === 1) return teams[0];
-    if (entity.teamId === 2) return teams[1];
-    return IFF_NEUTRAL;
-  }
+  if (view.followedTeamId !== undefined || usesObserverPalette(view))
+    return resolveTeamIffDisplay(entity.teamId, view);
   const iff = entity.iffColor;
-  return iff && iff.r > iff.g ? IFF_ENEMY : IFF_FRIENDLY;
+  return iff ? (iff.r > iff.g ? IFF_ENEMY : IFF_FRIENDLY) : fallback;
 }
 
 // Cached by object identity: theme colors are module constants, and

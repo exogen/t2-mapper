@@ -327,6 +327,19 @@ function drawOutlinedIcon(
 
 const _svgIconImages = new Map<string, HTMLImageElement | null>();
 const _svgIconLabels = new Map<string, CanvasLabel>();
+const iconReadyListeners = new Set<() => void>();
+
+/** Wake label overlays after a source image loads, including on-demand views. */
+export function subscribeLabelIconReady(listener: () => void): () => void {
+  iconReadyListeners.add(listener);
+  return () => {
+    iconReadyListeners.delete(listener);
+  };
+}
+
+function notifyIconReady(): void {
+  for (const listener of iconReadyListeners) listener();
+}
 
 /**
  * Returns the icon bitmap (icon size plus the outline margin), or null
@@ -347,6 +360,7 @@ export function getSvgIconLabel(
     _svgIconImages.set(key, null);
     el.onload = () => {
       _svgIconImages.set(key, el);
+      notifyIconReady();
     };
     el.src = `data:image/svg+xml,${encodeURIComponent(markup)}`;
     return null;
@@ -390,6 +404,7 @@ export function getTintedIconLabel(
     _iconImages.set(url, null);
     el.onload = () => {
       _iconImages.set(url, el);
+      notifyIconReady();
     };
     el.src = url;
     return null;

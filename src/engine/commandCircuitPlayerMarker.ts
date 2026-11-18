@@ -6,12 +6,8 @@ import { settingsStore } from "../state/settingsStore";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { enterWatchFollow, isWatchSpectator } from "../state/watchFollow";
 import { liveConnectionStore } from "../state/liveConnectionStore";
-import {
-  isObserverView,
-  resolveIffDisplay,
-  rgbString,
-  IFF_FRIENDLY,
-} from "../iffTheme";
+import { getIffView } from "../state/iffView";
+import { resolveIffDisplay, rgbString } from "../iffTheme";
 import { SKULL_MARKUP, SKULL_SIZE } from "./markerIcons";
 import {
   createCanvasLabel,
@@ -37,8 +33,6 @@ const CONE_LENGTH = 34;
 const CONE_HALF_WIDTH = Math.round(CONE_LENGTH * Math.tan(Math.PI / 4));
 /** How long the death icon lingers over the body, in playback seconds. */
 const DEATH_FADE_SECONDS = 3;
-
-const FALLBACK_COLOR = rgbString(IFF_FRIENDLY.mapColor);
 
 const NAME_FONT_SIZE = 8;
 /** Name center sits this far above the dot center. */
@@ -158,7 +152,7 @@ export function createCommandCircuitPlayerMarker(
     },
     draw: (ctx, x, y) => {
       const entity = readEntity();
-      const { observerTeamColors, ccPlayerNames } = settingsStore.getState();
+      const { ccPlayerNames } = settingsStore.getState();
       const now = streamClock.time;
       const kf = getKeyframeAtTime(entity.keyframes ?? [], now);
       const dead = kf?.damageState != null && kf.damageState >= 1;
@@ -197,11 +191,8 @@ export function createCommandCircuitPlayerMarker(
 
       // Entity affiliation fields are mutated in-place by streaming
       // playback, so re-resolve the theme color every frame.
-      const color = rgbString(
-        resolveIffDisplay(entity, isObserverView(), observerTeamColors)
-          .mapColor ?? IFF_FRIENDLY.mapColor,
-      );
-      const cone = getConeBitmap(color || FALLBACK_COLOR);
+      const color = rgbString(resolveIffDisplay(entity, getIffView()).mapColor);
+      const cone = getConeBitmap(color);
 
       // First column of matrixWorld = world direction of local +X (the
       // player's forward). Screen-up is world +X (Torque north) and

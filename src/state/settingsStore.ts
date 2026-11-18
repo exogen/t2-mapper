@@ -45,6 +45,13 @@ const IFF_VISIBILITY_VALUES: readonly IffVisibility[] = [
   "never",
 ];
 
+export const MIN_IFF_DISTANCE = 50;
+export const MAX_IFF_DISTANCE = 1000;
+export const IFF_DISTANCE_STEP = 50;
+
+export type FlagColorMode = "matchTeam" | "possession";
+const FLAG_COLOR_MODES: readonly FlagColorMode[] = ["matchTeam", "possession"];
+
 /** Server browser layout: the classic table or preview tiles. */
 export type ServerBrowserView = "list" | "tiles";
 const SERVER_BROWSER_VIEW_VALUES: readonly ServerBrowserView[] = [
@@ -119,8 +126,12 @@ export interface Preferences {
   showCompass: boolean;
   serverBrowserView: ServerBrowserView;
   showIffs: IffVisibility;
+  iffMaxDistance: number;
   /** Team color scheme used when spectating from the observer "team". */
   observerTeamColors: TeamColorScheme;
+  flagColorMode: FlagColorMode;
+  followTeamIff: boolean;
+  firstPersonTeamIff: boolean;
   /** Player names under command circuit dot markers. */
   ccPlayerNames: CcPlayerNames;
   followBehindPlayer: boolean;
@@ -186,7 +197,11 @@ export const DEFAULT_PREFERENCES: Preferences = {
   showCompass: true,
   serverBrowserView: "list",
   showIffs: "always",
+  iffMaxDistance: 150,
   observerTeamColors: DEFAULT_TEAM_COLOR_SCHEME,
+  flagColorMode: "matchTeam",
+  followTeamIff: false,
+  firstPersonTeamIff: false,
   ccPlayerNames: "always",
   followBehindPlayer: false,
   renderOnDemand: false,
@@ -314,7 +329,23 @@ export function restorePreferences(
   copy("showReticle");
   copy("showCompass");
   copy("showIffs", (value) => IFF_VISIBILITY_VALUES.includes(value));
-  copy("observerTeamColors", (value) => value in TEAM_COLOR_SCHEMES);
+  if (
+    typeof saved.iffMaxDistance === "number" &&
+    Number.isFinite(saved.iffMaxDistance)
+  )
+    restored.iffMaxDistance = clamp(
+      Math.round(saved.iffMaxDistance / IFF_DISTANCE_STEP) * IFF_DISTANCE_STEP,
+      MIN_IFF_DISTANCE,
+      MAX_IFF_DISTANCE,
+    );
+  copy(
+    "observerTeamColors",
+    (value) =>
+      typeof value === "string" && Object.hasOwn(TEAM_COLOR_SCHEMES, value),
+  );
+  copy("flagColorMode", (value) => FLAG_COLOR_MODES.includes(value));
+  copy("followTeamIff", isBoolean);
+  copy("firstPersonTeamIff", isBoolean);
   copy("ccPlayerNames", (value) => CC_PLAYER_NAMES_VALUES.includes(value));
   copy("followBehindPlayer", isBoolean);
   copy("serverBrowserView", (value) =>

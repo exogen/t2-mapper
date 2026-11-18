@@ -2,13 +2,8 @@ import { Object3D, Vector3, type Camera } from "three";
 import { textureToUrl } from "../loaders";
 import { resolveFlagTeam, shouldShowFlagMarker } from "../state/flagTeam";
 import { commandCircuitStore } from "../state/commandCircuitStore";
-import { settingsStore } from "../state/settingsStore";
-import {
-  IFF_NEUTRAL,
-  isObserverView,
-  resolveIffDisplay,
-  rgbString,
-} from "../iffTheme";
+import { getFlagIffDisplay } from "../state/iffView";
+import { rgbString } from "../iffTheme";
 import {
   createCanvasLabel,
   drawLabelText,
@@ -105,31 +100,8 @@ function createFlagMarker(
 
   const update = (camera: Camera) => {
     const entity = readEntity();
-    const { observerTeamColors } = settingsStore.getState();
-    // Tint — affiliation fields are mutated in-place by streaming playback.
-    // Teamed viewers get the friend/foe theme constants (iffColor only
-    // classifies the side); observers tint by the (carried) flag's team.
-    let color: string;
-    if (isObserverView()) {
-      const { teamId } = resolveFlagTeam(entity);
-      color = rgbString(
-        resolveIffDisplay(
-          { teamId: teamId ?? undefined },
-          true,
-          observerTeamColors,
-        ).color,
-      );
-    } else if ("iffColor" in entity && entity.iffColor) {
-      color = rgbString(
-        resolveIffDisplay(
-          { iffColor: entity.iffColor },
-          false,
-          observerTeamColors,
-        ).color,
-      );
-    } else {
-      color = rgbString(IFF_NEUTRAL.color);
-    }
+    const { teamId } = resolveFlagTeam(entity);
+    const color = rgbString(getFlagIffDisplay(entity, teamId).color);
     if (color !== lastColor || iconItem.bitmap == null) {
       const bitmap = getTintedIconLabel(
         FLAG_ICON_URL,

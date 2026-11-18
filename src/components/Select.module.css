@@ -63,11 +63,12 @@
 
 .Popover {
   composes: Surface;
+  --select-popover-padding: 4px;
   z-index: 100;
   min-width: var(--popover-anchor-width);
   max-width: min(28rem, calc(100vw - 16px));
   max-height: min(360px, var(--popover-available-height, 360px));
-  padding: 4px;
+  padding: var(--select-popover-padding);
   background-color: var(--control-popover-background);
   box-shadow: 0 8px 28px rgb(0 0 0 / 50%);
   font-size: 13px;
@@ -94,9 +95,11 @@
 }
 
 .Separator {
-  margin: 4px 0;
+  margin-block: var(--select-popover-padding);
+  margin-inline: calc(-1 * var(--select-popover-padding));
   border: 0;
   border-top: 1px solid var(--control-border);
+  opacity: 0.45;
 }
 
 .Item {
@@ -151,7 +154,7 @@
 }
 
 .Popover[data-size="small"] {
-  padding: 3px;
+  --select-popover-padding: 3px;
   border-radius: 4px;
   font-size: 12px;
 }

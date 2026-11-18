@@ -1,5 +1,5 @@
 import type { ComponentProps } from "react";
-import styles from "./Checkbox.module.css";
+import styles from "./ChoiceInput.module.css";
 
 type CheckboxProps = Omit<ComponentProps<"input">, "type">;
 
@@ -10,7 +10,7 @@ export function Checkbox({ className, ...props }: CheckboxProps) {
       {...props}
       type="checkbox"
       data-checkbox=""
-      className={`${styles.Input} ${className ?? ""}`}
+      className={`${styles.Checkbox} ${className ?? ""}`}
     />
   );
 }

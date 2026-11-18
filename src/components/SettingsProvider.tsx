@@ -22,6 +22,7 @@ import {
   settingsStore,
   updateHudPreference,
   type CcPlayerNames,
+  type FlagColorMode,
   type HudPosition,
   type HudStyle,
   type IffVisibility,
@@ -122,8 +123,16 @@ type SettingsContextType = {
   setServerBrowserView: StateSetter<ServerBrowserView>;
   showIffs: IffVisibility;
   setShowIffs: StateSetter<IffVisibility>;
+  iffMaxDistance: number;
+  setIffMaxDistance: StateSetter<number>;
   observerTeamColors: TeamColorScheme;
   setObserverTeamColors: StateSetter<TeamColorScheme>;
+  flagColorMode: FlagColorMode;
+  setFlagColorMode: StateSetter<FlagColorMode>;
+  followTeamIff: boolean;
+  setFollowTeamIff: StateSetter<boolean>;
+  firstPersonTeamIff: boolean;
+  setFirstPersonTeamIff: StateSetter<boolean>;
   ccPlayerNames: CcPlayerNames;
   setCcPlayerNames: StateSetter<CcPlayerNames>;
   followBehindPlayer: boolean;
@@ -211,7 +220,11 @@ const settingsActions = {
   setShowCompass: setter("showCompass"),
   setServerBrowserView: setter("serverBrowserView"),
   setShowIffs: setter("showIffs"),
+  setIffMaxDistance: setter("iffMaxDistance"),
   setObserverTeamColors: setter("observerTeamColors"),
+  setFlagColorMode: setter("flagColorMode"),
+  setFollowTeamIff: setter("followTeamIff"),
+  setFirstPersonTeamIff: setter("firstPersonTeamIff"),
   setCcPlayerNames: setter("ccPlayerNames"),
   setFollowBehindPlayer: setter("followBehindPlayer"),
 };
@@ -252,7 +265,11 @@ function selectSettings(
     showCompass: state.showCompass,
     serverBrowserView: state.serverBrowserView,
     showIffs: state.showIffs,
+    iffMaxDistance: state.iffMaxDistance,
     observerTeamColors: state.observerTeamColors,
+    flagColorMode: state.flagColorMode,
+    followTeamIff: state.followTeamIff,
+    firstPersonTeamIff: state.firstPersonTeamIff,
     ccPlayerNames: state.ccPlayerNames,
     followBehindPlayer: state.followBehindPlayer,
   };

@@ -1,6 +1,7 @@
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { formatPing } from "../stringUtils";
 import styles from "./DebugInfoPanel.module.css";
+import fieldsetStyles from "./SidebarFieldset.module.css";
 
 /** Display host of a ws:// or wss:// relay URL. */
 function relayHost(url: string): string {
@@ -30,7 +31,7 @@ export function DebugNetworkInfo() {
   if (!relayConnected && gameStatus == null) return null;
 
   return (
-    <fieldset className={styles.Root}>
+    <fieldset className={`${fieldsetStyles.Fieldset} ${styles.Root}`}>
       <legend>Network info</legend>
       <dl>
         <dt>You to relay</dt>

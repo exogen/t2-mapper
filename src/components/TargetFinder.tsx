@@ -30,11 +30,12 @@ import {
 import { inputControlsStore, useInputAction } from "./InputControls";
 import {
   IFF_NEUTRAL,
-  isObserverView,
   resolveIffDisplay,
+  resolveTeamIffDisplay,
   rgbString,
+  type IffView,
 } from "../iffTheme";
-import { useSettings } from "./SettingsProvider";
+import { useIffView } from "./useIffView";
 import { ColoredName } from "./ColoredName";
 import { restorePointerLock } from "./restorePointerLock";
 import styles from "./TargetFinder.module.css";
@@ -51,19 +52,25 @@ function targetsEqual(a: FollowTarget[], b: FollowTarget[]) {
         target.key === b[i].key &&
         target.label === b[i].label &&
         target.rawName === b[i].rawName &&
-        target.entityId === b[i].entityId,
+        target.entityId === b[i].entityId &&
+        target.flagTeamId === b[i].flagTeamId,
     )
   );
 }
 
-function PlayerTargetIcon({ entityId }: { entityId: string }) {
-  const { observerTeamColors } = useSettings();
+function PlayerTargetIcon({
+  entityId,
+  view,
+}: {
+  entityId: string;
+  view: IffView;
+}) {
   // Affiliation can change in place without changing the target list.
   const color = useStreamSnapshot(() => {
     const entity = gameEntityStore.getState().streamEntities.get(entityId);
     const display =
       entity?.renderType === "Player"
-        ? resolveIffDisplay(entity, isObserverView(), observerTeamColors)
+        ? resolveIffDisplay(entity, view)
         : IFF_NEUTRAL;
     return rgbString(display.color);
   });
@@ -116,6 +123,7 @@ function TargetFinderDialog({ onClose }: { onClose: () => void }) {
     return () => cancelAnimationFrame(frame);
   }, []);
   const [query, setQuery] = useState("");
+  const view = useIffView();
   // Mounted only while searching; closed launchers do no entity-list work.
   const names = useCaster((s) => s.teamNames);
   const targets = useStreamSnapshot(
@@ -203,15 +211,11 @@ function TargetFinderDialog({ onClose }: { onClose: () => void }) {
                   <PiFlagBannerFill
                     aria-hidden
                     color={rgbString(
-                      resolveIffDisplay(
-                        { teamId: target.flagSlot },
-                        true,
-                        "blueOrange",
-                      ).color,
+                      resolveTeamIffDisplay(target.flagTeamId, view).color,
                     )}
                   />
                 ) : (
-                  <PlayerTargetIcon entityId={target.entityId} />
+                  <PlayerTargetIcon entityId={target.entityId} view={view} />
                 )}
               </span>
               <span className={styles.Name}>

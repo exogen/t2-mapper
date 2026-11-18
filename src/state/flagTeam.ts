@@ -2,7 +2,7 @@ import { casterStore } from "./casterStore";
 import { streamSnapshotStore } from "./streamSnapshotStore";
 import { DEFAULT_TEAM_NAMES, formatTargetName } from "../stringUtils";
 import { stripTaggedStringMarkup } from "../stream/streamHelpers";
-import type { GameEntity } from "./gameEntityTypes";
+import type { GameEntity, PlayerEntity } from "./gameEntityTypes";
 import type { FlagTargetInfo } from "../stream/types";
 
 /** HudNavDisplay (Tribes2.exe 0x503f00) excludes dead players from HUD
@@ -13,6 +13,27 @@ export function shouldShowFlagMarker(entity: GameEntity): boolean {
     ((entity.targetRenderFlags ?? 0) & 0x2) !== 0 &&
     (entity.renderType !== "Player" || (entity.damageState ?? 0) === 0)
   );
+}
+
+function carriedFlagSkin(entity: PlayerEntity): string | undefined {
+  return entity.imageSlots
+    ?.find((slot) => slot?.shapeName?.toLowerCase().startsWith("flag"))
+    ?.skinName?.toLowerCase();
+}
+
+/** Returns undefined when the skin is absent and null when it is ambiguous. */
+function findFlagSkin<T extends { skinName?: string }>(
+  entries: readonly T[] | undefined,
+  skin: string | undefined,
+): T | null | undefined {
+  if (!entries || !skin) return undefined;
+  let match: T | undefined;
+  for (const entry of entries) {
+    if (entry.skinName !== skin) continue;
+    if (match !== undefined) return null;
+    match = entry;
+  }
+  return match;
 }
 
 /**
@@ -28,16 +49,15 @@ export function resolveFlagTeam(entity: GameEntity): {
   teamId: number | null;
   name: string | null;
 } {
-  const teams = streamSnapshotStore.getState().snapshot?.teamScores;
+  const snapshot = streamSnapshotStore.getState().snapshot;
+  const teams = snapshot?.teamScores;
   if (entity.renderType === "Player") {
-    const slot = entity.imageSlots?.find((s) =>
-      s?.shapeName?.toLowerCase().startsWith("flag"),
-    );
-    const skin = slot?.skinName?.toLowerCase();
-    let teamId: number | null = null;
-    if (skin) {
-      teamId = teams?.find((t) => t.skinName === skin)?.teamId ?? null;
-    }
+    const skin = carriedFlagSkin(entity);
+    const target = findFlagSkin(snapshot?.flagTargets, skin);
+    const teamId =
+      target === null
+        ? null
+        : (target?.teamId ?? findFlagSkin(teams, skin)?.teamId ?? null);
     return {
       teamId,
       name: teamId
@@ -73,12 +93,7 @@ function originalFlagTarget(entity: GameEntity): FlagTargetInfo | undefined {
   // CTF mounts the flag image using its team's target skin. Single-flag
   // modes need no team association, including when joining during a pickup.
   if (targets.length === 1) return targets[0];
-  const skin = entity.imageSlots
-    ?.find((slot) => slot?.shapeName?.toLowerCase().startsWith("flag"))
-    ?.skinName?.toLowerCase();
-  if (!skin) return undefined;
-  const matches = targets.filter((target) => target.skinName === skin);
-  return matches.length === 1 ? matches[0] : undefined;
+  return findFlagSkin(targets, carriedFlagSkin(entity)) ?? undefined;
 }
 
 /** Explicitly select the flag's own label or its current carrier's target label.

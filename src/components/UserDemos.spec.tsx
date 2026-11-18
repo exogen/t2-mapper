@@ -301,7 +301,7 @@ it("shows the creator's clips above both demo sections", () => {
 });
 
 it.each(["owner", "visitor"])(
-  "shows the linked MapGenius demo union above uploads for the %s",
+  "shows uploads above the linked MapGenius demo union for the %s",
   (viewer) => {
     if (viewer === "owner") {
       signIn();
@@ -339,8 +339,8 @@ it.each(["owner", "visitor"])(
     expect(official).not.toContain(otherUpload.filename);
     expect(official).not.toContain("Delete");
     expect(section(markup, "Uploaded demos")).toContain(demo.filename);
-    expect(markup.indexOf('aria-label="MapGenius demos"')).toBeLessThan(
-      markup.indexOf('aria-label="Uploaded demos"'),
+    expect(markup.indexOf('aria-label="Uploaded demos"')).toBeLessThan(
+      markup.indexOf('aria-label="MapGenius demos"'),
     );
     expect(fixture.demos[0]).toBe(older);
     expect(fixture.mapGeniusOptions.enabled).toBe(true);

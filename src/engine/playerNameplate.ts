@@ -6,11 +6,12 @@ import { streamClock, streamPlaybackStore } from "../state/streamPlaybackStore";
 import { streamSnapshotStore } from "../state/streamSnapshotStore";
 import { commandCircuitStore } from "../state/commandCircuitStore";
 import { cameraTourStore } from "../state/cameraTourStore";
-import { settingsStore } from "../state/settingsStore";
+import { settingsStore, type IffVisibility } from "../state/settingsStore";
+import { getIffView, selectIffVisibilityTarget } from "../state/iffView";
 import {
-  isObserverView,
   resolveIffDisplay,
   rgbString,
+  usesObserverPalette,
   IFF_ENEMY,
 } from "../iffTheme";
 import {
@@ -30,9 +31,6 @@ import {
 } from "./labelOverlay";
 import type { DTSModel } from "../dts/dtsModel";
 import type { PlayerEntity } from "../state/gameEntityTypes";
-
-/** Max distance at which nameplates are visible. */
-const NAMEPLATE_FADE_DISTANCE = 150;
 
 /** Padding above the shape's bounding box top for the IFF arrow. */
 const IFF_PADDING = 0.1;
@@ -128,15 +126,11 @@ function plateSize(name: string, hasHealth: boolean): [number, number] {
 }
 
 /** Whether the IFF preference shows this player's nameplate. */
-function nameplateShown(entityId: string): boolean {
-  const { showIffs } = settingsStore.getState();
+function nameplateShown(entityId: string, showIffs: IffVisibility): boolean {
   if (showIffs === "always") return true;
   if (showIffs === "never") return false;
-  const state = streamPlaybackStore.getState();
   const isFollowed =
-    state.followEntityId === entityId &&
-    (state.cameraMode === "orbitOverride" ||
-      state.cameraMode === "firstPersonOverride");
+    selectIffVisibilityTarget(streamPlaybackStore.getState()) === entityId;
   return showIffs === "followed" ? isFollowed : !isFollowed;
 }
 
@@ -201,7 +195,7 @@ export function createPlayerNameplate(
   };
 
   /** The distance fade (as WorldLabel's), or null while hidden. */
-  const fade = (camera: Camera): number | null => {
+  const fade = (camera: Camera, maxDistance: number): number | null => {
     // During a command circuit tour, world-anchored labels get out of the
     // way — the active target gets a screen-space label instead.
     if (
@@ -219,7 +213,7 @@ export function createPlayerNameplate(
       _worldPos.z,
     );
     const distance = behind ? Infinity : camera.position.distanceTo(_worldPos);
-    const inRange = distance < NAMEPLATE_FADE_DISTANCE;
+    const inRange = distance < maxDistance;
     if (inRange) {
       hideCountdown = HIDE_DELAY_FRAMES;
       visible = true;
@@ -227,25 +221,24 @@ export function createPlayerNameplate(
       visible = false;
     }
     if (!visible) return null;
-    return inRange
-      ? Math.max(0, Math.min(1, 1 - distance / NAMEPLATE_FADE_DISTANCE))
-      : 0;
+    return inRange ? 1 - distance / maxDistance : 0;
   };
 
   return {
     update(camera) {
       const entity = readEntity();
+      const { showIffs, iffMaxDistance } = settingsStore.getState();
       if (
         entity.id ===
           streamSnapshotStore.getState().snapshot?.controlPlayerGhostId ||
-        !nameplateShown(entity.id)
+        !nameplateShown(entity.id, showIffs)
       ) {
         visible = true;
         hideCountdown = HIDE_DELAY_FRAMES;
         hide();
         return;
       }
-      const fadeOpacity = fade(camera);
+      const fadeOpacity = fade(camera, iffMaxDistance);
       if (fadeOpacity == null) {
         hide();
         return;
@@ -270,15 +263,16 @@ export function createPlayerNameplate(
       // Affiliation fields and playerName are mutated in-place by streaming
       // playback, so they're polled here. rgbString is cached by color
       // identity (theme constants), so this is alloc-free.
-      const { observerTeamColors } = settingsStore.getState();
-      const observer = isObserverView();
-      const display = resolveIffDisplay(entity, observer, observerTeamColors);
+      const view = getIffView();
+      const display = resolveIffDisplay(entity, view);
       const colorStr = rgbString(display.color);
 
       // IFF arrow: enemy shape + theme color for teamed viewers, allied
       // shape + team color for observers.
       const arrowUrl =
-        !observer && display === IFF_ENEMY ? IFF_ENEMY_URL : IFF_FRIENDLY_URL;
+        !usesObserverPalette(view) && display === IFF_ENEMY
+          ? IFF_ENEMY_URL
+          : IFF_FRIENDLY_URL;
       const arrowKey = `${arrowUrl}|${colorStr}`;
       if (drawn.arrowKey !== arrowKey) {
         const bitmap = getTintedIconLabel(

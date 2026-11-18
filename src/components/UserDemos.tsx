@@ -476,6 +476,36 @@ export default function UserDemos({ userId }: { userId: string }) {
             canDelete={owner}
           />
         )}
+        <section className={styles.DemoSection} aria-label="Uploaded demos">
+          <div className={styles.Header}>
+            <h2 className={styles.Title}>Uploaded demos</h2>
+            {(index.isFetching || (owner && uploads.isFetching)) && (
+              <LuLoaderCircle
+                className={styles.Spinner}
+                role="status"
+                aria-label="Refreshing demos"
+              />
+            )}
+            <DemoPagination {...uploadedPages} label="Uploaded demo pages" />
+          </div>
+          {!validUser ? (
+            <p className={styles.Error} role="alert">
+              Invalid Discord user ID.
+            </p>
+          ) : gallery.length > 0 ? (
+            <div className={styles.Grid}>
+              {uploadedPages.items.map((entry) => entry.card)}
+            </div>
+          ) : index.isPending ? (
+            <p className={styles.Message}>Loading demos…</p>
+          ) : index.isError && !index.data ? (
+            <p className={styles.Error} role="alert">
+              Could not load demos. Please reload to try again.
+            </p>
+          ) : (
+            <p className={styles.Message}>No demos uploaded yet.</p>
+          )}
+        </section>
         {validUser && (
           <section className={styles.DemoSection} aria-label="MapGenius demos">
             <div className={styles.Header}>
@@ -508,36 +538,6 @@ export default function UserDemos({ userId }: { userId: string }) {
             )}
           </section>
         )}
-        <section className={styles.DemoSection} aria-label="Uploaded demos">
-          <div className={styles.Header}>
-            <h2 className={styles.Title}>Uploaded demos</h2>
-            {(index.isFetching || (owner && uploads.isFetching)) && (
-              <LuLoaderCircle
-                className={styles.Spinner}
-                role="status"
-                aria-label="Refreshing demos"
-              />
-            )}
-            <DemoPagination {...uploadedPages} label="Uploaded demo pages" />
-          </div>
-          {!validUser ? (
-            <p className={styles.Error} role="alert">
-              Invalid Discord user ID.
-            </p>
-          ) : gallery.length > 0 ? (
-            <div className={styles.Grid}>
-              {uploadedPages.items.map((entry) => entry.card)}
-            </div>
-          ) : index.isPending ? (
-            <p className={styles.Message}>Loading demos…</p>
-          ) : index.isError && !index.data ? (
-            <p className={styles.Error} role="alert">
-              Could not load demos. Please reload to try again.
-            </p>
-          ) : (
-            <p className={styles.Message}>No demos uploaded yet.</p>
-          )}
-        </section>
       </div>
     </>
   );

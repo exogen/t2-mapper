@@ -1,13 +1,7 @@
 import { streamSnapshotStore } from "../state/streamSnapshotStore";
-import { settingsStore } from "../state/settingsStore";
 import { resolveFlagTeam, flagLabel } from "../state/flagTeam";
-import {
-  isObserverView,
-  resolveIffDisplay,
-  rgbaString,
-  IFF_NEUTRAL,
-  type TeamColorScheme,
-} from "../iffTheme";
+import { getFlagIffDisplay } from "../state/iffView";
+import { rgbaString } from "../iffTheme";
 import { FLAG_STATUS_ICONS } from "./markerIcons";
 import { ScreenRectTracker } from "./screenRectTracker";
 import {
@@ -33,24 +27,11 @@ const LABEL_FONT_SIZE = 9;
 /** Flag status shown as an icon after the label text. */
 type FlagStatus = keyof typeof FLAG_STATUS_ICONS;
 
-/**
- * Stroke color for the callout: teamed viewers get the flag's
- * viewer-relative IFF color; observers get the flag's TEAM color from
- * the selected scheme. The label keeps the tour callout's normal text
- * color either way.
- */
 function resolveCalloutStroke(
   entity: GameEntity,
   flagTeamId: number | null,
-  scheme: TeamColorScheme,
 ): string {
-  const observer = isObserverView();
-  const iff = "iffColor" in entity ? entity.iffColor : undefined;
-  const display = observer
-    ? resolveIffDisplay({ teamId: flagTeamId ?? undefined }, true, scheme)
-    : iff
-      ? resolveIffDisplay({ iffColor: iff }, false, scheme)
-      : IFF_NEUTRAL;
+  const display = getFlagIffDisplay(entity, flagTeamId);
   // mapColor matches the player dots/cones on the dark map terrain; the
   // stroke opacity keeps the outline style lighter than the solid dots.
   return rgbaString(display.mapColor, display.strokeOpacity);
@@ -107,11 +88,7 @@ export function createCommandCircuitFlagCallout(readEntity: () => GameEntity): {
         x,
         y,
         CIRCLE_RADIUS,
-        resolveCalloutStroke(
-          entity,
-          teamId,
-          settingsStore.getState().observerTeamColors,
-        ),
+        resolveCalloutStroke(entity, teamId),
       );
 
       const label = flagLabel(entity, "original");

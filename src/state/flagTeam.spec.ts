@@ -155,6 +155,7 @@ it("labels an already-carried CTF flag from its original target, without ever se
       },
     ],
   });
+  expect(resolveFlagTeam(entity).teamId).toBe(1);
   expect(flagLabel(entity, "original", {})).toBe("Storm Flag");
   expect(flagLabel(entity, "original", { 1: "Knights", 2: "Raiders" })).toBe(
     "Knights Flag",
@@ -203,6 +204,7 @@ it("does not guess an original flag from ambiguous skins or use the carrier's ow
         skinName: "base",
       },
     ],
+    teamScores: [{ teamId: 1, name: "Storm", skinName: "base" }],
   } as StreamSnapshot);
   const entity = streamEntityToGameEntity({
     id: "carrier",
@@ -215,4 +217,12 @@ it("does not guess an original flag from ambiguous skins or use the carrier's ow
     ],
   });
   expect(flagLabel(entity, "original", {})).toBe("Flag");
+  expect(resolveFlagTeam(entity).teamId).toBeNull();
+  setStreamSnapshot({
+    teamScores: [
+      { teamId: 1, name: "Storm", skinName: "base" },
+      { teamId: 2, name: "Inferno", skinName: "base" },
+    ],
+  } as StreamSnapshot);
+  expect(resolveFlagTeam(entity).teamId).toBeNull();
 });

@@ -7,7 +7,12 @@ import {
   Timer,
   WebGLRenderer,
 } from "three";
+import {
+  selectIffFollowTarget,
+  selectIffVisibilityTarget,
+} from "../state/iffView";
 import { settingsStore } from "../state/settingsStore";
+import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { setDTSCullCamera } from "../dts/dtsModel";
 import { flushTransformChanges } from "../transformChanges";
 import { registerShadowRenderer } from "./shadowControl";
@@ -161,10 +166,30 @@ export function mountEngineCanvas(
   const unsubscribe = settingsStore.subscribe((state, previous) => {
     if (
       state.renderOnDemand !== previous.renderOnDemand ||
-      state.fpsLimit !== previous.fpsLimit
+      state.fpsLimit !== previous.fpsLimit ||
+      state.showIffs !== previous.showIffs ||
+      state.iffMaxDistance !== previous.iffMaxDistance ||
+      state.observerTeamColors !== previous.observerTeamColors ||
+      state.flagColorMode !== previous.flagColorMode ||
+      state.followTeamIff !== previous.followTeamIff ||
+      state.firstPersonTeamIff !== previous.firstPersonTeamIff
     )
       invalidate();
   });
+  const unsubscribeIffFollow = streamPlaybackStore.subscribe(
+    (state, previous) => {
+      const preferences = settingsStore.getState();
+      const { showIffs } = preferences;
+      if (
+        selectIffFollowTarget(state, preferences) !==
+          selectIffFollowTarget(previous, preferences) ||
+        ((showIffs === "followed" || showIffs === "exceptFollowed") &&
+          selectIffVisibilityTarget(state) !==
+            selectIffVisibilityTarget(previous))
+      )
+        invalidate();
+    },
+  );
 
   registerShadowRenderer(renderer);
   const disconnect = engine.connect({
@@ -188,6 +213,7 @@ export function mountEngineCanvas(
       timer.dispose();
       observer.disconnect();
       unsubscribe();
+      unsubscribeIffFollow();
       flushTransformChanges(scene);
       disconnect();
       registerShadowRenderer(null);

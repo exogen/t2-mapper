@@ -12,6 +12,7 @@ import { quickCamDisplay } from "./quickCamDisplay";
 import { QuickCamIcon } from "./QuickCamIcon";
 import { FlagStatus } from "./FlagStatus";
 import { useQuickCams } from "./useQuickCams";
+import { useIffView } from "./useIffView";
 import { useSettings } from "./SettingsProvider";
 import styles from "./QuickCamHUD.module.css";
 
@@ -38,10 +39,11 @@ export function QuickCamHUD({
   const hudRef = useRef<HTMLElement>(null);
   const flags = useFlagCameras();
   const players = useStreamSnapshot(getPlayerResolver);
+  const iffView = useIffView();
   const source = useDataSource();
   const spectatorReady = useIsWatchSpectator({ requireReady: true });
   const ready = source === "demo" || (source === "live" && spectatorReady);
-  const { restore } = useQuickCams();
+  const { save, restore } = useQuickCams();
   useEffect(() => {
     if (lastCameraAction === seenAction.current) return;
     seenAction.current = lastCameraAction;
@@ -85,11 +87,11 @@ export function QuickCamHUD({
               type="button"
               className={styles.CameraButton}
               data-slot={slot}
-              disabled={!ready || empty}
-              onClick={empty ? undefined : () => restore(slot)}
+              disabled={!ready}
+              onClick={() => (empty ? save(slot) : restore(slot))}
               title={
                 empty
-                  ? `Press Shift+${slot} to set camera ${slot}`
+                  ? `Click or press Shift+${slot} to set camera ${slot}`
                   : `Recall camera ${slot}: ${label}`
               }
             >
@@ -102,13 +104,14 @@ export function QuickCamHUD({
                     camera={camera}
                     Icon={Icon}
                     flagTeamId={flagTeamId}
+                    view={iffView}
                   />
                 )
               )}
               <span className={styles.LabelGroup}>
                 {empty ? (
                   <span className={styles.SetHint}>
-                    Press{" "}
+                    Click or{" "}
                     <BsShiftFill
                       className={styles.ShiftIcon}
                       aria-label="Shift"
