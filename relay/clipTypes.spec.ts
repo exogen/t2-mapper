@@ -50,7 +50,11 @@ it("accepts hosted source keys, normalizes quaternion data, and strips unknown f
 it("preserves first-person freelook through trimming and camera cuts", () => {
   const clip = readClipTake(
     take([
-      frame(0, 10, { cameraMode: "firstPersonOverride", headYaw: 0 }),
+      frame(0, 10, {
+        cameraMode: "firstPersonOverride",
+        headYaw: 0,
+        firstPersonPose: false,
+      }),
       frame(1000, 11, { cameraMode: "firstPersonOverride", headYaw: 0.6 }),
       frame(2000, 12, {
         cameraMode: "firstPersonOverride",
@@ -60,6 +64,7 @@ it("preserves first-person freelook through trimming and camera cuts", () => {
     ]),
   );
   expect(sampleClipTake(clip, 500).headYaw).toBeCloseTo(0.3);
+  expect(sampleClipTake(clip, 500).firstPersonPose).toBe(false);
   expect(sampleClipTake(clip, 1500).headYaw).toBe(0.6);
   expect(sampleClipTake(clip, 2000).headYaw).toBe(-0.6);
   expect(trimClipTake(clip, 500, 1800).samples[0].headYaw).toBeCloseTo(0.3);
@@ -68,6 +73,41 @@ it("preserves first-person freelook through trimming and camera cuts", () => {
     readClipTake(take([frame(0, 10, { headYaw: 4 }), frame(1000, 11)])),
   ).toThrow("Invalid clip camera sample");
 });
+
+it.each([
+  { cameraMode: "orbitOverride" },
+  { cameraMode: "firstPersonOverride", firstPersonPose: false },
+])(
+  "uses the outside-eye pose as soon as the camera leaves the eye: %j",
+  (end) => {
+    const eye = frame(0, 10, {
+      cameraMode: "firstPersonOverride",
+      firstPersonPose: true,
+      headYaw: 0.2,
+      targetId: 7,
+    });
+    const transition = frame(32, 10.032, { targetId: 7, ...end });
+    const clip = take([eye, transition]);
+    expect(sampleClipTake(clip, 0)).toMatchObject({
+      firstPersonPose: true,
+      headYaw: 0.2,
+    });
+    const midpoint = sampleClipTake(clip, 16);
+    expect(midpoint).toMatchObject({
+      position: [16, 2, 3],
+      firstPersonPose: false,
+    });
+    expect(midpoint).not.toHaveProperty("headYaw");
+    expect(trimClipTake(clip, 12, 32).samples[0].firstPersonPose).toBe(false);
+
+    const cut = take([eye, { ...transition, cut: true }]);
+    expect(sampleClipTake(cut, 16)).toMatchObject({
+      position: eye.position,
+      firstPersonPose: true,
+      headYaw: 0.2,
+    });
+  },
+);
 
 it("retains the creator's four interpolation values through validation and trimming", () => {
   const settings = {

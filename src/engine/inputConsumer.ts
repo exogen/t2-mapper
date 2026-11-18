@@ -19,7 +19,7 @@ import {
   yawPitchToQuaternion,
   MAX_PITCH,
 } from "../stream/streamHelpers";
-import type { StreamRecording } from "../stream/types";
+import type { StreamRecording, StreamSnapshot } from "../stream/types";
 import type { LiveStreamAdapter } from "../stream/liveStreaming";
 import {
   claimMoveIndex,
@@ -198,8 +198,32 @@ export function installInputConsumer(engine: GameEngine): () => void {
   let prevOrbitTargetPos = { x: 0, y: 0, z: 0 };
   let currentOrbitTargetPos = { x: 0, y: 0, z: 0 };
   let orbitTargetInitialized = false;
+  let orbitTargetIsPoint = false;
   /** Snapshot reference from last orbit target update (identity check). */
-  let lastOrbitSnapshot: unknown = null;
+  let lastOrbitSnapshot: StreamSnapshot | null = null;
+  const updateOrbitTarget = (snapshot: StreamSnapshot | null) => {
+    if (!snapshot || snapshot === lastOrbitSnapshot) return;
+    lastOrbitSnapshot = snapshot;
+    const point = snapshot.camera?.orbitPoint;
+    const id = snapshot.camera?.orbitTargetId;
+    const position =
+      point ??
+      (id ? snapshot.entities.find((e) => e.id === id)?.position : undefined);
+    if (!position) return;
+
+    const next = { x: position[0], y: position[1], z: position[2] };
+    const isPoint = point !== undefined;
+    // Point packets contain the center directly. Entity targets use a
+    // render-time vertical offset, so interpolation across the two
+    // representations would apply that height twice or leave it out.
+    prevOrbitTargetPos =
+      orbitTargetInitialized && orbitTargetIsPoint === isPoint
+        ? currentOrbitTargetPos
+        : next;
+    currentOrbitTargetPos = next;
+    orbitTargetInitialized = true;
+    orbitTargetIsPoint = isPoint;
+  };
 
   // ── Input for the next move (live mode): look deltas and triggers
   // accumulate until a tick consumes them; the axes hold the current input.
@@ -335,28 +359,7 @@ export function installInputConsumer(engine: GameEngine): () => void {
       // Only update when the simulation snapshot has actually changed,
       // otherwise prev gets overwritten with current on every useTick, destroying
       // the interpolation endpoints between packets.
-      const snap = liveAdapter.getSnapshot();
-      if (snap !== lastOrbitSnapshot) {
-        lastOrbitSnapshot = snap;
-        const cam = snap?.camera;
-        if (cam?.orbitTargetId) {
-          const targetEntity = snap.entities.find(
-            (e) => e.id === cam.orbitTargetId,
-          );
-          if (targetEntity?.position) {
-            prevOrbitTargetPos = { ...currentOrbitTargetPos };
-            currentOrbitTargetPos = {
-              x: targetEntity.position[0],
-              y: targetEntity.position[1],
-              z: targetEntity.position[2],
-            };
-            if (!orbitTargetInitialized) {
-              prevOrbitTargetPos = { ...currentOrbitTargetPos };
-              orbitTargetInitialized = true;
-            }
-          }
-        }
-      }
+      updateOrbitTarget(liveAdapter.getSnapshot());
 
       const buffer = moveBuffer;
       const moveIndex = claimMoveIndex(
@@ -553,7 +556,7 @@ export function installInputConsumer(engine: GameEngine): () => void {
     engine.scheduler.add(FramePriority.CameraLive, (ctx) => {
       const isLive = isLiveConnection(live());
       const { gameStatus, liveReady } = live();
-      const mode = inputModeStore.getState().mode;
+      let mode = inputModeStore.getState().mode;
       if (
         !isLive ||
         !activeAdapter ||
@@ -623,9 +626,9 @@ export function installInputConsumer(engine: GameEngine): () => void {
         predInitialized = true;
 
         // Derive observer mode from the server's camera data — the server
-        // is authoritative. "third-person" with a camera control type means
-        // the server's Camera is in OrbitObject mode (follow). "observer"
-        // means free-fly. This corrects local state if a trigger 2 move
+        // is authoritative. "third-person" means the server's Camera is
+        // orbiting a ghost or a point. "observer" means free-fly. This
+        // corrects local state if a trigger 2 move
         // was lost or the server rejected the mode transition.
         const serverMode = serverCam.mode === "third-person" ? "follow" : "fly";
         if (serverMode !== mode) {
@@ -641,6 +644,7 @@ export function installInputConsumer(engine: GameEngine): () => void {
             });
           }
           setInputMode(serverMode);
+          mode = serverMode;
           if (activeAdapter) {
             activeAdapter.observerMode = serverMode;
           }
@@ -652,23 +656,8 @@ export function installInputConsumer(engine: GameEngine): () => void {
           }
         }
 
-        // Initialize orbit target position on first reconciliation with
-        // orbit data, so follow mode works immediately after mode switch.
-        if (serverCam.orbitTargetId && !orbitTargetInitialized) {
-          const targetEntity = snapshot.entities.find(
-            (e) => e.id === serverCam.orbitTargetId,
-          );
-          if (targetEntity?.position) {
-            const pos = {
-              x: targetEntity.position[0],
-              y: targetEntity.position[1],
-              z: targetEntity.position[2],
-            };
-            currentOrbitTargetPos = pos;
-            prevOrbitTargetPos = { ...pos };
-            orbitTargetInitialized = true;
-          }
-        }
+        // Reconcile the pivot even if this frame didn't collect a move.
+        if (serverMode === "follow") updateOrbitTarget(snapshot);
       }
 
       if (!predInitialized) return;
@@ -699,7 +688,7 @@ export function installInputConsumer(engine: GameEngine): () => void {
           predPitch,
           engine.ticks.fraction,
           streamPlaybackStore.getState().orbitOverrideDistance,
-          serverCam?.orbitTargetId,
+          orbitTargetIsPoint ? undefined : serverCam?.orbitTargetId,
         );
       }
     }),

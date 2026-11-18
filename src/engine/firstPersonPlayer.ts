@@ -45,15 +45,16 @@ export function firstPersonPlayerId(
   camera: StreamCamera | null,
   mode: DemoCameraMode,
   firstPersonFollowId: string | undefined,
+  controlAtEye = camera?.mode === "first-person",
 ): string | null {
   const id =
     mode === "firstPersonOverride"
       ? firstPersonFollowId
-      : mode === "original" && camera?.mode === "first-person"
-        ? camera.controlEntityId
+      : mode === "original" && controlAtEye
+        ? camera?.controlEntityId
         : undefined;
   const player = id === undefined ? undefined : entities.get(id);
-  if (player?.type !== "Player") return null;
+  if (player?.type !== "Player" || player.damageState) return null;
   if (
     mode === "firstPersonOverride" &&
     player.mountObjectId &&

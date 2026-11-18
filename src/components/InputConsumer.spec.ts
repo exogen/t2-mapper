@@ -134,6 +134,7 @@ interface TestSnapshot {
     mode: string;
     orbitDistance?: number;
     orbitTargetId?: string;
+    orbitPoint?: [number, number, number];
   };
   entities: { id: string; position: number[] }[];
 }
@@ -443,6 +444,34 @@ it("shares native live follow distance and limits between wheel and pinch, prese
   expect(streamPlaybackStore.getState().orbitOverrideDistance).toBe(
     MIN_ORBIT_DISTANCE,
   );
+});
+
+it("orbits the fixed camera point as soon as it replaces the tracked ghost", async () => {
+  const live = await mountInput();
+  const camera = {
+    yaw: 0,
+    pitch: 0,
+    position: [0, 0, 0],
+    mode: "third-person",
+    orbitDistance: 6,
+  };
+  live.adapter.snapshot = {
+    camera: { ...camera, orbitTargetId: "target" },
+    entities: [{ id: "target", position: [5, 7, 11] }],
+  };
+  await live.step(1 / 60);
+  expect(live.camera.position.toArray()).toEqual([1, 11, 5]);
+
+  live.adapter.serverUpdateId++;
+  live.adapter.snapshot = {
+    camera: { ...camera, orbitPoint: [20, 30, 12] },
+    entities: [],
+  };
+  await live.step(0);
+  expect(live.camera.position.toArray()).toEqual([24, 12, 20]);
+
+  await live.step(1 / 60);
+  expect(live.camera.position.toArray()).toEqual([24, 12, 20]);
 });
 
 it("consumes a completed quick pinch once, then accepts a fresh drag", async () => {

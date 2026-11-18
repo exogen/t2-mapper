@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { Group, PerspectiveCamera, Scene } from "three";
-import type { ParsedData } from "t2-demo-parser";
+import { BlockTypeInfo, type ParsedData } from "t2-demo-parser";
 import { FrameScheduler, type FrameContext } from "../engine/frameScheduler";
 import type { GameEngine } from "../engine/gameEngine";
 import { StreamPlaybackSession } from "../engine/streamPlayback";
@@ -14,7 +14,7 @@ import {
   PACKED_BODY_YAW_STEP,
   PACKED_HEAD_STEP,
 } from "./quantizedPlayerAim";
-import { yawPitchToQuaternion } from "./streamHelpers";
+import { STREAM_TICK_SEC, yawPitchToQuaternion } from "./streamHelpers";
 import { fakeDemoParser, moveBlock, packetBlock } from "./streamTestFixtures";
 import type { StreamRecording, StreamSnapshot } from "./types";
 
@@ -93,6 +93,117 @@ describe("DemoStreamAdapter.getEffectShapes", () => {
       "effect_plasma_explosion.dts",
       "debris_generic.dts",
     ]);
+  });
+});
+
+describe("recorded first-person transitions", () => {
+  const mode = (firstPerson: boolean) => ({
+    type: BlockTypeInfo,
+    parsed: { firstPerson, cameraFov: 90 },
+  });
+  const time = (tick: number) => tick * STREAM_TICK_SEC;
+  function recordingCamera(
+    blocks: unknown[],
+    initialBlock?: NonNullable<
+      Parameters<typeof fakeDemoParser>[0]
+    >["initialBlock"],
+  ) {
+    const parser = fakeDemoParser({
+      blocks,
+      ghostClasses: "Player",
+      decompressedByteLength: blocks.length + 1,
+      initialBlock: {
+        controlObjectData: {
+          position: { x: 1, y: 2, z: 3 },
+          rotationZ: 0,
+          headX: 0,
+        },
+        ...initialBlock,
+      },
+    });
+    return new DemoStreamAdapter(parser, { checkpoints: false });
+  }
+
+  it("starts at the recorded position and reverses at the recorded speed", () => {
+    const blocks = [
+      moveBlock(),
+      mode(false),
+      moveBlock(),
+      moveBlock(),
+      moveBlock(),
+      moveBlock(),
+      mode(true),
+      moveBlock(),
+    ];
+    const stream = recordingCamera(blocks, { cameraPos: 0.6, cameraSpeed: 5 });
+    const blends = [0.6, 0.44, 0.6, 0.76, 0.92, 1, 0.84];
+    const snapshots = blends.map((blend, tick) => {
+      const camera = stream.stepToTime(time(tick)).camera;
+      expect(camera?.controlCameraBlend).toBeCloseTo(blend);
+      expect(camera?.previousControlCameraBlend).toBeCloseTo(
+        blends[Math.max(0, tick - 1)],
+      );
+      expect(camera?.mode).toBe(
+        tick >= 2 && tick <= 5 ? "third-person" : "first-person",
+      );
+      return camera;
+    });
+    expect(snapshots[0]?.controlCameraBlend).toBe(0.6);
+  });
+
+  it("restores a partial blend and accepts older checkpoints at their view endpoint", async () => {
+    const blocks = [
+      moveBlock(),
+      mode(false),
+      moveBlock(),
+      moveBlock(),
+      mode(true),
+      moveBlock(),
+      moveBlock(),
+    ];
+    const source = recordingCamera(blocks);
+    const saved = await source.captureCheckpointAt(2, async () => {});
+    const viewer = recordingCamera(blocks);
+    viewer.setPlayerPredictionEnabled(true);
+    viewer.importCheckpoints([saved]);
+    expect(viewer.stepToTime(time(2)).camera?.controlCameraBlend).toBeCloseTo(
+      0.32,
+    );
+    expect(viewer.lastStepStartTimeSec).toBeCloseTo(time(2));
+    const reversed = viewer.stepToTime(time(4)).camera;
+    expect(reversed?.previousControlCameraBlend).toBeCloseTo(0.64);
+    expect(reversed?.controlCameraBlend).toBeCloseTo(0.32);
+
+    const legacy = structuredClone(saved);
+    delete legacy.simulation.state.camera?.controlCameraBlend;
+    delete legacy.simulation.state.camera?.previousControlCameraBlend;
+    viewer.importCheckpoints([legacy]);
+    expect(viewer.stepToTime(time(2)).camera?.controlCameraBlend).toBe(1);
+    expect(viewer.stepToTime(time(4)).camera?.controlCameraBlend).toBeCloseTo(
+      0.68,
+    );
+  });
+
+  it("pulls the camera in when its control object's datablock requires first person", () => {
+    const stream = recordingCamera([moveBlock()], {
+      firstPerson: false,
+      cameraPos: 0.5,
+      controlObjectGhostIndex: 0,
+      dataBlocks: new Map([
+        [1, { className: "PlayerData", data: { firstPersonOnly: true } }],
+      ]),
+      initialGhosts: [
+        {
+          index: 0,
+          classId: 1,
+          type: "create",
+          parsedData: { dataBlockId: 1, position: { x: 1, y: 2, z: 3 } },
+        },
+      ],
+    });
+    expect(stream.stepToTime(time(1)).camera?.controlCameraBlend).toBeCloseTo(
+      0.18,
+    );
   });
 });
 
@@ -191,6 +302,16 @@ it.each([
         expect(component).toBeCloseTo(expected[index], 10);
       });
     };
+    const expectDeathCamera = () => {
+      expectAim(0.5, 0);
+      expect(camera.position.x).toBeCloseTo(
+        body.position.x - 4 * Math.cos(0.5),
+      );
+      expect(camera.position.y).toBeCloseTo(body.position.y + 1.15);
+      expect(camera.position.z).toBeCloseTo(
+        body.position.z - 4 * Math.sin(0.5),
+      );
+    };
     frame(0.016);
     const first = streamSnapshot.current!;
     const pitchCorrection = (PACKED_HEAD_STEP * MAX_LOOK_ANGLE) / 2;
@@ -221,14 +342,16 @@ it.each([
     frame(0.024);
     expect(streamSnapshot.current!.timeSec).toBe(0.032);
     expect(streamSnapshot.current!.entities[0].headPitch).toBe(0.4);
-    if (damageState || !allowWarp)
+    if (damageState && !revive) expectDeathCamera();
+    else if (damageState || !allowWarp)
       expectAim(0.65 + yawCorrection, 0.6 + pitchCorrection);
     else expectAim(yawCorrection, pitchCorrection);
     vi.mocked(engine.invalidate).mockClear();
     settingsStore.setState({ aimCorrection: false });
     expect(engine.invalidate).toHaveBeenCalledOnce();
     frame(0);
-    expectAim(0.65, 0.6);
+    if (damageState && !revive) expectDeathCamera();
+    else expectAim(0.65, 0.6);
     settingsStore.setState({ aimCorrection: true });
 
     if (completeAtFrontier) {
@@ -250,7 +373,8 @@ it.each([
       headPitch: 0,
       headYaw: 0,
     });
-    if (damageState || !allowWarp)
+    if (damageState && !revive) expectDeathCamera();
+    else if (damageState || !allowWarp)
       expectAim(0.65 + yawCorrection, 0.6 + pitchCorrection);
     else expectAim(0.325 + yawCorrection, 0.3 + pitchCorrection);
     expect(first.entities[0].headPitch).toBe(0);

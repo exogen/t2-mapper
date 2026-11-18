@@ -10,6 +10,7 @@ import { engineStore } from "../state/engineStore";
 import { streamClock, streamPlaybackStore } from "../state/streamPlaybackStore";
 import { setStreamSnapshot } from "../state/streamSnapshotStore";
 import type { StreamSnapshot, StreamingPlayback } from "../stream/types";
+import { streamRenderFrame } from "../stream/interpolateEntity";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { commandCircuitStore } from "../state/commandCircuitStore";
 import { resolveCameraOwner } from "../state/cameraOwner";
@@ -354,6 +355,117 @@ it("preserves interpolation during a recorded flag hand-off", () => {
   expect(recorded.samples[1].cut).toBeUndefined();
   expect(sampleClipTake(recorded, 20).position).toEqual([2, 2, 3]);
 });
+
+it("records a perspective toggle on one body without inserting a camera cut", () => {
+  const { engine, frame } = fixture();
+  const body = {
+    id: "player",
+    renderType: "Player" as const,
+    className: "Player",
+    targetId: 7,
+  };
+  gameEntityStore.getState().setStreamEntity(body);
+  streamPlaybackStore.setState({
+    cameraMode: "orbitOverride",
+    followEntityId: body.id,
+    followTargetId: 7,
+  });
+  expect(clipStore.getState().start()).toBe(true);
+  engine.cameras.perspective.position.x = 1;
+  engine.scheduler.run(FramePriority.ClipCamera, frame());
+  streamPlaybackStore.setState({ cameraMode: "firstPersonOverride" });
+  engine.cameras.perspective.position.x = 3;
+  engine.scheduler.run(FramePriority.ClipCamera, frame(0.01));
+  clipStore.getState().stop();
+
+  const recorded = clipStore.getState().draft!;
+  expect(recorded.samples[1].cut).toBeUndefined();
+  expect(recorded.samples[1].firstPersonPose).toBe(false);
+  expect(sampleClipTake(recorded, 5).position[0]).toBe(2);
+});
+
+it("records the end of a pullback separately from steady orbit even between regular samples", () => {
+  const { engine, frame } = fixture();
+  const body = {
+    id: "player",
+    renderType: "Player" as const,
+    className: "Player",
+    targetId: 7,
+  };
+  gameEntityStore.getState().setStreamEntity(body);
+  streamPlaybackStore.setState({
+    cameraMode: "firstPersonOverride",
+    followEntityId: body.id,
+    followTargetId: 7,
+  });
+  expect(clipStore.getState().start()).toBe(true);
+  const { firstPersonPlayerId, maskFirstPersonPose } = streamRenderFrame;
+  try {
+    streamRenderFrame.firstPersonPlayerId = body.id;
+    streamRenderFrame.maskFirstPersonPose = true;
+    engine.scheduler.run(FramePriority.ClipCamera, frame());
+    streamPlaybackStore.setState({ cameraMode: "orbitOverride" });
+    streamRenderFrame.maskFirstPersonPose = false;
+    engine.scheduler.run(FramePriority.ClipCamera, frame(0.01));
+    streamRenderFrame.firstPersonPlayerId = null;
+    engine.scheduler.run(FramePriority.ClipCamera, frame(0.01));
+    clipStore.getState().stop();
+    const recorded = clipStore.getState().draft!;
+    expect(
+      recorded.samples.map(({ timeMs, firstPersonPose, cut }) => ({
+        timeMs,
+        firstPersonPose,
+        cut,
+      })),
+    ).toEqual([
+      { timeMs: 0, firstPersonPose: true, cut: undefined },
+      { timeMs: 10, firstPersonPose: false, cut: undefined },
+      { timeMs: 20, firstPersonPose: undefined, cut: undefined },
+    ]);
+  } finally {
+    Object.assign(streamRenderFrame, {
+      firstPersonPlayerId,
+      maskFirstPersonPose,
+    });
+  }
+});
+
+it.each(["firstPersonOverride", "orbitOverride"] as const)(
+  "keeps a camera cut when toggling away from %s on an already dead body",
+  (cameraMode) => {
+    const { engine, frame } = fixture();
+    const body = {
+      id: "corpse",
+      renderType: "Player" as const,
+      className: "Player",
+      targetId: 7,
+      damageState: 1,
+    };
+    gameEntityStore.getState().setStreamEntity(body);
+    streamPlaybackStore.setState({
+      cameraMode,
+      followEntityId: body.id,
+      followTargetId: 7,
+    });
+    expect(clipStore.getState().start()).toBe(true);
+    engine.cameras.perspective.position.x = 1;
+    engine.scheduler.run(FramePriority.ClipCamera, frame());
+    streamPlaybackStore.setState({
+      cameraMode:
+        cameraMode === "orbitOverride"
+          ? "firstPersonOverride"
+          : "orbitOverride",
+    });
+    engine.cameras.perspective.position.x = 3;
+    engine.scheduler.run(FramePriority.ClipCamera, frame(0.01));
+    clipStore.getState().stop();
+
+    const recorded = clipStore.getState().draft!;
+    expect(recorded.samples[1].cut).toBe(true);
+    expect(sampleClipTake(recorded, 5).position[0]).toBe(1);
+    expect(sampleClipTake(recorded, 10).position[0]).toBe(3);
+  },
+);
 
 it("starts a fresh time origin after discarding a take between rendered frames", () => {
   const { engine, frame } = fixture();

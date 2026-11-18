@@ -20,8 +20,9 @@ export const streamRenderFrame: {
   aimCorrection: boolean;
   /** Recorded view used by the camera pass; held during incomplete seeks. */
   camera: StreamCamera | null;
-  /** Player whose eye and weapon use the first-person animation mask. */
+  /** Player used by the first-person view, including its camera transition. */
   firstPersonPlayerId: string | null;
+  maskFirstPersonPose: boolean;
   /** Shared camera and arm aim for the followed first-person player. */
   firstPersonAim: PlayerRenderAim | null;
 } = {
@@ -31,6 +32,7 @@ export const streamRenderFrame: {
   aimCorrection: false,
   camera: null,
   firstPersonPlayerId: null,
+  maskFirstPersonPose: false,
   firstPersonAim: null,
 };
 

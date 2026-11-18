@@ -23,6 +23,7 @@ import { cameraRegistry } from "../state/cameraRegistry";
 import { isPlayerOrbitLocked, resolveCameraOwner } from "../state/cameraOwner";
 import { commandCircuitStore } from "../state/commandCircuitStore";
 import {
+  blendPlayerRenderAim,
   getPlayerRenderAim,
   getPlayerViewAngles,
   type PlayerRenderAim,
@@ -69,6 +70,7 @@ import {
   yawPitchToQuaternion,
   orbitPullbackDir,
   playerYawToQuaternion,
+  threeForwardHeading,
 } from "../stream/streamHelpers";
 import type {
   StreamRecording,
@@ -82,6 +84,12 @@ import { isSceneEntity } from "../state/gameEntityTypes";
 import { torqueVecToThree } from "../scene/coordinates";
 import { firstPersonPlayerId, readClipViewAngles } from "./firstPersonPlayer";
 import { markTransformChanged } from "../transformChanges";
+import { PlayerCameraTransition } from "./playerCameraTransition";
+import {
+  applyObserverOrbit,
+  applyPlayerControlCamera,
+  recordedCameraBlend,
+} from "./playerViewCamera";
 
 type EntityById = Map<string, StreamEntity>;
 
@@ -246,6 +254,10 @@ const _orbitFeedForward = new Vector3();
 const _playerView = { yaw: 0, pitch: 0 };
 const _followAim: PlayerRenderAim = { yaw: 0, pitch: 0, headYaw: 0 };
 const _viewBodyRotation = new Quaternion();
+const _followEyeCamera = {
+  position: new Vector3(),
+  quaternion: new Quaternion(),
+};
 
 /**
  * Compute first-person camera transform from entity state, matching
@@ -321,6 +333,10 @@ export class StreamPlaybackSession {
     pitch: 0,
     headYaw: 0,
   };
+  private readonly followTransition = new PlayerCameraTransition();
+  private followCameraBlend: number | null = null;
+  private corpseView: { id: string; seekNonce: number; yaw: number } | null =
+    null;
   private readonly clock = new PlaybackClock();
   private readonly lockedOrbit = new PlayerOrbitSpring();
   private readonly orbitDistance = new OrbitDistanceSpring();
@@ -346,8 +362,8 @@ export class StreamPlaybackSession {
       engine.scheduler.add(FramePriority.StreamPlayback, (ctx) =>
         this.playbackPass(ctx),
       ),
-      engine.scheduler.add(FramePriority.PlayerView, () =>
-        this.selectFirstPersonPose(),
+      engine.scheduler.add(FramePriority.PlayerView, ({ delta }) =>
+        this.selectFirstPersonPose(delta),
       ),
       engine.scheduler.add(FramePriority.CameraStream, (ctx) =>
         this.cameraPass(ctx),
@@ -635,6 +651,8 @@ export class StreamPlaybackSession {
       this.streamRevision = stream.playbackRevision;
       stopAllTrackedSounds();
       this.renderFrame = null;
+      this.followTransition.reset();
+      this.corpseView = null;
       this.lastSyncedSnapshot = null;
     }
     const pending = engineStore.getState().playback;
@@ -795,7 +813,7 @@ export class StreamPlaybackSession {
   }
 
   /** Select the view rig before evaluating the eye and mount nodes. */
-  private selectFirstPersonPose(): void {
+  private selectFirstPersonPose(delta: number): void {
     const frame = this.renderFrame;
     const playback = engineStore.getState().playback;
     if (
@@ -806,27 +824,95 @@ export class StreamPlaybackSession {
     )
       return;
     streamRenderFrame.firstPersonAim = null;
+    streamRenderFrame.maskFirstPersonPose = false;
+    this.followCameraBlend = null;
     const owner = resolveCameraOwner();
     if (
       (owner !== "input" && owner !== "clip") ||
       commandCircuitStore.getState().active
     ) {
       streamRenderFrame.firstPersonPlayerId = null;
+      this.followTransition.reset();
+      this.corpseView = null;
       return;
     }
     const { renderCurrent } = frame;
     const camera = renderCurrent.camera;
-    const { cameraMode, firstPersonFollowId } = this.cameraSelection(camera);
+    const {
+      cameraMode,
+      firstPersonFollowId,
+      orbitTargetId,
+      isLive,
+      isWatcher,
+    } = this.cameraSelection(camera);
     const entities = getEntityMap(renderCurrent);
+    const followEntity = orbitTargetId
+      ? entities.get(orbitTargetId)
+      : undefined;
+    const localPlayerFollow =
+      owner === "input" &&
+      (!isLive || isWatcher) &&
+      (cameraMode === "orbitOverride" ||
+        cameraMode === "firstPersonOverride") &&
+      streamPlaybackStore.getState().followFlagSlot == null &&
+      followEntity?.type === "Player";
+    const controlEntity = camera?.controlEntityId
+      ? entities.get(camera.controlEntityId)
+      : undefined;
+    if (localPlayerFollow && !followEntity.damageState) {
+      this.followCameraBlend = this.followTransition.update(
+        followEntity.id,
+        playback.seekNonce,
+        cameraMode === "firstPersonOverride",
+        delta,
+      );
+      if (this.followCameraBlend !== (firstPersonFollowId ? 0 : 1))
+        this.engine.invalidate();
+    } else this.followTransition.reset();
+
+    const corpse =
+      localPlayerFollow && firstPersonFollowId
+        ? followEntity
+        : owner === "input" && !isLive && cameraMode === "original"
+          ? controlEntity
+          : undefined;
+    if (corpse?.type === "Player" && corpse.damageState) {
+      if (
+        this.corpseView?.id !== corpse.id ||
+        this.corpseView.seekNonce !== playback.seekNonce
+      ) {
+        const rotation = corpse.rotation;
+        this.corpseView = {
+          id: corpse.id,
+          seekNonce: playback.seekNonce,
+          yaw: rotation
+            ? threeForwardHeading(_viewBodyRotation.fromArray(rotation))
+            : 0,
+        };
+      }
+    } else this.corpseView = null;
+
+    const viewTargetId =
+      this.followCameraBlend === null
+        ? firstPersonFollowId
+        : this.followCameraBlend < 1
+          ? orbitTargetId
+          : undefined;
     const id = firstPersonPlayerId(
       entities,
       camera,
-      cameraMode,
-      firstPersonFollowId,
+      viewTargetId ? "firstPersonOverride" : cameraMode,
+      viewTargetId,
+      camera !== null && recordedCameraBlend(camera, frame.interpT) === 0,
     );
-    streamRenderFrame.firstPersonPlayerId = id;
-    if (!id || !firstPersonFollowId) return;
     const clipSample = owner === "clip" ? this.engine.clipCameraSample : null;
+    const clipInTransition =
+      viewTargetId && clipSample?.firstPersonPose === false;
+    streamRenderFrame.firstPersonPlayerId = clipInTransition ? null : id;
+    if (!id || clipInTransition) return;
+    streamRenderFrame.maskFirstPersonPose =
+      !viewTargetId || !localPlayerFollow || this.followCameraBlend === 0;
+    if (!viewTargetId) return;
     const group = streamPlaybackStore
       .getState()
       .root?.children.find((child) => child.name === id);
@@ -843,6 +929,15 @@ export class StreamPlaybackSession {
     if (clipSample) {
       readClipViewAngles(clipSample.quaternion, aim);
       aim.headYaw = clipSample.headYaw ?? aim.headYaw;
+    } else if (this.followCameraBlend) {
+      const orbitAim = getPlayerRenderAim(
+        group.quaternion,
+        followEntity,
+        frame.interpT,
+        _followAim,
+        streamRenderFrame.aimCorrection,
+      );
+      blendPlayerRenderAim(orbitAim, aim, 1 - this.followCameraBlend);
     }
     streamRenderFrame.firstPersonAim = aim;
 
@@ -923,9 +1018,10 @@ export class StreamPlaybackSession {
     const previousCamera =
       currentCamera &&
       renderPrev.camera &&
-      renderPrev.camera.mode === currentCamera.mode &&
       renderPrev.camera.controlEntityId === currentCamera.controlEntityId &&
-      renderPrev.camera.orbitTargetId === currentCamera.orbitTargetId
+      (currentCamera.controlEntityId ||
+        (renderPrev.camera.mode === currentCamera.mode &&
+          renderPrev.camera.orbitTargetId === currentCamera.orbitTargetId))
         ? renderPrev.camera
         : null;
 
@@ -1031,6 +1127,21 @@ export class StreamPlaybackSession {
     }
 
     const mode = currentCamera?.mode;
+    const recordedControlId =
+      cameraMode === "original" && !isLive
+        ? currentCamera?.controlEntityId
+        : undefined;
+    const recordedPlayer = recordedControlId
+      ? currentEntities.get(recordedControlId)
+      : undefined;
+    const playerControlsCamera =
+      recordedPlayer?.type === "Player" && !recordedPlayer.mountObjectId;
+    const recordedObserverOrbit =
+      cameraMode === "original" &&
+      !isLive &&
+      mode === "third-person" &&
+      currentCamera?.controlEntityId === undefined;
+    const followBlend = this.followCameraBlend;
     // In live mode, InputConsumer handles orbit positioning from local rotation
     // so the orbit responds at frame rate. Skip here to avoid fighting —
     // EXCEPT spectate mode, where InputConsumer's live path is off and the
@@ -1039,10 +1150,17 @@ export class StreamPlaybackSession {
     // In orbitOverride mode with a valid orbit target, use user-controlled
     // yaw/pitch instead of stream data.
     const orbitOverride =
-      cameraMode === "orbitOverride" &&
+      (cameraMode === "orbitOverride" ||
+        (cameraMode === "firstPersonOverride" &&
+          followBlend !== null &&
+          followBlend > 0)) &&
       (!isLive || isWatcher) &&
       orbitTargetId != null;
-    const orbitLocked = isPlayerOrbitLocked(followBehindPlayer);
+    const orbitLocked =
+      isPlayerOrbitLocked(followBehindPlayer) ||
+      (followBehindPlayer &&
+        orbitOverride &&
+        cameraMode === "firstPersonOverride");
     const orbitSnapNonce = streamPlaybackStore.getState().orbitSnapNonce;
     if (this.lastOrbitSnapNonce !== orbitSnapNonce) {
       this.lockedOrbit.reset();
@@ -1075,6 +1193,9 @@ export class StreamPlaybackSession {
       currentCamera &&
       cameraMode !== "freeFly" &&
       (!isLive || isWatcher) &&
+      !playerControlsCamera &&
+      !recordedObserverOrbit &&
+      !this.corpseView &&
       (mode === "third-person" || orbitOverride) &&
       root &&
       orbitTargetId
@@ -1265,16 +1386,35 @@ export class StreamPlaybackSession {
       }
     }
 
-    // Spectate first person: mount the camera to the followed player's
-    // animated eye node with the game's own eye transform (Player::
-    // getEyeTransform) — position from the eye bone, orientation from
-    // body yaw plus the player's replicated head pitch/yaw. The base
-    // stream-camera write above is fully overwritten here.
-    if (root && firstPersonFollowId) {
+    const eyeFollowId =
+      followBlend === null
+        ? firstPersonFollowId
+        : followBlend < 1
+          ? orbitTargetId
+          : undefined;
+    const corpseView = this.corpseView;
+    if (corpseView) {
+      const corpse = currentEntities.get(corpseView.id);
+      const group = root?.children.find(
+        (child) => child.name === corpseView.id,
+      );
+      if (group || corpse?.position) {
+        if (group) _orbitTarget.copy(group.position);
+        else torqueVecToThree(corpse!.position!, _orbitTarget);
+        _orbitTarget.y += this.playerOrbitCenterHeight(corpse, group);
+        streamCamera.quaternion.fromArray(
+          yawPitchToQuaternion(corpseView.yaw, 0),
+        );
+        applyObserverOrbit(streamCamera, _orbitTarget);
+        return;
+      }
+    } else if (root && eyeFollowId) {
+      // Spectate first person: mount to the animated eye. During a Tab
+      // transition, the orbit endpoint above still uses spectator controls.
       const resolvedTarget = resolveCameraTarget(
         root,
         currentEntities,
-        firstPersonFollowId,
+        eyeFollowId,
       );
       if (resolvedTarget) {
         // Head angles always come from the followed PLAYER; the body
@@ -1282,29 +1422,87 @@ export class StreamPlaybackSession {
         // mirroring the authoritative piloted view, which is
         // vehicle-based). Yaw extraction ignores vehicle pitch/roll,
         // keeping the horizon stable like the real vehicle look.
-        const mounted = resolvedTarget.entity?.id !== firstPersonFollowId;
+        const mounted = resolvedTarget.entity?.id !== eyeFollowId;
         const sharedAim =
-          streamRenderFrame.firstPersonPlayerId === firstPersonFollowId
+          streamRenderFrame.firstPersonPlayerId === eyeFollowId
             ? streamRenderFrame.firstPersonAim
             : null;
         computeFirstPersonCamera(
-          streamCamera,
+          _followEyeCamera,
           resolvedTarget.group,
           mounted
             ? _tmpVec.set(0, DEFAULT_EYE_HEIGHT, 0)
-            : (readEyePosition(firstPersonFollowId, _tmpVec) ??
+            : (readEyePosition(eyeFollowId, _tmpVec) ??
                 _tmpVec.set(0, DEFAULT_EYE_HEIGHT, 0)),
           sharedAim ??
             this.sampleFollowAim(
               frame,
-              firstPersonFollowId,
+              eyeFollowId,
               resolvedTarget.group.quaternion,
               aimCorrection,
               resolveCameraOwner() !== "clip",
               _followAim,
             ),
         );
+        if (followBlend) {
+          streamCamera.position.lerp(
+            _followEyeCamera.position,
+            1 - followBlend,
+          );
+          constrainOrbitCamera(
+            _followEyeCamera.position,
+            streamCamera.position,
+            cameraRegistry.perspective
+              ? orbitCameraClearance(cameraRegistry.perspective)
+              : undefined,
+          );
+          streamCamera.quaternion.slerp(
+            _followEyeCamera.quaternion,
+            1 - followBlend,
+          );
+        } else {
+          streamCamera.position.copy(_followEyeCamera.position);
+          streamCamera.quaternion.copy(_followEyeCamera.quaternion);
+        }
       }
+    }
+
+    if (recordedObserverOrbit && currentCamera) {
+      const target =
+        root && orbitTargetId
+          ? resolveCameraTarget(root, currentEntities, orbitTargetId)
+          : null;
+      const entity =
+        target?.entity ??
+        (orbitTargetId ? currentEntities.get(orbitTargetId) : undefined);
+      const position = entity?.position ?? currentCamera.orbitPoint;
+      if (target || position) {
+        if (target) _orbitTarget.copy(target.group.position);
+        else torqueVecToThree(position!, _orbitTarget);
+        if (entity?.type === "Player")
+          _orbitTarget.y += this.playerOrbitCenterHeight(entity, target?.group);
+        applyObserverOrbit(
+          streamCamera,
+          _orbitTarget,
+          currentCamera.orbitDistance,
+        );
+      }
+    } else if (playerControlsCamera && recordedControlId && currentCamera) {
+      const group = root?.children.find(
+        (child) => child.name === recordedControlId,
+      );
+      const db = this.playerDatablock(recordedPlayer);
+      const min =
+        typeof db?.cameraMinDist === "number" ? db.cameraMinDist : 0.2;
+      const max = typeof db?.cameraMaxDist === "number" ? db.cameraMaxDist : 3;
+      applyPlayerControlCamera(
+        streamCamera,
+        group,
+        recordedControlId,
+        Math.max(0, max - min),
+        recordedCameraBlend(currentCamera, interpT),
+      );
+      return;
     }
 
     // First-person camera, recorded view ONLY ("original"): add the
@@ -1332,5 +1530,20 @@ export class StreamPlaybackSession {
         streamCamera.position.y += DEFAULT_EYE_HEIGHT;
       }
     }
+  }
+
+  private playerDatablock(player: StreamEntity | undefined) {
+    return player?.dataBlockId === undefined
+      ? undefined
+      : this.stream?.getDataBlockData(player.dataBlockId);
+  }
+
+  private playerOrbitCenterHeight(
+    player: StreamEntity | undefined,
+    group: Object3D | undefined,
+  ): number {
+    const box = this.playerDatablock(player)?.boxSize as
+      { z?: number } | undefined;
+    return ((box?.z ?? 2.3) / 2) * (group?.scale.y ?? player?.scale?.[1] ?? 1);
   }
 }

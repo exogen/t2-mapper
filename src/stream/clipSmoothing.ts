@@ -13,9 +13,16 @@ const kernels = new Map<
   readonly { offset: number; weight: number }[]
 >();
 
-/** First-person and the demo recorder's original view keep their exact camera motion. */
-export function canSmoothClipCamera(cameraMode: string): boolean {
-  return cameraMode !== "firstPersonOverride" && cameraMode !== "original";
+/** Preserve first person, perspective transitions, and the recorder's original view. */
+export function canSmoothClipCamera(
+  cameraMode: string,
+  firstPersonPose?: boolean,
+): boolean {
+  return (
+    cameraMode !== "firstPersonOverride" &&
+    cameraMode !== "original" &&
+    !(cameraMode === "orbitOverride" && firstPersonPose === false)
+  );
 }
 
 function kernel(steps: number) {
@@ -39,7 +46,9 @@ function startsSegment(previous: ClipSample, sample: ClipSample): boolean {
     sample.targetId !== previous.targetId ||
     sample.flagSlot !== previous.flagSlot ||
     sample.projection !== previous.projection ||
-    sample.aspect !== previous.aspect
+    sample.aspect !== previous.aspect ||
+    canSmoothClipCamera(sample.cameraMode, sample.firstPersonPose) !==
+      canSmoothClipCamera(previous.cameraMode, previous.firstPersonPose)
   );
 }
 
@@ -65,7 +74,8 @@ export function smoothClipTake(
       !startsSegment(take.samples[end - 1], take.samples[end])
     )
       continue;
-    if (!canSmoothClipCamera(take.samples[start].cameraMode)) {
+    const { cameraMode, firstPersonPose } = take.samples[start];
+    if (!canSmoothClipCamera(cameraMode, firstPersonPose)) {
       start = end;
       continue;
     }

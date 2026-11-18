@@ -60,6 +60,8 @@ import {
   TICK_DURATION_MS,
   MAX_PITCH,
   CameraMode_OrbitObject,
+  CameraMode_OrbitPoint,
+  observerOrbitDistance,
   yawPitchToQuaternion,
   playerYawToQuaternion,
   torqueQuatToThreeJS,
@@ -1265,30 +1267,21 @@ export abstract class StreamEngine implements StreamingPlayback {
       } else {
         this.isPiloting = false;
         this.controlPlayerGhostId = undefined;
-        if (typeof controlData.cameraMode === "number") {
-          this.lastCameraMode = controlData.cameraMode;
-          if (controlData.cameraMode === CameraMode_OrbitObject) {
-            if (typeof controlData.orbitObjectGhostIndex === "number") {
-              this.lastOrbitGhostIndex = controlData.orbitObjectGhostIndex;
-            }
-            const minOrbit = controlData.minOrbitDist as number | undefined;
-            const maxOrbit = controlData.maxOrbitDist as number | undefined;
-            const curOrbit = controlData.curOrbitDist as number | undefined;
-            if (
-              typeof minOrbit === "number" &&
-              typeof maxOrbit === "number" &&
-              Number.isFinite(minOrbit) &&
-              Number.isFinite(maxOrbit)
-            ) {
-              this.lastOrbitDistance = Math.max(0, maxOrbit - minOrbit);
-            } else if (
-              typeof curOrbit === "number" &&
-              Number.isFinite(curOrbit)
-            ) {
-              this.lastOrbitDistance = Math.max(0, curOrbit);
-            }
-          } else {
+        const mode = controlData.cameraMode;
+        if (typeof mode === "number") {
+          this.lastCameraMode = mode;
+          if (mode !== CameraMode_OrbitObject) {
             this.lastOrbitGhostIndex = undefined;
+          } else if (typeof controlData.orbitObjectGhostIndex === "number") {
+            this.lastOrbitGhostIndex = controlData.orbitObjectGhostIndex;
+          }
+          if (
+            mode === CameraMode_OrbitObject ||
+            mode === CameraMode_OrbitPoint
+          ) {
+            this.lastOrbitDistance =
+              observerOrbitDistance(controlData) ?? this.lastOrbitDistance;
+          } else {
             this.lastOrbitDistance = undefined;
           }
         }
@@ -3642,6 +3635,27 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   // ── Camera and HUD ──
 
+  /** Resolve an observer Camera's orbit from its last control packet. */
+  protected applyObserverCameraMode(camera: StreamCamera): void {
+    const data = this.latestControl.data;
+    const mode = data?.cameraMode ?? this.lastCameraMode;
+    if (mode !== CameraMode_OrbitObject && mode !== CameraMode_OrbitPoint)
+      return;
+
+    camera.mode = "third-person";
+    const distance = observerOrbitDistance(data) ?? this.lastOrbitDistance;
+    if (distance !== undefined) camera.orbitDistance = distance;
+    if (mode === CameraMode_OrbitObject) {
+      const index = data?.orbitObjectGhostIndex ?? this.lastOrbitGhostIndex;
+      if (typeof index === "number" && index >= 0)
+        camera.orbitTargetId = this.resolveEntityIdForGhostIndex(index);
+    } else {
+      const point = data?.orbitPoint as Vec3 | undefined;
+      if (isValidPosition(point))
+        camera.orbitPoint = [point.x, point.y, point.z];
+    }
+  }
+
   protected updateCameraAndHud(): void {
     this.syncControlVehicle();
     const control = this.latestControl;
@@ -3701,26 +3715,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       };
 
       if (controlType === "camera") {
-        const cameraMode =
-          typeof data?.cameraMode === "number"
-            ? data.cameraMode
-            : this.lastCameraMode;
-        if (cameraMode === CameraMode_OrbitObject) {
-          this.camera.mode = "third-person";
-          if (typeof this.lastOrbitDistance === "number") {
-            this.camera.orbitDistance = this.lastOrbitDistance;
-          }
-          const orbitIndex =
-            typeof data?.orbitObjectGhostIndex === "number"
-              ? (data.orbitObjectGhostIndex as number)
-              : this.lastOrbitGhostIndex;
-          if (typeof orbitIndex === "number" && orbitIndex >= 0) {
-            this.camera.orbitTargetId =
-              this.resolveEntityIdForGhostIndex(orbitIndex);
-          }
-        } else {
-          this.camera.mode = "observer";
-        }
+        this.applyObserverCameraMode(this.camera);
       } else {
         // Player control object.
         if (control.ghostIndex >= 0) {

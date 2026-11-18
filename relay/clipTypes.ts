@@ -31,6 +31,9 @@ export interface ClipSample {
   viewHeight?: number;
   /** First-person freelook relative to the body, in radians. */
   headYaw?: number;
+  /** True at the eye, false during a perspective transition or death view.
+   * Steady third-person samples and older takes omit this field. */
+  firstPersonPose?: boolean;
   cameraMode: string;
   targetId: number | null;
   flagSlot: number | null;
@@ -168,6 +171,8 @@ export function readClipTake(value: unknown): ClipTake {
         !finite(sample.viewHeight, 0.001, 1e7)) ||
       (sample.headYaw !== undefined &&
         !finite(sample.headYaw, -Math.PI, Math.PI)) ||
+      (sample.firstPersonPose !== undefined &&
+        typeof sample.firstPersonPose !== "boolean") ||
       !MODES.has(sample.cameraMode) ||
       !identity(sample.targetId) ||
       !identity(sample.flagSlot) ||
@@ -195,6 +200,9 @@ export function readClipTake(value: unknown): ClipTake {
         viewHeight: sample.viewHeight,
       }),
       ...(sample.headYaw !== undefined && { headYaw: sample.headYaw }),
+      ...(sample.firstPersonPose !== undefined && {
+        firstPersonPose: sample.firstPersonPose,
+      }),
       cameraMode: sample.cameraMode,
       targetId: sample.targetId,
       flagSlot: sample.flagSlot,
@@ -257,6 +265,12 @@ export function sampleClipTake(take: ClipTake, timeMs: number): ClipSample {
   const blend = (first: number, second: number) =>
     first + (second - first) * fraction;
   const cut = b.cut || a.projection !== b.projection;
+  const leavesEye =
+    !cut &&
+    a.cameraMode === "firstPersonOverride" &&
+    a.firstPersonPose !== false &&
+    (b.cameraMode === "orbitOverride" ||
+      (b.cameraMode === a.cameraMode && b.firstPersonPose === false));
   const sample: ClipSample = {
     ...a,
     timeMs: time,
@@ -281,6 +295,12 @@ export function sampleClipTake(take: ClipTake, timeMs: number): ClipSample {
         headYaw: blend(a.headYaw, b.headYaw),
       }),
   };
+  // The interpolated camera has already left the eye even though the mode
+  // changes at the next sample. Keep the body in its third-person pose here.
+  if (leavesEye) {
+    sample.firstPersonPose = false;
+    delete sample.headYaw;
+  }
   // A cut belongs to its exact sample, not a point interpolated after it.
   delete sample.cut;
   return sample;

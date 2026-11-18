@@ -52,6 +52,17 @@ function interpolateYaw(from: number, to: number, t: number): number {
   return from + Math.atan2(Math.sin(delta), Math.cos(delta)) * t;
 }
 
+/** Fade from the normal world pose into reconstructed first-person aim. */
+export function blendPlayerRenderAim(
+  from: PlayerRenderAim,
+  to: PlayerRenderAim,
+  weight: number,
+): void {
+  to.yaw = interpolateYaw(from.yaw, to.yaw, weight);
+  to.pitch = from.pitch + (to.pitch - from.pitch) * weight;
+  to.headYaw = from.headYaw + (to.headYaw - from.headYaw) * weight;
+}
+
 /**
  * A player's head angles at `interpT`. With `aimCorrection`, a view a ghost
  * update packed (viewQuantized) is read at the middle of its step, except a

@@ -101,6 +101,7 @@ beforeEach(() => {
   settings.showChat = false;
   settings.chatHudStyle = "solid";
   settings.showCompass = false;
+  settings.showReticle = false;
   clipStore.setState({ active: null, draft: null, playing: false });
   streamPlaybackStore.setState({
     cameraMode: "original",
@@ -296,4 +297,27 @@ it("shows the followed replay player's health and equipment rather than the reco
   expect(html).toContain('alt="Spinfusor"');
   expect(html).not.toContain('alt="Blaster"');
   expect(html).not.toContain("width:90%");
+});
+
+it("hides the reticle while following a corpse that still has a weapon", () => {
+  settings.showReticle = true;
+  const player = {
+    id: "followed",
+    type: "Player",
+    className: "Player",
+    damageState: 0,
+    imageSlots: [
+      { shapeName: "weapon_disc.dts", mountPoint: 0, dataBlockId: 1 },
+    ],
+  } as StreamEntity;
+  fixture.entities = [player];
+  streamPlaybackStore.setState({
+    cameraMode: "firstPersonOverride",
+    followEntityId: player.id,
+  });
+  const render = () =>
+    renderToStaticMarkup(<PlayerHUD onOpenScoreScreen={() => {}} />);
+  expect(render()).toContain("ReticleImage");
+  fixture.entities = [{ ...player, damageState: 1 }];
+  expect(render()).not.toContain("ReticleImage");
 });

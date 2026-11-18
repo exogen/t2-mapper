@@ -33,6 +33,24 @@ const _rotQuat = new Quaternion();
 
 export const MAX_PITCH = Math.PI * 0.494;
 export const CameraMode_OrbitObject = 3;
+export const CameraMode_OrbitPoint = 4;
+
+export function observerOrbitDistance(
+  data: ParsedData | undefined,
+): number | undefined {
+  const min = data?.minOrbitDist;
+  const max = data?.maxOrbitDist;
+  const current = data?.curOrbitDist;
+  if (
+    typeof min === "number" &&
+    Number.isFinite(min) &&
+    typeof max === "number" &&
+    Number.isFinite(max)
+  )
+    return Math.max(0, max - min);
+  if (typeof current === "number" && Number.isFinite(current))
+    return Math.max(0, current);
+}
 
 /**
  * Build a Three.js quaternion from Torque observer yaw/pitch angles.

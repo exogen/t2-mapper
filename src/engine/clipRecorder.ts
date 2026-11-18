@@ -220,11 +220,22 @@ export function installClipRecorder(engine: GameEngine): () => void {
       const followedBody =
         followedEntity?.renderType === "Player" ? followedEntity : undefined;
       const followedBodyDead = (followedBody?.damageState ?? 0) !== 0;
-      const aim =
-        mode === "firstPersonOverride" &&
-        streamRenderFrame.firstPersonPlayerId === followedBody?.id
-          ? streamRenderFrame.firstPersonAim
-          : null;
+      const bodyId =
+        mode === "original"
+          ? streamRenderFrame.camera?.controlEntityId
+          : followedBody?.id;
+      // While pulling out to orbit, PlayerView still samples aim for this body.
+      // Retain the pose marker until the orbit has reached its endpoint.
+      const followsViewPose =
+        followedBody !== undefined &&
+        streamRenderFrame.firstPersonPlayerId === followedBody.id;
+      const firstPersonPose =
+        followedBody &&
+        (mode === "firstPersonOverride" ||
+          (mode === "orbitOverride" && followsViewPose))
+          ? followsViewPose && streamRenderFrame.maskFirstPersonPose
+          : undefined;
+      const aim = firstPersonPose ? streamRenderFrame.firstPersonAim : null;
       const sample: ClipSample = {
         timeMs: rounded(elapsedMs, 3),
         demoTimeSec: rounded(streamClock.time),
@@ -245,30 +256,41 @@ export function installClipRecorder(engine: GameEngine): () => void {
           viewHeight: (camera.top - camera.bottom) / camera.zoom,
         }),
         ...(aim && { headYaw: rounded(aim.headYaw) }),
+        ...(firstPersonPose !== undefined && { firstPersonPose }),
         cameraMode: mode,
         targetId: stream.followTargetId,
         flagSlot: stream.followFlagSlot,
         rate: playback.rate,
         playing: playback.status === "playing" || playback.status === "ending",
       };
+      const changingPerspective =
+        followedBody !== undefined &&
+        !followedBodyDead &&
+        ((lastSample?.cameraMode === "firstPersonOverride" &&
+          mode === "orbitOverride") ||
+          (lastSample?.cameraMode === "orbitOverride" &&
+            mode === "firstPersonOverride"));
       const cut =
         lastSample !== null &&
-        (sample.cameraMode !== lastSample.cameraMode ||
+        ((!changingPerspective &&
+          sample.cameraMode !== lastSample.cameraMode) ||
           sample.targetId !== lastSample.targetId ||
           sample.flagSlot !== lastSample.flagSlot ||
           sample.projection !== lastSample.projection ||
-          followedBody?.id !== lastFollowedBodyId ||
+          bodyId !== lastFollowedBodyId ||
           followedBodyDead !== lastFollowedBodyDead);
       if (
         elapsedMs - lastSampleMs >= SAMPLE_INTERVAL_MS ||
         cut ||
+        changingPerspective ||
+        firstPersonPose !== lastSample?.firstPersonPose ||
         elapsedMs === MAX_CLIP_DURATION_MS
       ) {
         if (cut) sample.cut = true;
         state.appendSample(sample);
         lastSampleMs = elapsedMs;
         lastSample = sample;
-        lastFollowedBodyId = followedBody?.id;
+        lastFollowedBodyId = bodyId;
         lastFollowedBodyDead = followedBodyDead;
       }
       if (elapsedMs >= MAX_CLIP_DURATION_MS) state.stop();

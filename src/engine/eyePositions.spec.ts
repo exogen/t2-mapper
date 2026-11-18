@@ -1,11 +1,13 @@
 import { expect, it } from "vitest";
 import { Object3D, Vector3 } from "three";
 import { DTSShape } from "../dts/dtsModel";
+import { createDTSTestShape } from "../dts/dtsTestFixtures";
 import { createDeferredPose } from "./deferredPose";
 import { readEyePosition, registerEyeNode } from "./eyePositions";
 
 it("samples a dormant shape's current eye before it renders", () => {
   const shape = new DTSShape();
+  shape.data = createDTSTestShape();
   const eye = new Object3D();
   shape.add(eye);
   shape.dormant = true;

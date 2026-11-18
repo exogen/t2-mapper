@@ -495,8 +495,14 @@ export interface StreamCamera {
   rotation: [number, number, number, number];
   fov: number;
   mode: "first-person" | "third-person" | "observer";
+  /** Recorder's control-camera pullback, from 0 (eye) to 1 (third person). */
+  controlCameraBlend?: number;
+  /** Start of that tick's blend, even when a frame skips a demo tick. */
+  previousControlCameraBlend?: number;
   controlEntityId?: string;
   orbitTargetId?: string;
+  /** Fixed observer orbit center in Torque space when no target is scoped. */
+  orbitPoint?: [number, number, number];
   /** Orbit distance used for third-person camera positioning. */
   orbitDistance?: number;
   /** Vertical offset for orbit target (from VehicleData.cameraOffset). */

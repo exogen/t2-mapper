@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Quaternion, Vector3 } from "three";
 import {
+  blendPlayerRenderAim,
   getPlayerHeadAngles,
   getPlayerRenderAim,
   getPlayerViewAngles,
@@ -13,6 +14,15 @@ import {
   playerYawToQuaternion,
   yawPitchToQuaternion,
 } from "./streamHelpers";
+
+it("fades the first-person aim correction without wrapping the body yaw", () => {
+  const orbit = { yaw: Math.PI - 0.1, pitch: 0.2, headYaw: 0.1 };
+  const eye = { yaw: -Math.PI + 0.1, pitch: 0.4, headYaw: 0.3 };
+  blendPlayerRenderAim(orbit, eye, 0.5);
+  expect(eye.yaw).toBeCloseTo(Math.PI);
+  expect(eye.pitch).toBeCloseTo(0.3);
+  expect(eye.headYaw).toBeCloseTo(0.2);
+});
 
 it("samples the retail arm and head pitch range and clamps at ±80°", () => {
   for (const [degrees, phase] of [

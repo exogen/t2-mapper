@@ -152,6 +152,26 @@ it.each(["firstPersonOverride", "original"])(
   },
 );
 
+it("does not smooth a pullback into the surrounding steady orbit", () => {
+  const input = take(
+    Array.from({ length: 14 }, (_, index) =>
+      sample(index * 25, {
+        cameraMode: index === 0 ? "firstPersonOverride" : "orbitOverride",
+        ...(index === 0 && { firstPersonPose: true }),
+        ...(index >= 1 && index <= 4 && { firstPersonPose: false }),
+        position: [index % 2 ? 10 : 0, 0, 0],
+      }),
+    ),
+  );
+
+  for (const level of [1, 2] as const) {
+    const smoothed = smoothClipTake(input, level);
+    expect(smoothed.samples.slice(0, 6)).toEqual(input.samples.slice(0, 6));
+    expect(smoothed.samples[8].position).not.toEqual(input.samples[8].position);
+    expect(sampleClipTake(smoothed, 113)).toEqual(sampleClipTake(input, 113));
+  }
+});
+
 it("preserves straight motion with uneven sample spacing instead of favoring dense frames", () => {
   const input = take(
     [0, 2, 5, 25, 50, 100, 220, 250, 400, 1000].map((timeMs) => sample(timeMs)),

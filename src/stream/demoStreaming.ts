@@ -11,9 +11,15 @@ import {
 import type { ParsedData } from "t2-demo-parser";
 import { clamp } from "../mathUtils";
 import {
+  advancePlayerCameraBlend,
+  PLAYER_CAMERA_SPEED,
+} from "./playerCameraBlend";
+import {
   TICK_DURATION_MS,
   streamTimeToTick,
   MAX_PITCH,
+  CameraMode_OrbitPoint,
+  observerOrbitDistance,
   isValidPosition,
   stripTaggedStringMarkup,
   normalizePlayerGuid,
@@ -747,6 +753,26 @@ export class DemoStreamAdapter extends StreamEngine {
         },
       },
     });
+    // Older checkpoints kept the control packet but rendered orbit-point
+    // cameras as free observers. Recover the orbit before the first frame.
+    if (
+      this.camera?.mode === "observer" &&
+      this.lastControlType === "camera" &&
+      this.latestControl.data?.cameraMode === CameraMode_OrbitPoint
+    ) {
+      this.camera = { ...this.camera };
+      this.applyObserverCameraMode(this.camera);
+    }
+    // Checkpoints produced before control-camera interpolation still carry the
+    // requested view. Start there so the next recorded toggle can animate.
+    if (this.camera && this.camera.controlCameraBlend === undefined) {
+      const blend = this.controlCameraTarget();
+      this.camera = {
+        ...this.camera,
+        controlCameraBlend: blend,
+        previousControlCameraBlend: blend,
+      };
+    }
     this.exhausted = false;
     this.exhaustedAtBytes = 0;
     this._cachedSnapshot = null;
@@ -755,6 +781,7 @@ export class DemoStreamAdapter extends StreamEngine {
 
   private readonly parser: DemoParser;
   private readonly initialMissionInfo: DemoMissionInfo;
+  private readonly controlCameraSpeed: number;
   private readonly initialBlock: {
     dataBlocks: Map<number, { className: string; data: ParsedData }>;
     initialGhosts: Array<{
@@ -819,6 +846,10 @@ export class DemoStreamAdapter extends StreamEngine {
     this.registry = parser.getRegistry();
     this.ghostTracker = parser.getGhostTracker();
     const initial = parser.initialBlock;
+    this.controlCameraSpeed =
+      Number.isFinite(initial.cameraSpeed) && initial.cameraSpeed > 0
+        ? initial.cameraSpeed
+        : PLAYER_CAMERA_SPEED;
     this.initialBlock = {
       dataBlocks: initial.dataBlocks,
       initialGhosts: initial.initialGhosts,
@@ -903,6 +934,48 @@ export class DemoStreamAdapter extends StreamEngine {
 
   protected getControlPlayerHeadPitch(_pitch: number): number {
     return clamp(this.absolutePitch / MAX_PITCH, -1, 1);
+  }
+
+  private controlCameraTarget(): number {
+    if (this.firstPerson) return 0;
+    const id =
+      this.camera?.controlEntityId ??
+      this.entityIdByGhostIndex.get(this.latestControl.ghostIndex);
+    const dataBlockId =
+      id == null ? undefined : this.entities.get(id)?.dataBlockId;
+    return dataBlockId != null &&
+      this.getDataBlockData(dataBlockId)?.firstPersonOnly === true
+      ? 0
+      : 1;
+  }
+
+  protected override updateCameraAndHud(): void {
+    const previous = this.camera?.controlCameraBlend;
+    super.updateCameraAndHud();
+    if (!this.camera) return;
+    if (!this.latestControl.position) {
+      this.camera.previousControlCameraBlend = previous;
+      return;
+    }
+    const target = this.controlCameraTarget();
+    if (this.moveTicks === 0) {
+      const initial = this.parser.initialBlock.cameraPos;
+      const blend = Number.isFinite(initial) ? clamp(initial, 0, 1) : target;
+      this.camera.controlCameraBlend = this.camera.previousControlCameraBlend =
+        blend;
+      return;
+    }
+    // Retail advances by 32 ms in each GameProcessCameraQuery (0x5bbcc0).
+    // Demo files record the requested modes but omit render cadence. Advance
+    // by the same interval per demo tick so seeking and playback agree.
+    const from = previous ?? target;
+    this.camera.previousControlCameraBlend = from;
+    this.camera.controlCameraBlend = advancePlayerCameraBlend(
+      from,
+      target === 0,
+      TICK_DURATION_MS / 1000,
+      this.controlCameraSpeed,
+    );
   }
 
   // ── StreamingPlayback interface ──
@@ -1001,28 +1074,10 @@ export class DemoStreamAdapter extends StreamEngine {
         "number"
         ? this.initialBlock.controlObjectData.orbitObjectGhostIndex
         : undefined;
-    if (this.lastControlType === "camera") {
-      const minOrbit = this.initialBlock.controlObjectData?.minOrbitDist as
-        number | undefined;
-      const maxOrbit = this.initialBlock.controlObjectData?.maxOrbitDist as
-        number | undefined;
-      const curOrbit = this.initialBlock.controlObjectData?.curOrbitDist as
-        number | undefined;
-      if (
-        typeof minOrbit === "number" &&
-        typeof maxOrbit === "number" &&
-        Number.isFinite(minOrbit) &&
-        Number.isFinite(maxOrbit)
-      ) {
-        this.lastOrbitDistance = Math.max(0, maxOrbit - minOrbit);
-      } else if (typeof curOrbit === "number" && Number.isFinite(curOrbit)) {
-        this.lastOrbitDistance = Math.max(0, curOrbit);
-      } else {
-        this.lastOrbitDistance = undefined;
-      }
-    } else {
-      this.lastOrbitDistance = undefined;
-    }
+    this.lastOrbitDistance =
+      this.lastControlType === "camera"
+        ? observerOrbitDistance(this.initialBlock.controlObjectData)
+        : undefined;
     const initialAbsRot = this.getAbsoluteRotation(
       this.initialBlock.controlObjectData,
     );

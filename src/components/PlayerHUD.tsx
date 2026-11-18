@@ -185,7 +185,7 @@ function Reticle() {
     }
     if (!viewedId) return undefined;
     const entity = snap.entities.find((e: StreamEntity) => e.id === viewedId);
-    if (!entity) return undefined;
+    if (!entity || entity.damageState) return undefined;
     return entity.imageSlots?.[0]?.shapeName ?? "";
   });
   if (weaponShape === undefined) return null;

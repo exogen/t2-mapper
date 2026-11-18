@@ -357,7 +357,10 @@ export function createPlayerModel(
     // player, use bind position/rotation on the spine before additive
     // aim and recoil. Scripted first-person actions use their full pose.
     const isFirstPerson = streamRenderFrame.firstPersonPlayerId === entityId;
-    const maskSpine = isFirstPerson && !firstPersonAction;
+    const maskSpine =
+      isFirstPerson &&
+      streamRenderFrame.maskFirstPersonPose &&
+      !firstPersonAction;
     if (maskSpine !== spineMasked) {
       spineMasked = maskSpine;
       for (const node of spineNodes)

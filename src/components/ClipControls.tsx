@@ -73,7 +73,8 @@ function useClipControlsState() {
         playheadMs: Math.floor(state.playheadMs / 100) * 100,
         recordedRate: sample?.rate ?? 1,
         cameraSmoothingAvailable:
-          sample === null || canSmoothClipCamera(sample.cameraMode),
+          sample === null ||
+          canSmoothClipCamera(sample.cameraMode, sample.firstPersonPose),
       };
     },
     shallow,
