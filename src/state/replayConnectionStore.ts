@@ -590,6 +590,39 @@ export const replayConnectionStore = createStore<ReplayConnectionState>(
   },
 );
 
+type ReplayTransportState = Pick<
+  ReplayConnectionState,
+  "state" | "connecting" | "ready"
+>;
+
+export function selectReplayBusy({
+  state,
+  connecting,
+  ready,
+}: ReplayTransportState): boolean {
+  return (
+    !state?.closed &&
+    (connecting ||
+      !ready ||
+      state?.status === "seeking" ||
+      state?.status === "preparing")
+  );
+}
+
+export function selectCanControlReplay(connection: ReplayTransportState) {
+  return (
+    !!connection.state?.isOwner &&
+    !connection.state.closed &&
+    !selectReplayBusy(connection)
+  );
+}
+
+export function selectCanPlayReplay(connection: ReplayTransportState) {
+  return (
+    selectCanControlReplay(connection) && connection.state?.status !== "ended"
+  );
+}
+
 export function useReplaySelector<T>(
   selector: (state: ReplayConnectionState) => T,
   equality?: (a: T, b: T) => boolean,

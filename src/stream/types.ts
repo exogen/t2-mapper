@@ -343,6 +343,8 @@ export interface StreamEntity {
   ghostIndex?: number;
   /** Projectiles: the shooter's ghost index (packet sourceObject). */
   sourceGhostIndex?: number;
+  /** Display name captured when the projectile appeared, even if the shooter leaves scope. */
+  projectileSourceName?: string;
   /** Mounted image slot that emitted the projectile. */
   sourceSlot?: number;
   /** Beam projectiles: Torque-space endpoints from the ghost
@@ -738,6 +740,27 @@ export interface PreloadAsset {
   name: string;
 }
 
+/** Ordered flight transitions while a stream applies packets and steps ticks. */
+export type ProjectileLifecycleEvent =
+  | {
+      type: "spawn";
+      id: string;
+      timeSec: number;
+      /** Estimated launch time, when the packet supplies the projectile's age. */
+      launchTimeSec?: number;
+      /** Initial flight direction or velocity in Torque space. */
+      direction?: [number, number, number];
+      sourceEntityId?: string;
+      sourceName?: string;
+    }
+  | {
+      type: "end";
+      id: string;
+      timeSec: number;
+      /** Impact or last known flight position in Torque coordinates. */
+      position: [number, number, number];
+    };
+
 export interface StreamingPlayback {
   /** Entity lifetimes were replaced by a mission reset or checkpoint restore. */
   readonly worldGeneration?: number;
@@ -773,6 +796,10 @@ export interface StreamingPlayback {
   ): () => void;
   reset(): void;
   getSnapshot(): StreamSnapshot;
+  /** Does not replay existing flights when subscribing or rebuilding the world. */
+  subscribeProjectileLifecycle?(
+    listener: (event: ProjectileLifecycleEvent) => void,
+  ): () => void;
   /** Aim lookahead for the observed player at the current demo tick. */
   getPlayerAim?(entityId: string): DemoPlayerAim | undefined;
   /** Demo work can be bounded in ticks or wall time; a partial snapshot resumes

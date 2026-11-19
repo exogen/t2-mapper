@@ -75,6 +75,10 @@ export const TARGET_FINDER_INPUT = [
   { name: "findTarget", keys: ["KeyT"] },
 ] as const satisfies readonly InputMapEntry[];
 
+export const PROJECTILE_FOLLOW_INPUT = [
+  { name: "followProjectile", keys: ["KeyP"] },
+] as const satisfies readonly InputMapEntry[];
+
 /**
  * Opens the score screen in demo playback and live. The open screen
  * closes itself on F2 (ScoreScreen), as it holds the keyboard.
@@ -191,6 +195,7 @@ export type ActionName =
   | (typeof LIVE_OBSERVER_INPUT)[number]["name"]
   | (typeof REVERSE_OBSERVER_INPUT)[number]["name"]
   | (typeof TARGET_FINDER_INPUT)[number]["name"]
+  | (typeof PROJECTILE_FOLLOW_INPUT)[number]["name"]
   | (typeof SCORE_SCREEN_INPUT)[number]["name"]
   | (typeof ORBIT_CAMERA_INPUT)[number]["name"]
   | (typeof PLAYER_ORBIT_INPUT)[number]["name"]

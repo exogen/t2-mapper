@@ -50,7 +50,9 @@ export function subscribeFollowActions(enabled: () => boolean): () => void {
  * Returns false when no follow is armed.
  */
 export function syncFollowCameraMode(): boolean {
-  const { followEntityId, followPlayer } = streamPlaybackStore.getState();
+  const { followEntityId, followPlayer, projectileFollow } =
+    streamPlaybackStore.getState();
+  if (projectileFollow?.kind === "tracking") return true;
   if (!followEntityId && !followPlayer) return false;
   const target = resolveWatchFollowTarget();
   if (target) {

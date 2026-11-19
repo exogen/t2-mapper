@@ -340,25 +340,27 @@ export class LiveStreamAdapter extends StreamEngine {
     const skyWeather =
       payload.skyWeatherStates && new Map(payload.skyWeatherStates);
     const now = this.getTimeSec();
-    for (const ghost of payload.initialGhosts) {
-      const rain = precipitation?.get(ghost.index);
-      const sky = skyWeather?.get(ghost.index);
-      this.processGhostUpdate(
-        ghost,
-        rain || sky
-          ? {
-              precipitation: rain && {
-                ...rain,
-                storm: rain.storm && {
-                  ...rain.storm,
-                  startTime: now + rain.storm.startTime,
+    this.withProjectileGhostBatch(() => {
+      for (const ghost of payload.initialGhosts) {
+        const rain = precipitation?.get(ghost.index);
+        const sky = skyWeather?.get(ghost.index);
+        this.processGhostUpdate(
+          ghost,
+          rain || sky
+            ? {
+                precipitation: rain && {
+                  ...rain,
+                  storm: rain.storm && {
+                    ...rain.storm,
+                    startTime: now + rain.storm.startTime,
+                  },
                 },
-              },
-              skyWeather: sky && shiftSkyWeather(sky, now),
-            }
-          : undefined,
-      );
-    }
+                skyWeather: sky && shiftSkyWeather(sky, now),
+              }
+            : undefined,
+        );
+      }
+    }, true);
 
     // Control object: the relay's server-side observer camera. The relay
     // only sends neutral moves, so this is exactly where the server placed
@@ -681,26 +683,28 @@ export class LiveStreamAdapter extends StreamEngine {
       // throws on one (an unsupported class, a bad datablock reference)
       // must not drop the rest of the packet, which the parser has
       // already registered in its tracker.
-      for (const event of parsed.events) {
-        try {
-          this.processParsedEvent(event, isEarlyPacket, shouldLog);
-        } catch (e) {
-          log.error("event %d handler failed: %o", event.classId, e);
+      this.withProjectileGhostBatch(() => {
+        for (const event of parsed.events) {
+          try {
+            this.processParsedEvent(event, isEarlyPacket, shouldLog);
+          } catch (e) {
+            log.error("event %d handler failed: %o", event.classId, e);
+          }
         }
-      }
 
-      for (const ghost of parsed.ghosts) {
-        try {
-          this.processParsedGhost(ghost);
-        } catch (e) {
-          log.error(
-            "ghost #%d %s handler failed: %o",
-            ghost.index,
-            ghost.type,
-            e,
-          );
+        for (const ghost of parsed.ghosts) {
+          try {
+            this.processParsedGhost(ghost);
+          } catch (e) {
+            log.error(
+              "ghost #%d %s handler failed: %o",
+              ghost.index,
+              ghost.type,
+              e,
+            );
+          }
         }
-      }
+      });
 
       this.acknowledgeMoves(
         this.lastMoveAck,

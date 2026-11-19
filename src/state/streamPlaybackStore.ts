@@ -6,6 +6,20 @@ import { streamRenderFrame } from "../stream/interpolateEntity";
 export type DemoCameraMode =
   "original" | "freeFly" | "orbitOverride" | "firstPersonOverride";
 
+export type ProjectileFollow =
+  | {
+      kind: "armed";
+      playerId: string;
+      playerName: string;
+      armedAtSec: number;
+    }
+  | {
+      kind: "tracking";
+      projectileId: string;
+      sourceName?: string;
+      terminalPosition?: readonly [number, number, number];
+    };
+
 /** Default follow orbit distance, and the scroll-zoom clamp range. */
 export const DEFAULT_ORBIT_DISTANCE = 8;
 export const MIN_ORBIT_DISTANCE = 2;
@@ -123,6 +137,7 @@ export interface StreamPlaybackState {
    * exit.
    */
   followFlagSlot: number | null;
+  projectileFollow: ProjectileFollow | null;
 }
 
 export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
@@ -141,6 +156,7 @@ export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
   lastFollowTargetId: null,
   lastFollowGhostIndex: null,
   followFlagSlot: null,
+  projectileFollow: null,
 }));
 
 /** Reset all streaming playback state. Called when streaming ends. */
@@ -167,6 +183,7 @@ export function resetStreamPlayback(): void {
     lastFollowTargetId: null,
     lastFollowGhostIndex: null,
     followFlagSlot: null,
+    projectileFollow: null,
   });
   // root is the engine's entity root (installEntityViews) — don't clear it
 }

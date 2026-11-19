@@ -71,6 +71,8 @@ import { ToggleSidebarButton } from "./ToggleSidebarButton";
 import { ExitTourButton } from "./ExitTourButton";
 import { TargetFinder } from "./TargetFinder";
 import { lazyNamed } from "./lazyNamed";
+import { ShortcutHelpDialog } from "./ShortcutHelpDialog";
+import { useShortcutHelpTrigger } from "./useShortcutHelpTrigger";
 import styles from "./MapInspector.module.css";
 
 function ViewTransition({ children }: { children: ReactNode }) {
@@ -116,6 +118,13 @@ export function MapInspector() {
   const [mapInfoOpen, setMapInfoOpen] = useState(false);
   const [scoreScreenOpen, setScoreScreenOpen] = useState(false);
   const [cameraDrawerOpen, setCameraDrawerOpen] = useState(false);
+  const [shortcutHelpPointerLocked, setShortcutHelpPointerLocked] = useState<
+    boolean | null
+  >(null);
+  const openShortcutHelp = useShortcutHelpTrigger(
+    setShortcutHelpPointerLocked,
+    mapInfoOpen || scoreScreenOpen,
+  );
   useAutoScoreScreen(setScoreScreenOpen);
   useInputAction("toggleScoreScreen", () =>
     setScoreScreenOpen((open) => !open),
@@ -532,6 +541,12 @@ export function MapInspector() {
   // frame with "Disconnected" in the toolbar; clicking Live again clears
   // the stream and lands here.
   const showJoinScreen = mode === "live" && !sessionActive && !hasStreamData;
+  const picker = mode === "demo" && !choosingMap ? "demo" : "map";
+  const showPicker =
+    choosingMap ||
+    (!(clipId || hasStreamData || sessionActive) &&
+      !showJoinScreen &&
+      mode !== "replay");
 
   // Demo mode without a recording: the content area shows the drag &
   // drop landing instead of an empty 3D view.
@@ -616,17 +631,8 @@ export function MapInspector() {
               <StreamingMissionInfo onOpenScoreScreen={handleOpenScoreScreen} />
             )}
           </Activity>
-          <Activity
-            mode={
-              (!(clipId || hasStreamData || sessionActive) &&
-                !showJoinScreen &&
-                mode !== "replay") ||
-              choosingMap
-                ? "visible"
-                : "hidden"
-            }
-          >
-            {mode === "demo" && !choosingMap ? (
+          <Activity mode={showPicker ? "visible" : "hidden"}>
+            {picker === "demo" ? (
               <DemoSelect />
             ) : (
               <MissionSelect
@@ -662,6 +668,7 @@ export function MapInspector() {
                 choosingMap={choosingMap}
                 engine={engine}
                 onOpenMapInfo={handleOpenMapInfo}
+                onOpenShortcutHelp={openShortcutHelp}
                 onOpenScoreScreen={
                   hasStreamData ? handleOpenScoreScreen : undefined
                 }
@@ -842,6 +849,14 @@ export function MapInspector() {
             </Suspense>
           ) : null}
         </footer>
+        {shortcutHelpPointerLocked !== null && (
+          <ShortcutHelpDialog
+            mode={mode}
+            picker={showPicker ? picker : undefined}
+            wasPointerLocked={shortcutHelpPointerLocked}
+            onClose={() => setShortcutHelpPointerLocked(null)}
+          />
+        )}
         {mapInfoOpen ? (
           <ViewTransition>
             <Suspense

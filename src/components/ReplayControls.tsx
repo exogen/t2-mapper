@@ -3,6 +3,9 @@ import { isPlaybackControl } from "../keyboard";
 import { GrPauseFill, GrPlayFill } from "react-icons/gr";
 import {
   replayConnectionStore,
+  selectCanControlReplay,
+  selectCanPlayReplay,
+  selectReplayBusy,
   useReplaySelector,
 } from "../state/replayConnectionStore";
 import { streamClock } from "../state/streamPlaybackStore";
@@ -82,8 +85,6 @@ export function ReplaySessionStatus() {
 export function ReplayControls() {
   const state = useReplaySelector((value) => value.state);
   const error = useReplaySelector((value) => value.error);
-  const connecting = useReplaySelector((value) => value.connecting);
-  const ready = useReplaySelector((value) => value.ready);
   const currentTime = useCurrentTime();
   const [dragValue, setDragValue] = useState<number | null>(null);
   const scrub = useRef<{
@@ -91,14 +92,9 @@ export function ReplayControls() {
     epoch: number;
     revision: number;
   } | null>(null);
-  const busy =
-    !state?.closed &&
-    (connecting ||
-      !ready ||
-      state?.status === "seeking" ||
-      state?.status === "preparing");
-  const canControl = !!state?.isOwner && ready && !busy && !state.closed;
-  const canPlay = canControl && state.status !== "ended";
+  const busy = useReplaySelector(selectReplayBusy);
+  const canControl = useReplaySelector(selectCanControlReplay);
+  const canPlay = useReplaySelector(selectCanPlayReplay);
   const playing = state?.status === "playing";
   const duration = (state?.durationTicks ?? 0) * STREAM_TICK_SEC;
   const time = Math.max(
@@ -118,12 +114,7 @@ export function ReplayControls() {
       latest.sessionId !== state.sessionId ||
       latest.epoch !== state.epoch ||
       latest.revision !== state.revision ||
-      !latest.isOwner ||
-      latest.closed ||
-      !current.ready ||
-      current.connecting ||
-      latest.status === "preparing" ||
-      latest.status === "seeking"
+      !selectCanControlReplay(current)
     )
       return null;
     return latest;

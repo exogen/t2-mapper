@@ -8,6 +8,8 @@ const fixture = vi.hoisted(() => ({
   source: "demo" as "demo" | "live" | null,
   watcher: false,
   replay: false,
+  spectatorReady: true,
+  isSeeking: false,
   owner: "input" as "input" | "tour" | "director" | "commandCircuit" | "clip",
   targetFinderOpen: false,
   orbit: false,
@@ -16,6 +18,7 @@ const fixture = vi.hoisted(() => ({
 }));
 
 vi.mock("./usePlayback", () => ({
+  useIsSeeking: () => fixture.isSeeking,
   useRecording: () =>
     fixture.source && {
       source: fixture.source,
@@ -33,7 +36,14 @@ vi.mock("../state/cameraOwner", () => ({
 }));
 vi.mock("../state/liveConnectionStore", () => ({
   useLiveSelector: (select: (state: unknown) => unknown) =>
-    select({ role: fixture.watcher ? "watcher" : "player" }),
+    select({
+      role: fixture.watcher ? "watcher" : "player",
+      liveReady: fixture.spectatorReady,
+    }),
+}));
+vi.mock("../state/replayConnectionStore", () => ({
+  useReplaySelector: (select: (state: unknown) => unknown) =>
+    select({ ready: fixture.spectatorReady }),
 }));
 vi.mock("zustand", () => ({
   useStore: (_store: unknown, select: (state: unknown) => unknown) =>
@@ -56,6 +66,8 @@ afterEach(() => {
   fixture.source = "demo";
   fixture.watcher = false;
   fixture.replay = false;
+  fixture.spectatorReady = true;
+  fixture.isSeeking = false;
   fixture.owner = "input";
   fixture.targetFinderOpen = false;
   fixture.orbit = false;
@@ -114,6 +126,18 @@ it.each(["tour", "director", "commandCircuit"] as const)(
     );
   },
 );
+
+it("routes the wheel exclusively to command circuit zoom in live fly mode", () => {
+  Object.assign(fixture, {
+    source: "live",
+    inputMode: "fly",
+    owner: "commandCircuit",
+  });
+  const html = renderToStaticMarkup(<ActiveInputBindings />);
+  expect(html).toContain("commandZoom");
+  expect(html).not.toContain("adjustSpeed");
+  expect(html).not.toContain("moveForward");
+});
 
 it.each(["input", "tour", "director", "commandCircuit"] as const)(
   "offers demo quick cams while %s owns the camera, without competing number bindings",
@@ -178,6 +202,31 @@ it("binds the follow lock only while orbiting a player", () => {
 it("leaves number keys to the target finder while it is open", () => {
   fixture.targetFinderOpen = true;
   expect(renderToStaticMarkup(<ActiveInputBindings />)).toBe("");
+});
+
+it("binds projectile follow when a local stream camera is available", () => {
+  const bound = () =>
+    renderToStaticMarkup(<ActiveInputBindings />).includes("followProjectile");
+  expect(bound()).toBe(true);
+  fixture.isSeeking = true;
+  expect(bound()).toBe(false);
+  fixture.isSeeking = false;
+  fixture.owner = "commandCircuit";
+  expect(bound()).toBe(false);
+  fixture.owner = "input";
+  fixture.source = null;
+  expect(bound()).toBe(false);
+  fixture.source = "live";
+  expect(bound()).toBe(false);
+  fixture.watcher = true;
+  expect(bound()).toBe(true);
+  fixture.spectatorReady = false;
+  expect(bound()).toBe(false);
+  fixture.watcher = false;
+  fixture.replay = true;
+  expect(bound()).toBe(false);
+  fixture.spectatorReady = true;
+  expect(bound()).toBe(true);
 });
 
 it.each([

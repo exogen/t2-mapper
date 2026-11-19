@@ -2,7 +2,7 @@ import {
   createParser,
   createSerializer,
   parseAsBoolean,
-  parseAsInteger,
+  parseAsFloat,
   parseAsString,
   parseAsStringLiteral,
   useQueryState,
@@ -94,7 +94,7 @@ const navigationParsers = {
   clip: parseAsString,
   user: parseAsString,
   replay: parseAsString,
-  t: parseAsInteger,
+  t: parseAsFloat,
   address: parseAsString,
   name: parseAsString,
   view: parseAsStringLiteral(["cc"] as const),
@@ -197,18 +197,8 @@ export function useDemoQueryState() {
   return [demo, setDemo] as const;
 }
 
-/**
- * The second of the loaded demo a link points at: `?t=<sec>`. The camera
- * for that moment rides in the URL hash (see demoMoment.ts). Read once
- * when the demo is ready, and written by the "Link to moment" button.
- */
-export function useDemoTimeQueryState() {
-  const [t, setT] = useQueryState("t", parseAsInteger);
-  return [t, setT] as const;
-}
-
-/** Builds a shareable URL for a moment's second from the page URL. */
-export const serializeDemoTime = createSerializer({ t: parseAsInteger });
+/** Builds a shareable URL for a moment's time from the page URL. */
+export const serializeDemoTime = createSerializer({ t: navigationParsers.t });
 
 /**
  * Drops the URL hash without leaving a bare `#` behind (assigning

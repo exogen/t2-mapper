@@ -1,5 +1,7 @@
 import {
   applyStreamEntityPose,
+  interpolateStreamPosition,
+  isTrackableProjectile,
   streamRenderFrame,
 } from "../stream/interpolateEntity";
 import { createLogger } from "../logger";
@@ -85,6 +87,7 @@ import { torqueVecToThree } from "../scene/coordinates";
 import { firstPersonPlayerId, readClipViewAngles } from "./firstPersonPlayer";
 import { markTransformChanged } from "../transformChanges";
 import { PlayerCameraTransition } from "./playerCameraTransition";
+import { exitToFreeFly } from "../state/watchFollow";
 import {
   applyObserverOrbit,
   applyPlayerControlCamera,
@@ -782,7 +785,8 @@ export class StreamPlaybackSession {
   }
 
   private cameraSelection(camera: StreamCamera | null) {
-    const { cameraMode, followEntityId } = streamPlaybackStore.getState();
+    const { cameraMode, followEntityId, projectileFollow } =
+      streamPlaybackStore.getState();
     const isLive = this.recording.source === "live";
     // The relay’s own server camera stays in fly mode. Watchers and demo
     // follow overrides use the target selected in the browser.
@@ -795,7 +799,15 @@ export class StreamPlaybackSession {
       (!isLive &&
         (cameraMode === "orbitOverride" ||
           cameraMode === "firstPersonOverride"));
+    const projectileTracking =
+      cameraMode === "orbitOverride" &&
+      projectileFollow?.kind === "tracking" &&
+      (!isLive || isWatcher) &&
+      resolveCameraOwner() === "input"
+        ? projectileFollow
+        : null;
     const orbitTargetId =
+      projectileTracking?.projectileId ??
       (userFollowing ? followEntityId : null) ??
       camera?.orbitTargetId ??
       undefined;
@@ -809,6 +821,7 @@ export class StreamPlaybackSession {
       isWatcher,
       orbitTargetId,
       firstPersonFollowId,
+      projectileTracking,
     };
   }
 
@@ -1031,6 +1044,7 @@ export class StreamPlaybackSession {
       isWatcher,
       orbitTargetId,
       firstPersonFollowId,
+      projectileTracking,
     } = this.cameraSelection(currentCamera);
     // In live mode, InputConsumer owns camera position and rotation
     // (moves are applied locally, matching how the real Tribes 2 client
@@ -1157,10 +1171,11 @@ export class StreamPlaybackSession {
       (!isLive || isWatcher) &&
       orbitTargetId != null;
     const orbitLocked =
-      isPlayerOrbitLocked(followBehindPlayer) ||
-      (followBehindPlayer &&
-        orbitOverride &&
-        cameraMode === "firstPersonOverride");
+      projectileTracking === null &&
+      (isPlayerOrbitLocked(followBehindPlayer) ||
+        (followBehindPlayer &&
+          orbitOverride &&
+          cameraMode === "firstPersonOverride"));
     const orbitSnapNonce = streamPlaybackStore.getState().orbitSnapNonce;
     if (this.lastOrbitSnapNonce !== orbitSnapNonce) {
       this.lockedOrbit.reset();
@@ -1189,26 +1204,42 @@ export class StreamPlaybackSession {
       }
       lastLockedOrbit.reset();
     }
+    const projectile = projectileTracking
+      ? currentEntities.get(projectileTracking.projectileId)
+      : undefined;
+    const liveProjectile = isTrackableProjectile(projectile)
+      ? projectile
+      : undefined;
+    const terminalPosition = projectileTracking?.terminalPosition;
+    const projectileEnded =
+      projectileTracking !== null &&
+      (terminalPosition !== undefined || liveProjectile === undefined);
     if (
-      currentCamera &&
+      (currentCamera || projectileTracking) &&
       cameraMode !== "freeFly" &&
       (!isLive || isWatcher) &&
       !playerControlsCamera &&
       !recordedObserverOrbit &&
       !this.corpseView &&
       (mode === "third-person" || orbitOverride) &&
-      root &&
       orbitTargetId
     ) {
-      const resolvedTarget = resolveCameraTarget(
-        root,
-        currentEntities,
-        orbitTargetId,
-      );
-      if (resolvedTarget) {
-        const targetGroup = resolvedTarget.group;
-        const orbitEntity = resolvedTarget.entity;
-        _orbitTarget.copy(targetGroup.position);
+      const resolvedTarget =
+        root && !projectileTracking
+          ? resolveCameraTarget(root, currentEntities, orbitTargetId)
+          : null;
+      if (resolvedTarget || liveProjectile || terminalPosition) {
+        const targetGroup = resolvedTarget?.group;
+        const orbitEntity = resolvedTarget?.entity;
+        if (terminalPosition) torqueVecToThree(terminalPosition, _orbitTarget);
+        else if (liveProjectile) {
+          interpolateStreamPosition(
+            _orbitTarget,
+            liveProjectile,
+            getEntityMap(renderPrev).get(orbitTargetId),
+            interpT,
+          );
+        } else if (targetGroup) _orbitTarget.copy(targetGroup.position);
         // Loose-spring target for the auto-director: ease toward where
         // the followed thing IS rather than teleporting with it through
         // drops, passes and pickups. A jump far beyond hand-off range is
@@ -1218,13 +1249,14 @@ export class StreamPlaybackSession {
         // the home base mid-shot — freeze on the last framing instead
         // and let the next shot (the aftermath) own what follows.
         const spState = streamPlaybackStore.getState();
-        if (spState.orbitTargetDamping != null) {
+        const damping = projectileTracking ? null : spState.orbitTargetDamping;
+        if (damping != null) {
           advanceFollowSpring(
             this.spring,
             _orbitTarget,
             orbitTargetId,
             spState.orbitSnapNonce,
-            spState.orbitTargetDamping,
+            damping,
             ctx.delta * (isPlaying ? playback.rate : 0),
           );
         } else {
@@ -1235,7 +1267,7 @@ export class StreamPlaybackSession {
         // in our stream are feet-level, so lift to an approximate center.
         // For vehicles, use the datablock's cameraOffset (vertical Z offset
         // in Torque space = Y in Three.js).
-        if (currentCamera.orbitOffset) {
+        if (!projectileTracking && currentCamera?.orbitOffset) {
           _orbitTarget.y += currentCamera.orbitOffset;
         } else if (orbitEntity?.type === "Player") {
           _orbitTarget.y += 1.0;
@@ -1247,7 +1279,7 @@ export class StreamPlaybackSession {
 
         let hasDirection = false;
         if (orbitOverride) {
-          if (orbitLocked) {
+          if (orbitLocked && targetGroup) {
             getPlayerViewAngles(
               targetGroup.quaternion,
               currentEntities.get(orbitTargetId),
@@ -1264,14 +1296,13 @@ export class StreamPlaybackSession {
           }
           // Both camera modes use positive pitch to look down, with the
           // orbit pulling back above the target. Demo and watch share this.
-          const spState = streamPlaybackStore.getState();
           orbitPullbackDir(
             orbitLocked ? lastLockedOrbit.yaw : spState.orbitOverrideYaw,
             orbitLocked ? lastLockedOrbit.pitch : spState.orbitOverridePitch,
             _orbitDir,
           );
           hasDirection = _orbitDir.lengthSq() > 1e-8;
-        } else if (currentCamera.orbitDirection) {
+        } else if (currentCamera?.orbitDirection) {
           // Use explicit pullback direction (e.g. from full vehicle quaternion
           // including roll) when available.
           _orbitDir.set(
@@ -1303,8 +1334,11 @@ export class StreamPlaybackSession {
           // User-controlled follow zooms distance via the scroll wheel;
           // otherwise use the recorder's distance or the mode default.
           const orbitDistance = orbitOverride
-            ? streamPlaybackStore.getState().orbitOverrideDistance
-            : Math.max(0.1, currentCamera.orbitDistance ?? (isWatcher ? 8 : 4));
+            ? spState.orbitOverrideDistance
+            : Math.max(
+                0.1,
+                currentCamera?.orbitDistance ?? (isWatcher ? 8 : 4),
+              );
           _orbitCandidate
             .copy(_orbitTarget)
             .addScaledVector(_orbitDir, orbitDistance);
@@ -1316,8 +1350,7 @@ export class StreamPlaybackSession {
           // clamp underneath as the never-inside-the-hill guarantee.
           // Tight close shots (the defender's hip, the hero frame) are
           // deliberately near the ground and keep only the hard floor.
-          const directing =
-            streamPlaybackStore.getState().orbitTargetDamping != null;
+          const directing = damping != null;
           if (directing && orbitDistance >= TERRAIN_TRACK_MIN_DISTANCE) {
             const soft = smoothedGroundHeightAt(
               _orbitCandidate.x,
@@ -1384,6 +1417,11 @@ export class StreamPlaybackSession {
           );
         }
       }
+    }
+
+    if (projectileTracking) {
+      if (projectileEnded) exitToFreeFly();
+      return;
     }
 
     const eyeFollowId =

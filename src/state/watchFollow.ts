@@ -236,16 +236,16 @@ function resolveFlagSlot(
  * Follow a flag with the number keys: enter orbit follow on the flag item
  * (or its carrier while held) that `slot` selects — see resolveFlagSlot.
  * The follow keeps tracking that slot as the flag changes hands (see
- * resolveWatchFollowTarget); no-op if no such flag is in scope.
+ * resolveWatchFollowTarget). Returns false when the flag is out of scope.
  */
-export function followFlag(slot: number): void {
+export function followFlag(slot: number): boolean {
   const target = resolveFlagSlot(slot);
-  if (!target) return;
+  if (!target) return false;
   const state = streamPlaybackStore.getState();
   // Re-pressing the active slot is a no-op — never snap the user's
   // orbit angles out from under them.
   if (state.followFlagSlot === slot && state.followEntityId === target.id) {
-    return;
+    return true;
   }
   seedOrbitBehindTarget(target.id);
   // Flag follow is its own mode OUTSIDE the player-follow cycle: no
@@ -260,6 +260,7 @@ export function followFlag(slot: number): void {
     followCameraMode: "orbitOverride",
     cameraMode: "orbitOverride",
   });
+  return true;
 }
 
 /**
@@ -377,6 +378,7 @@ export function enterWatchFollow(targetId?: string): void {
  */
 export function exitToFreeFly(): void {
   streamPlaybackStore.setState({
+    projectileFollow: null,
     followEntityId: null,
     followTargetId: null,
     followPlayer: null,
@@ -388,8 +390,10 @@ export function exitToFreeFly(): void {
 
 /** Back to free-fly; the camera stays where the orbit left it. */
 export function exitWatchFollow(): void {
-  const { followEntityId, followPlayer } = streamPlaybackStore.getState();
-  if (followEntityId === null && followPlayer === null) return;
+  const { followEntityId, followPlayer, projectileFollow } =
+    streamPlaybackStore.getState();
+  if (followEntityId === null && followPlayer === null && !projectileFollow)
+    return;
   exitToFreeFly();
 }
 
@@ -540,7 +544,12 @@ export function toggleWatchFollow(): void {
  * view of the followed player.
  */
 export function cycleWatchObserverMode(direction: 1 | -1 = 1): void {
-  const { followEntityId, followCameraMode } = streamPlaybackStore.getState();
+  const { followEntityId, followCameraMode, projectileFollow } =
+    streamPlaybackStore.getState();
+  if (projectileFollow?.kind === "tracking") {
+    exitToFreeFly();
+    return;
+  }
   cycleCameraMode(
     followEntityId ? followCameraMode : "freeFly",
     false,

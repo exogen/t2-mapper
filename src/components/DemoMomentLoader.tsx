@@ -9,38 +9,36 @@ import {
   findLivingEntityByTargetId,
   followFlag,
 } from "../state/watchFollow";
-import { parseDemoMoment, type DemoMomentCamera } from "./demoMoment";
 import {
-  useDemoQueryState,
-  useDemoTimeQueryState,
-  useNavigationQueryState,
-} from "./useQueryParams";
+  findDemoMomentProjectile,
+  parseDemoMoment,
+  type DemoMomentCamera,
+} from "./demoMoment";
+import { useNavigationQueryState } from "./useQueryParams";
 import { createLogger } from "../logger";
 import { FramePriority } from "../engine/framePriority";
+import { startProjectileTracking } from "../engine/projectileFollow";
 import { useEngineFrame } from "./useEngine";
 import { demoSourceUrl } from "../stream/demoSources";
 
 const log = createLogger("demoMoment");
 
-/** How long a follow link waits for its player to have a body. */
+/** How long a player or flag link waits for its target to enter scope. */
 const FOLLOW_ARM_TIMEOUT_MS = 30_000;
 
 /**
  * Takes a shared link to a moment in the loaded demo: once the demo is
- * ready it seeks to the second the link names and sets up the camera
- * the link describes. A follow is armed as soon as the followed player
- * has a body at the new time — the seek rebuilds the world, so that can
- * be a beat later.
+ * ready it seeks to the linked time and applies the camera after the
+ * destination frame is ready. Player and flag follows can wait for the
+ * target to appear.
  *
  * Applied once per demo: the URL keeps the moment while the viewer
  * watches on, and a later dropdown pick clears it (see DemoSelect).
  */
 export function DemoMomentLoader() {
-  const [demoParam] = useDemoQueryState();
-  const [route] = useNavigationQueryState();
-  const [t] = useDemoTimeQueryState();
+  const [{ demo: demoParam, clip }] = useNavigationQueryState();
   const recording = useEngineSelector((s) => s.playback.recording);
-  const durationMs = useEngineSelector((s) => s.playback.durationMs);
+  const hasDuration = useEngineSelector((s) => s.playback.durationMs > 0);
   const sourceUrl = useDemoLoad((s) => s.sourceUrl);
   // Set by StreamPlaybackSession once it has taken the recording up — the
   // same effect that snapshots the seek nonce as "already handled" and
@@ -54,129 +52,168 @@ export function DemoMomentLoader() {
     recording: typeof recording;
     key: string;
   } | null>(null);
-  const pendingFollowRef = useRef<{
-    camera: Extract<DemoMomentCamera, { kind: "follow" | "fp" }>;
+  const pendingMomentRef = useRef<{
+    camera: DemoMomentCamera;
     recording: NonNullable<typeof recording>;
-    seekNonce: number;
+    seekIntentNonce: number;
     untilMs: number | null;
   } | null>(null);
 
   useEffect(() => {
     if (
-      route.clip ||
+      clip ||
       !demoParam ||
       recording?.source !== "demo" ||
       !sourceUrl ||
       sourceUrl !== demoSourceUrl(demoParam)
     ) {
       appliedRef.current = null;
-      pendingFollowRef.current = null;
+      pendingMomentRef.current = null;
       return;
     }
-    if (durationMs <= 0 || !attached) return;
-    // The hash is read here, not tracked: the copy button rewrites it
-    // for the moment being watched, and that must not seek again.
-    const hash = window.location.hash;
-    const moment = parseDemoMoment(t, hash);
-    if (!moment) return;
-    const key = `${demoParam}|${t}|${hash}`;
-    if (
-      appliedRef.current?.recording === recording &&
-      appliedRef.current.key === key
-    )
-      return;
-    appliedRef.current = { recording, key };
-    if (!engineStore.getState().seekPlayback(moment.timeSec)) return;
-    // A follow still waiting for its player belongs to the previous
-    // link; a player on this demo could share the target id.
-    pendingFollowRef.current = null;
-    if (streamPlaybackStore.getState().followPlayer)
-      streamPlaybackStore.setState({ followPlayer: null });
-    log.info("Seeking to %ds (%s)", moment.timeSec, moment.camera.kind);
-    const cam = moment.camera;
-    switch (cam.kind) {
-      case "original":
-        streamPlaybackStore.setState({
-          cameraMode: "original",
-          followEntityId: null,
-          followTargetId: null,
-          followFlagSlot: null,
-        });
-        break;
-      case "fly": {
-        exitToFreeFly();
-        const camera = cameraRegistry.perspective;
-        if (camera) {
-          camera.position.copy(cam.position);
-          if (cam.quaternion) camera.quaternion.copy(cam.quaternion);
-        }
-        break;
+    if (!hasDuration || !attached) return;
+    const applyMoment = () => {
+      // Browser events may run before the route effect has switched demos.
+      const query = new URLSearchParams(window.location.search);
+      if (
+        query.get("demo") !== demoParam ||
+        query.get("clip") ||
+        engineStore.getState().playback.recording !== recording
+      ) {
+        appliedRef.current = null;
+        pendingMomentRef.current = null;
+        return;
       }
-      case "flag":
-        followFlag(cam.slot);
-        applyOrbit(cam);
-        break;
-      case "follow":
-      case "fp":
-        pendingFollowRef.current = {
-          camera: cam,
-          recording,
-          seekNonce: engineStore.getState().playback.seekNonce,
-          untilMs: null,
-        };
-        break;
-    }
-  }, [demoParam, t, recording, durationMs, sourceUrl, attached, route.clip]);
+      const t = Number.parseFloat(query.get("t") ?? "");
+      const hash = window.location.hash;
+      const moment = parseDemoMoment(t, hash);
+      if (!moment) {
+        appliedRef.current = null;
+        pendingMomentRef.current = null;
+        return;
+      }
+      const key = `${demoParam}|${t}|${hash}`;
+      if (
+        appliedRef.current?.recording === recording &&
+        appliedRef.current.key === key
+      )
+        return;
+      appliedRef.current = { recording, key };
+      if (!engineStore.getState().seekPlayback(moment.timeSec)) return;
+      pendingMomentRef.current = {
+        camera: moment.camera,
+        recording,
+        seekIntentNonce: engineStore.getState().playback.seekIntentNonce,
+        untilMs: null,
+      };
+      log.info("Seeking to %ds (%s)", moment.timeSec, moment.camera.kind);
+    };
 
-  // A player follow can only be armed once that player has a body at
-  // the new time; look for it each frame until it appears.
+    // Copy updates the address bar with replaceState, which fires neither
+    // event. Only an actual navigation should seek an already attached demo.
+    applyMoment();
+    window.addEventListener("popstate", applyMoment);
+    window.addEventListener("hashchange", applyMoment);
+    return () => {
+      window.removeEventListener("popstate", applyMoment);
+      window.removeEventListener("hashchange", applyMoment);
+    };
+  }, [demoParam, recording, hasDuration, sourceUrl, attached, clip]);
+
+  // The destination frame also mounts the map's default camera. Set the
+  // linked view after that and only while its seek still owns playback.
   useEngineFrame(FramePriority.CameraSelect, () => {
-    const pending = pendingFollowRef.current;
+    const pending = pendingMomentRef.current;
     if (!pending) return;
     const playback = engineStore.getState().playback;
     if (
       playback.recording !== pending.recording ||
-      playback.seekNonce !== pending.seekNonce
+      playback.seekIntentNonce !== pending.seekIntentNonce
     ) {
-      pendingFollowRef.current = null;
+      pendingMomentRef.current = null;
       return;
     }
-    if (playback.status === "seeking") return;
+    // The transport can retry a failed seek under the same seek intent.
+    if (playback.status === "seeking" || playback.seekFailed) return;
+    const { camera } = pending;
+    if (camera.kind === "original") {
+      pendingMomentRef.current = null;
+      streamPlaybackStore.setState({
+        cameraMode: "original",
+        followEntityId: null,
+        followTargetId: null,
+        followPlayer: null,
+        followFlagSlot: null,
+      });
+      return;
+    }
+    if (camera.kind === "fly") {
+      pendingMomentRef.current = null;
+      applyFly(camera);
+      return;
+    }
+    if (camera.kind === "projectile") {
+      pendingMomentRef.current = null;
+      const projectile = findDemoMomentProjectile(camera);
+      if (
+        !projectile ||
+        !startProjectileTracking(
+          projectile.id,
+          projectile.projectileSourceName,
+          camera,
+        )
+      )
+        applyFly(camera.fallback);
+      return;
+    }
     pending.untilMs ??= performance.now() + FOLLOW_ARM_TIMEOUT_MS;
     if (performance.now() > pending.untilMs) {
-      log.warn(
-        "Follow link: player %d never appeared",
-        pending.camera.targetId,
-      );
-      pendingFollowRef.current = null;
+      if (camera.kind === "flag")
+        log.warn("Follow link: flag %d never appeared", camera.slot);
+      else log.warn("Follow link: player %d never appeared", camera.targetId);
+      pendingMomentRef.current = null;
       return;
     }
-    const entityId = findLivingEntityByTargetId(pending.camera.targetId);
+    if (camera.kind === "flag") {
+      if (!followFlag(camera.slot)) return;
+      pendingMomentRef.current = null;
+      streamPlaybackStore.setState(orbitSettings(camera));
+      return;
+    }
+    const entityId = findLivingEntityByTargetId(camera.targetId);
     if (!entityId) return;
-    pendingFollowRef.current = null;
+    pendingMomentRef.current = null;
     const followCameraMode =
-      pending.camera.kind === "fp" ? "firstPersonOverride" : "orbitOverride";
+      camera.kind === "fp" ? "firstPersonOverride" : "orbitOverride";
     streamPlaybackStore.setState({
       followEntityId: entityId,
-      followTargetId: pending.camera.targetId,
+      followTargetId: camera.targetId,
       followPlayer: null,
-      lastFollowTargetId: pending.camera.targetId,
+      lastFollowTargetId: camera.targetId,
       followCameraMode,
       cameraMode: followCameraMode,
       followFlagSlot: null,
+      ...orbitSettings(camera),
     });
-    applyOrbit(pending.camera);
   });
 
   return null;
 }
 
-function applyOrbit(o: { yaw: number; pitch: number; distance: number }) {
-  streamPlaybackStore.setState({
+function applyFly(view: Extract<DemoMomentCamera, { kind: "fly" }>) {
+  exitToFreeFly();
+  const camera = cameraRegistry.perspective;
+  if (!camera) return;
+  camera.position.copy(view.position);
+  if (view.quaternion) camera.quaternion.copy(view.quaternion);
+}
+
+function orbitSettings(o: { yaw: number; pitch: number; distance: number }) {
+  return {
     orbitOverrideYaw: o.yaw,
     orbitOverridePitch: o.pitch,
     ...(Number.isFinite(o.distance)
       ? { orbitOverrideDistance: o.distance }
       : {}),
-  });
+  };
 }

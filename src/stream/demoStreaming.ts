@@ -1108,10 +1108,12 @@ export class DemoStreamAdapter extends StreamEngine {
         ? (this.initialBlock.controlObjectData?.position as Vec3)
         : undefined,
     };
-    for (const ghost of this.initialBlock.initialGhosts) {
-      if (ghost.type !== "create" || ghost.classId == null) continue;
-      this.processGhostUpdate(ghost);
-    }
+    this.withProjectileGhostBatch(() => {
+      for (const ghost of this.initialBlock.initialGhosts) {
+        if (ghost.type !== "create" || ghost.classId == null) continue;
+        this.processGhostUpdate(ghost);
+      }
+    }, true);
 
     if (this.latestControl.data)
       this.correctControlPlayer(this.latestControl.data as PlayerPacketData);
@@ -1786,14 +1788,16 @@ export class DemoStreamAdapter extends StreamEngine {
         }
       }
 
-      for (const evt of packet.events) {
-        const eventName = this.registry.getEventParser(evt.classId)?.name;
-        this.processEvent(evt, eventName);
-      }
+      this.withProjectileGhostBatch(() => {
+        for (const evt of packet.events) {
+          const eventName = this.registry.getEventParser(evt.classId)?.name;
+          this.processEvent(evt, eventName);
+        }
 
-      for (const ghost of packet.ghosts) {
-        this.processGhostUpdate(ghost);
-      }
+        for (const ghost of packet.ghosts) {
+          this.processGhostUpdate(ghost);
+        }
+      });
       this.lastRecordedMoveAck = Math.max(
         this.lastRecordedMoveAck,
         packet.gameState.lastMoveAck,

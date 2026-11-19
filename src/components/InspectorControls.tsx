@@ -8,6 +8,7 @@ import { Checkbox } from "./Checkbox";
 import { ChatHudControl, MatchHudControl } from "./HudControls";
 import { useCommentaryTracks } from "../state/commentaryTracksStore";
 import { memo } from "react";
+import { BiSolidHelpCircle } from "react-icons/bi";
 import { FaRotateRight } from "react-icons/fa6";
 import {
   MAX_JOYSTICK_OPACITY,
@@ -77,6 +78,7 @@ export const InspectorControls = memo(function InspectorControls({
   missionName,
   missionType,
   onOpenMapInfo,
+  onOpenShortcutHelp,
   onOpenScoreScreen,
   onOpenServerBrowser,
   onEnterDemoMode,
@@ -89,6 +91,7 @@ export const InspectorControls = memo(function InspectorControls({
   missionName: string;
   missionType?: string;
   onOpenMapInfo: () => void;
+  onOpenShortcutHelp: () => void;
   onOpenScoreScreen?: () => void;
   onOpenServerBrowser?: () => void;
   onEnterDemoMode?: () => void;
@@ -689,6 +692,16 @@ export const InspectorControls = memo(function InspectorControls({
                     </p>
                   </div>
                 )}
+                <button
+                  type="button"
+                  className={styles.ShortcutHelpButton}
+                  aria-haspopup="dialog"
+                  title="Show keyboard and mouse shortcuts (?)"
+                  onClick={onOpenShortcutHelp}
+                >
+                  <BiSolidHelpCircle aria-hidden="true" />
+                  Keyboard shortcuts
+                </button>
               </Accordion>
               <Accordion value="audio" label="Audio">
                 <div className={styles.CheckboxField}>

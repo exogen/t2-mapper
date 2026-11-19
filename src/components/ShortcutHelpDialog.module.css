@@ -1,0 +1,178 @@
+.Overlay {
+  composes: Overlay from "./GameDialog.module.css";
+  z-index: 20;
+}
+
+.Dialog {
+  composes: BlueDialog from "./GameDialog.module.css";
+  width: 920px;
+  display: flex;
+  flex-direction: column;
+  z-index: 21;
+}
+
+.Dialog.Dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.Header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 12px 12px 20px;
+  border-bottom: 1px solid var(--control-border);
+}
+
+.TitleRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.Title {
+  color: inherit;
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.ModeBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--control-border);
+  border-radius: 4px;
+  background: var(--control-background);
+  color: var(--control-muted);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.ModeBadge svg {
+  font-size: 18px;
+}
+
+.Close {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  background: transparent;
+  color: inherit;
+  font-size: 20px;
+}
+
+.Close:hover {
+  background: var(--control-hover-background);
+}
+
+.Content {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px 20px 0;
+}
+
+.Columns {
+  column-width: 250px;
+  column-gap: 24px;
+}
+
+.Section {
+  display: inline-block;
+  width: 100%;
+  break-inside: avoid;
+  vertical-align: top;
+  margin-bottom: 16px;
+}
+
+.SectionTitle {
+  margin: 0 0 5px;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.Table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.Table tr {
+  border-top: 1px solid rgb(255 255 255 / 7%);
+}
+
+.Action,
+.BindingsCell {
+  padding: 5px 0;
+  vertical-align: middle;
+}
+
+.Action {
+  padding-right: 10px;
+  text-align: left;
+  font-weight: 400;
+  color: #a4cfdf;
+}
+
+.Bindings {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.Key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: rgba(39, 104, 142, 0.4);
+  color: #bde4f7;
+  font-family: inherit;
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.Key svg {
+  font-size: 12px;
+}
+
+.Key .MouseIcon {
+  font-size: 16px;
+}
+
+.Action[data-unavailable],
+.Key[data-unavailable] {
+  opacity: 0.4;
+}
+
+.ScreenReaderOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

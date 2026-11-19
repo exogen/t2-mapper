@@ -12,7 +12,7 @@ import {
 } from "../state/commandCircuitStore";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import { resolveCameraOwner } from "../state/cameraOwner";
-import { inputModeStore } from "../state/inputModeStore";
+import { inputModeStore, usesOrbitInput } from "../state/inputModeStore";
 import {
   streamPlaybackStore,
   MIN_ORBIT_DISTANCE,
@@ -147,11 +147,7 @@ export function installKeyboardMouseInput(engine: GameEngine): () => void {
       // Like CC, this ignores invertScroll so the two stay in sync.
       const { cameraMode, orbitOverrideDistance: prev } =
         streamPlaybackStore.getState();
-      if (
-        cameraMode === "orbitOverride" ||
-        (inputModeStore.getState().mode === "follow" &&
-          cameraMode !== "firstPersonOverride")
-      ) {
+      if (usesOrbitInput(cameraMode, inputModeStore.getState().mode)) {
         const next = prev * Math.exp(scroll.deltaY * ORBIT_ZOOM_SENSITIVITY);
         streamPlaybackStore.setState({
           orbitOverrideDistance: Math.max(

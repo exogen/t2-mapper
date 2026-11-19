@@ -48,9 +48,7 @@ function resolveFollowedName(
 }
 
 /**
- * HUD chip naming the player being followed, with a grayed "Following"
- * label. Shown only in follow/first-person, independent of the input
- * overlay, stacked with it.
+ * Follow status chip, shown independently of the input overlay.
  */
 export function WatchedPlayerHUD() {
   const teamNames = useCaster((s) => s.teamNames);
@@ -62,7 +60,11 @@ export function WatchedPlayerHUD() {
   const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
   const followEntityId = useStore(streamPlaybackStore, (s) => s.followEntityId);
   const followFlagSlot = useStore(streamPlaybackStore, (s) => s.followFlagSlot);
-  const name = useStreamSnapshot(
+  const projectileFollow = useStore(
+    streamPlaybackStore,
+    (s) => s.projectileFollow,
+  );
+  const followedName = useStreamSnapshot(
     () =>
       resolveFollowedName(
         cameraMode,
@@ -73,19 +75,37 @@ export function WatchedPlayerHUD() {
     (a, b) => a === b,
   );
 
-  if (!name) return null;
+  let label = "Following:";
+  let name = followedName;
+  const armed = projectileFollow?.kind === "armed";
+  if (projectileFollow?.kind === "tracking") {
+    label = "Following";
+    name = projectileFollow.sourceName
+      ? `${projectileFollow.sourceName}’s projectile`
+      : "projectile";
+  }
+
+  if (!armed && !name) return null;
+  const showViewButton =
+    orbitAvailable && projectileFollow?.kind !== "tracking";
   return (
     <div
       className={
-        orbitAvailable
+        showViewButton
           ? styles.WatchedPlayerWithViewButton
           : styles.WatchedPlayer
       }
     >
-      <div className={styles.Badge}>
-        <span className={styles.Label}>Following:</span> {name}
+      <div className={styles.Badge} data-armed={armed || undefined}>
+        {armed ? (
+          "Following next projectile"
+        ) : (
+          <>
+            <span className={styles.Label}>{label}</span> {name}
+          </>
+        )}
       </div>
-      {orbitAvailable && (
+      {showViewButton && (
         <button
           type="button"
           className={styles.ViewButton}

@@ -16,7 +16,7 @@ import {
 } from "./quantizedPlayerAim";
 import { STREAM_TICK_SEC, yawPitchToQuaternion } from "./streamHelpers";
 import { fakeDemoParser, moveBlock, packetBlock } from "./streamTestFixtures";
-import type { StreamRecording, StreamSnapshot } from "./types";
+import type { StreamEntity, StreamRecording, StreamSnapshot } from "./types";
 
 const dataBlocks: [number, string, ParsedData][] = [
   [10, "LinearFlareProjectileData", { explosion: 11 }],
@@ -95,6 +95,109 @@ describe("DemoStreamAdapter.getEffectShapes", () => {
     ]);
   });
 });
+
+it.each([true, false])(
+  "orbits a projectile without a visual and drops to free-fly (impact point: %s)",
+  (hasImpactPoint) => {
+    const stream = demo(new Map(), new Map());
+    const projectile: StreamEntity = {
+      id: "shot",
+      type: "Projectile",
+      position: [1, 4, 8],
+    };
+    const first: StreamSnapshot = {
+      ...stream.getSnapshot(),
+      camera: null,
+      exhausted: false,
+      timeSec: 0,
+      entities: [projectile],
+    };
+    const step = vi.spyOn(stream, "stepToTime").mockReturnValue(first);
+    vi.spyOn(stream, "findSceneReadyTime").mockReturnValue(0);
+    const recording: StreamRecording = {
+      source: "demo",
+      duration: 1,
+      missionName: null,
+      gameType: null,
+      serverDisplayName: null,
+      recorderName: null,
+      recordingDate: null,
+      streamingPlayback: stream,
+    };
+    const scheduler = new FrameScheduler();
+    const engine = {
+      scheduler,
+      streamSnapshot: { current: null },
+      assetsLoading: () => false,
+      invalidate: vi.fn(),
+    } as unknown as GameEngine;
+    engineStore.getState().setRecording(recording);
+    engineStore.getState().setPlaybackStatus("playing");
+    const session = new StreamPlaybackSession(engine, recording);
+    try {
+      const camera = new PerspectiveCamera();
+      const scene = new Scene();
+      const render = () =>
+        scheduler.runAll({
+          camera,
+          scene,
+          delta: STREAM_TICK_SEC / 2,
+          elapsed: 0,
+          frame: 1,
+          renderer: {} as FrameContext["renderer"],
+        });
+      streamPlaybackStore.setState({
+        root: null,
+        cameraMode: "orbitOverride",
+        orbitOverrideDistance: 4,
+        projectileFollow: { kind: "tracking", projectileId: "shot" },
+      });
+      step.mockReturnValue({
+        ...first,
+        timeSec: STREAM_TICK_SEC,
+        entities: [{ ...projectile, position: [3, 8, 12] }],
+      });
+      render();
+      // Midpoint in Torque space is [2, 6, 10]. The camera pulls back
+      // four metres along Three's X axis.
+      expect(camera.position.toArray()).toEqual([2, 10, 2]);
+      const beforeEnd = camera.quaternion.clone();
+
+      if (hasImpactPoint) {
+        streamPlaybackStore.setState({
+          projectileFollow: {
+            kind: "tracking",
+            projectileId: "shot",
+            terminalPosition: [3, 10, 14],
+          },
+        });
+      }
+      step.mockReturnValue({
+        ...first,
+        timeSec: STREAM_TICK_SEC * 2,
+        entities: hasImpactPoint
+          ? [{ ...projectile, position: undefined, hasExploded: true }]
+          : [],
+      });
+      render();
+      const finalPosition = hasImpactPoint ? [6, 14, 3] : [2, 10, 2];
+      expect(camera.position.toArray()).toEqual(finalPosition);
+      expect(camera.quaternion.toArray()).toEqual(beforeEnd.toArray());
+      expect(streamPlaybackStore.getState()).toMatchObject({
+        cameraMode: "freeFly",
+        followEntityId: null,
+        projectileFollow: null,
+      });
+      render();
+      expect(camera.position.toArray()).toEqual(finalPosition);
+    } finally {
+      session.dispose();
+      engineStore.getState().setRecording(null);
+      gameEntityStore.getState().endStreaming();
+      vi.restoreAllMocks();
+    }
+  },
+);
 
 describe("recorded first-person transitions", () => {
   const mode = (firstPerson: boolean) => ({

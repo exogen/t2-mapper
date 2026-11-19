@@ -1,6 +1,6 @@
 import { useContext } from "react";
 import { useStore } from "zustand";
-import { useRecording } from "./usePlayback";
+import { useIsSeeking, useRecording } from "./usePlayback";
 import { useInputMode } from "../state/inputModeStore";
 import { useControls } from "./SettingsProvider";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
@@ -30,6 +30,7 @@ import {
   COMMAND_CIRCUIT_INPUT,
   COMMAND_CIRCUIT_EXIT_INPUT,
   TARGET_FINDER_INPUT,
+  PROJECTILE_FOLLOW_INPUT,
   SCORE_SCREEN_INPUT,
   ORBIT_CAMERA_INPUT,
   PLAYER_ORBIT_INPUT,
@@ -43,6 +44,7 @@ import {
 export function ActiveInputBindings() {
   const { recordAvailable } = useContext(ClipControlsContext);
   const recording = useRecording();
+  const isSeeking = useIsSeeking();
   const inputMode = useInputMode();
   const { clickToCycle } = useControls();
   // Clip > tour > director > command circuit > input, resolved in one place.
@@ -50,6 +52,7 @@ export function ActiveInputBindings() {
   // Watch mode: client-only free-fly camera; server-observer bindings
   // (fly/follow toggle, ObserveClient) don't apply.
   const isWatcher = useIsWatchSpectator();
+  const spectatorReady = useIsWatchSpectator({ requireReady: true });
   // Flag follow (number keys) is not a player follow — no player cycling.
   const isFlagFollow = useStore(
     streamPlaybackStore,
@@ -59,11 +62,16 @@ export function ActiveInputBindings() {
     streamPlaybackStore,
     (s) => s.cameraMode === "orbitOverride",
   );
+  const trackingProjectile = useStore(
+    streamPlaybackStore,
+    (s) => s.projectileFollow?.kind === "tracking",
+  );
   const isDemo = recording?.source === "demo";
   const isLive = recording?.source === "live";
   const isMap = !recording;
   const targetFinderOpen = useStore(targetFinderStore, (s) => s.open);
   const canFindTarget = isDemo || (isLive && isWatcher);
+  const canFollowProjectiles = isDemo || (isLive && spectatorReady);
   const hasOrbitCamera =
     (canFindTarget && isOrbitFollow) ||
     (isLive && !isWatcher && inputMode === "follow");
@@ -125,10 +133,8 @@ export function ActiveInputBindings() {
   // watch-mode spectating, or demo playback (InputConsumer only acts on
   // WASD when cameraMode is "freeFly", so it's inert otherwise).
   const showFreeFly =
-    (isMap && !isCommandCircuit) ||
-    (isLive && inputMode === "fly") ||
-    (isLive && isWatcher && !isCommandCircuit) ||
-    (isDemo && !isCommandCircuit);
+    !isCommandCircuit &&
+    (isMap || isDemo || (isLive && (isWatcher || inputMode === "fly")));
 
   return (
     <>
@@ -138,6 +144,9 @@ export function ActiveInputBindings() {
         <InputBindings map={CAMERA_SCROLL_INPUT} />
       )}
       {canFindTarget && <InputBindings map={TARGET_FINDER_INPUT} />}
+      {canFollowProjectiles && !isCommandCircuit && !isSeeking && (
+        <InputBindings map={PROJECTILE_FOLLOW_INPUT} />
+      )}
       {!isCommandCircuit && (
         <InputBindings
           map={hasOrbitCamera ? ORBIT_CAMERA_INPUT : MOVABLE_CAMERA_INPUT}
@@ -167,6 +176,7 @@ export function ActiveInputBindings() {
       {(isLive || isDemo) &&
         inputMode === "follow" &&
         !isFlagFollow &&
+        !trackingProjectile &&
         !isCommandCircuit && (
           <>
             <InputBindings map={FOLLOW_KEYBOARD_INPUT} />

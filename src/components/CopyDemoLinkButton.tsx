@@ -3,19 +3,19 @@ import { RiShareForwardFill } from "react-icons/ri";
 import { FaClipboardCheck } from "react-icons/fa6";
 import { captureDemoMoment, encodeDemoMoment } from "./demoMoment";
 import { serializeDemoTime, useNavigationQueryState } from "./useQueryParams";
+import { useIsSeeking } from "./usePlayback";
+import { engineStore } from "../state/engineStore";
 import { clipShareUrl } from "../stream/clipApi";
 import buttonStyles from "./Button.module.css";
 import styles from "./CopyDemoLinkButton.module.css";
 
 /**
- * Copies a link to the second of the demo the viewer is on, through the
- * camera they are watching it with — the recorded view, a free-fly pose,
- * or a follow with its orbit. The demo itself is already in the URL
- * (`?demo=`), so the link is the page URL plus the moment.
+ * Copies the demo moment's time and camera, or the current clip's URL.
  */
 export function CopyDemoLinkButton() {
   const [route] = useNavigationQueryState();
   const sharingClip = !!route.clip;
+  const isSeeking = useIsSeeking();
   const [showCopied, setShowCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
@@ -26,21 +26,23 @@ export function CopyDemoLinkButton() {
   );
 
   const handleCopyLink = useCallback(async () => {
-    if (timerRef.current) clearTimeout(timerRef.current);
     let fullUrl: string;
-    if (route.clip && route.demo)
+    if (route.clip) {
+      if (!route.demo) return;
       fullUrl = clipShareUrl({ id: route.clip, sourceDemo: route.demo });
-    else {
+    } else {
+      if (engineStore.getState().playback.status === "seeking") return;
       const moment = captureDemoMoment();
       if (!moment) return;
       const { t, hash } = encodeDemoMoment(moment);
       const base = `${window.location.pathname}${window.location.search}`;
       const fullPath = `${serializeDemoTime(base, { t })}${hash}`;
       fullUrl = `${window.location.origin}${fullPath}`;
-      window.history.replaceState(null, "", fullPath);
+      window.history.replaceState(window.history.state, "", fullPath);
     }
     try {
       await navigator.clipboard.writeText(fullUrl);
+      if (timerRef.current) clearTimeout(timerRef.current);
       setShowCopied(true);
       timerRef.current = setTimeout(() => setShowCopied(false), 1100);
     } catch (err) {
@@ -56,9 +58,9 @@ export function CopyDemoLinkButton() {
       title={
         sharingClip
           ? "Copy a link to this clip"
-          : "Copy a link to this second of the demo, camera included"
+          : "Copy a link to this moment in the demo, camera included"
       }
-      disabled={sharingClip && !route.demo}
+      disabled={sharingClip ? !route.demo : isSeeking}
       onClick={handleCopyLink}
       data-copied={showCopied ? "true" : "false"}
       id="copyDemoLinkButton"

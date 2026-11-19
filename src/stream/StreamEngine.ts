@@ -113,6 +113,7 @@ import type {
   StreamEntity,
   StreamSnapshot,
   StreamingPlayback,
+  ProjectileLifecycleEvent,
   PreloadAsset,
   InventoryHudSlot,
   PendingAudioEvent,
@@ -322,6 +323,13 @@ export abstract class StreamEngine implements StreamingPlayback {
   readonly debrisHistory = new DebrisHistory();
   readonly lightningHistory = new LightningHistory();
   private _worldGeneration = 0;
+  private readonly projectileListeners = new Set<
+    (event: ProjectileLifecycleEvent) => void
+  >();
+  private projectileGhostBatch?: {
+    finish?: (() => void)[];
+    hydrating: boolean;
+  };
 
   /** Render effects must discard the previous world after reset or restore. */
   get worldGeneration(): number {
@@ -881,6 +889,12 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   abstract reset(): void;
   abstract getSnapshot(): StreamSnapshot;
+  subscribeProjectileLifecycle(
+    listener: (event: ProjectileLifecycleEvent) => void,
+  ): () => void {
+    this.projectileListeners.add(listener);
+    return () => this.projectileListeners.delete(listener);
+  }
   abstract stepToTime(
     targetTimeSec: number,
     maxMoveTicks?: number,
@@ -1111,6 +1125,7 @@ export abstract class StreamEngine implements StreamingPlayback {
    *  stale entity collisions in the render store after seeks. */
   protected clearAllEntities(): void {
     this._worldGeneration++;
+    if (this.projectileGhostBatch) this.projectileGhostBatch.finish = undefined;
     this.conn.flagDroppedAtSec = {};
     this.endedEntities = null;
     // A reset invalidates every ghost, so the world is incomplete again
@@ -1562,6 +1577,86 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   // ── Ghost processing ──
 
+  /** Finish projectile events in ghost order, after same-packet sources exist. */
+  protected withProjectileGhostBatch(apply: () => void, hydrating = false) {
+    const batch: NonNullable<StreamEngine["projectileGhostBatch"]> = {
+      hydrating,
+    };
+    this.projectileGhostBatch = batch;
+    try {
+      apply();
+    } finally {
+      this.projectileGhostBatch = undefined;
+    }
+    if (batch.finish) for (const finish of batch.finish) finish();
+  }
+
+  private completeProjectileEvent(complete: () => void): void {
+    if (this.projectileGhostBatch)
+      (this.projectileGhostBatch.finish ??= []).push(complete);
+    else complete();
+  }
+
+  private publishProjectileEvent(event: ProjectileLifecycleEvent): void {
+    for (const listener of this.projectileListeners) listener(event);
+  }
+
+  private projectileSource(ghostIndex: number | undefined) {
+    if (ghostIndex == null) return undefined;
+    const id = this.entityIdByGhostIndex.get(ghostIndex);
+    return id == null ? undefined : this.entities.get(id);
+  }
+
+  private captureProjectileSourceName(
+    projectile: MutableEntity,
+    source: MutableEntity,
+  ) {
+    projectile.projectileSourceName =
+      source.playerName ||
+      source.label ||
+      (source.className === "Turret" ? "Turret" : undefined);
+  }
+
+  private noteProjectileSpawn(projectile: MutableEntity, data?: ParsedData) {
+    // Catch-up copies previously merged ghosts. Their source slots can have
+    // changed occupants since the shot, so they cannot identify a new flight.
+    if (this.projectileGhostBatch?.hydrating) return;
+    const sourceIndex = projectile.sourceGhostIndex;
+    const source = this.projectileSource(sourceIndex);
+    if (source) this.captureProjectileSourceName(projectile, source);
+    const spawn =
+      this.projectileListeners.size > 0 &&
+      projectile.position != null &&
+      !projectile.hasExploded;
+    const pendingSource =
+      !source && sourceIndex != null && this.projectileGhostBatch;
+    if (!spawn && !pendingSource) return;
+    const timeSec = this.getTimeSec();
+    const age = data?.currTick;
+    const direction =
+      projectile.simulatedVelocity ??
+      projectile.velocity ??
+      projectile.direction;
+    this.completeProjectileEvent(() => {
+      const samePacketSource = source ?? this.projectileSource(sourceIndex);
+      if (!source && samePacketSource)
+        this.captureProjectileSourceName(projectile, samePacketSource);
+      if (spawn)
+        this.publishProjectileEvent({
+          type: "spawn",
+          id: projectile.id,
+          timeSec,
+          launchTimeSec:
+            typeof age === "number" && Number.isFinite(age) && age >= 0
+              ? timeSec - (age * TICK_DURATION_MS) / 1000
+              : undefined,
+          direction: direction && [...direction],
+          sourceEntityId: samePacketSource?.id,
+          sourceName: projectile.projectileSourceName,
+        });
+    });
+  }
+
   protected processGhostUpdate(
     ghost: {
       index: number;
@@ -1587,22 +1682,16 @@ export abstract class StreamEngine implements StreamingPlayback {
         ? prevEntity.targetId
         : undefined;
 
-    // Spawn explosion for projectiles being removed
-    if (prevEntityId) {
-      if (
-        prevEntity &&
-        prevEntity.type === "Projectile" &&
-        !prevEntity.hasExploded &&
-        prevEntity.explosionDataBlockId != null &&
-        prevEntity.position &&
-        (ghost.type === "delete" || ghost.type === "create")
-      ) {
-        this.spawnExplosion(prevEntity, [...prevEntity.position] as [
-          number,
-          number,
-          number,
-        ]);
-      }
+    // Scope loss and slot replacement both terminate the original flight.
+    if (
+      prevEntity?.type === "Projectile" &&
+      !prevEntity.hasExploded &&
+      prevEntity.position &&
+      ghost.type !== "update"
+    ) {
+      if (prevEntity.explosionDataBlockId != null)
+        this.spawnExplosion(prevEntity, [...prevEntity.position]);
+      else this.endProjectileFlight(prevEntity, prevEntity.position);
     }
 
     if (ghost.type === "delete") {
@@ -1659,6 +1748,8 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.type = toEntityType(className);
     this.entityIdByGhostIndex.set(ghostIndex, entityId);
     this.applyGhostData(entity, ghost.parsedData, weatherSeed?.precipitation);
+    if (!existingEntity && entity.type === "Projectile")
+      this.noteProjectileSpawn(entity, ghost.parsedData);
     if (ghost.type === "create" || ghost.parsedData?.targetId != null) {
       const flagPlayerTarget =
         entity.type === "Player" &&
@@ -2725,26 +2816,29 @@ export abstract class StreamEngine implements StreamingPlayback {
       }
     }
 
-    // Explosion detection
-    const explodePos = isValidPosition(data.explodePosition as Vec3)
-      ? (data.explodePosition as Vec3)
-      : isValidPosition(data.explodePoint as Vec3)
-        ? (data.explodePoint as Vec3)
-        : undefined;
-    if (
-      entity.type === "Projectile" &&
-      !entity.hasExploded &&
-      explodePos &&
-      entity.explosionDataBlockId != null
-    ) {
-      const normal = isValidPosition(data.explodeNormal as Vec3)
-        ? (data.explodeNormal as Vec3)
-        : undefined;
-      this.spawnExplosion(
-        entity,
-        [explodePos.x, explodePos.y, explodePos.z],
-        normal ? [normal.x, normal.y, normal.z] : undefined,
-      );
+    if (entity.type === "Projectile" && !entity.hasExploded) {
+      // Non-initial bomb packets use endPoint/endNormal for detonation,
+      // which can arrive alongside an ordinary position update.
+      const bombEnd =
+        entity.className === "BombProjectile" &&
+        isValidPosition(data.endPoint as Vec3)
+          ? (data.endPoint as Vec3)
+          : undefined;
+      const explodePos = isValidPosition(data.explodePosition as Vec3)
+        ? (data.explodePosition as Vec3)
+        : isValidPosition(data.explodePoint as Vec3)
+          ? (data.explodePoint as Vec3)
+          : bombEnd;
+      if (explodePos) {
+        const normal = (
+          explodePos === bombEnd ? data.endNormal : data.explodeNormal
+        ) as Vec3 | undefined;
+        this.spawnExplosion(
+          entity,
+          [explodePos.x, explodePos.y, explodePos.z],
+          isValidPosition(normal) ? [normal.x, normal.y, normal.z] : undefined,
+        );
+      }
     }
 
     // Damage
@@ -3030,9 +3124,24 @@ export abstract class StreamEngine implements StreamingPlayback {
       );
     }
 
-    // Stop the projectile
+    this.endProjectileFlight(projectile, position);
+  }
+
+  private endProjectileFlight(
+    projectile: MutableEntity,
+    position: [number, number, number],
+  ) {
     projectile.position = undefined;
     projectile.simulatedVelocity = undefined;
+    if (!this.projectileListeners.size || this.projectileGhostBatch?.hydrating)
+      return;
+    const event: ProjectileLifecycleEvent = {
+      type: "end",
+      id: projectile.id,
+      position: [...position],
+      timeSec: this.getTimeSec(),
+    };
+    this.completeProjectileEvent(() => this.publishProjectileEvent(event));
   }
 
   /**
@@ -3245,8 +3354,7 @@ export abstract class StreamEngine implements StreamingPlayback {
             this.spawnExplosion(entity, [...seg.endPoint], [...seg.endNormal]);
           } else {
             // Lifetime expired without an explosion (fizzle) — hide.
-            entity.position = undefined;
-            entity.simulatedVelocity = undefined;
+            this.endProjectileFlight(entity, seg.endPoint);
           }
           continue;
         }
@@ -3283,8 +3391,7 @@ export abstract class StreamEngine implements StreamingPlayback {
               [...result.explodeAt.normal],
             );
           } else {
-            entity.position = undefined;
-            entity.simulatedVelocity = undefined;
+            this.endProjectileFlight(entity, result.explodeAt.point);
           }
           continue;
         }
@@ -4190,6 +4297,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         direction: entity.direction,
         ghostIndex: entity.ghostIndex,
         sourceGhostIndex: entity.sourceGhostIndex,
+        projectileSourceName: entity.projectileSourceName,
         sourceSlot: entity.sourceSlot,
         beamStart: entity.beamStart,
         beamEnd: entity.beamEnd,

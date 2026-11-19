@@ -183,6 +183,17 @@ it.each<[DemoCameraMode, string]>([
   expect(actions.modes.find((mode) => mode.active)?.id).toBe(cameraMode);
 });
 
+it("keeps player follow selectable without marking it active during projectile tracking", () => {
+  streamPlaybackStore.setState({
+    projectileFollow: { kind: "tracking", projectileId: "shot" },
+  });
+  const actions = useMobileCameraActions();
+  expect(actions.modes.some((mode) => mode.active)).toBe(false);
+  expect(
+    actions.modes.find((mode) => mode.id === "orbitOverride")?.enabled,
+  ).toBe(true);
+});
+
 it("supports native observer actions without offering client-only flag cameras", () => {
   Object.assign(fixture, { source: "live", nativeReady: true });
   streamPlaybackStore.setState({ cameraMode: "original" });

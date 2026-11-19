@@ -33,11 +33,7 @@ const FLAG_COLOR_OPTIONS = [
   {
     value: "possession",
     label: "Carrier’s team",
-    description: (
-      <>
-        Match <em>Tribes 2</em>: change flag colors to match the carrier’s IFF.
-      </>
-    ),
+    description: "Change flag icons to match the carrier's IFF, like Tribes 2.",
   },
 ] as const;
 

@@ -6,6 +6,7 @@ import { installCameraTour } from "./cameraTour";
 import { installCameraWatchdog } from "./cameraWatchdog";
 import { installChatSounds } from "./chatSounds";
 import { installProjectiles } from "./projectiles";
+import { installProjectileFollow } from "./projectileFollow";
 import { installStreamEffects } from "./streamEffects";
 import { installDebugElements } from "./debugElements";
 import { installCommandCircuit } from "./commandCircuit";
@@ -74,6 +75,7 @@ export function startEngineSystems(engine: GameEngine): () => void {
     engine.ambientParticles.install(),
     engine.lightningEffects.install(),
     installProjectiles(engine),
+    installProjectileFollow(engine),
     installWorldLabels(engine),
     installSceneLighting(engine),
     // Render hooks run in this order: lights, then shadows, then the DTS

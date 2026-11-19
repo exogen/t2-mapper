@@ -1,6 +1,6 @@
 import { Quaternion } from "three";
 import { markTransformChanged } from "../transformChanges";
-import type { Camera, Object3D } from "three";
+import type { Camera, Object3D, Vector3 } from "three";
 import type { GameEntity } from "../state/gameEntityTypes";
 import type { StreamCamera, StreamEntity } from "./types";
 import { playerBodyYawCorrection, type PlayerRenderAim } from "./playerView";
@@ -109,7 +109,7 @@ export function applyStreamEntityPose(
     qy = quaternion.y,
     qz = quaternion.z,
     qw = quaternion.w;
-  posePosition(child, entity.position, entity, previousEntity, interpT);
+  interpolateStreamPosition(position, entity, previousEntity, interpT);
   poseRotation(child, entity, previousEntity, interpT, camera, aimCorrection);
   // A frozen root recomposes only when its pose actually changed, so an
   // unmoved entity's subtree keeps its world matrices.
@@ -126,17 +126,32 @@ export function applyStreamEntityPose(
     markTransformChanged(child);
 }
 
-function posePosition(
-  child: Object3D,
-  position: readonly [number, number, number],
+/** A positioned flight the camera can follow, even before its visual loads. */
+export function isTrackableProjectile(
+  entity: StreamEntity | undefined,
+): entity is StreamEntity & { type: "Projectile" } {
+  return (
+    entity?.type === "Projectile" &&
+    entity.position != null &&
+    !entity.hasExploded &&
+    !entity.destroyedHidden &&
+    (entity.fadeVal !== 0 || Boolean(entity.cloakLevel))
+  );
+}
+
+/** Sample the rendered position without depending on a loaded visual. */
+export function interpolateStreamPosition(
+  out: Vector3,
   entity: StreamEntity,
   previousEntity: StreamEntity | undefined,
   interpT: number,
 ): void {
+  const { position } = entity;
+  if (!position) return;
   if (entity.playerDelta) {
     const delta = entity.playerDelta.posVec;
     const dt = 1 - interpT;
-    child.position.set(
+    out.set(
       position[1] + delta[1] * dt,
       position[2] + delta[2] * dt,
       position[0] + delta[0] * dt,
@@ -151,9 +166,9 @@ function posePosition(
     const ix = px + (cx - px) * interpT;
     const iy = py + (cy - py) * interpT;
     const iz = pz + (cz - pz) * interpT;
-    child.position.set(iy, iz, ix);
+    out.set(iy, iz, ix);
   } else {
-    torqueVecToThree(position, child.position);
+    torqueVecToThree(position, out);
   }
 }
 

@@ -155,6 +155,7 @@ export function restoreQuickCam(slot: QuickCamSlot): SavedCamera | undefined {
     lastCameraAction: { slot },
   });
   streamPlaybackStore.setState((s) => ({
+    projectileFollow: null,
     orbitTargetDamping: null,
     orbitSnapNonce: s.orbitSnapNonce + 1,
   }));

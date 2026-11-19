@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { Quaternion, Vector3 } from "three";
-import { encodeDemoMoment, parseDemoMoment } from "./demoMoment";
+import { parseAsFloat } from "nuqs";
+import { PerspectiveCamera, Quaternion, Vector3 } from "three";
+import { cameraRegistry } from "../state/cameraRegistry";
+import { streamClock, streamPlaybackStore } from "../state/streamPlaybackStore";
+import { streamRenderFrame } from "../stream/interpolateEntity";
+import {
+  captureDemoMoment,
+  encodeDemoMoment,
+  parseDemoMoment,
+} from "./demoMoment";
+import { serializeDemoTime } from "./useQueryParams";
 
 describe("demo moment links", () => {
   it("carries a free-fly pose as the coordinates hash, at whole seconds", () => {
@@ -20,6 +29,79 @@ describe("demo moment links", () => {
     if (back.camera.kind === "fly") {
       expect(back.camera.position.x).toBeCloseTo(1.235);
       expect(back.camera.quaternion?.w).toBeCloseTo(0.707);
+    }
+  });
+
+  it("links to the captured projectile lifetime at the exact time, with a fallback pose", () => {
+    const previousCamera = cameraRegistry.perspective;
+    const previousStream = streamPlaybackStore.getState();
+    const previousTime = streamClock.time;
+    const previousEntities = streamRenderFrame.current;
+    try {
+      const camera = new PerspectiveCamera();
+      camera.position.set(1, 2, 3);
+      camera.quaternion.set(0, 0.6, 0, 0.8);
+      cameraRegistry.perspective = camera;
+      streamClock.time = 15.500123;
+      streamRenderFrame.current = new Map([
+        [
+          "shot",
+          {
+            id: "shot",
+            type: "Projectile",
+            ghostIndex: 31,
+            spawnTimeSec: 15.424,
+            position: [10, 20, 30],
+          },
+        ],
+      ]);
+      streamPlaybackStore.setState({
+        cameraMode: "orbitOverride",
+        followEntityId: null,
+        projectileFollow: { kind: "tracking", projectileId: "shot" },
+        orbitOverrideYaw: 1.25,
+        orbitOverridePitch: 0.375,
+        orbitOverrideDistance: 8,
+      });
+
+      const { t, hash } = encodeDemoMoment(captureDemoMoment()!);
+      const path = serializeDemoTime("/?demo=a.rec&t=3", { t });
+      const url = new URL(`${path}${hash}`, "https://example.com");
+      expect(url.href).toBe(
+        "https://example.com/?demo=a.rec&t=15.500123#s31,482~1.25,0.375,8!1,2,3~0,0.6,0,0.8",
+      );
+      expect(
+        parseDemoMoment(
+          parseAsFloat.parse(url.searchParams.get("t")!),
+          url.hash,
+        ),
+      ).toEqual({
+        timeSec: 15.500123,
+        camera: {
+          kind: "projectile",
+          ghostIndex: 31,
+          spawnTick: 482,
+          yaw: 1.25,
+          pitch: 0.375,
+          distance: 8,
+          fallback: {
+            kind: "fly",
+            position: camera.position,
+            quaternion: camera.quaternion.clone(),
+          },
+        },
+      });
+
+      streamRenderFrame.current = new Map();
+      expect(encodeDemoMoment(captureDemoMoment()!)).toEqual({
+        t: 15,
+        hash: "#c1,2,3~0,0.6,0,0.8",
+      });
+    } finally {
+      cameraRegistry.perspective = previousCamera;
+      streamPlaybackStore.setState(previousStream, true);
+      streamClock.time = previousTime;
+      streamRenderFrame.current = previousEntities;
     }
   });
 
@@ -88,6 +170,10 @@ describe("demo moment links", () => {
       camera: { kind: "original" },
     });
     expect(parseDemoMoment(10, "#zzz")).toEqual({
+      timeSec: 10,
+      camera: { kind: "original" },
+    });
+    expect(parseDemoMoment(10, "#s31,no-tick~0,0,8!1,2,3~0,0,0,1")).toEqual({
       timeSec: 10,
       camera: { kind: "original" },
     });

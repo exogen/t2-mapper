@@ -92,6 +92,34 @@
   margin: 0 0 10px 0;
 }
 
+.Field:has(> .Control > [data-range-slider]) {
+  margin-top: -6px;
+}
+
+.ShortcutHelpButton {
+  composes: SmallButton from "./Button.module.css";
+  width: fit-content;
+  margin: 16px 0 0 auto;
+  padding-left: 3px;
+  border-radius: 999px;
+  border-color: rgb(255 255 255 / 16%);
+  background: rgb(255 255 255 / 8%);
+  box-shadow: none;
+  color: rgb(255 255 255 / 85%);
+  font-size: 12px;
+}
+
+.ShortcutHelpButton:hover,
+.ShortcutHelpButton:active {
+  border-color: rgb(255 255 255 / 28%);
+  background: rgb(255 255 255 / 14%);
+  color: #fff;
+}
+
+.ShortcutHelpButton > svg {
+  font-size: 18px;
+}
+
 .DebugActionField {
   composes: Field;
   margin-top: 16px;
@@ -288,6 +316,11 @@
 }
 
 @media (pointer: coarse) {
+  .ShortcutHelpButton {
+    min-height: 44px;
+    font-size: 14px;
+  }
+
   .InterpolationPreset {
     min-height: 32px;
     font-size: 12px;

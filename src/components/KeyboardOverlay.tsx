@@ -331,6 +331,13 @@ function RotateCameraRow() {
   );
 }
 
+function usePlayerCyclingAllowed(): boolean {
+  return useStore(
+    streamPlaybackStore,
+    (s) => s.followFlagSlot == null && s.projectileFollow?.kind !== "tracking",
+  );
+}
+
 /** Show keyboard cycling unless captured mouse clicks are enabled. */
 function CyclePlayerRow() {
   const { clickToCycle } = useControls();
@@ -373,7 +380,7 @@ function CycleCameraModeRow() {
             <BsShiftFill className={styles.ShiftIcon} aria-hidden="true" />F
           </span>
         }
-        label="Cycle camera mode"
+        label="Camera mode"
         labelPosition="right"
         inputSize="auto"
       />
@@ -596,7 +603,7 @@ function CommandCircuitOverlay({
  */
 function DemoCameraOverlay() {
   const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
-  const followFlagSlot = useStore(streamPlaybackStore, (s) => s.followFlagSlot);
+  const playerCyclingAllowed = usePlayerCyclingAllowed();
   const isFly = cameraMode === "freeFly";
   const isFollow = cameraMode === "orbitOverride";
   const following = isFollow || cameraMode === "firstPersonOverride";
@@ -622,7 +629,7 @@ function DemoCameraOverlay() {
       ) : null}
       <div className={styles.Column} data-height="compact">
         {/* Player cycling while following, otherwise saved camera controls. */}
-        {following && followFlagSlot == null ? (
+        {following && playerCyclingAllowed ? (
           <CyclePlayerRow />
         ) : (
           <QuickCamKey />
@@ -699,7 +706,7 @@ function ObserverOverlay({
   const inputMode = mode ?? contextMode;
   const following = inputMode === "follow" || inputMode === "firstPerson";
   const isPointerLocked = usePointerLocked();
-  const followFlagSlot = useStore(streamPlaybackStore, (s) => s.followFlagSlot);
+  const playerCyclingAllowed = usePlayerCyclingAllowed();
   return (
     <>
       {inputMode === "fly" ? <MoveKeys /> : null}
@@ -720,7 +727,7 @@ function ObserverOverlay({
       </div>
       <div className={styles.Column} data-height="compact">
         {/* Player cycling while following; saved cameras in watch mode. */}
-        {following && followFlagSlot == null ? (
+        {following && playerCyclingAllowed ? (
           <CyclePlayerRow />
         ) : mode != null ? (
           <QuickCamKey />

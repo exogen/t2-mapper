@@ -7,6 +7,7 @@ const fixture = vi.hoisted(() => ({
   copy: vi.fn(),
   history: vi.fn(),
   capture: vi.fn(),
+  seeking: false,
 }));
 vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
@@ -23,6 +24,14 @@ vi.mock("./useQueryParams", () => ({
   useNavigationQueryState: () => [fixture.route],
   serializeDemoTime: (base: string, { t }: { t: number }) => `${base}&t=${t}`,
 }));
+vi.mock("./usePlayback", () => ({ useIsSeeking: () => fixture.seeking }));
+vi.mock("../state/engineStore", () => ({
+  engineStore: {
+    getState: () => ({
+      playback: { status: fixture.seeking ? "seeking" : "paused" },
+    }),
+  },
+}));
 vi.mock("../account/authClient", () => ({
   appApiBaseUrl: "https://api.example.com",
 }));
@@ -32,6 +41,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
   fixture.route = { clip: null, demo: "test.rec" };
+  fixture.seeking = false;
   fixture.capture.mockReturnValue({ timeSec: 42 });
   fixture.copy.mockResolvedValue(undefined);
   vi.stubGlobal("window", {
@@ -53,9 +63,10 @@ afterEach(() => {
 
 it("shares the canonical clip without moment or camera parameters", async () => {
   fixture.route.clip = "clip-id";
-  expect(renderToStaticMarkup(<CopyDemoLinkButton />)).toContain(
-    'aria-label="Share clip"',
-  );
+  fixture.seeking = true;
+  const button = renderToStaticMarkup(<CopyDemoLinkButton />);
+  expect(button).toContain('aria-label="Share clip"');
+  expect(button).not.toContain("disabled");
   await fixture.callback!();
   const url = new URL(fixture.copy.mock.calls[0][0]);
   expect(url.searchParams.get("clip")).toBe("clip-id");
@@ -75,4 +86,16 @@ it("keeps ordinary demo moment links working", async () => {
     "https://play.example.com/?mode=demo&demo=test.rec&t=42#c1,2,3",
   );
   expect(fixture.history).toHaveBeenCalledOnce();
+});
+
+it("blocks moment links while seeking, even before the button re-renders", async () => {
+  expect(renderToStaticMarkup(<CopyDemoLinkButton />)).not.toContain(
+    "disabled",
+  );
+  fixture.seeking = true;
+  await fixture.callback!();
+  expect(fixture.capture).not.toHaveBeenCalled();
+  expect(fixture.copy).not.toHaveBeenCalled();
+  expect(fixture.history).not.toHaveBeenCalled();
+  expect(renderToStaticMarkup(<CopyDemoLinkButton />)).toContain('disabled=""');
 });

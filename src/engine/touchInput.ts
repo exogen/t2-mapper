@@ -4,7 +4,7 @@ import {
   type PinchState,
   type TouchState,
 } from "../state/inputControls";
-import { inputModeStore } from "../state/inputModeStore";
+import { inputModeStore, usesOrbitInput } from "../state/inputModeStore";
 import { joystickState } from "../state/joystickState";
 import { settingsStore } from "../state/settingsStore";
 import {
@@ -50,10 +50,7 @@ function startTouchInput(engine: GameEngine): () => void {
     const inputState = inputControlsStore.getState().actions;
     const touch = inputState.touchLook as TouchState | undefined;
     const cameraMode = streamPlaybackStore.getState().cameraMode;
-    const orbit =
-      cameraMode === "orbitOverride" ||
-      (inputModeStore.getState().mode === "follow" &&
-        cameraMode !== "firstPersonOverride");
+    const orbit = usesOrbitInput(cameraMode, inputModeStore.getState().mode);
     const pinch = inputState.orbitPinchZoom as PinchState | undefined;
     const dragSign = (invertDrag ? 1 : -1) * (orbit ? -1 : 1);
 

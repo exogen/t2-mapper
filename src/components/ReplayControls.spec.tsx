@@ -59,7 +59,8 @@ vi.mock("react", async (original) => ({
     }
   },
 }));
-vi.mock("../state/replayConnectionStore", () => ({
+vi.mock("../state/replayConnectionStore", async (original) => ({
+  ...(await original<typeof import("../state/replayConnectionStore")>()),
   replayConnectionStore: { getState: () => test },
   useReplaySelector: (select: (state: typeof test) => unknown) => select(test),
 }));

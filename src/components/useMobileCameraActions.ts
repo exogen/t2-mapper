@@ -40,6 +40,10 @@ export function useMobileCameraActions() {
       state.liveReady,
   );
   const cameraMode = useStore(streamPlaybackStore, (state) => state.cameraMode);
+  const trackingProjectile = useStore(
+    streamPlaybackStore,
+    (state) => state.projectileFollow?.kind === "tracking",
+  );
   const followCapabilities = useStreamSnapshot(
     getLocalCameraCapabilities,
     (a, b) =>
@@ -100,7 +104,7 @@ export function useMobileCameraActions() {
       : []),
   ].map((mode) => ({
     ...mode,
-    active: selectedMode === mode.id,
+    active: !trackingProjectile && selectedMode === mode.id,
     enabled: canSelectMode && modeAvailable[mode.id],
   }));
 
