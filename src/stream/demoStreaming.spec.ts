@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { Group, PerspectiveCamera, Scene } from "three";
+import { Group, Object3D, PerspectiveCamera, Scene, Vector3 } from "three";
 import { BlockTypeInfo, type ParsedData } from "t2-demo-parser";
+import { DTSShape } from "../dts/dtsModel";
+import { createDTSTestShape } from "../dts/dtsTestFixtures";
+import { registerEyeNode } from "../engine/eyePositions";
 import { FrameScheduler, type FrameContext } from "../engine/frameScheduler";
 import type { GameEngine } from "../engine/gameEngine";
 import { StreamPlaybackSession } from "../engine/streamPlayback";
@@ -14,7 +17,11 @@ import {
   PACKED_BODY_YAW_STEP,
   PACKED_HEAD_STEP,
 } from "./quantizedPlayerAim";
-import { STREAM_TICK_SEC, yawPitchToQuaternion } from "./streamHelpers";
+import {
+  CameraMode_OrbitPoint,
+  STREAM_TICK_SEC,
+  yawPitchToQuaternion,
+} from "./streamHelpers";
 import { fakeDemoParser, moveBlock, packetBlock } from "./streamTestFixtures";
 import type { StreamEntity, StreamRecording, StreamSnapshot } from "./types";
 
@@ -199,6 +206,126 @@ it.each([true, false])(
   },
 );
 
+it.each([
+  { seat: 1, turretScoped: true, seesTurret: true },
+  { seat: 0, turretScoped: true, seesTurret: false },
+  { seat: 2, turretScoped: true, seesTurret: false },
+  { seat: 1, turretScoped: false, seesTurret: false },
+])(
+  "chooses the first-person eye for seat $seat (turret scoped: $turretScoped) and orbits without a recorded camera",
+  ({ seat, turretScoped, seesTurret }) => {
+    const stream = demo(new Map(), new Map([[1, { useEyePoint: true }]]));
+    const turret: StreamEntity = {
+      id: "belly-turret",
+      type: "Deployable",
+      className: "Turret",
+      dataBlockId: 1,
+      mountObjectId: "bomber",
+      mountNode: 10,
+    };
+    vi.spyOn(stream, "stepToTime").mockReturnValue({
+      ...stream.getSnapshot(),
+      camera: null,
+      exhausted: false,
+      entities: [
+        {
+          id: "rider",
+          type: "Player",
+          mountObjectId: "bomber",
+          mountNode: seat,
+        },
+        { id: "bomber", type: "Vehicle", position: [0, 0, 0] },
+        { ...turret, id: "other-turret", mountObjectId: "other-vehicle" },
+        ...(turretScoped ? [turret] : []),
+      ],
+    });
+    vi.spyOn(stream, "findSceneReadyTime").mockReturnValue(0);
+    const recording: StreamRecording = {
+      source: "demo",
+      duration: 1,
+      missionName: null,
+      gameType: null,
+      serverDisplayName: null,
+      recorderName: null,
+      recordingDate: null,
+      streamingPlayback: stream,
+    };
+    const scheduler = new FrameScheduler();
+    const engine = {
+      scheduler,
+      streamSnapshot: { current: null },
+      assetsLoading: () => false,
+      invalidate: vi.fn(),
+    } as unknown as GameEngine;
+    engineStore.getState().setRecording(recording);
+    engineStore.getState().setPlaybackStatus("playing");
+    const session = new StreamPlaybackSession(engine, recording);
+
+    const root = new Group();
+    const bomber = new Group();
+    bomber.name = "bomber";
+    root.add(bomber);
+    const register = (id: string, position: Vector3, pitch = 0) => {
+      const shape = new DTSShape();
+      shape.data = createDTSTestShape();
+      const eye = new Object3D();
+      eye.position.copy(position);
+      eye.rotation.x = pitch;
+      shape.add(eye);
+      bomber.add(shape);
+      return registerEyeNode(id, eye, shape);
+    };
+    const unregister = [
+      register("bomber", new Vector3(0, 2, 4)),
+      register("belly-turret", new Vector3(0, -2, 0), Math.PI / 2),
+      register("other-turret", new Vector3(9, 9, 9)),
+    ];
+    try {
+      streamPlaybackStore.setState({
+        root,
+        cameraMode: "firstPersonOverride",
+        followEntityId: "rider",
+      });
+      const camera = new PerspectiveCamera();
+      const scene = new Scene();
+      const render = (frame: number) =>
+        scheduler.runAll({
+          camera,
+          scene,
+          delta: STREAM_TICK_SEC,
+          elapsed: frame * STREAM_TICK_SEC,
+          frame,
+          renderer: {} as FrameContext["renderer"],
+        });
+      render(1);
+      expect(camera.position.toArray()).toEqual(
+        seesTurret ? [0, -2, 0] : [4, 2, 0],
+      );
+      const expectedDirection = seesTurret
+        ? new Vector3(0, -1, 0)
+        : new Vector3(1, 0, 0);
+      expect(
+        camera.getWorldDirection(new Vector3()).distanceTo(expectedDirection),
+      ).toBeLessThan(1e-8);
+
+      streamPlaybackStore.setState({
+        cameraMode: "orbitOverride",
+        orbitOverrideDistance: 8,
+      });
+      for (let frame = 2; frame <= 20; frame++) render(frame);
+      expect(camera.position.distanceTo(new Vector3(-8, 0, 0))).toBeLessThan(
+        1e-8,
+      );
+    } finally {
+      for (const cleanup of unregister) cleanup();
+      session.dispose();
+      engineStore.getState().setRecording(null);
+      gameEntityStore.getState().endStreaming();
+      vi.restoreAllMocks();
+    }
+  },
+);
+
 describe("recorded first-person transitions", () => {
   const mode = (firstPerson: boolean) => ({
     type: BlockTypeInfo,
@@ -308,6 +435,79 @@ describe("recorded first-person transitions", () => {
       0.18,
     );
   });
+});
+
+it("applies recorded turn input to an observer orbit between server packets", () => {
+  const move = moveBlock();
+  move.parsed.yaw = 0.125;
+  move.parsed.pitch = -0.25;
+  const stream = new DemoStreamAdapter(
+    fakeDemoParser({
+      blocks: [move],
+      initialBlock: {
+        controlObjectData: {
+          cameraMode: CameraMode_OrbitPoint,
+          position: { x: 0, y: 0, z: 0 },
+          orbitPoint: { x: 1, y: 2, z: 3 },
+          minOrbitDist: 1,
+          maxOrbitDist: 10,
+          rotZ: 0.25,
+          rotX: 0.5,
+        },
+      },
+    }),
+    { checkpoints: false },
+  );
+  expect(stream.stepToTime(STREAM_TICK_SEC).camera).toMatchObject({
+    mode: "third-person",
+    orbitPoint: [1, 2, 3],
+    orbitDistance: 9,
+    yaw: 0.375,
+    pitch: 0.25,
+  });
+});
+
+it("replays a pilot's freelook and release on top of the exact control angles", () => {
+  const move = moveBlock();
+  const stream = new DemoStreamAdapter(
+    fakeDemoParser({
+      blocks: [
+        {
+          ...move,
+          parsed: { ...move.parsed, freeLook: true, yaw: 0.25, pitch: -0.25 },
+        },
+        move,
+      ],
+      ghostClasses: (id) => (id === 1 ? "Player" : "FlyingVehicle"),
+      initialBlock: {
+        controlObjectGhostIndex: 0,
+        controlObjectData: {
+          position: { x: 1, y: 2, z: 3 },
+          rotationZ: 0,
+          headX: 0.5,
+          headZ: 0.125,
+          controlObjectGhost: 1,
+        },
+        initialGhosts: [
+          {
+            index: 0,
+            classId: 1,
+            type: "create",
+            parsedData: { mountObject: 1, mountNode: 0 },
+          },
+          { index: 1, classId: 2, type: "create", parsedData: {} },
+        ],
+      },
+    }),
+    { checkpoints: false },
+  );
+  stream.setPlayerPredictionEnabled(true);
+  expect(stream.stepToTime(STREAM_TICK_SEC).camera?.controlMountHead).toEqual([
+    0.375, 0.25,
+  ]);
+  expect(
+    stream.stepToTime(STREAM_TICK_SEC * 2).camera?.controlMountHead,
+  ).toEqual([0.1875, 0.125]);
 });
 
 it.each([

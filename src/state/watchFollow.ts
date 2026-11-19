@@ -468,6 +468,8 @@ export function resolveWatchFollowTarget(): string | null {
       }
       return flag.id;
     }
+    if (state.projectileFollow?.kind === "armed")
+      streamPlaybackStore.setState({ projectileFollow: null });
     if (!current) {
       camlog.info(
         "flag follow: slot %d unresolvable and last body %s gone -> null",

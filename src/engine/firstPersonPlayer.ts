@@ -46,12 +46,13 @@ export function firstPersonPlayerId(
   mode: DemoCameraMode,
   firstPersonFollowId: string | undefined,
   controlAtEye = camera?.mode === "first-person",
+  controlEntityId = camera?.controlEntityId,
 ): string | null {
   const id =
     mode === "firstPersonOverride"
       ? firstPersonFollowId
       : mode === "original" && controlAtEye
-        ? camera?.controlEntityId
+        ? controlEntityId
         : undefined;
   const player = id === undefined ? undefined : entities.get(id);
   if (player?.type !== "Player" || player.damageState) return null;

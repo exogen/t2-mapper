@@ -2,11 +2,16 @@ import { PerspectiveCamera } from "three";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { engineStore } from "../state/engineStore";
 import { gameEntityStore } from "../state/gameEntityStore";
-import type { PlayerEntity } from "../state/gameEntityTypes";
+import type { PlayerEntity, ShapeEntity } from "../state/gameEntityTypes";
 import { notifySubscribers } from "../state/inputControls";
 import { selectLocalCameraMode } from "../state/selectCameraMode";
 import { streamClock, streamPlaybackStore } from "../state/streamPlaybackStore";
-import { cycleDemoCameraMode, cycleWatchFollow } from "../state/watchFollow";
+import {
+  cycleDemoCameraMode,
+  cycleWatchFollow,
+  followFlag,
+  resolveWatchFollowTarget,
+} from "../state/watchFollow";
 import { streamRenderFrame } from "../stream/interpolateEntity";
 import type {
   ProjectileLifecycleEvent,
@@ -46,6 +51,18 @@ const player = {
   targetId: 1,
   ghostIndex: 1,
 } as PlayerEntity;
+const carrier = { ...player, targetRenderFlags: 2 };
+const looseFlag: ShapeEntity = {
+  id: "flag",
+  className: "Item",
+  renderType: "Shape",
+  targetRenderFlags: 2,
+};
+const nearbyShot: StreamEntity = {
+  id: "nearby",
+  type: "Projectile",
+  position: [1, 0, 0],
+};
 
 let scheduler: FrameScheduler;
 let cleanup: () => void;
@@ -63,11 +80,18 @@ function followPlayer() {
   });
 }
 
+function followTestFlag(target: PlayerEntity | ShapeEntity) {
+  gameEntityStore.getState().setAllStreamEntities([target]);
+  expect(followFlag(1)).toBe(true);
+  streamRenderFrame.current = new Map([[nearbyShot.id, nearbyShot]]);
+}
+
 beforeEach(() => {
   stream.worldGeneration = 1;
   stream.playbackRevision = 1;
   streamClock.time = 15;
   streamClock.matchEndedAtSec = null;
+  gameEntityStore.getState().beginStreaming("demo");
   engineStore.setState((s) => ({
     playback: { ...s.playback, recording, status: "playing" },
   }));
@@ -153,6 +177,82 @@ it("stays armed across perspective changes and tracks the same player's next eli
     cameraMode: "freeFly",
     projectileFollow: null,
   });
+});
+
+it("ignores P while following a loose flag even with a projectile nearby", () => {
+  followTestFlag(looseFlag);
+  press();
+  expect(state()).toMatchObject({
+    followFlagSlot: 1,
+    followEntityId: looseFlag.id,
+    projectileFollow: null,
+  });
+  expect(callbacks.size).toBe(0);
+});
+
+it("does not arm on the last carrier when the flag is out of scope", () => {
+  followTestFlag(carrier);
+  gameEntityStore.getState().setStreamEntity(player);
+  expect(resolveWatchFollowTarget()).toBe(player.id);
+  press();
+  expect(state()).toMatchObject({
+    followFlagSlot: 1,
+    followEntityId: player.id,
+    projectileFollow: null,
+  });
+  expect(callbacks.size).toBe(0);
+});
+
+it("arms on the held flag's carrier and follows only their next projectile", () => {
+  followTestFlag(looseFlag);
+  gameEntityStore.getState().setAllStreamEntities([carrier]);
+  press();
+  const armed = { kind: "armed", playerId: carrier.id };
+  expect(state()).toMatchObject({
+    followFlagSlot: 1,
+    followEntityId: carrier.id,
+    projectileFollow: armed,
+  });
+
+  emit({
+    type: "spawn",
+    id: "wrong-shot",
+    timeSec: 15.2,
+    sourceEntityId: "other-player",
+  });
+  expect(state().projectileFollow).toMatchObject(armed);
+
+  emit({
+    type: "spawn",
+    id: "carrier-shot",
+    timeSec: 15.3,
+    sourceEntityId: carrier.id,
+  });
+  expect(state()).toMatchObject({
+    followFlagSlot: null,
+    projectileFollow: {
+      kind: "tracking",
+      projectileId: "carrier-shot",
+      sourceName: "Scout",
+    },
+  });
+});
+
+it.each([
+  ["is dropped", looseFlag],
+  ["changes hands", { ...carrier, id: "next-carrier", targetId: 2 }],
+  ["goes out of scope", null],
+] as const)("disarms when the followed flag %s", (_change, newTarget) => {
+  followTestFlag(carrier);
+  press();
+  expect(state().projectileFollow?.kind).toBe("armed");
+
+  gameEntityStore
+    .getState()
+    .setStreamEntities(newTarget ? [player, newTarget] : [player]);
+  expect(resolveWatchFollowTarget()).toBe(newTarget?.id ?? player.id);
+  expect(state().projectileFollow).toBeNull();
+  expect(callbacks.size).toBe(0);
 });
 
 it("selects the nearest visible projectile using the rendered positions", () => {

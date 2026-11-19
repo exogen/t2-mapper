@@ -735,6 +735,7 @@ export function pointObstructed(
   radius: number,
   options?: {
     includeStatics?: boolean;
+    excludeStaticColliders?: string | readonly (string | undefined)[];
     includeForceFields?: boolean;
     interiorHullType?: DIFHullType;
     /** Camera clearance: test actual terrain triangles, including holes and
@@ -792,9 +793,11 @@ export function pointObstructed(
   const groups = options?.includeStatics
     ? [interiors(), staticShapes()]
     : [interiors()];
+  const excluded = staticColliderExclusions(options?.excludeStaticColliders);
   for (const map of groups) {
     for (const entry of map.values()) {
-      if (!entryReaches(entry, _probeBox)) continue;
+      if (excluded?.includes(entry) || !entryReaches(entry, _probeBox))
+        continue;
       for (const collider of entry.colliders) {
         if (!syncMeshCollider(collider)) continue;
         // Broadphase in world space before paying for a descent.
@@ -1034,6 +1037,7 @@ export function castWorldRay(
   end: Vec3,
   options?: {
     includeStatics?: boolean;
+    excludeStaticColliders?: string | readonly (string | undefined)[];
     includeTerrain?: boolean;
     includeInteriors?: boolean;
     includeForceFields?: boolean;
@@ -1055,10 +1059,11 @@ export function castWorldRay(
           [staticShapes(), "static"],
         ]
       : [[interiors(), "interior"]];
+  const excluded = staticColliderExclusions(options?.excludeStaticColliders);
   for (const [group, source] of meshGroups) {
     if (source === "interior" && options?.includeInteriors === false) continue;
     for (const entry of group.values()) {
-      if (!entryReaches(entry, _segBox)) continue;
+      if (excluded?.includes(entry) || !entryReaches(entry, _segBox)) continue;
       for (const collider of entry.colliders) {
         if (!syncMeshCollider(collider)) continue;
         if (!collider.worldBox.intersectsBox(_segBox)) continue;
@@ -1125,6 +1130,16 @@ export function castWorldRay(
   }
 
   return best;
+}
+
+function staticColliderExclusions(
+  ids: string | readonly (string | undefined)[] | undefined,
+) {
+  if (ids === undefined) return undefined;
+  const statics = staticShapes();
+  return typeof ids === "string"
+    ? [statics.get(ids)]
+    : ids.map((id) => (id === undefined ? undefined : statics.get(id)));
 }
 
 /** Face normal of an axis-aligned box at a surface point (local space). */

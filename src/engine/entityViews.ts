@@ -59,6 +59,7 @@ interface ViewEntry {
   /** The view this one is attached to (and its id), for a mounted object. */
   parent: EntityView | null;
   parentId: string | null;
+  mountPoint?: number;
   detach?: () => void;
 }
 
@@ -158,44 +159,41 @@ export class EntityViewRegistry {
       done.add(entity.id);
       const parentId = placement.get(entity.id);
       if (parentId === undefined) return;
-      let parent: ViewEntry | undefined;
-      if (parentId != null) {
-        ensure(byId.get(parentId)!);
-        parent = this.views.get(parentId);
-        if (!parent?.view.mounts) {
-          // The parent draws nothing to mount on (hidden, or no shape).
-          this.remove(entity.id, "hidden");
-          return;
-        }
+      if (parentId != null) ensure(byId.get(parentId)!);
+      const parent =
+        parentId == null ? null : (this.views.get(parentId)?.view ?? null);
+      const mounts = parent?.mounts;
+      if (parentId != null && !mounts) {
+        // The parent draws nothing to mount on (hidden, or no shape).
+        this.remove(entity.id, "hidden");
+        return;
       }
-      const current = this.views.get(entity.id);
-      if (current && current.parent === (parent?.view ?? null)) {
-        if (current.entity === entity) return;
-        if (current.view.update?.(entity)) {
-          current.entity = entity;
-          return;
-        }
+      let entry = this.views.get(entity.id);
+      if (
+        entry &&
+        entry.parent === parent &&
+        (entry.entity === entity || entry.view.update?.(entity))
+      ) {
+        entry.entity = entity;
+      } else {
+        if (entry) this.remove(entity.id, "replaced");
+        const factory = this.factories[entity.renderType] as EntityViewFactory;
+        const view = factory(entity, engine, mounts !== undefined);
+        entry = { entity, view, parent, parentId };
+        if (!mounts) this.root.add(view.root);
+        this.views.set(entity.id, entry);
       }
-      if (current) this.remove(entity.id, "replaced");
-      const factory = this.factories[entity.renderType] as EntityViewFactory;
-      const view = factory(entity, engine, parent != null);
-      const entry: ViewEntry = {
-        entity,
-        view,
-        parent: parent?.view ?? null,
-        parentId,
-      };
-      if (parent) {
+      if (mounts) {
         const point = entity.mountNode ?? 0;
         // ShapeBase::mountObject clamps invalid slots to zero.
-        entry.detach = parent.view.mounts!.attach(
-          point >= 0 && point < 32 ? point : 0,
-          view.root,
-        );
-      } else {
-        this.root.add(view.root);
+        const mountPoint = point >= 0 && point < 32 ? point : 0;
+        // The stream can mutate the old entity before publishing a new one.
+        if (entry.mountPoint !== mountPoint) {
+          entry.detach?.();
+          entry.detach = mounts.attach(mountPoint, entry.view.root);
+          entry.mountPoint = mountPoint;
+        }
       }
-      this.views.set(entity.id, entry);
     };
     for (const entity of entities) ensure(entity);
   }

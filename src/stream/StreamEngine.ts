@@ -20,6 +20,7 @@ import type {
   PlayerGhostData,
   PlayerPacketData,
   PlayerDataBlock,
+  TurretPacketData,
 } from "t2-demo-parser";
 import { withCollisionQueryBatch } from "../collision/worldCollision";
 import {
@@ -1104,6 +1105,11 @@ export abstract class StreamEngine implements StreamingPlayback {
       this.camera.controlEntityId = ids.get(this.camera.controlEntityId);
     if (this.camera?.orbitTargetId)
       this.camera.orbitTargetId = ids.get(this.camera.orbitTargetId);
+    const controlled = this.nestedControlEntity();
+    if (controlled?.className === "Turret") {
+      this.syncControlTurret(controlled);
+      if (!this.camera) this.updateCameraPose(controlled);
+    }
     for (const event of this.serverEvents)
       event.id = this.serverEventIdCounter++;
     this.entityGeneration++;
@@ -1958,13 +1964,10 @@ export abstract class StreamEngine implements StreamingPlayback {
     // updateMove (FUN_0060b110) sets jetting from the same trigger and
     // FlyingVehicle::updateMove (FUN_00610220) picks the thrust direction
     // from move.y. The energy gate on jetting is not modelled.
-    if (triggers && this.isPiloting && this.lastPilotGhostIndex != null) {
-      const vehicleId = this.resolveEntityIdForGhostIndex(
-        this.lastPilotGhostIndex,
-      );
-      const vehicle = vehicleId ? this.entities.get(vehicleId) : undefined;
+    if (triggers) {
+      const vehicle = this.nestedControlEntity();
       const moveY = move.y;
-      if (vehicle) {
+      if (vehicle?.type === "Vehicle") {
         vehicle.jetting = !!triggers[3];
         if (vehicle.className === "FlyingVehicle" && moveY != null) {
           vehicle.thrustDirection =
@@ -3483,19 +3486,70 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
   }
 
-  /** Apply a control packet once; camera updates must not undo tick prediction. */
-  private syncControlVehicle(): void {
-    const control = this.latestControl;
+  private nestedControlEntity(): MutableEntity | undefined {
+    if (!this.isPiloting || this.lastPilotGhostIndex == null) return undefined;
+    const id = this.entityIdByGhostIndex.get(this.lastPilotGhostIndex);
+    return id ? this.entities.get(id) : undefined;
+  }
+
+  /** Retail takes the first-person restriction from the object supplying the Eye. */
+  protected controlCameraFirstPerson(): boolean {
+    if (this.firstPerson) return true;
+    const nestedId = this.nestedControlEntity()?.dataBlockId;
+    if (nestedId !== undefined) {
+      const data = this.getDataBlockData(nestedId);
+      if (data?.useEyePoint === true) return data.firstPersonOnly === true;
+    }
+    const id = this.entityIdByGhostIndex.get(this.latestControl.ghostIndex);
+    const dataBlockId =
+      id === undefined ? undefined : this.entities.get(id)?.dataBlockId;
+    return (
+      dataBlockId !== undefined &&
+      this.getDataBlockData(dataBlockId)?.firstPersonOnly === true
+    );
+  }
+
+  private syncControlTurret(turret: MutableEntity): void {
+    const packet = this.latestControl.data?.controlObjectData as
+      Partial<TurretPacketData> | undefined;
+    const values = packet?.rotationValues;
     if (
-      !this.isPiloting ||
-      this.lastPilotGhostIndex == null ||
-      !control.position ||
-      control === this.lastVehicleControl
+      !Array.isArray(values) ||
+      values.length !== 3 ||
+      !values.every(Number.isFinite)
     )
       return;
-    const id = this.resolveEntityIdForGhostIndex(this.lastPilotGhostIndex);
-    const vehicle = id ? this.entities.get(id) : undefined;
-    if (!vehicle) return;
+    // Turret::readPacketData (0x655d70) uses degree angles and full activation.
+    // The turret's regular ghost update omits those fields for its controller.
+    const [activation, phi, theta] = values;
+    const aim = turret.turretAim;
+    if (
+      aim?.activation !== activation ||
+      aim.phi !== phi ||
+      aim.theta !== theta
+    )
+      turret.turretAim = { activation, phi, theta };
+  }
+
+  private controlTurretPosition(
+    turret: MutableEntity | undefined,
+  ): Vec3 | undefined {
+    if (!turret) return undefined;
+    const mountId =
+      turret.mountObjectGhostIndex != null
+        ? this.entityIdByGhostIndex.get(turret.mountObjectGhostIndex)
+        : undefined;
+    const mount = mountId ? this.entities.get(mountId) : undefined;
+    const position = mount?.position ?? turret.position;
+    if (!position) return undefined;
+    const [x, y, z] = position;
+    return { x, y, z };
+  }
+
+  /** Apply a control packet once; camera updates must not undo tick prediction. */
+  private syncControlVehicle(vehicle: MutableEntity): void {
+    const control = this.latestControl;
+    if (!control.position || control === this.lastVehicleControl) return;
     // An unrelated packet retains the same position reference. Only a new
     // position corrects extrapolation; sparse velocity/orientation updates persist.
     if (
@@ -3544,8 +3598,9 @@ export abstract class StreamEngine implements StreamingPlayback {
    *  controlObjectData arrives sparsely (~10 of ~62 packets/sec). Between
    *  updates, we integrate position from the last known velocity. */
   protected advanceControlVehicle(): void {
-    this.syncControlVehicle();
-    if (!this.isPiloting || this.lastPilotGhostIndex == null) return;
+    const vehicle = this.nestedControlEntity();
+    if (vehicle?.type !== "Vehicle") return;
+    this.syncControlVehicle(vehicle);
     if (!this.lastVehiclePos || !this.lastVehicleVelocity) {
       if (this.tickCount % 100 === 0) {
         console.warn(
@@ -3561,18 +3616,12 @@ export abstract class StreamEngine implements StreamingPlayback {
       return;
     }
 
-    const vehicleId = this.resolveEntityIdForGhostIndex(
-      this.lastPilotGhostIndex,
-    );
-    const entity = vehicleId ? this.entities.get(vehicleId) : undefined;
-    if (!entity) return;
-
     const dt = TICK_DURATION_MS / 1000;
     const [vx, vy, vz] = this.lastVehicleVelocity;
     this.lastVehiclePos[0] += vx * dt;
     this.lastVehiclePos[1] += vy * dt;
     this.lastVehiclePos[2] += vz * dt;
-    entity.position = [...this.lastVehiclePos] as [number, number, number];
+    vehicle.position = [...this.lastVehiclePos];
   }
 
   protected advanceItems(): void {
@@ -3763,34 +3812,36 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
   }
 
-  protected updateCameraAndHud(): void {
-    this.syncControlVehicle();
+  private updateCameraPose(
+    controlledTurret: MutableEntity | undefined,
+  ): { yaw: number; pitch: number } | undefined {
     const control = this.latestControl;
     const timeSec = this.getTimeSec();
     const data = control.data;
     const controlType = this.lastControlType;
 
-    this.explodePendingExplosions();
-    this.removeExpiredExplosions();
-
-    if (control.position) {
-      let { yaw, pitch } = this.getCameraYawPitch(data);
+    // Mounted turret control packets lack an initial player position. The
+    // host vehicle anchors the view until its animated turret Eye is ready.
+    const position =
+      control.position ?? this.controlTurretPosition(controlledTurret);
+    if (position) {
+      const angles = this.getCameraYawPitch(data);
 
       // When piloting a vehicle (without freelook), mouse yaw goes to
       // vehicle steering (mRot.z) and the player's head rotation (mHead)
       // decays by 50% per tick — the camera is locked to the vehicle.
       // Use the vehicle's heading directly instead of move-accumulated yaw.
       // Verified against tribes2-engine Player::updateMove and Tribes2.exe.
-      if (this.isPiloting) {
-        yaw = this.lastVehicleHeading;
-        pitch = this.lastVehiclePitch;
+      if (this.isPiloting && !controlledTurret) {
+        angles.yaw = this.lastVehicleHeading;
+        angles.pitch = this.lastVehiclePitch;
       }
 
       // Follow the simulated vehicle position between server corrections.
       const cameraPos: [number, number, number] =
-        this.isPiloting && this.lastVehiclePos
+        this.isPiloting && !controlledTurret && this.lastVehiclePos
           ? [...this.lastVehiclePos]
-          : [control.position.x, control.position.y, control.position.z];
+          : [position.x, position.y, position.z];
 
       const predictedControlId = this.entityIdByGhostIndex.get(
         control.ghostIndex,
@@ -3804,10 +3855,11 @@ export abstract class StreamEngine implements StreamingPlayback {
         !this.isPiloting
       ) {
         predictedControl.position.toArray(cameraPos);
-        yaw = predictedControl.yaw + predictedControl.headYaw;
-        pitch = predictedControl.headPitch;
+        angles.yaw = predictedControl.yaw + predictedControl.headYaw;
+        angles.pitch = predictedControl.headPitch;
       }
 
+      const { yaw, pitch } = angles;
       this.camera = {
         time: timeSec,
         position: cameraPos,
@@ -3830,7 +3882,7 @@ export abstract class StreamEngine implements StreamingPlayback {
             control.ghostIndex,
           );
         }
-        if (!this.firstPerson) {
+        if (!this.controlCameraFirstPerson()) {
           // Third-person: orbit the vehicle (if piloting) or the player.
           this.camera.mode = "third-person";
           if (this.isPiloting && this.lastPilotGhostIndex != null) {
@@ -3866,8 +3918,8 @@ export abstract class StreamEngine implements StreamingPlayback {
         } else {
           this.camera.mode = "first-person";
         }
-        // When piloting, use the vehicle for camera positioning (its Eye
-        // node provides the cockpit viewpoint). Otherwise use the player.
+        // Preserve the nested control object so Original view can select its
+        // Eye when the datablock opts in (for example, a vehicle turret).
         if (this.isPiloting && this.lastPilotGhostIndex != null) {
           this.camera.controlEntityId = this.resolveEntityIdForGhostIndex(
             this.lastPilotGhostIndex,
@@ -3877,50 +3929,68 @@ export abstract class StreamEngine implements StreamingPlayback {
         }
       }
 
-      // Mounted placement owns the pilot's body; unpredicted players retain
-      // their packet poses (for example, headless timeline scans).
-      if (controlType === "player" && control.position) {
-        if (this.isPiloting && this.lastPilotGhostIndex != null) {
-          // The recorder's own body sits in the seat with the yaw the
-          // server zeroed on mount (Armor::onMount setTransform), which
-          // reaches the control client through its packet data.
-          const pilotEntity = this.controlPlayerGhostId
-            ? this.entities.get(this.controlPlayerGhostId)
-            : undefined;
-          if (
-            pilotEntity?.mountObjectGhostIndex != null &&
-            pilotEntity.mountNode === 0
-          ) {
-            pilotEntity.rotation = playerYawToQuaternion(0);
-          }
-        } else if (this.controlPlayerGhostId) {
-          const ghostEntity = this.entities.get(this.controlPlayerGhostId);
-          if (ghostEntity && !ghostEntity.playerPrediction?.hasPosition) {
-            ghostEntity.position = [
-              control.position.x,
-              control.position.y,
-              control.position.z,
-            ];
-            ghostEntity.rotation = playerYawToQuaternion(yaw);
-            ghostEntity.headPitch = this.getControlPlayerHeadPitch(pitch);
-            ghostEntity.viewQuantized = false;
-            // Sync velocity from controlObjectData. The authoritative
-            // falling/jetting flags come from the ghost's MoveMask update
-            // (processed earlier in applyGhostData) — don't overwrite them.
-            const vel = data?.velocity as
-              { x: number; y: number; z: number } | undefined;
-            if (isVec3Like(vel)) {
-              ghostEntity.velocity = [vel.x, vel.y, vel.z];
-            }
-          }
-        }
-      }
+      return angles;
     } else if (this.camera) {
       this.camera = {
         ...this.camera,
         time: timeSec,
         fov: this.latestFov,
       };
+    }
+    return undefined;
+  }
+
+  protected updateCameraAndHud(): void {
+    const nested = this.nestedControlEntity();
+    const controlledTurret =
+      nested?.className === "Turret" ? nested : undefined;
+    if (controlledTurret) this.syncControlTurret(controlledTurret);
+    else if (nested?.type === "Vehicle") this.syncControlVehicle(nested);
+
+    this.explodePendingExplosions();
+    this.removeExpiredExplosions();
+
+    const cameraPose = this.updateCameraPose(controlledTurret);
+    const control = this.latestControl;
+    const data = control.data;
+    // Mounted placement owns the pilot's body; unpredicted players retain
+    // their packet poses (for example, headless timeline scans).
+    if (cameraPose && this.lastControlType === "player" && control.position) {
+      const { yaw, pitch } = cameraPose;
+      if (this.isPiloting && this.lastPilotGhostIndex != null) {
+        // The recorder's own body sits in the seat with the yaw the
+        // server zeroed on mount (Armor::onMount setTransform), which
+        // reaches the control client through its packet data.
+        const pilotEntity = this.controlPlayerGhostId
+          ? this.entities.get(this.controlPlayerGhostId)
+          : undefined;
+        if (
+          pilotEntity?.mountObjectGhostIndex != null &&
+          pilotEntity.mountNode === 0
+        ) {
+          pilotEntity.rotation = playerYawToQuaternion(0);
+        }
+      } else if (this.controlPlayerGhostId) {
+        const ghostEntity = this.entities.get(this.controlPlayerGhostId);
+        if (ghostEntity && !ghostEntity.playerPrediction?.hasPosition) {
+          ghostEntity.position = [
+            control.position.x,
+            control.position.y,
+            control.position.z,
+          ];
+          ghostEntity.rotation = playerYawToQuaternion(yaw);
+          ghostEntity.headPitch = this.getControlPlayerHeadPitch(pitch);
+          ghostEntity.viewQuantized = false;
+          // Sync velocity from controlObjectData. The authoritative
+          // falling/jetting flags come from the ghost's MoveMask update
+          // (processed earlier in applyGhostData) — don't overwrite them.
+          const vel = data?.velocity as
+            { x: number; y: number; z: number } | undefined;
+          if (isVec3Like(vel)) {
+            ghostEntity.velocity = [vel.x, vel.y, vel.z];
+          }
+        }
+      }
     }
 
     // Health/energy/heat status

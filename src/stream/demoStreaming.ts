@@ -18,6 +18,7 @@ import {
   TICK_DURATION_MS,
   streamTimeToTick,
   MAX_PITCH,
+  CameraMode_OrbitObject,
   CameraMode_OrbitPoint,
   observerOrbitDistance,
   isValidPosition,
@@ -36,6 +37,7 @@ import type { Vec3 } from "./streamHelpers";
 import type {
   PlayerTickView,
   DemoPlayerAim,
+  StreamCamera,
   StreamRecording,
   StreamSnapshot,
   TeamScore,
@@ -439,6 +441,8 @@ const METADATA_PROBE_MAX_BLOCKS = 512;
 // Retail getNextMove (0x006019b0) refuses collection above 45 queued moves;
 // collectMove's playback branch (0x00601ca0) also stops admission at 46.
 const MAX_RECORDED_PENDING_MOVES = 46;
+// Camera::processTick (0x5cbc80) caps observer pitch at roughly 80 degrees.
+const MAX_OBSERVER_PITCH = 1.3962;
 
 export interface DemoStreamingOptions {
   /** Event/director scans need no seek history. Playback retains it on demand. */
@@ -766,12 +770,16 @@ export class DemoStreamAdapter extends StreamEngine {
     // Checkpoints produced before control-camera interpolation still carry the
     // requested view. Start there so the next recorded toggle can animate.
     if (this.camera && this.camera.controlCameraBlend === undefined) {
-      const blend = this.controlCameraTarget();
+      const blend = this.controlCameraFirstPerson() ? 0 : 1;
       this.camera = {
         ...this.camera,
         controlCameraBlend: blend,
         previousControlCameraBlend: blend,
       };
+    }
+    const mountHead = this.recordedPilotHead();
+    if (this.camera && !this.camera.controlMountHead && mountHead) {
+      this.camera = { ...this.camera, controlMountHead: mountHead };
     }
     this.exhausted = false;
     this.exhaustedAtBytes = 0;
@@ -917,10 +925,9 @@ export class DemoStreamAdapter extends StreamEngine {
     yaw: number;
     pitch: number;
   } {
-    // Move-derived angles are valid when the control object is a Player
-    // (including when piloting a vehicle — moves still drive the camera).
     const hasMoves =
-      this.lastControlType === "player" && this.controlMovesAvailable;
+      this.controlMovesAvailable &&
+      (this.lastControlType === "player" || this.isObserverOrbit());
     const yaw = hasMoves ? this.absoluteYaw : this.lastAbsYaw;
     const pitch = hasMoves ? this.absolutePitch : this.lastAbsPitch;
 
@@ -936,28 +943,82 @@ export class DemoStreamAdapter extends StreamEngine {
     return clamp(this.absolutePitch / MAX_PITCH, -1, 1);
   }
 
-  private controlCameraTarget(): number {
-    if (this.firstPerson) return 0;
-    const id =
-      this.camera?.controlEntityId ??
-      this.entityIdByGhostIndex.get(this.latestControl.ghostIndex);
-    const dataBlockId =
-      id == null ? undefined : this.entities.get(id)?.dataBlockId;
-    return dataBlockId != null &&
-      this.getDataBlockData(dataBlockId)?.firstPersonOnly === true
-      ? 0
-      : 1;
+  private isObserverOrbit(): boolean {
+    return (
+      this.lastControlType === "camera" &&
+      (this.lastCameraMode === CameraMode_OrbitObject ||
+        this.lastCameraMode === CameraMode_OrbitPoint)
+    );
+  }
+
+  private recordedPilotHead(): StreamCamera["controlMountHead"] {
+    const { data, ghostIndex } = this.latestControl;
+    if (
+      !this.isPiloting ||
+      typeof data?.headX !== "number" ||
+      typeof data?.headZ !== "number"
+    )
+      return;
+    const playerId = this.entityIdByGhostIndex.get(ghostIndex);
+    const player =
+      playerId === undefined ? undefined : this.entities.get(playerId);
+    if (
+      player?.mountNode !== 0 ||
+      player.mountObjectGhostIndex !== this.lastPilotGhostIndex
+    )
+      return;
+    if (player.damageState) return [data.headZ, data.headX];
+    const db =
+      player.dataBlockId === undefined
+        ? undefined
+        : this.getDataBlockData(player.dataBlockId);
+    const min =
+      typeof db?.minLookAngle === "number" ? db.minLookAngle : -MAX_PITCH;
+    const max =
+      typeof db?.maxLookAngle === "number" ? db.maxLookAngle : MAX_PITCH;
+    const yawLimit =
+      typeof db?.maxFreelookAngle === "number"
+        ? db.maxFreelookAngle
+        : Math.PI / 2;
+    let yaw = data.headZ;
+    let pitch = data.headX;
+    // Player::processTick forwards the moves to the vehicle. The pilot
+    // only receives the look deltas while freelooking in seat zero.
+    for (const { move } of this.pendingPlayerMoves) {
+      if (move.freeLook) {
+        const turn = move.yaw ?? 0;
+        const tilt = move.pitch ?? 0;
+        yaw = clamp(
+          yaw + (turn > Math.PI ? turn - 2 * Math.PI : turn),
+          -yawLimit,
+          yawLimit,
+        );
+        pitch = clamp(
+          pitch + (tilt > Math.PI ? tilt - 2 * Math.PI : tilt),
+          min,
+          max,
+        );
+      } else {
+        yaw *= 0.5;
+        pitch *= 0.5;
+      }
+    }
+    return [yaw, pitch];
   }
 
   protected override updateCameraAndHud(): void {
     const previous = this.camera?.controlCameraBlend;
     super.updateCameraAndHud();
     if (!this.camera) return;
-    if (!this.latestControl.position) {
+    this.camera.controlMountHead = this.recordedPilotHead();
+    const controlId = this.camera.controlEntityId;
+    const controlledTurret =
+      controlId != null && this.entities.get(controlId)?.className === "Turret";
+    if (!this.latestControl.position && !controlledTurret) {
       this.camera.previousControlCameraBlend = previous;
       return;
     }
-    const target = this.controlCameraTarget();
+    const target = this.controlCameraFirstPerson() ? 0 : 1;
     if (this.moveTicks === 0) {
       const initial = this.parser.initialBlock.cameraPos;
       const blend = Number.isFinite(initial) ? clamp(initial, 0, 1) : target;
@@ -1826,10 +1887,14 @@ export class DemoStreamAdapter extends StreamEngine {
       this.absoluteYaw += block.parsed.yaw ?? 0;
       const TWO_PI = Math.PI * 2;
       this.absoluteYaw = ((this.absoluteYaw % TWO_PI) + TWO_PI) % TWO_PI;
+      const observer = this.isObserverOrbit();
+      const pitchLimit = observer ? MAX_OBSERVER_PITCH : MAX_PITCH;
+      const pitch = block.parsed.pitch ?? 0;
       this.absolutePitch = clamp(
-        this.absolutePitch + (block.parsed.pitch ?? 0),
-        -MAX_PITCH,
-        MAX_PITCH,
+        this.absolutePitch +
+          (observer && pitch > Math.PI ? pitch - TWO_PI : pitch),
+        -pitchLimit,
+        pitchLimit,
       );
     }
   }

@@ -100,7 +100,7 @@ describe("mounted objects", () => {
       mountNode: 1,
     } as GameEntity;
   }
-  function createMountRegistry(log: string[]) {
+  function createMountRegistry(log: string[], reuse = false) {
     const view = (
       entity: GameEntity,
       _engine: GameEngine,
@@ -112,11 +112,17 @@ describe("mounted objects", () => {
       // The model's mount nodes live under the view's root.
       const scene = new Group();
       root.add(scene);
+      for (const point of [1, 2]) {
+        const node = new Group();
+        node.name = `mount${point}`;
+        scene.add(node);
+      }
       const mounts = new MountPoints();
       mounts.setScene(scene);
       return {
         root,
         mounts,
+        update: () => reuse,
         dispose: () => log.push(`dispose ${entity.id}`),
       };
     };
@@ -131,7 +137,24 @@ describe("mounted objects", () => {
     expect(log).toEqual(["create jeep", "create pilot mounted"]);
     expect(registry.root.children.map((c) => c.name)).toEqual(["jeep"]);
     const pilot = registry.get("pilot")!.root;
-    expect(pilot.parent?.parent).toBe(registry.get("jeep")!.root);
+    expect(pilot.parent?.name).toBe("mount1");
+    expect(pilot.parent?.parent?.parent).toBe(registry.get("jeep")!.root);
+  });
+
+  it("reattaches a rider who changes seats without rebuilding its view", () => {
+    const log: string[] = [];
+    const registry = createMountRegistry(log, true);
+    const jeep = shape("jeep");
+    const rider = player("rider", "jeep");
+    registry.sync([jeep, rider], engine);
+    const view = registry.get("rider")!;
+    expect(view.root.parent?.name).toBe("mount1");
+
+    rider.mountNode = 2;
+    registry.sync([jeep, { ...rider }], engine);
+    expect(registry.get("rider")).toBe(view);
+    expect(view.root.parent?.name).toBe("mount2");
+    expect(log).toEqual(["create jeep", "create rider mounted"]);
   });
 
   it("moves a dismounting player back to the entity root", () => {

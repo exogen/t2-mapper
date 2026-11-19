@@ -501,6 +501,8 @@ export interface StreamCamera {
   controlCameraBlend?: number;
   /** Start of that tick's blend, even when a frame skips a demo tick. */
   previousControlCameraBlend?: number;
+  /** Recorder's head yaw and pitch relative to the piloted vehicle seat. */
+  controlMountHead?: [yaw: number, pitch: number];
   controlEntityId?: string;
   orbitTargetId?: string;
   /** Fixed observer orbit center in Torque space when no target is scoped. */

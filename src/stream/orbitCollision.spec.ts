@@ -195,6 +195,31 @@ describe("follow camera obstruction", () => {
     expectClear(target, position);
   });
 
+  it("excludes only the followed hull from the arm ray", () => {
+    registerStaticShapeCollider("ghost:3", [box([2, 3, 3], [2, 0, 0])]);
+    registerStaticShapeCollider("ghost:4", [box([2, 3, 3], [5, 0, 0])]);
+    const target = new Vector3();
+    const position = new Vector3(8, 0, 0);
+    expect(constrainOrbitCamera(target, position)).toBeCloseTo(0.68);
+
+    position.set(8, 0, 0);
+    expect(
+      constrainOrbitCamera(target, position, undefined, undefined, "ghost:3"),
+    ).toBeCloseTo(3.68);
+  });
+
+  it("excludes the followed hull from near-plane clearance off the arm ray", () => {
+    registerStaticShapeCollider("ghost:3", [box([4, 20, 1], [8, 0, 0.7])]);
+    const target = new Vector3();
+    const position = new Vector3(8, 0, 0);
+    expect(constrainOrbitCamera(target, position)).toBeLessThan(6);
+
+    position.set(8, 0, 0);
+    expect(
+      constrainOrbitCamera(target, position, undefined, undefined, "ghost:3"),
+    ).toBe(8);
+  });
+
   it("respects enabled forcefields, including clearance beside their edges", () => {
     registerForceFieldCollider(
       "field",

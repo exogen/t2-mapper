@@ -15,7 +15,7 @@ import {
   type DemoCameraMode,
   type ProjectileFollow,
 } from "../state/streamPlaybackStore";
-import { exitToFreeFly } from "../state/watchFollow";
+import { exitToFreeFly, resolveFlagEntityId } from "../state/watchFollow";
 import {
   interpolateStreamPosition,
   isTrackableProjectile,
@@ -223,24 +223,30 @@ export function installProjectileFollow(engine: GameEngine): () => void {
     )
       return;
 
-    const body = state.followEntityId
-      ? gameEntityStore.getState().streamEntities.get(state.followEntityId)
+    const { followFlagSlot } = state;
+    // Flag follow can keep its last camera target while the flag is out of scope.
+    const targetId =
+      followFlagSlot === null
+        ? state.followEntityId
+        : resolveFlagEntityId(followFlagSlot);
+    const body = targetId
+      ? gameEntityStore.getState().streamEntities.get(targetId)
       : undefined;
-    if (
-      body?.renderType === "Player" &&
-      state.followFlagSlot === null &&
-      isPlayerFollowMode(state.cameraMode)
-    ) {
+    if (body?.renderType === "Player" && isPlayerFollowMode(state.cameraMode)) {
       const armed: ProjectileFollow = {
         kind: "armed",
         playerId: body.id,
         playerName: playerForEntity(body).name || "player",
         armedAtSec: streamClock.worldTime,
       };
-      streamPlaybackStore.setState({ projectileFollow: armed });
+      streamPlaybackStore.setState({
+        followEntityId: body.id,
+        projectileFollow: armed,
+      });
       engine.invalidate();
       return;
     }
+    if (followFlagSlot !== null) return;
 
     const projectile = nearestProjectile(engine.cameras.perspective, position);
     if (!projectile) return;
@@ -261,8 +267,7 @@ export function installProjectileFollow(engine: GameEngine): () => void {
       } else if (
         follow.kind === "armed"
           ? !isPlayerFollowMode(state.cameraMode) ||
-            state.followEntityId !== follow.playerId ||
-            state.followFlagSlot !== null
+            state.followEntityId !== follow.playerId
           : state.cameraMode !== "orbitOverride" ||
             state.followEntityId !== null ||
             state.followPlayer !== null ||

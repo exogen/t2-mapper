@@ -9,6 +9,7 @@ import {
 const MIN_CLEARANCE = 0.3;
 const SURFACE_MARGIN = 0.02;
 const SEARCH_STEPS = 10;
+type ClearanceOptions = NonNullable<Parameters<typeof pointObstructed>[2]>;
 const clearanceOptions = {
   includeStatics: true,
   includeForceFields: true,
@@ -37,6 +38,7 @@ export function constrainOrbitCamera(
   position: Vector3,
   clearance = MIN_CLEARANCE,
   chooseDistance?: (rayDistance: number) => number,
+  excludeStaticColliderId?: string,
 ): number {
   const desired = _direction.subVectors(position, target).length();
   if (desired === 0) return 0;
@@ -48,8 +50,15 @@ export function constrainOrbitCamera(
   _end[1] = position.x;
   _end[2] = position.y;
 
+  const options =
+    excludeStaticColliderId === undefined
+      ? clearanceOptions
+      : {
+          ...clearanceOptions,
+          excludeStaticColliders: excludeStaticColliderId,
+        };
   return withCollisionQueryBatch(() => {
-    const hit = castWorldRay(_start, _end, { includeStatics: true });
+    const hit = castWorldRay(_start, _end, options);
     let distance = desired;
     if (hit) {
       // Account for grazing angles, not just distance along the ray.
@@ -70,7 +79,7 @@ export function constrainOrbitCamera(
     }
     // Shortening preserves the sightline. Check the near plane at the chosen
     // destination only; testing an unused farther endpoint can over-retract.
-    distance = clearCameraDistance(target, distance, clearance);
+    distance = clearCameraDistance(target, distance, clearance, options);
     position.copy(target).addScaledVector(_direction, distance);
     return distance;
   });
@@ -80,8 +89,9 @@ function clearCameraDistance(
   target: Vector3,
   distance: number,
   clearance: number,
+  options: ClearanceOptions,
 ): number {
-  if (distance === 0 || !obstructedAt(target, distance, clearance))
+  if (distance === 0 || !obstructedAt(target, distance, clearance, options))
     return distance;
   // A clear centre ray can still put the near plane through a side wall.
   // Bound the work; every nonzero result below has passed the sphere test.
@@ -89,7 +99,7 @@ function clearCameraDistance(
   let blocked = distance;
   for (let i = 0; i < SEARCH_STEPS; i++) {
     const mid = (clear + blocked) / 2;
-    if (obstructedAt(target, mid, clearance)) blocked = mid;
+    if (obstructedAt(target, mid, clearance, options)) blocked = mid;
     else clear = mid;
   }
   return clear;
@@ -99,10 +109,11 @@ function obstructedAt(
   target: Vector3,
   distance: number,
   clearance: number,
+  options: ClearanceOptions,
 ): boolean {
   _point.copy(target).addScaledVector(_direction, distance);
   _end[0] = _point.z;
   _end[1] = _point.x;
   _end[2] = _point.y;
-  return pointObstructed(_end, clearance, clearanceOptions);
+  return pointObstructed(_end, clearance, options);
 }

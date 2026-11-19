@@ -1,11 +1,21 @@
-import type { Object3D, Vector3 } from "three";
+import { Matrix4, Quaternion, Vector3, type Object3D } from "three";
+import { updateCollisionWorldMatrix } from "../dts/dtsCollision";
 import type { DTSShape } from "../dts/dtsModel";
 import { getOwnNodePosition } from "../sceneNodes";
+import { SHAPE_MODEL_ROTATION_Y } from "../world/placement";
 
 const eyeNodes = new Map<
   string,
   { root: DTSShape; eye: Object3D | null; cam: Object3D | null }
 >();
+const rotationMatrix = new Matrix4();
+const updatedTransforms = new Set<Object3D>();
+const up = new Vector3(0, 1, 0);
+const undoModelRotation = new Quaternion().setFromAxisAngle(
+  up,
+  -SHAPE_MODEL_ROTATION_Y,
+);
+const dtsEyeToCamera = new Quaternion().setFromAxisAngle(up, Math.PI);
 
 /**
  * The entity's animated "Eye" node position in entity-local Three.js
@@ -26,6 +36,44 @@ export function readCameraNodePosition(
   target: Vector3,
 ): Vector3 | null {
   return readViewNode(entityId, target, "cam");
+}
+
+/** Read the rendered Eye and optional Cam through the mount hierarchy. ShapeBase
+ * uses the entire Eye transform. Player uses its animated translation and
+ * supplies its own head rotation in the mounted body's coordinate frame. */
+export function readWorldCameraNodes(
+  entityId: string,
+  eyePosition: Vector3,
+  eyeRotation: Quaternion,
+  cameraPosition?: Vector3,
+  playerLook?: Quaternion,
+): boolean {
+  const view = eyeNodes.get(entityId);
+  if (!view || (!cameraPosition && !view.eye)) return false;
+  view.root.catchUpPose?.();
+  const eye = view.eye ?? view.root;
+  updatedTransforms.clear();
+  updateCollisionWorldMatrix(eye, updatedTransforms);
+  if (cameraPosition) {
+    const cam = view.cam ?? view.root;
+    updateCollisionWorldMatrix(cam, updatedTransforms);
+    cameraPosition.setFromMatrixPosition(cam.matrixWorld);
+  }
+  updatedTransforms.clear();
+  eyePosition.setFromMatrixPosition(eye.matrixWorld);
+  if (playerLook) {
+    eyeRotation
+      .setFromRotationMatrix(
+        rotationMatrix.extractRotation(view.root.matrixWorld),
+      )
+      .multiply(undoModelRotation)
+      .multiply(playerLook);
+  } else {
+    eyeRotation
+      .setFromRotationMatrix(rotationMatrix.extractRotation(eye.matrixWorld))
+      .multiply(dtsEyeToCamera);
+  }
+  return true;
 }
 
 function readViewNode(
