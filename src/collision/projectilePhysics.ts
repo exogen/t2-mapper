@@ -5,7 +5,7 @@
  * the stream engine.
  */
 import { castWorldRay, type Vec3, type WorldRayHit } from "./worldCollision";
-import { castWaterRay, isWaterType } from "./waterLevel";
+import { castWaterRay, isWaterType, projectileWaterAt } from "./waterLevel";
 import { TICK_DURATION_MS } from "../stream/streamHelpers";
 
 /** Torque clamps projectile lifetime to at most 511 living ticks. */
@@ -17,6 +17,41 @@ export const LINEAR_LAUNCH_WARP_TICKS = 5;
 /** Round milliseconds up to a whole tick, as ProjectileData::onAdd does. */
 function roundUpToTick(ms: number): number {
   return (ms + TICK_DURATION_MS - 1) & ~(TICK_DURATION_MS - 1);
+}
+
+function linearLifetimeMS(lifetimeMS: number): number {
+  return roundUpToTick(
+    Math.max(
+      TICK_DURATION_MS,
+      Math.min(lifetimeMS, MAX_LIVING_TICKS * TICK_DURATION_MS),
+    ),
+  );
+}
+
+/** LinearProjectile::calcSplash uses the original full-lifetime ray, even
+ * when the flight itself has a shorter or second segment. */
+export function predictLinearSplash(
+  start: Vec3,
+  velocity: Vec3,
+  lifetimeMS: number,
+): { ageTick: number; position: Vec3 } | undefined {
+  const lifeMS = linearLifetimeMS(lifetimeMS);
+  const seconds = lifeMS / 1000;
+  const end: Vec3 = [
+    start[0] + velocity[0] * seconds,
+    start[1] + velocity[1] * seconds,
+    start[2] + velocity[2] * seconds,
+  ];
+  const startsWet = projectileWaterAt(...start) !== null;
+  if (startsWet && projectileWaterAt(...end)) return;
+  const hit = startsWet ? castWaterRay(end, start) : castWaterRay(start, end);
+  if (hit)
+    return {
+      ageTick: Math.floor(
+        ((startsWet ? 1 - hit.t : hit.t) * lifeMS) / TICK_DURATION_MS,
+      ),
+      position: hit.point,
+    };
 }
 
 export interface LinearSegment {
@@ -71,12 +106,7 @@ export function buildLinearSegment(options: {
   // deflectionOnWaterImpact, but flight simulation does not read them.
 }): LinearSegment {
   const { start, vel } = options;
-  const lifeMs = roundUpToTick(
-    Math.max(
-      TICK_DURATION_MS,
-      Math.min(options.lifetimeMS, MAX_LIVING_TICKS * TICK_DURATION_MS),
-    ),
-  );
+  const lifeMs = linearLifetimeMS(options.lifetimeMS);
   const lifeSec = lifeMs / 1000;
   const end: Vec3 = [
     start[0] + vel[0] * lifeSec,
@@ -117,8 +147,7 @@ export function buildLinearSegment(options: {
 
   if (!options.explodeOnWaterImpact) {
     // Passes through and keeps going, but SLOWER: the engine rebuilds
-    // segment 1 at wetVelocity. Without this a chaingun round carries
-    // on underwater at 750 u/s instead of 280.
+    // segment 1 at the weapon's wet velocity.
     const wetVel = options.wetVel;
     if (!wetVel) return dry;
     return {
@@ -317,6 +346,42 @@ export function bounceVelocity(
 interface BallisticStepResult {
   /** Hit that should explode the projectile (armed contact), if any. */
   explodeAt: WorldRayHit | null;
+  splash?: Vec3;
+}
+
+/** GrenadeProjectile::determineSplash tests a wetness change, then
+ * extends the final sweep by a meter at each end before casting. */
+function grenadeWaterCrossing(start: Vec3, end: Vec3): Vec3 | undefined {
+  if (
+    Boolean(projectileWaterAt(...start)) === Boolean(projectileWaterAt(...end))
+  )
+    return;
+  const dx = end[0] - start[0];
+  const dy = end[1] - start[1];
+  const dz = end[2] - start[2];
+  const length = Math.hypot(dx, dy, dz);
+  if (!length) return;
+  return castWaterRay(
+    [start[0] - dx / length, start[1] - dy / length, start[2] - dz / length],
+    [end[0] + dx / length, end[1] + dy / length, end[2] + dz / length],
+  )?.point;
+}
+
+export function grenadeQuickSplash(
+  position: Vec3,
+  velocity: Vec3,
+): Vec3 | undefined {
+  const speed = Math.hypot(...velocity);
+  if (!speed) return;
+  const back = 10 / speed;
+  return grenadeWaterCrossing(
+    [
+      position[0] - velocity[0] * back,
+      position[1] - velocity[1] * back,
+      position[2] - velocity[2] * back,
+    ],
+    position,
+  );
 }
 
 /** Max bounce resolutions within one tick (projGrenade.cc sMaxBounceCount). */
@@ -339,11 +404,20 @@ export function stepBallistic(
     elasticity: number;
     friction: number;
     armed: boolean;
+    /** GrenadeProjectileData drag, applied only for submerged ticks. */
+    submergedDrag?: number;
+    detectSplash?: boolean;
     /** When false (e.g. seekers), any contact explodes regardless of arming. */
     bounces?: boolean;
   },
 ): BallisticStepResult {
   const dt = TICK_DURATION_MS / 1000;
+  if (options.submergedDrag) {
+    const retainedSpeed = 1 - 15 * options.submergedDrag * dt;
+    vel[0] *= retainedSpeed;
+    vel[1] *= retainedSpeed;
+    vel[2] *= retainedSpeed;
+  }
   vel[2] += options.gravity * dt;
 
   let sx = pos[0];
@@ -360,14 +434,20 @@ export function stepBallistic(
       pos[0] = ex;
       pos[1] = ey;
       pos[2] = ez;
-      return { explodeAt: null };
+      const splash = options.detectSplash
+        ? grenadeWaterCrossing([sx, sy, sz], pos)
+        : undefined;
+      return { explodeAt: null, splash };
     }
     if (options.armed || options.bounces === false) {
       pos[0] = hit.point[0];
       pos[1] = hit.point[1];
       pos[2] = hit.point[2];
       vel[0] = vel[1] = vel[2] = 0;
-      return { explodeAt: hit };
+      const splash = options.detectSplash
+        ? grenadeWaterCrossing([sx, sy, sz], pos)
+        : undefined;
+      return { explodeAt: hit, splash };
     }
     bounceVelocity(vel, hit.normal, options.friction, options.elasticity);
     timeLeft *= 1 - hit.t;

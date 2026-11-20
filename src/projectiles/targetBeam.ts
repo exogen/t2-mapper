@@ -34,12 +34,14 @@ import {
   effectMesh,
   ribbonGeometry,
 } from "./geometry";
-import { setRibbonUV, writeRibbonQuad } from "./projectileGeometry";
+import {
+  beamRenderEnd,
+  setRibbonUV,
+  writeRibbonQuad,
+} from "./projectileGeometry";
+import { createBeamMuzzleFlare } from "./beamMuzzleFlare";
 import type { ProjectileEntityLookup, ProjectileView } from "./types";
 
-const BEAM_EDGE_TOLERANCE = -0.9998;
-const BEAM_EDGE_ADJUST = 0.022;
-const BEAM_EDGE_EPSILON = 0.0001;
 const REPLACE_ENDPOINT_DOT = 0.984;
 const RECONCILE_ENDPOINT_DOT = 0.996;
 
@@ -52,7 +54,6 @@ const scaledAxis = new Vector3();
 const offset = new Vector3();
 const fromCamera = new Vector3();
 const cameraPosition = new Vector3();
-const cameraDirection = new Vector3();
 
 /** TargetProjectile::renderObject (Tribes2.exe 0x647de0). The handheld
  * targeting laser and the bomber targeter use the same four passes. */
@@ -80,17 +81,12 @@ export function createTargetBeamView(
   ) as BufferAttribute;
   const pulseUV = pulse.geometry.getAttribute("uv") as BufferAttribute;
 
-  const flareMaterial = new SpriteMaterial({
-    map: textures[1],
-    color: mainMaterial.color,
-    transparent: true,
-    depthTest: false,
-    depthWrite: false,
-    fog: false,
-    toneMapped: false,
-  });
-  const flare = new Sprite(flareMaterial);
-  const flareSecondary = new Sprite(flareMaterial.clone());
+  const flare = createBeamMuzzleFlare(
+    visual,
+    textures[1],
+    mainMaterial.color,
+    viewportHeight,
+  );
   const impact = new Sprite(
     new SpriteMaterial({
       map: textures[3],
@@ -109,8 +105,7 @@ export function createTargetBeamView(
   impact.scale.setScalar(0.6);
   pulse.renderOrder = 1;
   main.renderOrder = 2;
-  root.add(flare, flareSecondary, impact, pulse, main);
-  const flareCutoff = -Math.cos((visual.flareAngle * Math.PI) / 180);
+  root.add(...flare.sprites, impact, pulse, main);
   const remoteTarget = new Vector3();
   const remoteFrom = new Vector3();
   const remoteEnd = new Vector3();
@@ -139,7 +134,6 @@ export function createTargetBeamView(
       else torqueVecToThree(entity.beamStart, start);
 
       camera.getWorldPosition(cameraPosition);
-      camera.getWorldDirection(cameraDirection);
       torqueVecToThree(entity.beamEnd, end);
       const scopedPlayer =
         source && shooter?.type === "Player" ? shooter : undefined;
@@ -206,41 +200,7 @@ export function createTargetBeamView(
       direction.multiplyScalar(1 / length);
 
       fromCamera.subVectors(start, cameraPosition).normalize();
-      const facing = fromCamera.dot(direction);
-      const viewFacing = cameraDirection.dot(direction);
-
-      // Two counter-rotating screenspace muzzle flares, visible only while
-      // looking almost directly into an unobstructed end of the laser.
-      flare.visible = false;
-      if (facing < -0.5 && viewFacing < -0.5) {
-        const size =
-          facing >= flareCutoff
-            ? visual.minFlareSize
-            : (visual.maxFlareSize * (flareCutoff - facing)) /
-              (1 + flareCutoff);
-        if (
-          size > 0 &&
-          !renderShapeRaycast.targetBeamHit(cameraPosition, start, linkSourceId)
-        ) {
-          const depth = offset
-            .subVectors(start, cameraPosition)
-            .dot(cameraDirection);
-          const projection = camera.projectionMatrix.elements;
-          // Perspective projection has nonzero w/z; orthographic does not.
-          const clipW = projection[11] * -depth + projection[15];
-          const scale = (2 * size * clipW) / (projection[5] * viewportHeight());
-          if (depth > 0 && scale > 0 && Number.isFinite(scale)) {
-            flare.position.copy(start);
-            flareSecondary.position.copy(start);
-            flare.scale.setScalar(scale);
-            flareSecondary.scale.setScalar(scale * 0.75);
-            flare.material.rotation = elapsed;
-            flareSecondary.material.rotation = -elapsed;
-            flare.visible = true;
-          }
-        }
-      }
-      flareSecondary.visible = flare.visible;
+      flare.update(camera, start, direction, linkSourceId, elapsed);
 
       impact.position.copy(end);
       const { cameraMode, followEntityId } = streamPlaybackStore.getState();
@@ -261,21 +221,15 @@ export function createTargetBeamView(
       axis.crossVectors(fromCamera, direction);
       if (axis.lengthSq() === 0) axis.set(0, 1, 0);
       else axis.normalize();
-      renderEnd.copy(end);
-      let onEdge = false;
-      if (facing < BEAM_EDGE_TOLERANCE) {
-        // WeaponBeam::adjustEdge nudges the ribbon off a head-on view.
-        offset.copy(direction).add(fromCamera);
-        const amount = offset.length();
-        onEdge = amount <= BEAM_EDGE_EPSILON;
-        if (!onEdge) {
-          offset.multiplyScalar((BEAM_EDGE_ADJUST - amount) / amount);
-          offset.add(direction).normalize();
-          renderEnd.copy(start).addScaledVector(offset, length);
-        }
-      }
-      main.visible = pulse.visible = !onEdge;
-      if (onEdge) return;
+      main.visible = pulse.visible = beamRenderEnd(
+        renderEnd,
+        start,
+        end,
+        direction,
+        fromCamera,
+        length,
+      );
+      if (!main.visible) return;
 
       writeRibbonQuad(
         mainPosition,

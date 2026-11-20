@@ -570,14 +570,10 @@ export const engineStore = createStore<EngineStoreState>()(
   })),
 );
 
-// ── Rate-scaled effect clock ──
+// ── Published playback effect clock ──
 //
-// A monotonic clock that advances by (frameDelta × playbackRate) each frame.
-// Components use effectNow() instead of performance.now() so that effect
-// timers (explosions, particles, shockwaves, animation threads) automatically
-// pause when the demo is paused and speed up / slow down with the playback
-// rate. The StreamPlaybackSession calls advanceEffectClock()
-// once per frame.
+// Accumulated elapsed time from frames published by StreamPlaybackSession.
+// It excludes seeks and frames held during buffering or asset loading.
 
 let _effectClockMs = 0;
 
@@ -590,11 +586,7 @@ export function effectNow(): number {
   return _effectClockMs;
 }
 
-/**
- * The frame's share of effect time in seconds: the render delta scaled
- * by the playback rate, and zero while paused. Self-timed effects (jets,
- * particles, flares, shape threads) advance by this, never by wall time.
- */
+/** Rate-scaled render delta in seconds for self-timed effects. */
 export function effectDeltaSec(renderDeltaSec: number): number {
   const playback = engineStore.getState().playback;
   return playback.status === "playing" && !streamClock.worldPaused

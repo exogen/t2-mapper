@@ -15,7 +15,7 @@ import {
 import { DTSShape } from "../dts/dtsModel";
 import { getDTSNodeLookup } from "../dts/dtsNodeLookup";
 import type { DTSShapeData } from "../dts/dtsTypes";
-import { torqueVecToThree } from "../scene/coordinates";
+import { threeToTorque, torqueVecToThree } from "../scene/coordinates";
 import { shapeKey } from "../stream/shapeSequences";
 import type { StreamEntity } from "../stream/types";
 import { objectMountSlot, SHAPE_MODEL_ROTATION_Y } from "../world/placement";
@@ -216,6 +216,30 @@ export class ProjectileShapePoses {
     const pose = this.getPose(entity);
     this.poses.set(entity.id, pose);
     return pose;
+  }
+
+  /** ShapeBase's world box center, including its position in a vehicle seat. */
+  getCenter(entity: ShapeEntity, playerHeight?: number) {
+    const world = this.get(entity);
+    if (!world) return entity.position;
+    if (playerHeight != null) {
+      this.position.set(0, playerHeight / 2, 0);
+    } else {
+      const bounds = getProjectileShapeData(
+        entity.shapeHint ?? entity.dataBlock,
+      )?.bounds;
+      if (bounds) {
+        const { min, max } = bounds;
+        this.position.set(
+          (min[1] + max[1]) / 2,
+          (min[2] + max[2]) / 2,
+          (min[0] + max[0]) / 2,
+        );
+      } else {
+        this.position.set(0, 0, 0);
+      }
+    }
+    return threeToTorque(this.position.applyMatrix4(world));
   }
 
   private getPose(entity: ShapeEntity): Matrix4 | undefined {

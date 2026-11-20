@@ -12,8 +12,10 @@ export interface DebrisEvent {
   /** Three-world orientation, as on stream entities. */
   rotation: [number, number, number, number];
   normal: Vec3;
-  /** Explicit launch velocity for a mounted-image casing, in Torque axes. */
+  /** Explicit casing launch velocity in Torque axes. */
   velocity?: Vec3;
+  /** Optional authored X and Z spin in degrees per second. */
+  spin?: [number, number];
   gravity: number;
 }
 

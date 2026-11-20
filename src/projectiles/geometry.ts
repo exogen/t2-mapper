@@ -7,6 +7,7 @@ import {
   Group,
   Mesh,
   MeshBasicMaterial,
+  ShaderMaterial,
 } from "three";
 import type { Material, Texture } from "three";
 import { ribbonIndices } from "./projectileGeometry";
@@ -47,6 +48,37 @@ export function effectMesh(geometry: BufferGeometry, material: Material): Mesh {
   mesh.frustumCulled = false;
   return mesh;
 }
+
+/** Splash and shockwave rings both modulate raw texture and vertex RGBA. */
+export function createEffectRingMaterial(texture: Texture): ShaderMaterial {
+  return new ShaderMaterial({
+    vertexShader: /* glsl */ `
+      attribute vec4 vertexColor;
+      attribute vec2 texCoord;
+      varying vec4 vColor;
+      varying vec2 vUV;
+      void main() {
+        vColor = vertexColor;
+        vUV = texCoord;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform sampler2D uTexture;
+      varying vec4 vColor;
+      varying vec2 vUV;
+      void main() {
+        gl_FragColor = vColor * texture2D(uTexture, vUV);
+      }
+    `,
+    uniforms: { uTexture: { value: texture } },
+    transparent: true,
+    depthWrite: false,
+    blending: AdditiveBlending,
+    side: DoubleSide,
+  });
+}
+
 /** Only for views that own their geometry/materials; textures belong to assets. */
 export function disposeGeometry(root: Group): void {
   const geometries = new Set<BufferGeometry>(),

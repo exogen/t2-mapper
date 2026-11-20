@@ -20,7 +20,12 @@ const eyeDirection = new Vector3();
 const eyeTarget = new Vector3();
 const headAngles = { pitch: 0, yaw: 0 };
 
-const imageMuzzles = new Map<string, Map<number, Object3D>>();
+interface MountedImage {
+  root: Object3D;
+  muzzle: Object3D;
+}
+
+const mountedImages = new Map<string, Map<number, MountedImage>>();
 
 /** Register only this mounted image's own muzzle, realizing its lazy DTS path.
  * ShapeBase::getRenderImageTransform falls back to the image transform when
@@ -30,29 +35,44 @@ export function registerImageMuzzle(
   slot: number,
   image: Object3D,
 ): () => void {
-  let slots = imageMuzzles.get(ownerId);
-  if (!slots) imageMuzzles.set(ownerId, (slots = new Map()));
-  const muzzle = findOwnNode(image, "muzzlePoint") ?? image;
-  slots.set(slot, muzzle);
+  let slots = mountedImages.get(ownerId);
+  if (!slots) mountedImages.set(ownerId, (slots = new Map()));
+  const entry = {
+    root: image,
+    muzzle: findOwnNode(image, "muzzlePoint") ?? image,
+  };
+  slots.set(slot, entry);
   return () => {
-    if (slots.get(slot) !== muzzle) return;
+    if (slots.get(slot) !== entry) return;
     slots.delete(slot);
-    if (!slots.size && imageMuzzles.get(ownerId) === slots)
-      imageMuzzles.delete(ownerId);
+    if (!slots.size && mountedImages.get(ownerId) === slots)
+      mountedImages.delete(ownerId);
   };
 }
 
 /** The mounted image can load before the owner has a mount to attach it to. */
-function mountedMuzzleNode(
+function mountedImage(
   sourceId: string | undefined,
   source: Object3D,
   slot: number,
-): Object3D | undefined {
-  const muzzle = sourceId ? imageMuzzles.get(sourceId)?.get(slot) : undefined;
-  if (!muzzle) return;
-  for (let node: Object3D | null = muzzle; node; node = node.parent) {
-    if (node === source) return muzzle;
+): MountedImage | undefined {
+  const entry = sourceId ? mountedImages.get(sourceId)?.get(slot) : undefined;
+  if (!entry) return;
+  for (let node: Object3D | null = entry.root; node; node = node.parent) {
+    if (node === source) return entry;
   }
+}
+
+/** Return a named node on the currently mounted image, without borrowing a
+ * similarly named node from another slot or a replacement owner. */
+export function mountedImageNode(
+  sourceId: string,
+  source: Object3D,
+  slot: number,
+  name: string,
+): Object3D | undefined {
+  const entry = mountedImage(sourceId, source, slot);
+  return entry ? (findOwnNode(entry.root, name) ?? entry.root) : undefined;
 }
 
 /** ShapeBase::getRenderMuzzlePoint(sourceSlot): the selected image's animated
@@ -63,7 +83,7 @@ export function muzzleWorldPosition(
   slot: number,
   out: Vector3,
 ): Vector3 {
-  const node = mountedMuzzleNode(sourceId, source, slot) ?? source;
+  const node = mountedImage(sourceId, source, slot)?.muzzle ?? source;
   return out.setFromMatrixPosition(posedNodeWorldMatrix(node));
 }
 
@@ -73,7 +93,7 @@ export function imageMuzzleWorldDirection(
   slot: number,
   out: Vector3,
 ): Vector3 {
-  const muzzle = mountedMuzzleNode(sourceId, source, slot);
+  const muzzle = mountedImage(sourceId, source, slot)?.muzzle;
   // Native DTS +Y becomes model +Z; an unrotated entity root uses +X.
   const useModelAxes = muzzle || source instanceof DTSShape;
   return out

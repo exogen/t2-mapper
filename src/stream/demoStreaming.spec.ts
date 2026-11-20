@@ -8,7 +8,7 @@ import { registerEyeNode } from "../engine/eyePositions";
 import { FrameScheduler, type FrameContext } from "../engine/frameScheduler";
 import type { GameEngine } from "../engine/gameEngine";
 import { StreamPlaybackSession } from "../engine/streamPlayback";
-import { engineStore } from "../state/engineStore";
+import { effectNow, engineStore } from "../state/engineStore";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { settingsStore } from "../state/settingsStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
@@ -303,6 +303,79 @@ it("commits a projectile tick once and agrees across warm replay, cold seeks, an
     restored.importCheckpoints([checkpoint]);
     expect(effects(restored.stepToTime(2 * STREAM_TICK_SEC))).toEqual(result);
   });
+});
+
+it("advances effect time with the published world across asset holds and debriefs", () => {
+  const stream = demo(new Map(), new Map());
+  const initial: StreamSnapshot = {
+    ...stream.getSnapshot(),
+    camera: null,
+    exhausted: false,
+    timeSec: 0,
+  };
+  const step = vi.spyOn(stream, "stepToTime").mockReturnValue(initial);
+  const boundary = vi.spyOn(stream, "projectileAssetBoundarySec", "get");
+  vi.spyOn(stream, "findSceneReadyTime").mockReturnValue(0);
+  const recording: StreamRecording = {
+    source: "demo",
+    duration: 1,
+    missionName: null,
+    gameType: null,
+    serverDisplayName: null,
+    recorderName: null,
+    recordingDate: null,
+    streamingPlayback: stream,
+  };
+  const scheduler = new FrameScheduler();
+  const engine = {
+    scheduler,
+    streamSnapshot: { current: null },
+    assetsLoading: () => false,
+    invalidate: vi.fn(),
+  } as unknown as GameEngine;
+  engineStore.getState().setRecording(recording);
+  engineStore.getState().setPlaybackStatus("playing");
+  const session = new StreamPlaybackSession(engine, recording);
+  try {
+    const camera = new PerspectiveCamera();
+    const scene = new Scene();
+    const start = effectNow();
+    const render = (expectedMS: number, delta = STREAM_TICK_SEC / 2) => {
+      scheduler.runAll({
+        camera,
+        scene,
+        delta,
+        elapsed: 0,
+        frame: 1,
+        renderer: {} as FrameContext["renderer"],
+      });
+      expect(effectNow() - start).toBeCloseTo(expectedMS);
+    };
+    step.mockReturnValue({ ...initial, timeSec: 0.032 });
+    render(16);
+    boundary.mockReturnValue(0.032);
+    render(16);
+    render(16);
+    boundary.mockReturnValue(undefined);
+    step.mockReturnValue({ ...initial, timeSec: 0.064 });
+    render(48);
+
+    step.mockReturnValue({
+      ...initial,
+      timeSec: 0.064,
+      matchEnded: true,
+      matchEndedAtSec: 0.056,
+    });
+    render(56);
+    render(56, 0.5);
+    step.mockReturnValue({ ...initial, timeSec: 0.608 });
+    render(72);
+  } finally {
+    session.dispose();
+    engineStore.getState().setRecording(null);
+    gameEntityStore.getState().endStreaming();
+    vi.restoreAllMocks();
+  }
 });
 
 it.each([true, false])(

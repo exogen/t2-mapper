@@ -229,6 +229,16 @@ export function isPointSubmergedSimple(
   return stillWaterAt(torqueX, torqueY, torqueZ) !== null;
 }
 
+/** Projectile::pointInWater uses the still surface and rejects lava. */
+export function projectileWaterAt(
+  torqueX: number,
+  torqueY: number,
+  torqueZ: number,
+): WaterInfo | null {
+  const water = stillWaterAt(torqueX, torqueY, torqueZ);
+  return water && liquidLabel(water.liquidType) !== "lava" ? water : null;
+}
+
 export interface WaterRayHit {
   /** Parametric position along the segment, 0..1. */
   t: number;
@@ -258,8 +268,12 @@ export function castWaterRay(
   for (const info of collisionState().water.values()) {
     if (info === excludeWater) continue;
     const surface = info.surfaceZ;
-    // Both ends the same side of the plane: no crossing.
-    if (start[2] > surface === end[2] > surface) continue;
+    // An endpoint exactly on the plane counts from either direction.
+    if (
+      (start[2] > surface && end[2] > surface) ||
+      (start[2] < surface && end[2] < surface)
+    )
+      continue;
     if (start[2] === end[2]) continue;
     const t = (start[2] - surface) / (start[2] - end[2]);
     const point: Vec3 = [

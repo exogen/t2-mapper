@@ -16,16 +16,6 @@ const pivot = new Vector3();
 const pullback = new Vector3();
 const DEATH_ORBIT_DISTANCE = 4;
 
-export function recordedCameraBlend(
-  camera: StreamCamera,
-  interpT: number,
-): number {
-  const end =
-    camera.controlCameraBlend ?? (camera.mode === "first-person" ? 0 : 1);
-  const start = camera.previousControlCameraBlend ?? end;
-  return start + (end - start) * interpT;
-}
-
 /** Camera::interpolateTick blends the observer's two Euler angles. */
 export function recordedObserverRotation(
   previous: StreamCamera,

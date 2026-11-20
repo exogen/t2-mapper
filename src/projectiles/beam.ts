@@ -8,8 +8,18 @@
  * FUN_00645fc0, ribbon FUN_0044da90 — binary-verified), and fogging an
  * additive ribbon whose texture has no alpha paints its whole strip.
  */
-import { Group, Vector3, SRGBColorSpace, NormalBlending } from "three";
-import type { BufferAttribute, Texture } from "three";
+import {
+  AdditiveBlending,
+  Group,
+  NormalBlending,
+  Object3D,
+  Sprite,
+  SpriteMaterial,
+  SRGBColorSpace,
+  Vector3,
+  type BufferAttribute,
+  type Texture,
+} from "three";
 import { streamClock, streamPlaybackStore } from "../state/streamPlaybackStore";
 import type { BeamEntity, LinkBeamEntity } from "../state/gameEntityTypes";
 import {
@@ -17,6 +27,7 @@ import {
   sourceAimDirection,
 } from "../engine/weaponMuzzle";
 import {
+  beamRenderEnd,
   setRibbonUV,
   writeLinkRibbon,
   writeRibbonQuad,
@@ -33,6 +44,15 @@ import { renderShapeRaycast } from "../collision/renderShapeRaycast";
 import { RepairBeamEndpoint, repairBeamWithinCutoff } from "./repairBeam";
 import { torqueVecToThree } from "../scene/coordinates";
 import { posedNodeWorldMatrix } from "../engine/deferredPose";
+import { recordedCameraBlend } from "../stream/playerCameraBlend";
+import {
+  addNodeEmitter,
+  removeNodeEmitter,
+  type NodeEmitter,
+} from "../engine/nodeEmitters";
+import { DEFAULT_BEAM_MUZZLE_FLARE } from "../stream/streamHelpers";
+import { streamRenderFrame } from "../stream/interpolateEntity";
+import { createBeamMuzzleFlare } from "./beamMuzzleFlare";
 const _upY = new Vector3(0, 1, 0);
 const _linkPoint = new Vector3();
 
@@ -43,13 +63,14 @@ const BEAM_PULSE_WIDTH_SCALE = 1.25;
 /** Overlay U scroll = -pulseSpeed x elapsed x this (pulse marches
  *  toward the target). */
 const BEAM_PULSE_SCROLL_RATE = 0.5;
-/** Overlay texture index = round(fade x 10 + 1): nonlingradient when
- *  fresh, stepping through laserrip01-09 as the beam dissipates. */
+/** The overlay steps from nonlingradient through laserrip01–09 in
+ *  equal tenths of its lifetime (retail 0x6430cf truncates the index). */
 const BEAM_RIP_RATE = 10;
 
 const _beamA = new Vector3();
 const _beamB = new Vector3();
 const _beamDir = new Vector3();
+const _beamRenderEnd = new Vector3();
 const _beamFromCam = new Vector3();
 const _beamCross = new Vector3();
 const _beamScaledCross = new Vector3();
@@ -67,6 +88,8 @@ const _beamScaledCross = new Vector3();
 export function createBeamView(
   visual: BeamEntity["visual"],
   textures: Texture[],
+  flareTexture?: Texture,
+  viewportHeight: () => number = () => 0,
 ): ProjectileView<BeamEntity> {
   const root = new Group(),
     mainMaterial = effectMaterial(textures.at(-1)),
@@ -82,6 +105,18 @@ export function createBeamView(
   const main = effectMesh(ribbonGeometry(), mainMaterial),
     pulse = effectMesh(ribbonGeometry(), pulseMaterial);
   root.add(main, pulse);
+  const flare = flareTexture
+    ? createBeamMuzzleFlare(
+        visual.flare ?? DEFAULT_BEAM_MUZZLE_FLARE,
+        flareTexture,
+        pulseMaterial.color,
+        viewportHeight,
+      )
+    : undefined;
+  if (flare) {
+    for (const sprite of flare.sprites) sprite.renderOrder = -1;
+    root.add(...flare.sprites);
+  }
   const mainPosition = main.geometry.getAttribute(
     "position",
   ) as BufferAttribute;
@@ -119,7 +154,8 @@ export function createBeamView(
         return;
       }
       _beamDir.normalize();
-      _beamFromCam.copy(_beamA).sub(camera.position);
+      camera.getWorldPosition(_beamFromCam);
+      _beamFromCam.multiplyScalar(-1).add(_beamA).normalize();
       _beamCross.crossVectors(_beamFromCam, _beamDir);
       if (_beamCross.lengthSq() < 1e-8) {
         _beamCross.crossVectors(_upY, _beamDir);
@@ -134,11 +170,28 @@ export function createBeamView(
         endLight.offset.copy(_beamB);
         endLight.intensity = 1 - t;
       }
-      writeRibbonQuad(mainPosition, _beamA, _beamB, _beamScaledCross);
+      flare?.update(
+        camera,
+        _beamA,
+        _beamDir,
+        entity.linkSourceId,
+        elapsed,
+        1 - t,
+      );
+      main.visible = pulse.visible = beamRenderEnd(
+        _beamRenderEnd,
+        _beamA,
+        _beamB,
+        _beamDir,
+        _beamFromCam,
+        length,
+      );
+      if (!main.visible) return;
+      writeRibbonQuad(mainPosition, _beamA, _beamRenderEnd, _beamScaledCross);
       _beamScaledCross
         .copy(_beamCross)
         .multiplyScalar(width * BEAM_PULSE_WIDTH_SCALE * 0.5);
-      writeRibbonQuad(pulsePosition, _beamA, _beamB, _beamScaledCross);
+      writeRibbonQuad(pulsePosition, _beamA, _beamRenderEnd, _beamScaledCross);
       mainMaterial.opacity = 1 - t;
       pulseMaterial.opacity = 1 - t;
       // Overlay: scrolling repeat along the beam, texture by fade stage.
@@ -146,8 +199,8 @@ export function createBeamView(
       const u1 = u0 + length * visual.pulseLength;
       setRibbonUV(pulseUV, u0, u1);
       const ripIndex = Math.min(
-        textures.length - 1,
-        Math.max(0, Math.round(t * BEAM_RIP_RATE + 1) - 1),
+        textures.length - 2,
+        Math.floor(t * BEAM_RIP_RATE),
       );
       const rip = textures[ripIndex];
       if (pulseMaterial.map !== rip) {
@@ -162,11 +215,11 @@ export function createBeamView(
 
 /** Ribbon samples: ELF uses 16, repair 20 (engine call sites). */
 const LINK_BEAM_SEGMENTS = { elf: 16, repair: 20 } as const;
-/** ELF lightning: three ribbons of 16 jittered points, re-seeded at
- *  roughly the flicker rate of the original effect. */
+/** ELF lightning: three ribbons of 16 jittered points, refreshed at 30 Hz
+ * (Tribes2.exe FUN_0064b3b0). */
 const LIGHTNING_RIBBONS = 3;
 const LIGHTNING_POINTS = 16;
-const LIGHTNING_RESEED_SEC = 1 / 15;
+const LIGHTNING_HZ = 30;
 /** Target attach height (body/object centre). */
 const LINK_TARGET_LIFT = 1.0;
 
@@ -177,6 +230,11 @@ const _linkAim = new Vector3();
 const _linkRayEnd = new Vector3();
 const _linkFlareRight = new Vector3();
 const _linkFlareUp = new Vector3();
+const ELF_FLARE_LAYERS = [
+  [2, 0.3],
+  [1.7, -0.2],
+  [1.82, 0.1],
+] as const;
 
 /**
  * A beam linking two live objects. Repair: a curved scrolling ribbon
@@ -214,7 +272,7 @@ export function createLinkBeamView(
     { length: LIGHTNING_RIBBONS },
     () => new Float32Array(LIGHTNING_POINTS * 3),
   );
-  let lastSeed = -1;
+  let lightningFrame = -1;
   if (lightningTexture)
     for (let i = 0; i < LIGHTNING_RIBBONS; i++) {
       const mesh = effectMesh(
@@ -227,31 +285,85 @@ export function createLinkBeamView(
       );
       lightningUVs.push(mesh.geometry.getAttribute("uv") as BufferAttribute);
     }
-  const flareMesh = flareTexture
-    ? effectMesh(ribbonGeometry(), effectMaterial(flareTexture))
-    : null;
+  const flareMesh =
+    flareTexture && visual.variant === "repair"
+      ? effectMesh(ribbonGeometry(), effectMaterial(flareTexture))
+      : null;
   const flarePosition = flareMesh?.geometry.getAttribute("position") as
     BufferAttribute | undefined;
   if (flareMesh) {
     flareMesh.geometry.getAttribute("uv").array.set([0, 0, 1, 0, 1, 1, 0, 1]);
     viewRoot.add(flareMesh);
   }
+  const elfFlares =
+    visual.variant === "elf" && flareTexture
+      ? ELF_FLARE_LAYERS.map(([size]) => {
+          const sprite = new Sprite(
+            new SpriteMaterial({
+              map: flareTexture,
+              opacity: 1 / 3,
+              blending: AdditiveBlending,
+              fog: false,
+              toneMapped: false,
+              depthTest: false,
+              depthWrite: false,
+            }),
+          );
+          sprite.scale.setScalar(size * visual.flareSize);
+          viewRoot.add(sprite);
+          return sprite;
+        })
+      : [];
+  const sparkPoint = visual.variant === "elf" ? new Object3D() : undefined;
+  if (sparkPoint) {
+    // The emitter's local +Z points along world up.
+    sparkPoint.rotation.x = -Math.PI / 2;
+    viewRoot.add(sparkPoint);
+  }
+  let sparks: NodeEmitter | undefined;
+  const removeSparks = () => {
+    if (!sparks) return;
+    removeNodeEmitter(sparks);
+    sparks = undefined;
+  };
   return {
     root: viewRoot,
-    reset() {
-      lastSeed = -1;
+    reset(entity) {
+      lightningFrame = -1;
       repairEndpoint.reset();
+      removeSparks();
+      if (!sparkPoint || entity.dataBlockId == null) return;
+      const emitterId = streamPlaybackStore
+        .getState()
+        .playback?.getDataBlockData(entity.dataBlockId)?.emitter;
+      if (typeof emitterId !== "number" || emitterId <= 0) return;
+      sparks = {
+        dataBlockId: emitterId,
+        anchor: sparkPoint,
+        frame: { velocity: [0, 0, 0], dtScale: 0 },
+        ownerId: entity.id,
+        emitAtPoint: true,
+      };
+      addNodeEmitter(sparks);
     },
-    release() {},
+    release: removeSparks,
     dispose() {
+      removeSparks();
       disposeGeometry(viewRoot);
     },
     update(entity, camera) {
       const group = viewRoot;
+      if (sparks) sparks.frame.dtScale = 0;
+      const age = streamClock.worldTime - (entity.spawnTime ?? 0);
+      if (age < 0 || entity.hidden || entity.debugHidden) {
+        group.visible = false;
+        return;
+      }
       const sourceView = findEntity(entity.linkSourceId);
       const source = sourceView?.mounts?.model ?? sourceView?.root;
-      const target = findEntity(entity.linkTargetId)?.root;
-      if (!source || !target) {
+      const targetId = entity.linkTargetId;
+      const target = findEntity(targetId)?.root;
+      if (!source || !targetId || !target) {
         group.visible = false;
         return;
       }
@@ -275,16 +387,13 @@ export function createLinkBeamView(
           .copy(_linkStart)
           .addScaledVector(_linkAim, visual.beamRange ?? 10);
         if (
-          !repairEndpoint.update(
-            entity.linkTargetId!,
-            streamClock.worldTime,
-            (out) =>
-              renderShapeRaycast.repairHit(
-                _linkStart,
-                _linkRayEnd,
-                entity.linkTargetId!,
-                out,
-              ),
+          !repairEndpoint.update(targetId, streamClock.worldTime, (out) =>
+            renderShapeRaycast.repairHit(
+              _linkStart,
+              _linkRayEnd,
+              targetId,
+              out,
+            ),
           )
         ) {
           group.visible = false;
@@ -302,11 +411,17 @@ export function createLinkBeamView(
           group.visible = false;
           return;
         }
-      } else {
+      } else if (!renderShapeRaycast.elfSnapPoint(targetId, _linkEnd)) {
         _linkEnd.setFromMatrixPosition(posedNodeWorldMatrix(target));
         _linkEnd.y += LINK_TARGET_LIFT;
       }
-      const length = _linkStart.distanceTo(_linkEnd);
+      // The native advance-time pass emits at the target's snap point. The
+      // later render pass clips only the beam and its flares to the hull.
+      if (sparks) {
+        sparks.anchor.position.copy(_linkEnd);
+        sparks.frame.dtScale = 1;
+      }
+      let length = _linkStart.distanceTo(_linkEnd);
       if (length < 1e-6) {
         group.visible = false;
         return;
@@ -330,7 +445,25 @@ export function createLinkBeamView(
         );
       };
 
-      const age = streamClock.worldTime - (entity.spawnTime ?? 0);
+      if (visual.variant === "elf") {
+        const visible = renderShapeRaycast.clipElfBeam(
+          sample,
+          entity.linkSourceId,
+          targetId,
+          _linkEnd,
+        );
+        if (!visible) {
+          group.visible = false;
+          return;
+        }
+        length = _linkStart.distanceTo(_linkEnd);
+        if (length < 1e-6) {
+          group.visible = false;
+          return;
+        }
+        _linkControl.copy(_linkStart).addScaledVector(_linkAim, length);
+      }
+
       const u0 = -age * visual.scrollSpeed;
       const uLength = length * visual.texRepeat;
       writeLinkRibbon(
@@ -346,12 +479,9 @@ export function createLinkBeamView(
 
       // ELF lightning: offsets re-seeded at flicker rate, ends pinned.
       if (visual.variant === "elf" && lightningTexture) {
-        if (
-          lastSeed < 0 ||
-          streamClock.worldTime - lastSeed >= LIGHTNING_RESEED_SEC ||
-          streamClock.worldTime < lastSeed
-        ) {
-          lastSeed = streamClock.worldTime;
+        const now = Math.floor(age * LIGHTNING_HZ);
+        if (lightningFrame !== now) {
+          lightningFrame = now;
           for (const offsets of lightningOffsets) {
             for (let i = 0; i < LIGHTNING_POINTS; i++) {
               if (i === 0 || i === LIGHTNING_POINTS - 1) {
@@ -402,28 +532,35 @@ export function createLinkBeamView(
         }
       }
 
-      // Impact flare: camera-facing quad at the target end.
+      // Both weapons use the same target-masked flare visibility test.
       const flare = flareMesh;
       const flarePos = flarePosition;
-      if (flare && flarePos && flareTexture) {
-        if (visual.variant === "repair") {
-          const { cameraMode, followEntityId } = streamPlaybackStore.getState();
-          // Other clients' sources have no controlling GameConnection here;
-          // the engine defaults those to first person for this occlusion test.
-          const firstPerson = !(
-            cameraMode === "orbitOverride" &&
-            followEntityId === entity.linkSourceId
-          );
-          flare.visible = renderShapeRaycast.repairFlareVisible(
-            camera.position,
-            _linkStart,
-            _linkEnd,
-            entity.linkTargetId!,
-            entity.linkSourceId,
-            firstPerson,
-          );
-          if (!flare.visible) return;
-        }
+      if (!flare && elfFlares.length === 0) return;
+      const { cameraMode, followEntityId } = streamPlaybackStore.getState();
+      const sourceId = entity.linkSourceId;
+      const { camera: recorded, interpT } = streamRenderFrame;
+      const thirdPerson =
+        (cameraMode === "orbitOverride" && followEntityId === sourceId) ||
+        (cameraMode === "original" &&
+          recorded !== null &&
+          recorded.controlEntityId === sourceId &&
+          recordedCameraBlend(recorded, interpT) > 0);
+      const visible = renderShapeRaycast.linkFlareVisible(
+        camera.position,
+        _linkStart,
+        _linkEnd,
+        targetId,
+        sourceId,
+        !thirdPerson,
+      );
+      for (const [i, sprite] of elfFlares.entries()) {
+        sprite.visible = visible;
+        sprite.position.copy(_linkEnd);
+        sprite.material.rotation = age * ELF_FLARE_LAYERS[i][1] * Math.PI * 2;
+      }
+      if (flare && flarePos) {
+        flare.visible = visible;
+        if (!visible) return;
         const half = visual.flareSize * 0.5;
         _linkFlareRight
           .set(1, 0, 0)

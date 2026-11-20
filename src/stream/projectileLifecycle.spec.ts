@@ -8,6 +8,7 @@ import { setTerrainCollisionData } from "../collision/terrainCollision";
 import { prepareProjectileShapes } from "../collision/projectileShapeAssets";
 import { setWaterInfo } from "../collision/waterLevel";
 import { createDTSTestShape } from "../dts/dtsTestFixtures";
+import { allocateEntityId } from "./entityClassification";
 import { interpolateStreamPosition } from "./interpolateEntity";
 import { orientationAlongDirection } from "./streamHelpers";
 import { TestLiveStream } from "./streamTestFixtures";
@@ -63,6 +64,7 @@ function linearWaterStream(projectile: ParsedData, liquidType = 0) {
     ],
     [2, { lifetimeMS: 1000 }],
     [3, { lifetimeMS: 1000 }],
+    [4, { lifetimeMS: 200, ringLifetime: 0.5 }],
   ]);
   vi.spyOn(stream, "getDataBlockData").mockImplementation((id) =>
     dataBlocks.get(id),
@@ -87,6 +89,7 @@ class ProjectileTestStream extends TestLiveStream {
 function scopedLinearStream(
   doDynamicClientHits: boolean,
   projectileClass = "LinearProjectile",
+  projectile: ParsedData = {},
 ) {
   const stream = new ProjectileTestStream("play", (id) =>
     id === 1 ? projectileClass : id === 3 ? "HoverVehicle" : "Player",
@@ -94,7 +97,13 @@ function scopedLinearStream(
   const blocks = new Map<number, ParsedData>([
     [
       1,
-      { dryVelocity: 100, lifetimeMS: 640, explosion: 2, doDynamicClientHits },
+      {
+        dryVelocity: 100,
+        lifetimeMS: 640,
+        explosion: 2,
+        doDynamicClientHits,
+        ...projectile,
+      },
     ],
     [2, { lifetimeMS: 1000 }],
     [3, { boxSize: { x: 1, y: 1, z: 2 } }],
@@ -346,6 +355,119 @@ it("preserves the tracer ribbon aim while inheriting perpendicular velocity", ()
     direction: [1, 0, 0],
     velocity: [100, 20, 0],
   });
+});
+
+it("records every linear trail tick and starts its delayed emitter after the authored age", () => {
+  const stream = scopedLinearStream(false, "LinearFlareProjectile", {
+    baseEmitter: 5,
+    delayEmitter: 6,
+    emitterDelay: 32,
+  });
+  stream.createGhost(4, 1, scopedShot);
+  stream.stepToTime(0.096);
+  const { events } = stream.projectileTrailHistory;
+  expect(
+    events.map(({ tick, emitterId, slot }) => [tick, emitterId, slot]),
+  ).toEqual([
+    [1, 5, "base"],
+    [2, 5, "base"],
+    [2, 6, "delayed"],
+    [3, 5, "base"],
+    [3, 6, "delayed"],
+  ]);
+  const projectile = stream.entityAt(4)!;
+  expect(projectile.projectileTrailMode).toBe("tick");
+  expect(events[0]).toMatchObject({
+    projectileId: projectile.id,
+    from: [0, 0, 100],
+    to: [3.2, 0, 100],
+    velocity: [100, 0, 0],
+  });
+  expect(events[3].from).toEqual([6.4, 0, 100]);
+  expect(events[3].to[0]).toBeCloseTo(9.6);
+
+  stream.roundTripCheckpoint();
+  const restored = stream.entityAt(4)!;
+  expect(restored.id).not.toBe(projectile.id);
+  expect(restored.projectileTrailMode).toBe("tick");
+  expect(stream.projectileTrailHistory.events).toEqual(
+    events.map((event) => ({ ...event, projectileId: restored.id })),
+  );
+  stream.stepToTime(0.128);
+  expect(stream.projectileTrailHistory.events.slice(-2)).toEqual([
+    expect.objectContaining({
+      slot: "base",
+      tick: 4,
+      projectileId: restored.id,
+    }),
+    expect.objectContaining({
+      slot: "delayed",
+      tick: 4,
+      projectileId: restored.id,
+    }),
+  ]);
+});
+
+it("keeps the full linear emission segment through a dynamic hit and ghost removal", () => {
+  const stream = scopedLinearStream(true, "LinearProjectile", {
+    baseEmitter: 5,
+  });
+  stream.muzzle.mockReturnValue([0, 5, 100]);
+  stream.createGhost(3, 2, playerAt(0, 5));
+  stream.createGhost(5, 2, playerAt(2.8, 4.4));
+  stream.createGhost(4, 1, { ...scopedShot, currTick: 2 });
+  stream.stepToTime(0.032);
+  expect(stream.entityAt(4)?.hasExploded).toBe(true);
+  expect(stream.projectileTrailHistory.events).toEqual([
+    expect.objectContaining({
+      tick: 1,
+      from: [0, 5, 100],
+      velocity: [100, 0, 0],
+    }),
+  ]);
+  const [sample] = stream.projectileTrailHistory.events;
+  expect(sample.to[0]).toBeCloseTo(4.48);
+  expect(sample.to[1]).toBeCloseTo(4);
+
+  stream.ghost({ index: 4, type: "delete" });
+  stream.roundTripCheckpoint();
+  stream.stepToTime(0.064);
+  const [restored] = stream.projectileTrailHistory.events;
+  expect(restored.projectileId).not.toBe(sample.projectileId);
+  expect(stream.projectileTrailHistory.events).toEqual([
+    { ...sample, projectileId: restored.projectileId },
+  ]);
+  stream.stepToTime(2);
+  expect(stream.projectileTrailHistory.events).toEqual([]);
+});
+
+it("remaps every detached trail sample away from imported live entity IDs", () => {
+  const stream = scopedLinearStream(false, "LinearProjectile", {
+    baseEmitter: 5,
+  });
+  stream.createGhost(4, 1, scopedShot);
+  stream.stepToTime(0.064);
+  const checkpoint = stream.checkpoint();
+  const history = checkpoint.projectileTrails!;
+  // A checkpoint from another process can have a detached projectile ID
+  // that matches the next ID this client will allocate.
+  const importedId = String(Number(allocateEntityId()) + 1);
+  checkpoint.projectileTrails = {
+    ...history,
+    events: history.events.map((sample) => ({
+      ...sample,
+      projectileId: importedId,
+    })),
+  };
+  stream.restore(checkpoint);
+
+  expect(stream.entityAt(4)?.id).toBe(importedId);
+  const restoredIds = stream.projectileTrailHistory.events.map(
+    ({ projectileId }) => projectileId,
+  );
+  expect(restoredIds).toHaveLength(2);
+  expect(new Set(restoredIds).size).toBe(1);
+  expect(restoredIds[0]).not.toBe(importedId);
 });
 
 it.each([true, false])(
@@ -675,6 +797,199 @@ it("uses the regular effect for an initial ghost that is already exploded underw
   expect(
     stream.getSnapshot().entities.find((entity) => entity.type === "Explosion"),
   ).toMatchObject({ explosionDataBlockId: 2, position: [4, 6, 14] });
+});
+
+it.each([
+  { startZ: 25, directionZ: -1, hidden: false },
+  { startZ: 19, directionZ: 1, hidden: false },
+  { startZ: 20.01, directionZ: 1, hidden: true },
+])(
+  "keeps one timed linear splash for z=$startZ and hidden=$hidden through checkpoint restore",
+  ({ startZ, directionZ, hidden }) => {
+    const stream = linearWaterStream({ splash: 4 });
+    stream.createGhost(4, 1, {
+      dataBlockId: 1,
+      ...(hidden
+        ? {
+            hidden: true,
+            explodePosition: { x: 4, y: 6, z: startZ },
+            explodeNormal: { x: 0, y: 0, z: directionZ },
+          }
+        : {
+            initialPosition: { x: 4, y: 6, z: startZ },
+            direction: { x: 0, y: 0, z: directionZ },
+          }),
+    });
+    const splashes = () =>
+      stream.getSnapshot().entities.filter(({ type }) => type === "Splash");
+    stream.roundTripCheckpoint();
+    stream.stepToTime(0.032);
+    expect(splashes()).toEqual([
+      expect.objectContaining({
+        dataBlockId: 4,
+        position: [4, 6, 20],
+        splashEmitterLifetimeMS: 224,
+      }),
+    ]);
+    stream.roundTripCheckpoint();
+    stream.stepToTime(0.128);
+    expect(splashes()).toHaveLength(1);
+    stream.stepToTime(0.8);
+    expect(splashes()).toEqual([]);
+  },
+);
+
+it.each(["LinearProjectile", "GrenadeProjectile"])(
+  "keeps a reported %s splash when the ghost leaves scope before its first tick",
+  (className) => {
+    const stream =
+      className === "LinearProjectile"
+        ? linearWaterStream({ splash: 4 })
+        : new TestLiveStream("play", "GrenadeProjectile");
+    if (className === "GrenadeProjectile") {
+      setWaterInfo(waterPlane);
+      vi.spyOn(stream, "getDataBlockData").mockImplementation((id) =>
+        id === 1 ? { splash: 4 } : { lifetimeMS: 200 },
+      );
+    }
+    stream.createGhost(4, 1, {
+      dataBlockId: 1,
+      ...(className === "LinearProjectile"
+        ? {
+            hidden: true,
+            explodePosition: { x: 4, y: 6, z: 20 },
+            explodeNormal: { x: 0, y: 0, z: 1 },
+          }
+        : {
+            position: { x: 4, y: 6, z: 18 },
+            velocity: { x: 0, y: 0, z: -10 },
+            quickSplash: true,
+          }),
+    });
+    stream.ghost({ index: 4, type: "delete" });
+    const frame = stream.stepToTime(0.032);
+    expect(frame.entities.filter(({ type }) => type === "Splash")).toEqual([
+      expect.objectContaining({ dataBlockId: 4, position: [4, 6, 20] }),
+    ]);
+  },
+);
+
+it("uses submerged drag, bubbles and depth effects for a grenade with one surface splash", () => {
+  const stream = new TestLiveStream("play", "GrenadeProjectile");
+  const blocks = new Map<number, ParsedData>([
+    [
+      1,
+      {
+        splash: 4,
+        drag: 0.1,
+        gravityMod: 0,
+        bubbleEmitter: 5,
+        baseEmitter: 6,
+        underwaterLightColor: { r: 0, g: 0, b: 1 },
+        explosion: 2,
+        underwaterExplosion: 3,
+        depthTolerance: 5,
+      },
+    ],
+    [2, { lifetimeMS: 1000 }],
+    [3, { lifetimeMS: 1000 }],
+    [4, { lifetimeMS: 200, ringLifetime: 0.5 }],
+  ]);
+  vi.spyOn(stream, "getDataBlockData").mockImplementation((id) =>
+    blocks.get(id),
+  );
+  setWaterInfo(waterPlane);
+
+  stream.createGhost(4, 1, {
+    dataBlockId: 1,
+    position: { x: 4, y: 6, z: 20.2 },
+    velocity: { x: 0, y: 0, z: -50 },
+  });
+  const first = stream.stepToTime(0.032);
+  expect(stream.entityAt(4)).toMatchObject({ projectileInWater: false });
+  expect(first.entities.filter(({ type }) => type === "Splash")).toEqual([
+    expect.objectContaining({ dataBlockId: 4, position: [4, 6, 20] }),
+  ]);
+  const [trail] = stream.projectileTrailHistory.events;
+  expect(trail).toMatchObject({
+    tick: 1,
+    from: [4, 6, 20.2],
+    velocity: [0, 0, -50],
+    emitterId: 6,
+  });
+  expect(trail.to[2]).toBeCloseTo(18.6);
+  stream.roundTripCheckpoint();
+  const second = stream.stepToTime(0.064);
+  expect(stream.entityAt(4)).toMatchObject({
+    projectileInWater: true,
+    bubbleEmitterId: 5,
+    underwaterLightColor: [0, 0, 1, 1],
+  });
+  expect(stream.entityAt(4)?.velocity?.[2]).toBeCloseTo(-47.6);
+  expect(stream.projectileTrailHistory.events.map(({ tick }) => tick)).toEqual([
+    1,
+  ]);
+  expect(second.entities.filter(({ type }) => type === "Splash")).toHaveLength(
+    1,
+  );
+  stream.updateGhost(4, { explodePoint: { x: 4, y: 6, z: 15 } });
+  expect(
+    stream.stepToTime(0.096).entities.find(({ type }) => type === "Explosion"),
+  ).toMatchObject({ explosionDataBlockId: 3 });
+});
+
+it("backcasts a quickSplash grenade and uses a sniper's recorded endpoint", () => {
+  const stream = new TestLiveStream("play", (id) =>
+    id === 1 ? "GrenadeProjectile" : "SniperProjectile",
+  );
+  const blocks = new Map<number, ParsedData>([
+    [1, { splash: 4 }],
+    [4, { lifetimeMS: 200 }],
+  ]);
+  vi.spyOn(stream, "getDataBlockData").mockImplementation((id) =>
+    blocks.get(id),
+  );
+  setWaterInfo(waterPlane);
+  stream.createGhost(4, 1, {
+    dataBlockId: 1,
+    position: { x: 4, y: 6, z: 18 },
+    velocity: { x: 0, y: 0, z: -10 },
+    quickSplash: true,
+  });
+  stream.createGhost(5, 2, {
+    dataBlockId: 1,
+    initialPosition: { x: 4, y: 6, z: 35 },
+    endPos: { x: 6, y: 7, z: 20 },
+    hitWater: true,
+  });
+  stream.stepToTime(0.032);
+  expect(
+    stream.getSnapshot().entities.filter(({ type }) => type === "Splash"),
+  ).toEqual([
+    expect.objectContaining({ position: [6, 7, 20] }),
+    expect.objectContaining({ position: [4, 6, 20] }),
+  ]);
+});
+
+it("renders a network Splash and spawns its child explosion once per ghost lifetime", () => {
+  const stream = new TestLiveStream("play", "Splash");
+  const blocks = new Map<number, ParsedData>([
+    [1, { explosion: 2 }],
+    [2, { lifetimeMS: 1000 }],
+  ]);
+  vi.spyOn(stream, "getDataBlockData").mockImplementation((id) =>
+    blocks.get(id),
+  );
+  const splash = { dataBlockId: 1, position: { x: 4, y: 6, z: 20 } };
+  stream.createGhost(4, 1, splash);
+  stream.updateGhost(4, splash);
+  stream.roundTripCheckpoint();
+  stream.updateGhost(4, splash);
+  const entities = stream.getSnapshot().entities;
+  expect(entities.filter(({ type }) => type === "Splash")).toHaveLength(1);
+  expect(entities.filter(({ type }) => type === "Explosion")).toEqual([
+    expect.objectContaining({ explosionDataBlockId: 2, position: [4, 6, 20] }),
+  ]);
 });
 
 it("ends a bomb at the packet's impact point even when it also updates the flight position", () => {

@@ -18,11 +18,21 @@ import {
   createShapeLightState,
   updateShapeLighting,
   shapeBoxCenter,
+  type ShapeLightState,
 } from "../shapeLighting";
 import { SHAPE_MODEL_ROTATION_Y } from "../world/placement";
 import { applyFadeAndCloak, advanceCloakUV } from "../engine/shapeFadeCloak";
 import { projectileLight } from "./light";
 import type { ProjectileView } from "./types";
+
+function resetLighting(state: ShapeLightState): void {
+  state.lastProbe = null;
+  state.lastInteriors = -1;
+  state.lastTerrain = -1;
+  state.slewing = false;
+  state.uniforms.shapeLightMode.value = 0;
+  state.uniforms.shapeLightColor.value.setRGB(1, 1, 1);
+}
 
 export function createShapeProjectileView(
   model: DTSModel,
@@ -30,6 +40,7 @@ export function createShapeProjectileView(
   anisotropy: number,
   emap: boolean,
   animationEnabled: () => boolean,
+  casing?: { model: DTSModel; shapeName: string },
 ): ProjectileView<ShapeEntity> {
   const root = new Group(),
     rotation = new Group();
@@ -42,9 +53,31 @@ export function createShapeProjectileView(
     emap,
     skinName: config.skinName,
   });
+  const casingScene = casing
+    ? (SkeletonUtils.clone(casing.model.scene) as DTSShape)
+    : undefined;
+  if (casingScene && casing) {
+    processShapeScene(casingScene, casing.shapeName, {
+      anisotropy,
+      emap,
+      skinName: config.skinName,
+    });
+    rotation.add(casingScene);
+  }
   const mixer = new DTSAnimationMixer(scene),
     clips = new Map(model.animations.map((c) => [c.name.toLowerCase(), c]));
   const lighting = createShapeLightState(scene, config.shapeName);
+  const casingLighting = casingScene
+    ? createShapeLightState(casingScene, casing?.shapeName)
+    : undefined;
+  const updateCasing = (entity: ShapeEntity) => {
+    if (!casingScene) return;
+    casingScene.visible =
+      entity.seekerCasing === true ||
+      (entity.seekerCasingSplitAtSec != null &&
+        streamClock.worldTime < entity.seekerCasingSplitAtSec);
+    scene.visible = !casingScene.visible;
+  };
   let ambient: AnimationAction | undefined,
     active: AnimationAction | undefined,
     phase = "",
@@ -83,16 +116,13 @@ export function createShapeProjectileView(
       phase = "";
       fade = NaN;
       cloak = NaN;
+      updateCasing(entity);
       // Projectile::onAdd creates the client-side ambient thread (FUN_00631bb0).
       ambient = entity.projectileAgeMS != null ? play("ambient") : undefined;
       scene.setImageAnimationTime(0, animationEnabled());
       light.acquire();
-      lighting.lastProbe = null;
-      lighting.lastInteriors = -1;
-      lighting.lastTerrain = -1;
-      lighting.slewing = false;
-      lighting.uniforms.shapeLightMode.value = 0;
-      lighting.uniforms.shapeLightColor.value.setRGB(1, 1, 1);
+      resetLighting(lighting);
+      if (casingLighting) resetLighting(casingLighting);
     },
     release() {
       light.release();
@@ -102,8 +132,10 @@ export function createShapeProjectileView(
       light.release();
       mixer.uncacheRoot(scene);
       disposeClonedScene(scene);
+      if (casingScene) disposeClonedScene(casingScene);
     },
     animate(entity) {
+      updateCasing(entity);
       const elapsed = Math.max(
         0,
         streamClock.worldTime - (entity.spawnTime ?? streamClock.worldTime),
@@ -125,21 +157,22 @@ export function createShapeProjectileView(
       sample(ambient, "ambient", elapsed);
       // Ambient begins on the client's onAdd; activation is delayed by the
       // projectile's simulation age, then maintain replaces it at its endpoint.
-      const age =
-        (entity.projectileAgeMS ?? 0) / 1000 +
-        streamClock.worldTime -
-        (entity.keyframes?.[0]?.time ?? streamClock.worldTime);
+      const ageMS =
+        (entity.projectileAgeMS ?? 0) +
+        (streamClock.worldTime -
+          (entity.keyframes?.[0]?.time ?? streamClock.worldTime)) *
+          1000;
       const activate = clips.get("activate");
       let desired = "",
         activeTime = 0;
       if (
         activate &&
         entity.projectileActivateDelayMS != null &&
-        age * 1000 >= entity.projectileActivateDelayMS
+        ageMS >= entity.projectileActivateDelayMS
       ) {
         activeTime = Math.min(
           elapsed,
-          Math.max(0, age - entity.projectileActivateDelayMS / 1000),
+          (ageMS - entity.projectileActivateDelayMS) / 1000,
         );
         desired = "activate";
         if (activeTime >= activate.duration && clips.has("maintain")) {
@@ -156,6 +189,12 @@ export function createShapeProjectileView(
       mixer.update(0);
       scene.setImageAnimationTime(elapsed, animationEnabled());
       if (light.light) {
+        if (entity.underwaterLightColor) {
+          const [r, g, b] = entity.projectileInWater
+            ? entity.underwaterLightColor
+            : color;
+          light.light.color.setRGB(r, g, b);
+        }
         const t = streamClock.worldTime * 1000,
           f = entity.fadeVal ?? 1;
         light.light.intensity =
@@ -166,10 +205,7 @@ export function createShapeProjectileView(
                   0.85) *
               f
             : f;
-        if (
-          config.lightDelayMS != null &&
-          (entity.projectileAgeMS ?? 0) < config.lightDelayMS
-        )
+        if (config.lightDelayMS != null && ageMS < config.lightDelayMS)
           light.light.intensity = 0;
       }
     },
@@ -179,10 +215,14 @@ export function createShapeProjectileView(
       if (c > 0) advanceCloakUV(Math.floor(effectNow() * 0.06));
       if (f !== fade || c !== cloak || f < 1 || c > 0) {
         applyFadeAndCloak(scene, f, c);
+        if (casingScene) applyFadeAndCloak(casingScene, f, c);
         fade = f;
         cloak = c;
       }
-      updateShapeLighting(lighting, worldDeltaSec(delta) * 1000);
+      updateShapeLighting(
+        casingScene?.visible && casingLighting ? casingLighting : lighting,
+        worldDeltaSec(delta) * 1000,
+      );
     },
   };
 }

@@ -28,7 +28,6 @@ class MatchStream extends TestLiveStream {
       className: "Explosion",
       type: "Explosion",
       position: [0, 0, 100],
-      isExplosion: true,
       expiryTick: 10,
     });
     this.addEntity({

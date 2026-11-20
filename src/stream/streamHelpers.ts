@@ -8,6 +8,7 @@ import {
 } from "../../relay/shared";
 import { clamp } from "../mathUtils";
 import type {
+  BeamMuzzleFlareVisual,
   ProjectileLight,
   StreamVisual,
   WeaponImageDataBlockState,
@@ -305,7 +306,11 @@ export function collectEffectShapeNames(
 ): string[] {
   const names = new Set<string>();
   for (const data of dataBlocks) {
-    for (const shape of [data?.dtsFileName, data?.debrisShapeName]) {
+    for (const shape of [
+      data?.dtsFileName,
+      data?.debrisShapeName,
+      data?.casingShapeName,
+    ]) {
       if (typeof shape === "string" && shape) names.add(shape);
     }
     if (
@@ -588,8 +593,26 @@ export function resolveBeamVisual(
     endWidth: getNumberField(data, ["endBeamWidth"]) ?? 0.25,
     pulseSpeed: getNumberField(data, ["pulseSpeed"]) ?? 6,
     pulseLength: getNumberField(data, ["pulseLength"]) ?? 0.15,
+    flare: resolveBeamMuzzleFlare(data),
     textures,
     light: projectileLight(data),
+  };
+}
+
+export const DEFAULT_BEAM_MUZZLE_FLARE: BeamMuzzleFlareVisual = {
+  flareAngle: 3,
+  minFlareSize: 0,
+  maxFlareSize: 400,
+};
+
+function resolveBeamMuzzleFlare(data: ParsedData): BeamMuzzleFlareVisual {
+  const defaults = DEFAULT_BEAM_MUZZLE_FLARE;
+  return {
+    flareAngle: getNumberField(data, ["beamFlareAngle"]) ?? defaults.flareAngle,
+    minFlareSize:
+      getNumberField(data, ["minFlareSize"]) ?? defaults.minFlareSize,
+    maxFlareSize:
+      getNumberField(data, ["maxFlareSize"]) ?? defaults.maxFlareSize,
   };
 }
 
@@ -613,9 +636,7 @@ export function resolveTargetBeamVisual(
     pulseWidth: getNumberField(data, ["pulseBeamWidth"]) ?? 0.5,
     pulseSpeed: getNumberField(data, ["pulseSpeed"]) ?? 6,
     pulseLength: getNumberField(data, ["pulseLength"]) ?? 0.15,
-    flareAngle: getNumberField(data, ["beamFlareAngle"]) ?? 3,
-    minFlareSize: getNumberField(data, ["minFlareSize"]) ?? 0,
-    maxFlareSize: getNumberField(data, ["maxFlareSize"]) ?? 400,
+    ...resolveBeamMuzzleFlare(data),
     textures: [textures[0], textures[1], textures[2], textures[3]],
   };
 }

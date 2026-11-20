@@ -16,13 +16,13 @@ import {
 import { DTSShape } from "../dts/dtsModel";
 import { createDTSTestShape } from "../dts/dtsTestFixtures";
 import { yawPitchToQuaternion } from "../stream/streamHelpers";
+import { recordedCameraBlend } from "../stream/playerCameraBlend";
 import type { StreamCamera } from "../stream/types";
 import { SHAPE_MODEL_ROTATION_Y } from "../world/placement";
 import { registerEyeNode } from "./eyePositions";
 import {
   applyObserverOrbit,
   applyPlayerControlCamera,
-  recordedCameraBlend,
   recordedObserverRotation,
 } from "./playerViewCamera";
 

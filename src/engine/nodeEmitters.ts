@@ -18,6 +18,8 @@ export interface NodeEmitter {
   frame: NodeEmitterFrame;
   /** Entity the emitter belongs to, for bookkeeping. */
   ownerId: string;
+  /** Emit at the current point without drawing a trail from its old position. */
+  emitAtPoint?: boolean;
 }
 
 export interface NodeEmitterFrame {

@@ -96,6 +96,11 @@ export function updateGameEntityFromStream(
       e.jetting = stream.jetting;
       e.thrustDirection = stream.thrustDirection;
       e.projectileAgeMS = stream.projectileAgeMS;
+      renderEntity.projectileInWater = stream.projectileInWater;
+      renderEntity.underwaterLightColor = stream.underwaterLightColor;
+      renderEntity.seekerCasing = stream.seekerCasing;
+      renderEntity.seekerCasingSplitAtSec =
+        stream.seekerLaunch?.casingSplitAtSec;
       break;
     case "ParticleEmissionDummy":
       e.particleEmitter = stream.particleEmitter;
@@ -111,6 +116,7 @@ export function updateGameEntityFromStream(
     case "Beam":
       if (stream.beamStart) e.beamStart = stream.beamStart;
       if (stream.beamEnd) e.beamEnd = stream.beamEnd;
+      renderEntity.linkSourceId = stream.linkSourceId;
       break;
     case "TargetBeam":
       if (stream.beamStart) renderEntity.beamStart = stream.beamStart;
@@ -315,6 +321,7 @@ export function streamEntityToGameEntity(
         visual: entity.visual,
         beamStart: start,
         beamEnd: end,
+        linkSourceId: entity.linkSourceId,
       } satisfies BeamEntity;
     }
     case "targetBeam":
@@ -489,6 +496,7 @@ export function streamEntityToGameEntity(
         thrustDirection: entity.thrustDirection,
         lightType: entity.lightType,
         lightColor: entity.lightColor,
+        underwaterLightColor: entity.underwaterLightColor,
         lightTime: entity.lightTime,
         lightRadius: entity.lightRadius,
         lightDelayMS: entity.lightDelayMS,
@@ -496,6 +504,9 @@ export function streamEntityToGameEntity(
         lightAnchor: entity.lightAnchor,
         isStaticItem: entity.isStaticItem,
         projectileAgeMS: entity.projectileAgeMS,
+        projectileInWater: entity.projectileInWater,
+        seekerCasing: entity.seekerCasing,
+        seekerCasingSplitAtSec: entity.seekerLaunch?.casingSplitAtSec,
         projectileActivateDelayMS: entity.projectileActivateDelayMS,
       } satisfies ShapeEntity;
   }

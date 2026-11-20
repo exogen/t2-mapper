@@ -13,6 +13,31 @@ const _linkPrev = new Vector3();
 const _linkTangent = new Vector3();
 const _linkCross = new Vector3();
 
+/** WeaponBeam::adjustEdge prevents the ribbon from collapsing in a view
+ * looking along the shot. An exactly edge-on beam draws only its flare. */
+export function beamRenderEnd(
+  out: Vector3,
+  start: Vector3,
+  end: Vector3,
+  direction: Vector3,
+  fromCamera: Vector3,
+  length: number,
+): boolean {
+  if (fromCamera.dot(direction) >= -0.9998) {
+    out.copy(end);
+    return true;
+  }
+  out.copy(direction).add(fromCamera);
+  const offset = out.length();
+  if (offset <= 0.0001) return false;
+  out
+    .multiplyScalar((0.022 - offset) / offset)
+    .add(direction)
+    .normalize();
+  out.multiplyScalar(length).add(start);
+  return true;
+}
+
 /** Write the shared camera-facing ribbon quad (A+c, A−c, B−c, B+c —
  *  the vertex order every ribbon in this file pairs with its UVs). */
 export function writeRibbonQuad(

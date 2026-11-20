@@ -18,6 +18,21 @@ import type { LightningConfig, PrecipitationConfig } from "../weather/types";
 
 export type { ServerLoadInfo };
 
+/** Scope-in effects and launch phases for SeekerProjectile ghosts. */
+export interface SeekerLaunchEffects {
+  sourceId?: string;
+  sourceVelocity?: [number, number, number];
+  exhaustEmitterId?: number;
+  exhaustNodeName?: string;
+  exhaustUntilSec?: number;
+  puffEmitterId?: number;
+  puffPosition?: [number, number, number];
+  casingSplitAtSec?: number;
+  trailStartsAtSec?: number;
+  delayEmitterId?: number;
+  delayEmitterStartsAtSec?: number;
+}
+
 /** A mounted image in one of 8 ShapeBase image slots. The mount bone
  *  comes from the image datablock's mountPoint field, not the slot index. */
 export interface ImageSlot {
@@ -169,12 +184,20 @@ export interface BeamVisual {
   endWidth: number;
   pulseSpeed: number;
   pulseLength: number;
+  /** Optional on beams saved before muzzle flares were rendered. */
+  flare?: BeamMuzzleFlareVisual;
   /** The datablock's 12 textures: [0] flare, [1] nonlingradient,
    *  [2..10] laserrip01-09, [11] the main beam (sniper00). */
   textures: string[];
 }
 
-export interface TargetBeamVisual {
+export interface BeamMuzzleFlareVisual {
+  flareAngle: number;
+  minFlareSize: number;
+  maxFlareSize: number;
+}
+
+export interface TargetBeamVisual extends BeamMuzzleFlareVisual {
   kind: "targetBeam";
   color: { r: number; g: number; b: number };
   range: number;
@@ -182,9 +205,6 @@ export interface TargetBeamVisual {
   pulseWidth: number;
   pulseSpeed: number;
   pulseLength: number;
-  flareAngle: number;
-  minFlareSize: number;
-  maxFlareSize: number;
   /** Main ribbon, muzzle flare, scrolling pulse, impact flare. */
   textures: [string, string, string, string];
 }
@@ -343,6 +363,7 @@ export interface StreamEntity {
   /** Item/ShapeBase built-in dynamic light from datablock. */
   lightType?: number;
   lightColor?: [number, number, number, number];
+  underwaterLightColor?: [number, number, number, number];
   lightTime?: number;
   lightRadius?: number;
   /** Projectile light withheld until this age in ms (missile flechette). */
@@ -406,6 +427,9 @@ export interface StreamEntity {
   projectileAgeMS?: number;
   /** Linear projectiles: activateDelayMS for the shape's activate sequence. */
   projectileActivateDelayMS?: number;
+  /** Flechette launch casing, before the missile separates. */
+  seekerCasing?: boolean;
+  seekerLaunch?: SeekerLaunchEffects;
   health?: number;
   energy?: number;
   /** See Keyframe.actionSlot. */
@@ -437,6 +461,13 @@ export interface StreamEntity {
   hasExploded?: boolean;
   /** Numeric ID of the ParticleEmitterData for in-flight trail particles. */
   maintainEmitterId?: number;
+  /** Retail uses tick segments for air trails, except the seeker's render-frame trail. */
+  projectileTrailMode?: "tick" | "seeker";
+  /** Grenade-family submersion flag at the start of the simulation tick. */
+  projectileInWater?: boolean;
+  bubbleEmitterId?: number;
+  /** SplashData's sampled lifetime before existing rings drain. */
+  splashEmitterLifetimeMS?: number;
   /** Entity ID of the object this entity is mounted on (vehicle, etc.). */
   mountObjectId?: string;
   /** Mount point node index on the mount target (0 = pilot, 1+ = passenger/turret). */
@@ -805,6 +836,7 @@ export interface StreamingPlayback {
   /** Simulation position after checkpoint restore, before the last step's ticks. */
   readonly lastStepStartTimeSec?: number;
   readonly debrisHistory?: import("./debrisHistory").DebrisHistory;
+  readonly projectileTrailHistory?: import("./projectileTrailHistory").ProjectileTrailHistory;
   readonly lightningHistory?: import("./lightningHistory").LightningHistory;
   readonly groundEffectHistory?: import("./groundEffectHistory").GroundEffectHistory;
   /** Retained seek checkpoints, in recorded ticks. Absent on live streams. */

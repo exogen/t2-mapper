@@ -6,6 +6,7 @@ import { refreshFlagCarriers } from "../../relay/flagState";
 import type { PlayerRecord } from "../../relay/playerReference";
 import { DebrisHistory, debrisRetention } from "./debrisHistory";
 import { LightningHistory } from "./lightningHistory";
+import { ProjectileTrailHistory } from "./projectileTrailHistory";
 import {
   resolveStreamLightning,
   resolveStreamPrecipitation,
@@ -20,6 +21,8 @@ import type {
   PlayerGhostData,
   PlayerPacketData,
   PlayerDataBlock,
+  SeekerProjectileDataBlock,
+  SeekerProjectileGhostData,
   TurretPacketData,
 } from "t2-demo-parser";
 import {
@@ -44,7 +47,9 @@ import { getImageMountOffset } from "./imageMount";
 import {
   buildLinearSegment,
   createLinearLaunchWarp,
+  grenadeQuickSplash,
   LINEAR_LAUNCH_WARP_TICKS,
+  predictLinearSplash,
   sampleLinearSegment,
   sampleLinearTick,
   stepBallistic,
@@ -68,10 +73,20 @@ import {
   type ProjectileMuzzleFrame,
 } from "./projectileMuzzle";
 import {
+  castWaterRay,
   isPointSubmergedSimple,
-  liquidLabel,
-  stillWaterAt,
+  projectileWaterAt,
 } from "../collision/waterLevel";
+import {
+  accelerateSeeker,
+  advanceSeekerWarp,
+  createSeekerWarp,
+  seekerCasingFragments,
+  seekerTuning,
+  steerSeeker,
+  type SeekerTarget,
+  type SeekerWarp,
+} from "./seekerProjectile";
 import {
   linearProjectileClassNames,
   ballisticProjectileClassNames,
@@ -85,6 +100,7 @@ import {
 } from "./entityClassification";
 import { clamp } from "../mathUtils";
 import {
+  STREAM_TICK_SEC,
   TICK_DURATION_MS,
   MAX_PITCH,
   CameraMode_OrbitObject,
@@ -200,6 +216,7 @@ const MAX_SERVER_EVENTS = 2000;
 /** Scratch segment end for advanceItems' swept casts (not retained). */
 const _itemCastEnd: [number, number, number] = [0, 0, 0];
 const linearTickStart: Point3 = [0, 0, 0];
+const ballisticTickStart: Point3 = [0, 0, 0];
 const linearTickEnd: Point3 = [0, 0, 0];
 
 // Projectile::onAdd seeds 7; processTick decrements before collision.
@@ -293,17 +310,35 @@ export interface MutableEntity extends Omit<
   /** Packet launch parameters, before the tick's collision world is ready. */
   linearLaunch?: Omit<Parameters<typeof buildLinearSegment>[0], "wetStart">;
   linearLaunchWarp?: LinearLaunchWarp;
+  /** Splash rays use the initial velocity and their own clock. */
+  linearSplash?: ReturnType<typeof predictLinearSplash> | null;
+  /** An initially hidden projectile reconstructs the launch from the impact. */
+  hiddenSplashLaunch?: { start: Point3; impactNormal: Point3 };
+  /** Initial grenade packet can report a crossing before it entered scope. */
+  quickSplash?: { position: Point3; velocity: Point3 };
+  splashDataBlockId?: number;
+  splashPlayed?: boolean;
   linearDynamicHits?: boolean;
   linearTickStart?: Point3;
   /** Bound at scope-in so a reused ghost slot is never mistaken for the shooter. */
   linearExclusions?: { sourceId?: string; vehicleId?: string };
+  seekerFlight?: {
+    inherited: Point3;
+    launchDirection: Point3;
+    earlyScope: boolean;
+    target?: { id?: string; position?: Point3 };
+    correction?: { position: Point3; velocity: Point3; scopeIn?: true };
+    warp?: SeekerWarp;
+    initialMuzzle?: boolean;
+    muzzleFrame?: ProjectileMuzzleFrame;
+  };
   /** Grenade-family bounce parameters resolved from the datablock. */
   projElasticity?: number;
   projFriction?: number;
+  projDrag?: number;
   /** Tick after which contact explodes instead of bouncing. */
   projArmedTick?: number;
   explosionShape?: string;
-  isExplosion?: boolean;
   expiryTick?: number;
   /** Stream time (getTimeSec) at explode(): the renderer's animation origin. */
   explosionSpawnSec?: number;
@@ -372,6 +407,9 @@ interface PendingExplosion {
 export abstract class StreamEngine implements StreamingPlayback {
   readonly groundEffectHistory = new GroundEffectHistory();
   readonly debrisHistory = new DebrisHistory();
+  readonly projectileTrailHistory = new ProjectileTrailHistory((id) =>
+    this.getDataBlockData(id),
+  );
   readonly lightningHistory = new LightningHistory();
   private _worldGeneration = 0;
   private readonly projectileListeners = new Set<
@@ -379,7 +417,7 @@ export abstract class StreamEngine implements StreamingPlayback {
   >();
   private projectileShapeLoader?: ProjectileShapeLoader;
   private projectileShapeWait?: Promise<void>;
-  private pendingLinearLaunches: MutableEntity[] = [];
+  private pendingProjectileLaunches: MutableEntity[] = [];
   protected pendingProjectileEvents?: ProjectileLifecycleEvent[];
   private projectileGhostBatch?: {
     finish?: (() => void)[];
@@ -969,22 +1007,29 @@ export abstract class StreamEngine implements StreamingPlayback {
     };
     let dynamicHits = false;
     for (const flight of this.entities.values()) {
-      if (
-        (!flight.linearSegment && !flight.linearLaunch) ||
-        !flight.position ||
-        flight.hasExploded
-      )
-        continue;
-      dynamicHits ||= this.usesDynamicProjectileHits(flight);
-      if (
-        (!flight.linearLaunch && !flight.linearLaunchWarp) ||
-        flight.spawnTick !== this.tickCount
-      )
-        continue;
-      const id = flight.linearExclusions?.sourceId;
+      if (!flight.position || flight.hasExploded) continue;
+      const targetId = flight.seekerFlight?.target?.id;
+      const target = targetId ? this.entities.get(targetId) : undefined;
+      if (target) {
+        if (target.type !== "Player") add(target);
+        for (const parent of this.projectileMountParents(target)) add(parent);
+      }
+      const linear = flight.linearSegment || flight.linearLaunch;
+      if (linear) dynamicHits ||= this.usesDynamicProjectileHits(flight);
+      const seekerMuzzle = flight.seekerFlight?.initialMuzzle;
+      const linearMuzzle =
+        (flight.linearLaunch || flight.linearLaunchWarp) &&
+        flight.spawnTick === this.tickCount;
+      if (!seekerMuzzle && !linearMuzzle) continue;
+      const id = seekerMuzzle
+        ? flight.seekerLaunch?.sourceId
+        : flight.linearExclusions?.sourceId;
       const source = id ? this.entities.get(id) : undefined;
-      const image = flight.linearMuzzle
-        ? flight.linearMuzzle.image
+      const muzzleFrame = seekerMuzzle
+        ? flight.seekerFlight?.muzzleFrame
+        : flight.linearMuzzle;
+      const image = muzzleFrame
+        ? muzzleFrame.image
         : flight.sourceSlot != null
           ? source?.imageSlots?.[flight.sourceSlot]
           : undefined;
@@ -1110,6 +1155,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       ),
       groundEffects: this.groundEffectHistory.save(),
       debris: this.debrisHistory.save(),
+      projectileTrails: this.projectileTrailHistory.save(),
       lightning: this.lightningHistory.save(),
     };
   }
@@ -1128,6 +1174,16 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (!ids.has(id)) ids.set(id, allocateEntityId());
     for (const entity of checkpoint.endedEntities ?? [])
       if (!ids.has(entity.id)) ids.set(entity.id, allocateEntityId());
+    this.projectileTrailHistory.restore(checkpoint.projectileTrails, (id) => {
+      let restored = ids.get(id);
+      if (restored === undefined) {
+        // Detached trails still own an emitter. Their saved IDs can overlap
+        // IDs allocated by the client importing the checkpoint.
+        restored = allocateEntityId();
+        ids.set(id, restored);
+      }
+      return restored;
+    });
     this.lightningHistory.restore(
       checkpoint.lightning,
       (id) => ids.get(id) ?? id,
@@ -1151,7 +1207,7 @@ export abstract class StreamEngine implements StreamingPlayback {
           : undefined,
       })) ?? null;
     this.entities = new Map();
-    this.pendingLinearLaunches.length = 0;
+    this.pendingProjectileLaunches.length = 0;
     this.projectileShapeWait = undefined;
     this.imageAnimations = new Map();
     const restoreGhostReference = (
@@ -1170,14 +1226,24 @@ export abstract class StreamEngine implements StreamingPlayback {
         ...checkpoint.shared.get(oldId),
         id: ids.get(oldId)!,
       };
+      if (
+        (entity.type === "Projectile" ||
+          entity.className === "SniperProjectile") &&
+        entity.dataBlockId != null
+      )
+        this.readProjectileWaterData(
+          entity,
+          this.getDataBlockData(entity.dataBlockId),
+        );
       if (entity.projectilePhysics === "linear" && entity.hasExploded) {
         entity.position = undefined;
         entity.simulatedVelocity = undefined;
       } else if (
         entity.linearLaunch ||
-        (entity.linearLaunchWarp && entity.spawnTick === this.tickCount)
+        (entity.linearLaunchWarp && entity.spawnTick === this.tickCount) ||
+        entity.seekerFlight?.initialMuzzle
       ) {
-        this.pendingLinearLaunches.push(entity);
+        this.pendingProjectileLaunches.push(entity);
       }
       const linkBeam = entity.visual?.kind === "linkBeam";
       if (entity.targetBeam || linkBeam || entity.beamSourceId !== undefined)
@@ -1204,6 +1270,19 @@ export abstract class StreamEngine implements StreamingPlayback {
           vehicleId: exclusions.vehicleId
             ? ids.get(exclusions.vehicleId)
             : undefined,
+        };
+      }
+      if (entity.seekerLaunch?.sourceId) {
+        entity.seekerLaunch = {
+          ...entity.seekerLaunch,
+          sourceId: ids.get(entity.seekerLaunch.sourceId),
+        };
+      }
+      const seeker = entity.seekerFlight;
+      if (seeker?.target?.id) {
+        entity.seekerFlight = {
+          ...seeker,
+          target: { ...seeker.target, id: ids.get(seeker.target.id) },
         };
       }
       entity.pendingWeather = entity.pendingWeather?.map((update) =>
@@ -1309,11 +1388,12 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.ghostAlwaysDoneSec = null;
     this.groundEffectHistory.clear();
     this.debrisHistory.clear();
+    this.projectileTrailHistory.clear();
     this.lightningHistory.clear();
     this.groundLifetimeData.clear();
     this.ambientEmitterData.clear();
     this.entities.clear();
-    this.pendingLinearLaunches.length = 0;
+    this.pendingProjectileLaunches.length = 0;
     this.projectileShapeWait = undefined;
     this.imageAnimations.clear();
     this.entityIdByGhostIndex.clear();
@@ -1857,10 +1937,11 @@ export abstract class StreamEngine implements StreamingPlayback {
     const sourceIndex = projectile.sourceGhostIndex;
     const source = this.projectileSource(sourceIndex);
     const linear = projectile.linearLaunch ?? projectile.linearSegment;
+    const seeker = projectile.seekerFlight;
     const vehicleIndex = getNumberField(data, ["vehicleObject"]);
     const vehicle = linear ? this.projectileSource(vehicleIndex) : undefined;
     const muzzle =
-      linear && source
+      (linear || seeker?.initialMuzzle) && source
         ? this.captureProjectileMuzzle(source, projectile.sourceSlot)
         : undefined;
     if (source) this.captureProjectileSourceName(projectile, source);
@@ -1870,7 +1951,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       !projectile.hasExploded;
     const pendingSource =
       !source && sourceIndex != null && this.projectileGhostBatch;
-    if (!spawn && !pendingSource && !linear) return;
+    if (!spawn && !pendingSource && !linear && !seeker) return;
     const timeSec = this.getTimeSec();
     const age = data?.currTick;
     const direction =
@@ -1882,6 +1963,19 @@ export abstract class StreamEngine implements StreamingPlayback {
       const samePacketSource = source ?? this.projectileSource(sourceIndex);
       if (!source && samePacketSource)
         this.captureProjectileSourceName(projectile, samePacketSource);
+      if (seeker && samePacketSource && projectile.seekerLaunch) {
+        projectile.seekerLaunch = {
+          ...projectile.seekerLaunch,
+          sourceId: samePacketSource.id,
+        };
+        if (seeker.initialMuzzle)
+          seeker.muzzleFrame =
+            muzzle ??
+            this.captureProjectileMuzzle(
+              samePacketSource,
+              projectile.sourceSlot,
+            );
+      }
       if (
         linear &&
         this.entities.get(projectile.id) === projectile &&
@@ -1949,25 +2043,27 @@ export abstract class StreamEngine implements StreamingPlayback {
 
     // Scope loss and slot replacement end tracking. Only a flight that
     // already reached its simulated endpoint can produce a local impact.
-    if (
-      prevEntity?.type === "Projectile" &&
-      !prevEntity.hasExploded &&
-      prevEntity.position &&
-      ghost.type !== "update"
-    ) {
+    if (prevEntity?.type === "Projectile" && ghost.type !== "update") {
       // An aged ghost can be removed before we get its first tick. Preserve
       // its terminal outcome using the collision geometry available now.
-      if (prevEntity.projAgeTicks) this.initializeLinearFlight(prevEntity);
-      const segment = prevEntity.linearSegment;
-      const end = segment?.next ?? segment;
-      if (
-        end &&
-        (prevEntity.projAgeTicks ?? 0) * TICK_DURATION_MS >= end.msEnd
-      ) {
-        // The server can delete the ghost during its final render interval.
-        this.finishLinearFlight(prevEntity, end);
-      } else {
-        this.endProjectileFlight(prevEntity, prevEntity.position);
+      if (prevEntity.projAgeTicks && !prevEntity.hasExploded)
+        this.initializeLinearFlight(prevEntity);
+      // Initial packets can report a splash that already happened, even if
+      // the ghost leaves scope before it gets a simulation tick.
+      this.prepareProjectileSplash(prevEntity);
+      this.playReadyLinearSplash(prevEntity);
+      if (!prevEntity.hasExploded && prevEntity.position) {
+        const segment = prevEntity.linearSegment;
+        const end = segment?.next ?? segment;
+        if (
+          end &&
+          (prevEntity.projAgeTicks ?? 0) * TICK_DURATION_MS >= end.msEnd
+        ) {
+          // The server can delete the ghost during its final render interval.
+          this.finishLinearFlight(prevEntity, end);
+        } else {
+          this.endProjectileFlight(prevEntity, prevEntity.position);
+        }
       }
     }
 
@@ -2186,6 +2282,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     // consuming the debrief and next mission. This is a viewer pause policy.
     if (this.matchEnded) return;
     this.debrisHistory.prune(this.getTimeSec());
+    this.projectileTrailHistory.prune(this.tickCount);
     this.lightningHistory.prune(this.getTimeSec());
     this.advanceItems();
     this.advanceControlVehicle();
@@ -2364,7 +2461,12 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (!rawData) return;
     // Retail leaves an exploded linear ghost hidden until it leaves scope,
     // including when its final server update arrives after a predicted hit.
-    if (entity.projectilePhysics === "linear" && entity.hasExploded) return;
+    if (
+      (entity.projectilePhysics === "linear" ||
+        entity.projectilePhysics === "seeker") &&
+      entity.hasExploded
+    )
+      return;
     const data = rawData;
     if (
       (entity.linearSegment || entity.linearLaunch) &&
@@ -2467,6 +2569,11 @@ export abstract class StreamEngine implements StreamingPlayback {
           entity.projectilePhysics = "seeker";
         }
       }
+      if (
+        entity.type === "Projectile" ||
+        entity.className === "SniperProjectile"
+      )
+        this.readProjectileWaterData(entity, blockData);
 
       // Resolve explosion shape
       if (entity.type === "Projectile" && entity.explosionDataBlockId == null) {
@@ -2744,7 +2851,12 @@ export abstract class StreamEngine implements StreamingPlayback {
               ? ((data.transform as { position: Vec3 }).position as Vec3)
               : undefined;
     if (position) {
-      entity.position = [position.x, position.y, position.z];
+      // Seeker state updates warp from the previous simulated position.
+      // Use the transmitted position directly only at scope-in.
+      if (entity.projectilePhysics !== "seeker" || !entity.position)
+        entity.position = [position.x, position.y, position.z];
+      if (entity.className === "Splash")
+        this.spawnSplash(entity, entity.position, entity.dataBlockId);
     } else {
       // ParticleEmissionDummy carries a row-major MatrixF rather than the
       // AffineTransform used by most positioned ghosts.
@@ -2793,13 +2905,11 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (typeof data.sourceSlot === "number")
       entity.sourceSlot = data.sourceSlot;
     if (
-      (entity.type === "Projectile" ||
-        entity.className === "SniperProjectile") &&
+      entity.type === "Projectile" &&
       typeof data.sourceObject === "number" &&
       data.sourceObject >= 0
-    ) {
+    )
       entity.sourceGhostIndex = data.sourceObject;
-    }
 
     // Link beams (ELF/repair): shooter and zapped/repaired object, by
     // ghost index — the endpoints are LIVE and re-derived per frame.
@@ -2860,13 +2970,18 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (isValidPosition(end)) {
         const previous = entity.beamEnd;
         entity.beamEnd = [end!.x, end!.y, end!.z];
+        // A beam update either identifies the scoped shooter or supplies
+        // the muzzle position instead. Rebind only on a beam update.
+        if (typeof data.sourceObject === "number" && data.sourceObject >= 0) {
+          entity.sourceGhostIndex = data.sourceObject;
+        } else {
+          entity.sourceGhostIndex = undefined;
+          entity.sourceSlot = undefined;
+        }
+        const source = this.bindBeamEndpoint(entity, "source");
+        if (!targeting && data.hitWater === true)
+          this.spawnSplash(entity, entity.beamEnd);
         if (targeting) {
-          // An unscoped packet replaces the muzzle and clears the shooter.
-          if (typeof data.sourceObject !== "number" || data.sourceObject < 0) {
-            entity.sourceGhostIndex = undefined;
-            entity.sourceSlot = undefined;
-          }
-          const source = this.bindBeamEndpoint(entity, "source");
           const clientOwned = data.clientOwned === true;
           const priorWarp = entity.targetBeam?.warp;
           const startedAtSec = this.getTimeSec();
@@ -3052,7 +3167,9 @@ export abstract class StreamEngine implements StreamingPlayback {
     // Projectile simulation velocity
     const hiddenLinearGhost =
       entity.projectilePhysics === "linear" && data.hidden === true;
-    if (entity.projectilePhysics && !hiddenLinearGhost) {
+    if (entity.projectilePhysics === "seeker") {
+      this.readSeekerUpdate(entity, data as SeekerProjectileGhostData);
+    } else if (entity.projectilePhysics && !hiddenLinearGhost) {
       if (
         entity.projectilePhysics === "linear" &&
         entity.position &&
@@ -3106,7 +3223,7 @@ export abstract class StreamEngine implements StreamingPlayback {
             "reflectOnWaterImpactAngle",
           ]),
         };
-        this.pendingLinearLaunches.push(entity);
+        this.pendingProjectileLaunches.push(entity);
       } else if (
         entity.projectilePhysics !== "linear" &&
         isVec3Like(data.velocity)
@@ -3122,8 +3239,8 @@ export abstract class StreamEngine implements StreamingPlayback {
       // It seeds the age clock (arming, lifetime) for every projectile, but
       // only a LinearProjectile derives its position from it: its ghost
       // carries the INITIAL state and the client evaluates the precomputed
-      // segment at that time. Grenade and seeker ghosts carry the CURRENT
-      // position and velocity, which the client adopts as-is
+      // segment at that time. Grenade ghosts carry the CURRENT position
+      // and velocity, which the client adopts as-is
       // (GrenadeProjectile::unpackUpdate FUN_00636050 — no fast-forward).
       const currTick = data.currTick as number | undefined;
       if (typeof currTick === "number" && currTick > 0) {
@@ -3131,6 +3248,18 @@ export abstract class StreamEngine implements StreamingPlayback {
       }
       if (entity.projAgeTicks == null) entity.projAgeTicks = 0;
     }
+
+    if (
+      entity.splashDataBlockId != null &&
+      entity.projectilePhysics === "ballistic" &&
+      data.quickSplash === true &&
+      entity.position &&
+      entity.simulatedVelocity
+    )
+      entity.quickSplash = {
+        position: [...entity.position],
+        velocity: [...entity.simulatedVelocity],
+      };
 
     if (entity.type === "Projectile" && !entity.hasExploded) {
       // Non-initial bomb packets use endPoint/endNormal for detonation,
@@ -3149,6 +3278,19 @@ export abstract class StreamEngine implements StreamingPlayback {
         const normal = (
           explodePos === bombEnd ? data.endNormal : data.explodeNormal
         ) as Vec3 | undefined;
+        if (
+          hiddenLinearGhost &&
+          entity.splashDataBlockId != null &&
+          isValidPosition(normal)
+        )
+          entity.hiddenSplashLaunch = {
+            start: [
+              explodePos.x + normal.x,
+              explodePos.y + normal.y,
+              explodePos.z + normal.z,
+            ],
+            impactNormal: [normal.x, normal.y, normal.z],
+          };
         this.spawnExplosion(
           entity,
           [explodePos.x, explodePos.y, explodePos.z],
@@ -3439,6 +3581,68 @@ export abstract class StreamEngine implements StreamingPlayback {
     };
   }
 
+  private readProjectileWaterData(
+    entity: MutableEntity,
+    block: ParsedData | undefined,
+  ): void {
+    if (!block) return;
+    const splash = getNumberField(block, ["splash"]);
+    if (splash && splash > 0) entity.splashDataBlockId = splash;
+    if (entity.projectilePhysics !== "ballistic") return;
+    const bubbles = getNumberField(block, ["bubbleEmitter"]);
+    if (bubbles && bubbles > 0) entity.bubbleEmitterId = bubbles;
+    entity.projDrag = getNumberField(block, ["drag"]) ?? 0;
+    const light = block.underwaterLightColor as
+      { r: number; g: number; b: number } | undefined;
+    if (light) entity.underwaterLightColor = [light.r, light.g, light.b, 1];
+  }
+
+  private spawnSplash(
+    source: MutableEntity,
+    position: Point3,
+    dataBlockId = source.splashDataBlockId,
+  ): void {
+    if (source.splashPlayed || dataBlockId == null) return;
+    const block = this.getDataBlockData(dataBlockId);
+    if (!block) return;
+    source.splashPlayed = true;
+    // Splash::advanceTime emits immediately. Splash::processTick rounds
+    // the sampled lifetime to the next tick before stopping new rings.
+    const random = timelineRandom(dataBlockId, this.tickCount, ...position);
+    const variance = Math.max(
+      0,
+      getNumberField(block, ["lifetimeVariance"]) ?? 0,
+    );
+    const lifetime =
+      (getNumberField(block, ["lifetimeMS"]) ?? 1000) +
+      Math.floor(random() * (2 * variance + 1)) -
+      variance;
+    const lifetimeTicks = Math.max(1, Math.ceil(lifetime / TICK_DURATION_MS));
+    const ringLifetime = Math.max(
+      0,
+      getNumberField(block, ["ringLifetime"]) ?? 1,
+    );
+    const id = allocateEntityId();
+    this.entities.set(id, {
+      id,
+      type: "Splash",
+      className: "Splash",
+      ghostIndex: -1,
+      dataBlockId,
+      position: [...position],
+      rotation: [0, 0, 0, 1],
+      spawnTick: this.tickCount,
+      splashEmitterLifetimeMS: lifetimeTicks * TICK_DURATION_MS,
+      expiryTick:
+        this.tickCount +
+        lifetimeTicks +
+        Math.ceil((ringLifetime * 1000) / TICK_DURATION_MS),
+    });
+    const explosion = getNumberField(block, ["explosion"]);
+    if (explosion && explosion > 0)
+      this.addExplosion(explosion, position, this.tickCount);
+  }
+
   protected spawnExplosion(
     projectile: MutableEntity,
     position: [number, number, number],
@@ -3451,21 +3655,18 @@ export abstract class StreamEngine implements StreamingPlayback {
     // LinearProjectile::onAdd (Tribes2.exe 0x62d630).
     if (
       !hiddenLinearGhost &&
-      projectile.projectilePhysics === "linear" &&
+      (projectile.projectilePhysics === "linear" ||
+        projectile.projectilePhysics === "ballistic") &&
       projectile.dataBlockId != null
     ) {
       const block = this.getDataBlockData(projectile.dataBlockId);
       const underwater = getNumberField(block, ["underwaterExplosion"]);
       if (underwater != null && underwater > 0) {
-        // LinearProjectile::explode (Tribes2.exe 0x62dc30) only uses the
-        // underwater explosion below depthTolerance, measured in still water.
-        const water = stillWaterAt(...position);
+        // LinearProjectile and GrenadeProjectile compare against the same
+        // depthTolerance measured from the still surface.
+        const water = projectileWaterAt(...position);
         const depthTolerance = getNumberField(block, ["depthTolerance"]) ?? 5;
-        if (
-          water &&
-          liquidLabel(water.liquidType) !== "lava" &&
-          water.surfaceZ - position[2] >= depthTolerance
-        ) {
+        if (water && water.surfaceZ - position[2] >= depthTolerance) {
           explosionId = underwater;
         }
       }
@@ -3622,7 +3823,6 @@ export abstract class StreamEngine implements StreamingPlayback {
       explosionDataBlockId: p.explosionDataBlockId,
       position: p.position,
       rotation: [0, 0, 0, 1],
-      isExplosion: true,
       faceViewer: p.faceViewer,
       // Deleted on the processTick where the lifetime clock (running since
       // onAdd) passes mEndingMS — at the earliest the tick after exploding.
@@ -3680,12 +3880,274 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   // ── Per-tick physics simulation ──
 
+  private seekerData(entity: MutableEntity): SeekerProjectileDataBlock {
+    return ((entity.dataBlockId == null
+      ? undefined
+      : this.getDataBlockData(entity.dataBlockId)) ??
+      {}) as SeekerProjectileDataBlock;
+  }
+
+  private readSeekerUpdate(
+    entity: MutableEntity,
+    data: SeekerProjectileGhostData,
+  ): void {
+    if (!isValidPosition(data.position) || !isValidPosition(data.velocity))
+      return;
+    const position: Point3 = [
+      data.position.x,
+      data.position.y,
+      data.position.z,
+    ];
+    const velocity: Point3 = [
+      data.velocity.x,
+      data.velocity.y,
+      data.velocity.z,
+    ];
+    let flight = entity.seekerFlight;
+    if (flight) {
+      flight.correction = { position, velocity };
+    } else {
+      const block = this.seekerData(entity);
+      const tuning = seekerTuning(block);
+      const hydrated = this.projectileGhostBatch?.hydrating === true;
+      const onAdd = entity.simulatedVelocity === undefined && !hydrated;
+      const earlyScope = onAdd && data.timeoutReset === true;
+      // The parser's legacy name "orientation" is the shooter velocity
+      // inherited at launch (retail's mPlayerVel).
+      const orientation = data.orientation;
+      const inherited: Point3 = isValidPosition(orientation)
+        ? [orientation.x, orientation.y, orientation.z]
+        : [0, 0, 0];
+      flight = entity.seekerFlight = {
+        inherited,
+        launchDirection: [
+          velocity[0] - inherited[0],
+          velocity[1] - inherited[1],
+          velocity[2] - inherited[2],
+        ],
+        earlyScope,
+        initialMuzzle: onAdd && data.timeoutReset !== undefined,
+        correction: { position, velocity, scopeIn: onAdd ? true : undefined },
+      };
+      if (flight.initialMuzzle) this.pendingProjectileLaunches.push(entity);
+      const age = entity.projAgeTicks;
+      // An older checkpoint may retain its local age without seeker state.
+      // Only assume ignition when the age is unknown or the wire says so.
+      const mature =
+        hydrated || data.timeoutReset === false || (!onAdd && age == null);
+      entity.projAgeTicks = mature
+        ? Math.max(age ?? 0, tuning.ignitionTick)
+        : (age ?? 0);
+      entity.seekerCasing = tuning.flechette && earlyScope;
+      entity.simulatedVelocity ??= velocity;
+      const scopeSec =
+        this.getTimeSec() - entity.projAgeTicks * STREAM_TICK_SEC;
+      const exhaustTicks = Math.floor(
+        (block.exhaustTimeMs ?? 0) / TICK_DURATION_MS,
+      );
+      const trailStartsAtSec =
+        scopeSec +
+        (tuning.flechette ? tuning.ignitionTick : 0) * STREAM_TICK_SEC;
+      const delayStartsAtTick = Math.max(
+        tuning.flechette ? tuning.ignitionTick : 0,
+        Math.trunc((block.emitterDelay ?? 0) / TICK_DURATION_MS) + 1,
+      );
+      entity.seekerLaunch = {
+        sourceVelocity: flight.inherited,
+        exhaustEmitterId: block.exhaustEmitter ?? undefined,
+        exhaustNodeName: block.exhaustNodeName,
+        // The client increments age before emitting a full tick of exhaust
+        // at ages 1 through exhaustTicks - 1.
+        exhaustUntilSec:
+          earlyScope && exhaustTicks > 1
+            ? this.getTimeSec() + (exhaustTicks - 1) * STREAM_TICK_SEC
+            : undefined,
+        trailStartsAtSec,
+        delayEmitterId: block.delayEmitter ?? undefined,
+        delayEmitterStartsAtSec: scopeSec + delayStartsAtTick * STREAM_TICK_SEC,
+      };
+      this.updateProjectileVelocity(
+        entity,
+        entity.simulatedVelocity,
+        entity.seekerCasing ? flight.launchDirection : undefined,
+      );
+    }
+
+    const point = data.targetDirection;
+    if (data.targetMode === 1 && isValidPosition(point)) {
+      flight.target = { position: [point.x, point.y, point.z] };
+    } else if (data.targetMode === 0 && data.targetGhost != null) {
+      const targetGhost = data.targetGhost;
+      const source = this.projectileSource(targetGhost);
+      const target = (flight.target = {
+        id: source?.id,
+        position: source?.position && ([...source.position] as Point3),
+      });
+      if (!source)
+        this.completeProjectileEvent(() => {
+          // Resolve an endpoint declared later in the same packet, but
+          // never follow a subsequent occupant of the wire ghost slot.
+          const resolved = this.projectileSource(targetGhost);
+          target.id = resolved?.id;
+          target.position = resolved?.position && [...resolved.position];
+        });
+    } else {
+      flight.target = undefined;
+    }
+  }
+
+  private seekerTarget(
+    flight: NonNullable<MutableEntity["seekerFlight"]>,
+    poses: ProjectileShapePoses | undefined,
+  ): SeekerTarget | undefined {
+    const target = flight.target;
+    if (!target) return;
+    const entity = target.id ? this.entities.get(target.id) : undefined;
+    if (!entity) {
+      target.id = undefined;
+      return target.position ? { position: target.position } : undefined;
+    }
+    const block =
+      entity.dataBlockId == null
+        ? undefined
+        : this.getDataBlockData(entity.dataBlockId);
+    const box = block?.boxSize as Vec3 | undefined;
+    const height =
+      entity.type === "Player" && isValidPosition(box) ? box.z : undefined;
+    target.position = poses?.getCenter(entity, height) ?? target.position;
+    if (target.position)
+      return {
+        position: target.position,
+        heat: getNumberField(block, ["heat"]) ?? 1,
+      };
+  }
+
+  private splitSeekerCasing(
+    entity: MutableEntity,
+    position: Point3,
+    next: Point3,
+    block: SeekerProjectileDataBlock,
+    direction: Point3,
+  ): void {
+    entity.seekerCasing = false;
+    const time = this.getTimeSec();
+    const puffEmitterId = block.puffEmitter ?? undefined;
+    entity.seekerLaunch = {
+      ...entity.seekerLaunch,
+      casingSplitAtSec: time,
+      puffEmitterId,
+      puffPosition: puffEmitterId != null ? position : undefined,
+    };
+    const casing = block.casingDebris;
+    if (casing == null || !this.getDataBlockData(casing)) return;
+    const random = timelineRandom(casing, this.tickCount, ...next);
+    const expires =
+      time + debrisRetention(casing, (id) => this.getDataBlockData(id));
+    for (const fragment of seekerCasingFragments(direction, random)) {
+      this.debrisHistory.add({
+        ...fragment,
+        kind: "shell",
+        time,
+        expires,
+        dataBlockId: casing,
+        position: next,
+        normal: [0, 0, 1],
+        gravity: this.gravity,
+      });
+    }
+  }
+
+  private advanceSeeker(
+    entity: MutableEntity,
+    flight: NonNullable<MutableEntity["seekerFlight"]>,
+    position: Point3,
+    velocity: Point3,
+    dt: number,
+    age: number,
+    poses: ProjectileShapePoses | undefined,
+  ): void {
+    const block = this.seekerData(entity);
+    const tuning = seekerTuning(block);
+    const target = this.seekerTarget(flight, poses);
+    const pending = flight.correction;
+    if (pending) {
+      // An initial packet with no available muzzle already seeds the
+      // flight at its authoritative position. Later packets always warp.
+      if (!pending.scopeIn) {
+        const correction = createSeekerWarp(
+          position,
+          pending.position,
+          pending.velocity,
+          target,
+          tuning,
+        );
+        flight.warp = correction.warp;
+        if (correction.passedTarget) flight.target = undefined;
+      }
+      flight.correction = undefined;
+    }
+
+    let next: Point3;
+    if (flight.warp) {
+      const sample = advanceSeekerWarp(flight.warp);
+      next = sample.position;
+      velocity = sample.velocity;
+      if (!flight.warp.ticksLeft) flight.warp = undefined;
+    } else {
+      velocity = accelerateSeeker(velocity, flight.inherited, tuning, age);
+      if (target && flight.target) {
+        const guidance = steerSeeker(position, velocity, target, tuning);
+        velocity = guidance.velocity;
+        if (guidance.passedTarget) flight.target = undefined;
+      }
+      next = [
+        position[0] + velocity[0] * dt,
+        position[1] + velocity[1] * dt,
+        position[2] + velocity[2] * dt,
+      ];
+    }
+
+    if (entity.seekerCasing && age >= tuning.casingSplitTick)
+      this.splitSeekerCasing(
+        entity,
+        position,
+        next,
+        block,
+        flight.launchDirection,
+      );
+    const hit = castWorldRay(position, next, {
+      includeStatics: true,
+      excludeStaticColliders: entity.seekerLaunch?.sourceId,
+    });
+    const water = tuning.explodeOnWaterImpact
+      ? castWaterRay(position, next)
+      : null;
+    const impact = water && (!hit || water.t < hit.t) ? water : hit;
+    if (impact) {
+      if (flight.earlyScope && age >= tuning.casingSplitTick) {
+        this.spawnExplosion(entity, impact.point, impact.normal);
+      } else {
+        entity.hasExploded = true;
+        this.endProjectileFlight(entity, impact.point);
+      }
+      return;
+    }
+    entity.position = next;
+    entity.simulatedVelocity = velocity;
+    this.updateProjectileVelocity(
+      entity,
+      velocity,
+      entity.seekerCasing ? flight.launchDirection : undefined,
+    );
+  }
+
   private updateProjectileVelocity(
     entity: MutableEntity,
-    velocity: [number, number, number],
+    velocity: Point3,
+    direction = velocity,
   ) {
     if (!worldAlignedProjectileClassNames.has(entity.className)) {
-      entity.rotation = orientationAlongDirection(velocity) ?? entity.rotation;
+      entity.rotation = orientationAlongDirection(direction) ?? entity.rotation;
     }
     entity.velocity = [...velocity];
     // TracerProjectile draws its ribbon along mInitialDirection (0x6406c0).
@@ -3779,6 +4241,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     slot: number,
     poses: ProjectileShapePoses,
     launch?: ProjectileMuzzleFrame,
+    directionOut?: Point3,
   ): Point3 | undefined {
     const block =
       source.dataBlockId == null
@@ -3795,13 +4258,38 @@ export abstract class StreamEngine implements StreamingPlayback {
         ? this.getShapeConstructorSequences(shapeName)
         : undefined,
       launch,
+      directionOut,
     );
   }
 
   private sampleProjectileLaunches(): void {
     let poses: ProjectileShapePoses | undefined;
-    for (const flight of this.pendingLinearLaunches) {
+    for (const flight of this.pendingProjectileLaunches) {
       if (!flight.position || this.entities.get(flight.id) !== flight) continue;
+      const seeker = flight.seekerFlight;
+      if (seeker?.initialMuzzle) {
+        const sourceId = flight.seekerLaunch?.sourceId;
+        const source = sourceId ? this.entities.get(sourceId) : undefined;
+        if (source && flight.sourceSlot != null && flight.sourceSlot >= 0) {
+          poses ??= new ProjectileShapePoses((index, id) =>
+            this.projectileSource(index, id),
+          );
+          const muzzle = this.resolveProjectileMuzzle(
+            source,
+            flight.sourceSlot,
+            poses,
+            seeker.muzzleFrame,
+            seeker.launchDirection,
+          );
+          if (muzzle) {
+            flight.position = muzzle;
+            if (seeker.correction) seeker.correction.scopeIn = undefined;
+          }
+        }
+        seeker.initialMuzzle = undefined;
+        seeker.muzzleFrame = undefined;
+        continue;
+      }
       this.initializeLinearFlight(flight);
       const firingMuzzle = flight.linearMuzzle;
       flight.linearMuzzle = undefined;
@@ -3820,7 +4308,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       );
       if (muzzle) flight.linearLaunchWarp.start = muzzle;
     }
-    this.pendingLinearLaunches.length = 0;
+    this.pendingProjectileLaunches.length = 0;
   }
 
   private initializeLinearFlight(flight: MutableEntity): void {
@@ -3830,10 +4318,14 @@ export abstract class StreamEngine implements StreamingPlayback {
     // Resolve the whole flight against the prepared world. Before this tick
     // a newly scoped terrain, interior or water plane may still be loading.
     const wetStart = isPointSubmergedSimple(...launch.start);
+    const velocity = wetStart ? (launch.wetVel ?? launch.vel) : launch.vel;
+    if (flight.splashDataBlockId != null)
+      flight.linearSplash =
+        predictLinearSplash(launch.start, velocity, launch.lifetimeMS) ?? null;
     const segment = (flight.linearSegment = buildLinearSegment({
       ...launch,
       wetStart,
-      vel: wetStart ? (launch.wetVel ?? launch.vel) : launch.vel,
+      vel: velocity,
     }));
     const age = flight.projAgeTicks ?? 0;
     flight.simulatedVelocity = sampleLinearSegment(
@@ -3856,6 +4348,104 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
   }
 
+  private prepareProjectileSplash(entity: MutableEntity): void {
+    const quickSplash = entity.quickSplash;
+    if (quickSplash) {
+      entity.quickSplash = undefined;
+      const position = grenadeQuickSplash(
+        quickSplash.position,
+        quickSplash.velocity,
+      );
+      if (position) this.spawnSplash(entity, position);
+    }
+    const hidden = entity.hiddenSplashLaunch;
+    const segment = entity.linearSegment;
+    if (
+      entity.splashDataBlockId == null ||
+      entity.linearSplash !== undefined ||
+      (!hidden && (!segment || entity.hasExploded))
+    )
+      return;
+    const block =
+      entity.dataBlockId == null
+        ? undefined
+        : this.getDataBlockData(entity.dataBlockId);
+    const lifetimeMS = getNumberField(block, ["lifetimeMS"]) ?? 1000;
+    if (hidden) {
+      entity.hiddenSplashLaunch = undefined;
+      const wet = isPointSubmergedSimple(...hidden.start);
+      const speed =
+        getNumberField(block, [wet ? "wetVelocity" : "dryVelocity"]) ?? 80;
+      entity.linearSplash =
+        predictLinearSplash(
+          hidden.start,
+          [
+            -hidden.impactNormal[0] * speed,
+            -hidden.impactNormal[1] * speed,
+            -hidden.impactNormal[2] * speed,
+          ],
+          lifetimeMS,
+        ) ?? null;
+    } else if (segment) {
+      // Backfilled sidecars from before splash support can reconstruct
+      // crossings still ahead of a saved linear shot.
+      const trace = predictLinearSplash(segment.start, segment.vel, lifetimeMS);
+      entity.linearSplash =
+        trace && trace.ageTick >= (entity.projAgeTicks ?? 0) ? trace : null;
+    }
+  }
+
+  private playReadyLinearSplash(entity: MutableEntity): void {
+    const splash = entity.linearSplash;
+    if (splash && (entity.projAgeTicks ?? 0) >= splash.ageTick) {
+      this.spawnSplash(entity, splash.position);
+      entity.linearSplash = null;
+    }
+  }
+
+  private recordProjectileTrailTick(
+    entity: MutableEntity,
+    from: Point3,
+    to: Point3,
+    velocity: Point3,
+  ): void {
+    const block =
+      entity.dataBlockId == null
+        ? undefined
+        : this.getDataBlockData(entity.dataBlockId);
+    const base = entity.maintainEmitterId;
+    const delayedEmitter = block?.delayEmitter;
+    const delayed =
+      typeof delayedEmitter === "number" &&
+      delayedEmitter > 0 &&
+      (entity.projAgeTicks ?? 0) >
+        Math.trunc(
+          (getNumberField(block, ["emitterDelay"]) ?? -1) / TICK_DURATION_MS,
+        )
+        ? delayedEmitter
+        : undefined;
+    if (!base && !delayed) return;
+    const interval = {
+      projectileId: entity.id,
+      tick: this.tickCount,
+      from: [...from] as Point3,
+      to: [...to] as Point3,
+      velocity: [...velocity] as Point3,
+    };
+    if (base)
+      this.projectileTrailHistory.add({
+        ...interval,
+        emitterId: base,
+        slot: "base",
+      });
+    if (delayed)
+      this.projectileTrailHistory.add({
+        ...interval,
+        emitterId: delayed,
+        slot: "delayed",
+      });
+  }
+
   /**
    * Advance projectile positions by one tick, mirroring the original
    * client's prediction: linear projectiles follow their precomputed
@@ -3866,11 +4456,16 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected advanceProjectiles(): void {
     const dt = TICK_DURATION_MS / 1000;
     let dynamicCollision: ProjectileDynamicCollision | undefined;
+    let poses: ProjectileShapePoses | undefined;
     for (const entity of this.entities.values()) {
-      if (!entity.simulatedVelocity || !entity.position) continue;
+      if (entity.type !== "Projectile") continue;
+      this.prepareProjectileSplash(entity);
       const v = entity.simulatedVelocity;
       const p = entity.position;
+      if ((!v || !p) && !entity.linearSplash) continue;
       entity.projAgeTicks = (entity.projAgeTicks ?? 0) + 1;
+      this.playReadyLinearSplash(entity);
+      if (!v || !p) continue;
 
       if (entity.linearSegment) {
         const seg = entity.linearSegment;
@@ -3894,6 +4489,13 @@ export abstract class StreamEngine implements StreamingPlayback {
           );
           if (warp && scopeTick >= LINEAR_LAUNCH_WARP_TICKS)
             entity.linearLaunchWarp = undefined;
+          // LinearProjectile emits its tick segment before the dynamic ray.
+          this.recordProjectileTrailTick(
+            entity,
+            linearTickStart,
+            linearTickEnd,
+            velocity,
+          );
           // Retail tests the tick's actual path, including the initial warp.
           const ignoreSource = scopeTick <= LINEAR_SOURCE_GRACE_TICKS;
           // Old checkpoints and merged catch-up state have no trustworthy
@@ -3902,13 +4504,14 @@ export abstract class StreamEngine implements StreamingPlayback {
             (!ignoreSource || exclusions) &&
             this.usesDynamicProjectileHits(entity)
           ) {
-            dynamicCollision ??= new ProjectileDynamicCollision(
-              this.projectileCollisionTargets(
-                new ProjectileShapePoses((index, id) =>
-                  this.projectileSource(index, id),
-                ),
-              ),
-            );
+            if (!dynamicCollision) {
+              poses ??= new ProjectileShapePoses((index, id) =>
+                this.projectileSource(index, id),
+              );
+              dynamicCollision = new ProjectileDynamicCollision(
+                this.projectileCollisionTargets(poses),
+              );
+            }
             const hit = dynamicCollision.cast(
               linearTickStart,
               linearTickEnd,
@@ -3931,24 +4534,56 @@ export abstract class StreamEngine implements StreamingPlayback {
         }
         continue;
       }
+      if (entity.seekerFlight) {
+        if (entity.seekerFlight.target?.id)
+          poses ??= new ProjectileShapePoses((index, id) =>
+            this.projectileSource(index, id),
+          );
+        this.advanceSeeker(
+          entity,
+          entity.seekerFlight,
+          p,
+          v,
+          dt,
+          entity.projAgeTicks,
+          poses,
+        );
+        continue;
+      }
       if (
         entity.projectilePhysics === "ballistic" ||
         entity.projectilePhysics === "seeker"
       ) {
+        const ballistic = entity.projectilePhysics === "ballistic";
+        if (ballistic)
+          entity.projectileInWater = projectileWaterAt(...p) !== null;
+        // EnergyProjectile draws a motion blur in its own processTick and
+        // does not call Projectile::emitParticles for the flight path.
+        const emitsTrail =
+          ballistic &&
+          !entity.projectileInWater &&
+          entity.className !== "EnergyProjectile";
+        if (emitsTrail)
+          [
+            ballisticTickStart[0],
+            ballisticTickStart[1],
+            ballisticTickStart[2],
+          ] = p;
         const result = stepBallistic(p, v, {
           // Seekers coast on their transmitted velocity, no gravity.
-          gravity:
-            entity.projectilePhysics === "ballistic"
-              ? this.gravity * (entity.gravityMod ?? 1)
-              : 0,
+          gravity: ballistic ? this.gravity * (entity.gravityMod ?? 1) : 0,
           elasticity: entity.projElasticity ?? 0.999,
           friction: entity.projFriction ?? 0.3,
           armed:
             entity.projArmedTick != null
               ? entity.projAgeTicks > entity.projArmedTick
               : true,
-          bounces: entity.projectilePhysics === "ballistic",
+          submergedDrag: entity.projectileInWater ? entity.projDrag : undefined,
+          detectSplash:
+            ballistic && !!entity.splashDataBlockId && !entity.splashPlayed,
+          bounces: ballistic,
         });
+        if (result.splash) this.spawnSplash(entity, result.splash);
         if (result.explodeAt && !entity.hasExploded) {
           if (entity.explosionDataBlockId != null) {
             this.spawnExplosion(
@@ -3961,6 +4596,8 @@ export abstract class StreamEngine implements StreamingPlayback {
           }
           continue;
         }
+        if (emitsTrail)
+          this.recordProjectileTrailTick(entity, ballisticTickStart, p, v);
       } else {
         p[0] += v[0] * dt;
         p[1] += v[1] * dt;
@@ -4260,13 +4897,9 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
   }
 
-  protected removeExpiredExplosions(): void {
+  private removeExpiredEffects(): void {
     for (const [id, entity] of this.entities) {
-      if (
-        entity.isExplosion &&
-        entity.expiryTick != null &&
-        this.tickCount >= entity.expiryTick
-      ) {
+      if (entity.expiryTick != null && this.tickCount >= entity.expiryTick) {
         this.entities.delete(id);
       }
     }
@@ -4499,7 +5132,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     else if (nested?.type === "Vehicle") this.syncControlVehicle(nested);
 
     this.explodePendingExplosions();
-    this.removeExpiredExplosions();
+    this.removeExpiredEffects();
 
     const cameraPose = this.updateCameraPose(controlledTurret);
     const control = this.latestControl;
@@ -4939,6 +5572,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         imageSlots: entity.imageSlots,
         lightType: entity.lightType,
         lightColor: entity.lightColor,
+        underwaterLightColor: entity.underwaterLightColor,
         lightTime: entity.lightTime,
         lightRadius: entity.lightRadius,
         lightDelayMS: entity.lightDelayMS,
@@ -5002,6 +5636,15 @@ export abstract class StreamEngine implements StreamingPlayback {
           entity.spawnTick * (TICK_DURATION_MS / 1000),
         hasExploded: entity.hasExploded,
         maintainEmitterId: entity.maintainEmitterId,
+        projectileTrailMode:
+          entity.projectilePhysics === "seeker"
+            ? "seeker"
+            : entity.projectilePhysics
+              ? "tick"
+              : undefined,
+        projectileInWater: entity.projectileInWater,
+        bubbleEmitterId: entity.bubbleEmitterId,
+        splashEmitterLifetimeMS: entity.splashEmitterLifetimeMS,
         headPitch: entity.headPitch,
         headYaw: entity.headYaw,
         viewQuantized: entity.viewQuantized,
@@ -5024,6 +5667,8 @@ export abstract class StreamEngine implements StreamingPlayback {
             ? entity.projAgeTicks * TICK_DURATION_MS
             : undefined,
         projectileActivateDelayMS: entity.projActivateDelayMS,
+        seekerCasing: entity.seekerCasing,
+        seekerLaunch: entity.seekerLaunch,
         maxSteeringAngle: entity.maxSteeringAngle,
         soundSlots: entity.soundSlots,
         sceneData: entity.sceneData,

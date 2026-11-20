@@ -3,8 +3,14 @@ import { buildDTS } from "../dts/dtsBuilder";
 import { createDTSSequence, createDTSTestShape } from "../dts/dtsTestFixtures";
 import { DTSSequenceFlags } from "../dts/dtsTypes";
 import type { DTSShape } from "../dts/dtsModel";
+import { effectLights } from "../engine/effectLights";
 import type { ShapeEntity } from "../state/gameEntityTypes";
 import { streamClock } from "../state/streamPlaybackStore";
+import {
+  streamEntityToGameEntity,
+  updateGameEntityFromStream,
+} from "../stream/entityBridge";
+import type { StreamEntity } from "../stream/types";
 import { createShapeProjectileView } from "./shape";
 
 vi.mock("../textureUtils", async (importOriginal) => {
@@ -21,6 +27,74 @@ afterEach(() => {
   streamClock.time = 0;
   streamClock.matchEndedAtSec = null;
 });
+
+it("switches an existing missile view from its casing to its exposed projectile", () => {
+  const projectile = buildDTS(createDTSTestShape());
+  const casing = buildDTS(createDTSTestShape());
+  const entity: ShapeEntity = {
+    id: "missile",
+    className: "SeekerProjectile",
+    renderType: "Shape",
+    seekerCasing: true,
+  };
+  const view = createShapeProjectileView(
+    projectile,
+    entity,
+    1,
+    false,
+    () => true,
+    {
+      model: casing,
+      shapeName: "weapon_missile_casement.dts",
+    },
+  );
+  const [exposed, enclosed] = view.root.children[0].children;
+  view.reset(entity);
+  expect([exposed.visible, enclosed.visible]).toEqual([false, true]);
+  entity.seekerCasing = false;
+  entity.seekerCasingSplitAtSec = 0.25;
+  streamClock.time = 0.24;
+  view.animate!(entity, 0.032);
+  expect([exposed.visible, enclosed.visible]).toEqual([false, true]);
+  streamClock.time = 0.25;
+  view.animate!(entity, 0.032);
+  expect([exposed.visible, enclosed.visible]).toEqual([true, false]);
+  view.release();
+  entity.seekerCasing = true;
+  view.reset(entity);
+  expect([exposed.visible, enclosed.visible]).toEqual([false, true]);
+  view.dispose();
+});
+
+it("waits for the render clock to reach missile ignition before lighting the projectile", () => {
+  const model = buildDTS(createDTSTestShape());
+  const entity: ShapeEntity = {
+    id: "missile",
+    className: "SeekerProjectile",
+    renderType: "Shape",
+    lightType: 1,
+    lightDelayMS: 544,
+    projectileAgeMS: 544,
+    keyframes: [{ time: 1.544, position: [0, 0, 0], rotation: [0, 0, 0, 1] }],
+  };
+  const view = createShapeProjectileView(model, entity, 1, false, () => true);
+  const anchor = view.root.children[0].children[0];
+  try {
+    view.reset(entity);
+    const light = Array.from(effectLights()).find(
+      (light) => light.anchor === anchor,
+    );
+    streamClock.time = 1.528;
+    view.animate!(entity, 0.016);
+    expect(light?.intensity).toBe(0);
+    streamClock.time = 1.544;
+    view.animate!(entity, 0.016);
+    expect(light?.intensity).toBe(1);
+  } finally {
+    view.dispose();
+  }
+});
+
 it("seats pooled projectiles at their recorded activate/maintain time, including late loads and backwards seeks", () => {
   const data = createDTSTestShape();
   const activate = data.names.push("activate") - 1;
@@ -148,4 +222,42 @@ it("holds ambient while paused and resets recycled poses without disposing share
   );
   view.dispose();
   expect(disposed).not.toHaveBeenCalled();
+});
+
+it("switches the mortar's light at the surface without replacing its view", () => {
+  const mortar: StreamEntity = {
+    id: "mortar",
+    type: "Projectile",
+    className: "GrenadeProjectile",
+    dataBlock: "mortar_projectile.dts",
+    lightType: 1,
+    lightColor: [0.05, 0.2, 0.05, 1],
+    underwaterLightColor: [0.05, 0.075, 0.2, 1],
+    projectileInWater: true,
+  };
+  const entity = streamEntityToGameEntity(mortar, 0) as ShapeEntity;
+  const model = buildDTS(createDTSTestShape());
+  const view = createShapeProjectileView(model, entity, 1, false, () => true);
+  const anchor = view.root.children[0].children[0];
+  const registeredLight = () =>
+    Array.from(effectLights()).find((light) => light.anchor === anchor);
+
+  try {
+    view.reset(entity);
+    view.animate!(entity, 0);
+    const light = registeredLight();
+    expect(light?.color.toArray()).toEqual([0.05, 0.075, 0.2]);
+
+    expect(
+      updateGameEntityFromStream(entity, {
+        ...mortar,
+        projectileInWater: false,
+      }),
+    ).toBe(false);
+    view.animate!(entity, 0);
+    expect(registeredLight()).toBe(light);
+    expect(light?.color.toArray()).toEqual([0.05, 0.2, 0.05]);
+  } finally {
+    view.dispose();
+  }
 });

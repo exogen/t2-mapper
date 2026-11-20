@@ -8,12 +8,10 @@ import {
   type ParticleBuffers,
 } from "../particles/particleRenderer";
 import {
-  AdditiveBlending,
   BoxGeometry,
   BufferAttribute,
   BufferGeometry,
   CanvasTexture,
-  DoubleSide,
   DynamicDrawUsage,
   Group,
   Object3D,
@@ -30,7 +28,19 @@ import {
   SRGBColorSpace,
 } from "three";
 import { audioToUrl } from "../loaders";
-import { orientationAlongDirection } from "../stream/streamHelpers";
+import {
+  orientationAlongDirection,
+  streamTimeToTick,
+  TICK_DURATION_MS,
+} from "../stream/streamHelpers";
+import { timelineRandom } from "../stream/timelineRandom";
+import {
+  interpolateStreamPosition,
+  streamRenderFrame,
+} from "../stream/interpolateEntity";
+import { createEffectRingMaterial } from "../projectiles/geometry";
+import { createSplashRings, type SplashRings } from "../projectiles/splash";
+import type { SplashDataBlock } from "t2-demo-parser";
 import { takeShockwaveRequests } from "./shockwaveRequests";
 import {
   nodeEmitters,
@@ -45,6 +55,7 @@ import type { EmitterDataResolved } from "../particles/types";
 import type { FrameContext } from "./frameScheduler";
 import type {
   PendingAudioEvent,
+  StreamEntity,
   StreamSnapshot,
   StreamingPlayback,
 } from "../stream/types";
@@ -61,7 +72,7 @@ import {
   stopAndDetachSound,
 } from "./soundEffects";
 import { getEffectiveSoundRate } from "./audioPlaybackRate";
-import { effectDeltaSec, effectNow, engineStore } from "../state/engineStore";
+import { effectNow, engineStore } from "../state/engineStore";
 import { streamClock } from "../state/streamPlaybackStore";
 import { ParticleSnapshotIndex } from "./particleSnapshot";
 import { findAudioProfileId, ScriptSoundTracker } from "../stream/scriptSounds";
@@ -69,6 +80,8 @@ import { reaction, combineCleanups } from "./storeReaction";
 import { FramePriority } from "./framePriority";
 import type { GameEngine } from "./gameEngine";
 import { torqueVecToThree } from "../scene/coordinates";
+import { posedNodeWorldMatrix } from "./deferredPose";
+import { mountedImageNode } from "./weaponMuzzle";
 
 const log = createLogger("ParticleEffects");
 
@@ -239,7 +252,7 @@ function createShockwave(
   if (!swData) return null;
   const texture = getParticleTexture(swData.textureName);
   const geo = createShockwaveGeometry(swData.numSegments, swData.texWrap);
-  const mat = createShockwaveMaterial(texture);
+  const mat = createEffectRingMaterial(texture);
   const mesh = new Mesh(geo, mat);
   mesh.frustumCulled = false;
   torqueVecToThree(origin, mesh.position);
@@ -311,29 +324,6 @@ function interpolateShockwaveColor(
     c0.a + (c1.a - c0.a) * frac,
   ];
 }
-
-// Shockwave ring shader — additive blending, vertex colors with alpha.
-const shockwaveVertexShader = /* glsl */ `
-  attribute vec4 vertexColor;
-  attribute vec2 texCoord;
-  varying vec4 vColor;
-  varying vec2 vUV;
-  void main() {
-    vColor = vertexColor;
-    vUV = texCoord;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`;
-
-const shockwaveFragmentShader = /* glsl */ `
-  uniform sampler2D uTexture;
-  varying vec4 vColor;
-  varying vec2 vUV;
-  void main() {
-    vec4 tex = texture2D(uTexture, vUV);
-    gl_FragColor = vec4(vColor.rgb * tex.rgb, vColor.a * tex.a);
-  }
-`;
 
 /**
  * Create ring geometry buffers for a shockwave with the given segment count.
@@ -456,19 +446,6 @@ function updateShockwaveGeometry(
   geo.computeBoundingSphere();
 }
 
-/** Create the ShaderMaterial for a shockwave ring. */
-function createShockwaveMaterial(texture: Texture): ShaderMaterial {
-  return new ShaderMaterial({
-    vertexShader: shockwaveVertexShader,
-    fragmentShader: shockwaveFragmentShader,
-    uniforms: { uTexture: { value: texture } },
-    transparent: true,
-    depthWrite: false,
-    blending: AdditiveBlending,
-    side: DoubleSide,
-  });
-}
-
 /** Map explosion dataBlock shape name to a debug wireframe color. */
 function getExplosionColor(dataBlock: string | undefined): number {
   if (!dataBlock) return 0xff00ff;
@@ -523,7 +500,7 @@ interface ActiveEmitter extends ParticleBuffers {
   targetTexture: Texture;
   /** Current emission point (Torque space). */
   origin: [number, number, number];
-  /** Emission point last frame; trails spawn along prevOrigin→origin. */
+  /** Emission point or rendered projectile position from the prior frame. */
   prevOrigin?: [number, number, number];
   /** Driver velocity (Torque space) for inheritedVelFactor. */
   emitVelocity?: [number, number, number];
@@ -533,8 +510,19 @@ interface ActiveEmitter extends ParticleBuffers {
   /** Entity whose lifetime bounds emission: a trail's projectile or a
    *  streaming emitter's explosion. Emission stops once it leaves the scene. */
   driverEntityId?: string;
-  /** Trails: origin and axis track the driver each frame. */
-  followsDriver?: boolean;
+  trail?: "air" | "water" | "delayed" | "tick";
+  /** Splash emitters age from the recorded impact time, including after a seek. */
+  splash?: { timeSec: number; elapsedMS: number };
+  /** A missile's casing puff outlives its ghost and ages from the split. */
+  seekerPuff?: { timeSec: number; elapsedMS: number };
+  /** Backblast is attached to the source's launcher, never to the projectile. */
+  launcherExhaust?: {
+    sourceId: string;
+    slot: number;
+    node: string;
+    startSec: number;
+    endSec: number;
+  };
   /** Emission axis in Torque space (defaults to [0,0,1] = up). */
   emitAxis?: [number, number, number];
   /** Node-anchored emitters: origin, axis and velocity track the node. */
@@ -554,6 +542,13 @@ function removeEmitterDebugMeshes(entry: ActiveEmitter): void {
     for (const mesh of entry.debugParticleMeshes) mesh.removeFromParent();
     entry.debugParticleMeshes = undefined;
   }
+}
+
+function disposeEmitter(entry: ActiveEmitter): void {
+  entry.mesh.removeFromParent();
+  removeEmitterDebugMeshes(entry);
+  entry.geometry.dispose();
+  entry.material.dispose();
 }
 
 /** Check if a ShaderMaterial compiled successfully. Must call after first render. */
@@ -675,8 +670,13 @@ function createStreamEmitter(
   emitterData: EmitterDataResolved,
   origin: [number, number, number],
   group: Object3D,
+  random?: () => number,
 ): ActiveEmitter {
-  const emitter = new EmitterInstance(emitterData, MAX_PARTICLES_PER_EMITTER);
+  const emitter = new EmitterInstance(
+    emitterData,
+    MAX_PARTICLES_PER_EMITTER,
+    random,
+  );
   const texture = getParticleTexture(emitterData.particles.textureName);
   const geometry = createParticleGeometry(MAX_PARTICLES_PER_EMITTER);
   const material = createParticleMaterial(
@@ -701,6 +701,31 @@ function createStreamEmitter(
   };
 }
 
+/** Advance fixed-position emitters directly to their age in the stream. */
+function advanceSplashEmitter(
+  entry: ActiveEmitter,
+  splash: NonNullable<ActiveEmitter["splash"]>,
+  worldTime: number,
+): void {
+  const ageMS = Math.round((worldTime - splash.timeSec) * 1000);
+  const emitter = entry.emitter;
+  if (splash.elapsedMS === 0) {
+    const particle = emitter.data.particles;
+    const omitted = ageMS - particle.lifetimeMS - particle.lifetimeVarianceMS;
+    if (omitted > 0) {
+      emitter.advanceEmpty(omitted, omitted);
+      splash.elapsedMS = omitted;
+    }
+  }
+  while (splash.elapsedMS < ageMS) {
+    const step = Math.min(TICK_DURATION_MS, ageMS - splash.elapsedMS);
+    emitter.emitPeriodic(entry.origin, entry.origin, step);
+    emitter.update(step);
+    splash.elapsedMS += step;
+    if (emitter.isDead()) break;
+  }
+}
+
 /**
  * Move a node-anchored emitter to its node: this frame's segment runs
  * from last frame's node position to the current one, and the owner's
@@ -708,14 +733,80 @@ function createStreamEmitter(
  */
 function readNodeFrame(entry: ActiveEmitter, node: NodeEmitter): void {
   const prev = entry.prevOrigin!;
-  prev[0] = entry.origin[0];
-  prev[1] = entry.origin[1];
-  prev[2] = entry.origin[2];
+  if (!node.emitAtPoint) {
+    prev[0] = entry.origin[0];
+    prev[1] = entry.origin[1];
+    prev[2] = entry.origin[2];
+  }
   readNodeEmitterTransform(node.anchor, entry.origin, entry.emitAxis!);
   const vel = entry.emitVelocity!;
   vel[0] = node.frame.velocity[0];
   vel[1] = node.frame.velocity[1];
   vel[2] = node.frame.velocity[2];
+}
+
+function emitLauncherExhaust(
+  entry: ActiveEmitter,
+  launch: NonNullable<ActiveEmitter["launcherExhaust"]>,
+  engine: GameEngine,
+  projectile: StreamEntity | undefined,
+  source: StreamEntity | undefined,
+  worldTime: number,
+  effectDelta: number,
+): void {
+  const duration =
+    Math.min(worldTime, launch.endSec) -
+    Math.max(worldTime - effectDelta, launch.startSec);
+  if (duration > 0 && projectile && !projectile.hasExploded && source) {
+    const owner = engine.entities.get(source.id)?.root;
+    const node =
+      owner && mountedImageNode(source.id, owner, launch.slot, launch.node);
+    if (node) {
+      posedNodeWorldMatrix(node);
+      readNodeEmitterTransform(node, entry.origin, entry.emitAxis!);
+      // SeekerProjectile::processTick sends velocity opposite to that of
+      // the owner, and an emission segment whose two ends are the same node.
+      const velocity =
+        source.velocity ?? projectile.seekerLaunch?.sourceVelocity;
+      const inherited = entry.emitVelocity!;
+      inherited[0] = -(velocity?.[0] ?? 0);
+      inherited[1] = -(velocity?.[1] ?? 0);
+      inherited[2] = -(velocity?.[2] ?? 0);
+      entry.emitter.emitPeriodic(
+        entry.origin,
+        entry.origin,
+        duration * 1000,
+        entry.emitAxis,
+        inherited,
+      );
+    }
+  }
+  if (worldTime >= launch.endSec || !source || projectile?.hasExploded)
+    entry.emitter.kill();
+}
+
+const projectileTrailPosition = new Vector3();
+
+/** Use the same position as the projectile view, including before it loads. */
+function readTrailPosition(
+  entity: StreamEntity,
+  out: [number, number, number],
+): void {
+  if (!entity.position) return;
+  const { current, previous, interpT } = streamRenderFrame;
+  if (current?.get(entity.id) === entity) {
+    interpolateStreamPosition(
+      projectileTrailPosition,
+      entity,
+      previous?.get(entity.id),
+      interpT,
+    );
+    out[0] = projectileTrailPosition.z;
+    out[1] = projectileTrailPosition.x;
+    out[2] = projectileTrailPosition.y;
+  } else {
+    [out[0], out[1], out[2]] = entity.position;
+  }
 }
 
 /** out = −normalize(v), or straight up when v is (near) zero — the
@@ -766,9 +857,31 @@ export function createParticleEffects(
   const processedExplosions = new Set<string>();
   /** Shocklance bolts whose hit effects (shockwave, burst) have spawned. */
   const processedShockLances = new Set<string>();
-  /** Track which projectile entity IDs have trail emitters attached. */
   const nodeEmitterEntries = new Map<NodeEmitter, ActiveEmitter | null>();
-  const trailEntities = new Set<string>();
+  const trailEntities = {
+    air: new Set<string>(),
+    water: new Set<string>(),
+    delayed: new Set<string>(),
+  };
+  const tickTrailEntries = {
+    base: new Map<string, ActiveEmitter>(),
+    delayed: new Map<string, ActiveEmitter>(),
+  };
+  const previousBubblePositions = new Map<string, [number, number, number]>();
+  let lastTrailTick: number | undefined;
+  const playedSeekerPuffs = new Set<string>();
+  const launchedExhausts = new Set<string>();
+  const projectileEffectsById = [
+    ...Object.values(trailEntities),
+    ...Object.values(tickTrailEntries),
+    previousBubblePositions,
+    playedSeekerPuffs,
+    launchedExhausts,
+  ];
+  const splashRings = new Map<string, SplashRings | null>();
+  let lastSeekNonce = engineStore.getState().playback.seekNonce;
+  let lastWorldGeneration = playback.worldGeneration;
+  let lastEffectTimeMS = Math.round(effectNow());
   /** Active looping projectile sounds keyed by entity ID. */
   const projectileSounds = new Map<string, ProjectileSound>();
   /** Explosion entity IDs whose impact sound already played. */
@@ -792,8 +905,17 @@ export function createParticleEffects(
   let activeShockwaves: ActiveShockwave[] = [];
   const getDataBlockData = playback.getDataBlockData.bind(playback);
 
+  const resolveStreamEmitter = (id: number) => {
+    const raw = getDataBlockData(id);
+    return raw && resolveEmitterData(raw, getDataBlockData);
+  };
+
+  const clearSplashRings = () => {
+    for (const rings of splashRings.values()) rings?.dispose();
+    splashRings.clear();
+  };
+
   const update = (state: FrameContext) => {
-    const { delta } = state;
     const debugMode = selectDebugMode(settingsStore.getState());
     const { audioEnabled } = settingsStore.getState();
     const transport = engineStore.getState().playback;
@@ -804,13 +926,89 @@ export function createParticleEffects(
       return;
     const snapshot = snapshotRef.current;
     if (!snapshot) return;
-    const snapshotChanged = snapshotIndex.update(snapshot);
+    const tickTrails = playback.projectileTrailHistory;
+    const seekChanged = lastSeekNonce !== transport.seekNonce;
+    const resetTrails =
+      seekChanged || lastWorldGeneration !== playback.worldGeneration;
+    if (resetTrails) {
+      lastSeekNonce = transport.seekNonce;
+      lastWorldGeneration = playback.worldGeneration;
+      lastTrailTick = undefined;
+      clearSplashRings();
+      for (const effects of projectileEffectsById) effects.clear();
+      activeEmitters = activeEmitters.filter((entry) => {
+        if (
+          !entry.splash &&
+          !entry.trail &&
+          !entry.seekerPuff &&
+          !entry.launcherExhaust &&
+          !entry.node?.emitAtPoint
+        )
+          return true;
+        if (entry.node) nodeEmitterEntries.delete(entry.node);
+        disposeEmitter(entry);
+        return false;
+      });
+    }
+    const snapshotChanged = snapshotIndex.update(snapshot) || resetTrails;
     const currentEntityIds = snapshotIndex.entities;
 
     const isPlaying = engineStore.getState().playback.status === "playing";
-    // Scale delta by playback rate; 0 when paused.
-    const effectDelta = effectDeltaSec(delta);
-    const dtMS = effectDelta * 1000;
+    // The published clock stays put while playback is held. Round its
+    // endpoints, so a fractional frame cannot create or lose time every frame.
+    const effectTimeMS = Math.round(effectNow());
+    const dtMS = seekChanged ? 0 : Math.max(0, effectTimeMS - lastEffectTimeMS);
+    const effectDelta = dtMS / 1000;
+    lastEffectTimeMS = effectTimeMS;
+    const worldTime = streamClock.worldTime;
+
+    // A snapshot can include a splash from the next simulation tick. Wait
+    // for the render clock to reach its impact before starting the effect.
+    for (const entity of snapshotIndex.splashes) {
+      const { position, dataBlockId, spawnTimeSec } = entity;
+      if (!position || dataBlockId == null || spawnTimeSec == null) continue;
+      const age = worldTime - spawnTimeSec;
+      if (age < 0) continue;
+      const data = getDataBlockData(dataBlockId) as SplashDataBlock | undefined;
+      if (!data) continue;
+      if (!splashRings.has(entity.id)) {
+        const rings = data.textureName
+          ? createSplashRings(data, getParticleTexture(data.textureName))
+          : null;
+        splashRings.set(entity.id, rings);
+        if (rings) {
+          torqueVecToThree(position, rings.root.position);
+          group.add(rings.root);
+        }
+        for (const [slot, ref] of (data.emitters ?? []).entries()) {
+          if (ref == null) continue;
+          const emitter = resolveStreamEmitter(ref);
+          if (!emitter) continue;
+          const entry = createStreamEmitter(
+            emitter,
+            [...position],
+            group,
+            timelineRandom(dataBlockId, spawnTimeSec, ...position, slot),
+          );
+          entry.splash = { timeSec: spawnTimeSec, elapsedMS: 0 };
+          entry.driverEntityId = entity.id;
+          activeEmitters.push(entry);
+        }
+      }
+      splashRings
+        .get(entity.id)
+        ?.update(
+          age,
+          (entity.splashEmitterLifetimeMS ?? data.lifetimeMS ?? 0) / 1000,
+        );
+    }
+    if (snapshotChanged) {
+      for (const [id, rings] of splashRings) {
+        if (currentEntityIds.has(id)) continue;
+        rings?.dispose();
+        splashRings.delete(id);
+      }
+    }
 
     // Rings other systems asked for this frame (mounted-image muzzle flashes).
     for (const req of takeShockwaveRequests()) {
@@ -978,29 +1176,165 @@ export function createParticleEffects(
         }
       }
 
-    // Detect projectile entities with trail emitters (maintainEmitterId).
+    for (const entity of snapshotIndex.seekerLaunches) {
+      const launch = entity.seekerLaunch!;
+      const { casingSplitAtSec, puffEmitterId, puffPosition } = launch;
+      if (
+        casingSplitAtSec != null &&
+        casingSplitAtSec <= worldTime &&
+        puffEmitterId &&
+        puffPosition &&
+        !playedSeekerPuffs.has(entity.id)
+      ) {
+        const data = resolveStreamEmitter(puffEmitterId);
+        if (data) {
+          playedSeekerPuffs.add(entity.id);
+          const ageMS = (worldTime - casingSplitAtSec) * 1000;
+          const { lifetimeMS, lifetimeVarianceMS } = data.particles;
+          if (ageMS < lifetimeMS + lifetimeVarianceMS) {
+            const entry = createStreamEmitter(
+              data,
+              [...puffPosition],
+              group,
+              timelineRandom(puffEmitterId, casingSplitAtSec, ...puffPosition),
+            );
+            entry.isBurst = true;
+            entry.seekerPuff = { timeSec: casingSplitAtSec, elapsedMS: 0 };
+            entry.emitter.worldGravity = snapshot.gravity;
+            entry.emitter.emitPeriodic(entry.origin, entry.origin, 1000);
+            entry.emitter.kill();
+            activeEmitters.push(entry);
+          }
+        }
+      }
+
+      const { sourceId, exhaustUntilSec, exhaustNodeName, exhaustEmitterId } =
+        launch;
+      const { sourceSlot, spawnTimeSec } = entity;
+      if (
+        sourceId &&
+        exhaustUntilSec != null &&
+        exhaustUntilSec > worldTime - effectDelta &&
+        exhaustNodeName &&
+        exhaustEmitterId &&
+        sourceSlot != null &&
+        sourceSlot >= 0 &&
+        spawnTimeSec != null &&
+        !entity.hasExploded &&
+        !launchedExhausts.has(entity.id)
+      ) {
+        const data = resolveStreamEmitter(exhaustEmitterId);
+        if (data) {
+          launchedExhausts.add(entity.id);
+          const entry = createStreamEmitter(data, [0, 0, 0], group);
+          entry.driverEntityId = entity.id;
+          entry.launcherExhaust = {
+            sourceId,
+            slot: sourceSlot,
+            node: exhaustNodeName,
+            startSec: spawnTimeSec,
+            endSec: exhaustUntilSec,
+          };
+          activeEmitters.push(entry);
+        }
+      }
+    }
+
+    // Linear and grenade-family air trails emit during processTick, before
+    // the mesh interpolates within that tick. Consume only published steps.
+    const warmingTickTrails =
+      tickTrails && lastTrailTick === undefined
+        ? new Map<ActiveEmitter, number>()
+        : undefined;
+    if (tickTrails) {
+      const tick = streamTimeToTick(snapshot.timeSec);
+      const previousTick = lastTrailTick ?? -Infinity;
+      if (tick > previousTick) {
+        for (const event of tickTrails.events) {
+          if (event.tick <= previousTick) continue;
+          if (event.tick > tick) break;
+          const entries = tickTrailEntries[event.slot];
+          let entry = entries.get(event.projectileId);
+          if (!entry) {
+            const data = resolveStreamEmitter(event.emitterId);
+            if (!data) continue;
+            entry = createStreamEmitter(data, [...event.to], group);
+            entry.driverEntityId = event.projectileId;
+            entry.trail = "tick";
+            entries.set(event.projectileId, entry);
+            activeEmitters.push(entry);
+          }
+          [entry.origin[0], entry.origin[1], entry.origin[2]] = event.to;
+          entry.emitter.worldGravity = snapshot.gravity;
+          if (warmingTickTrails) {
+            const atMS = (event.tick - 1) * TICK_DURATION_MS;
+            const previousMS = warmingTickTrails.get(entry) ?? atMS;
+            entry.emitter.update(atMS - previousMS);
+            warmingTickTrails.set(entry, atMS);
+          }
+          reversedDirection(event.velocity, entry.emitAxis!);
+          entry.emitter.emitPeriodic(
+            event.from,
+            event.to,
+            TICK_DURATION_MS,
+            entry.emitAxis,
+            event.velocity,
+          );
+        }
+        lastTrailTick = tick;
+      }
+    }
+    if (warmingTickTrails) {
+      const worldTimeMS = Math.round(worldTime * 1000);
+      for (const [entry, atMS] of warmingTickTrails)
+        entry.emitter.update(worldTimeMS - atMS);
+    }
+
     if (snapshotChanged)
       for (const entity of snapshotIndex.trails) {
-        if (!entity.maintainEmitterId || trailEntities.has(entity.id)) {
-          continue;
+        if (!entity.position || entity.hasExploded) continue;
+        for (const [trail, ref] of entity.projectileInWater
+          ? ([["water", entity.bubbleEmitterId]] as const)
+          : entity.projectileTrailMode === "tick"
+            ? []
+            : ([
+                ["air", entity.maintainEmitterId],
+                ["delayed", entity.seekerLaunch?.delayEmitterId],
+              ] as const)) {
+          if (!ref || trailEntities[trail].has(entity.id)) continue;
+          const data = resolveStreamEmitter(ref);
+          if (!data) continue;
+          trailEntities[trail].add(entity.id);
+          const origin: [number, number, number] = [0, 0, 0];
+          const previous =
+            trail === "water" && previousBubblePositions.get(entity.id);
+          if (previous) [origin[0], origin[1], origin[2]] = previous;
+          else readTrailPosition(entity, origin);
+          if (trail === "water") previousBubblePositions.delete(entity.id);
+          const entry = createStreamEmitter(data, origin, group);
+          entry.driverEntityId = entity.id;
+          entry.trail = trail;
+          activeEmitters.push(entry);
         }
-        trailEntities.add(entity.id);
-
-        const emitterRaw = getDataBlockData(entity.maintainEmitterId);
-        if (!emitterRaw) continue;
-
-        const emitterData = resolveEmitterData(emitterRaw, getDataBlockData);
-        if (!emitterData) continue;
-
-        const entry = createStreamEmitter(
-          emitterData,
-          entity.position ? [...entity.position] : [0, 0, 0],
-          group,
-        );
-        entry.driverEntityId = entity.id;
-        entry.followsDriver = true;
-        activeEmitters.push(entry);
       }
+
+    // The first submerged frame starts at the last rendered position, even
+    // though no bubble emitter was active during the preceding dry frame.
+    for (const entity of snapshotIndex.trails) {
+      if (
+        !entity.bubbleEmitterId ||
+        !entity.position ||
+        entity.hasExploded ||
+        trailEntities.water.has(entity.id)
+      )
+        continue;
+      let previous = previousBubblePositions.get(entity.id);
+      if (!previous) {
+        previous = [0, 0, 0];
+        previousBubblePositions.set(entity.id, previous);
+      }
+      readTrailPosition(entity, previous);
+    }
 
     // Node-anchored emitters (jet nozzles, contrails) live as long as their
     // registration; a dropped one stops emitting and dies when empty.
@@ -1037,10 +1371,11 @@ export function createParticleEffects(
       }
     }
 
-    // Prune trail entity tracking set.
-    for (const id of trailEntities) {
-      if (!currentEntityIds.has(id)) {
-        trailEntities.delete(id);
+    // Stop tracking effects once their projectile is gone.
+    if (snapshotChanged) {
+      for (const effects of projectileEffectsById) {
+        for (const id of effects.keys())
+          if (!currentEntityIds.has(id)) effects.delete(id);
       }
     }
 
@@ -1059,22 +1394,19 @@ export function createParticleEffects(
         entry.shaderChecked = true;
       }
 
-      // Trails follow the projectile: this frame's segment runs from the
-      // previous emission point to the new one, and — as in
-      // Projectile::updateEmitters — the emission axis is the velocity
-      // direction reversed, with the velocity itself passed for
-      // inheritedVelFactor.
-      if (entry.followsDriver && entry.driverEntityId) {
+      let emitMS = entry.trail === "tick" ? 0 : dtMS;
+      let emitFrom = entry.prevOrigin ?? entry.origin;
+      let emitTo = entry.origin;
+      if (entry.trail && entry.trail !== "tick" && entry.driverEntityId) {
         const tracked = snapshotIndex.entities.get(entry.driverEntityId);
+        emitMS = 0;
         const prev = entry.prevOrigin!;
         const vel = entry.emitVelocity!;
         if (tracked?.position) {
           prev[0] = entry.origin[0];
           prev[1] = entry.origin[1];
           prev[2] = entry.origin[2];
-          entry.origin[0] = tracked.position[0];
-          entry.origin[1] = tracked.position[1];
-          entry.origin[2] = tracked.position[2];
+          readTrailPosition(tracked, entry.origin);
           if (tracked.velocity) {
             vel[0] = tracked.velocity[0];
             vel[1] = tracked.velocity[1];
@@ -1084,26 +1416,74 @@ export function createParticleEffects(
             vel[1] = (entry.origin[1] - prev[1]) / effectDelta;
             vel[2] = (entry.origin[2] - prev[2]) / effectDelta;
           }
-          reversedDirection(vel, entry.emitAxis!);
+          if (entry.trail !== "water") reversedDirection(vel, entry.emitAxis!);
+          if (
+            !tracked.hasExploded &&
+            !!tracked.projectileInWater === (entry.trail === "water")
+          ) {
+            const starts =
+              entry.trail === "delayed"
+                ? tracked.seekerLaunch?.delayEmitterStartsAtSec
+                : tracked.seekerLaunch?.trailStartsAtSec;
+            emitMS =
+              starts == null
+                ? dtMS
+                : Math.max(0, Math.min(dtMS, (worldTime - starts) * 1000));
+            if (entry.trail === "water") {
+              // Native updateBubbles ends the segment at the simulation pose.
+              emitTo = tracked.position;
+            } else if (tracked.projectileTrailMode === "seeker") {
+              // SeekerProjectile::advanceTime passes current render pose first.
+              emitFrom = entry.origin;
+              emitTo = prev;
+            }
+            if (emitMS < dtMS && starts != null) {
+              const fraction = emitMS / dtMS;
+              for (let axis = 0; axis < 3; axis++)
+                prev[axis] =
+                  entry.origin[axis] +
+                  (prev[axis] - entry.origin[axis]) * fraction;
+            }
+          }
         }
       }
 
       if (entry.node) readNodeFrame(entry, entry.node);
 
-      // Streaming emitters emit periodically along the frame's segment.
-      if (!entry.isBurst) {
-        entry.emitter.emitPeriodic(
-          entry.prevOrigin ?? entry.origin,
-          entry.origin,
-          entry.node ? dtMS * entry.node.frame.dtScale : dtMS,
-          entry.emitAxis,
-          entry.emitVelocity,
-        );
-      }
-
-      // Advance physics and interpolation.
       entry.emitter.worldGravity = snapshot.gravity;
-      entry.emitter.update(dtMS);
+      if (entry.splash) advanceSplashEmitter(entry, entry.splash, worldTime);
+      else {
+        // Streaming emitters emit periodically along the frame's segment.
+        if (entry.launcherExhaust) {
+          emitLauncherExhaust(
+            entry,
+            entry.launcherExhaust,
+            engine,
+            entry.driverEntityId
+              ? snapshotIndex.entities.get(entry.driverEntityId)
+              : undefined,
+            snapshotIndex.entities.get(entry.launcherExhaust.sourceId),
+            worldTime,
+            effectDelta,
+          );
+        } else if (!entry.isBurst && emitMS > 0) {
+          entry.emitter.emitPeriodic(
+            entry.node?.emitAtPoint ? entry.origin : emitFrom,
+            emitTo,
+            entry.node ? emitMS * entry.node.frame.dtScale : emitMS,
+            entry.emitAxis,
+            entry.emitVelocity,
+          );
+        }
+        if (entry.seekerPuff) {
+          const puff = entry.seekerPuff;
+          const age = Math.round((worldTime - puff.timeSec) * 1000);
+          entry.emitter.update(age - puff.elapsedMS);
+          puff.elapsedMS = age;
+        } else if (!warmingTickTrails?.has(entry)) {
+          entry.emitter.update(dtMS);
+        }
+      }
 
       // Swap in the real texture once it finishes loading.
       if (
@@ -1159,10 +1539,7 @@ export function createParticleEffects(
 
       // Remove dead emitters.
       if (entry.emitter.isDead()) {
-        group.remove(entry.mesh);
-        entry.geometry.dispose();
-        entry.material.dispose();
-        removeEmitterDebugMeshes(entry);
+        disposeEmitter(entry);
         active.splice(i, 1);
       }
     }
@@ -1483,13 +1860,9 @@ export function createParticleEffects(
     group,
     dispose() {
       stop();
-      for (const entry of activeEmitters) {
-        entry.mesh.removeFromParent();
-        removeEmitterDebugMeshes(entry);
-        entry.geometry.dispose();
-        entry.material.dispose();
-      }
+      for (const entry of activeEmitters) disposeEmitter(entry);
       activeEmitters = [];
+      clearSplashRings();
       for (const sphere of activeExplosionSpheres) {
         disposeExplosionSphere(sphere);
       }
@@ -1504,7 +1877,7 @@ export function createParticleEffects(
       activeShockwaves = [];
       processedExplosions.clear();
       processedShockLances.clear();
-      trailEntities.clear();
+      for (const effects of projectileEffectsById) effects.clear();
       processedExplosionSounds.clear();
       for (const entityId of [...projectileSounds.keys()]) {
         stopProjectileSound(projectileSounds, entityId);

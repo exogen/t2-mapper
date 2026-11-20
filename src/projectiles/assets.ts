@@ -56,12 +56,21 @@ export class ProjectileAssets {
   }
   private loadModelFactory(
     name: string,
-    create: (model: DTSModel) => ProjectileFactory,
+    create: (model: DTSModel, alternate?: DTSModel) => ProjectileFactory,
+    alternateName?: string,
   ): Promise<ProjectileFactory> {
-    return this.loader.loadAsync(shapeToUrl(name)).then((model) => {
+    const ready = (model: DTSModel, alternate?: DTSModel) => {
       if (this.disposed) throw new Error("Projectile assets disposed");
-      return create(model);
-    });
+      return create(model, alternate);
+    };
+    const main = this.loader.loadAsync(shapeToUrl(name));
+    if (!alternateName) return main.then((model) => ready(model));
+    const alternate = Promise.resolve()
+      .then(() => this.loader.loadAsync(shapeToUrl(alternateName)))
+      .catch(() => undefined);
+    return Promise.all([main, alternate]).then(([model, other]) =>
+      ready(model, other),
+    );
   }
 
   factory(
@@ -82,8 +91,11 @@ export class ProjectileAssets {
         return () => createTracerView(entity.visual, maps);
       }
       case "Beam": {
-        const maps = entity.visual.textures.slice(1).map(repeat);
-        return () => createBeamView(entity.visual, maps);
+        const [flare, ...textures] = entity.visual.textures;
+        const maps = textures.map(repeat);
+        const flareMap = flare ? texture(flare) : undefined;
+        return () =>
+          createBeamView(entity.visual, maps, flareMap, this.viewportHeight);
       }
       case "TargetBeam": {
         const v = entity.visual;
@@ -152,16 +164,31 @@ export class ProjectileAssets {
           entity.dataBlockId,
           entity.dataBlock,
         );
+        const block =
+          entity.className === "SeekerProjectile" && entity.dataBlockId != null
+            ? streamPlaybackStore
+                .getState()
+                .playback?.getDataBlockData(entity.dataBlockId)
+            : undefined;
+        const casingName =
+          block?.useFlechette === true &&
+          typeof block.casingShapeName === "string"
+            ? block.casingShapeName
+            : undefined;
         return this.loadModelFactory(
           entity.shapeName!,
-          (model) => () =>
+          (model, casing) => () =>
             createShapeProjectileView(
               model,
               entity,
               this.anisotropy,
               emap,
               this.animationEnabled,
+              casing && casingName
+                ? { model: casing, shapeName: casingName }
+                : undefined,
             ),
+          casingName,
         );
       }
     }

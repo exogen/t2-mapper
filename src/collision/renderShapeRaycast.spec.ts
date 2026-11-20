@@ -22,6 +22,29 @@ function shape() {
   return buildDTS(data).scene;
 }
 
+it("clips the ELF curve to the target's collision box", () => {
+  const rays = new RenderShapeRaycast();
+  const target = shape();
+  target.position.set(0, 0, 10);
+  rays.register("target", target, "Player");
+  const point = new Vector3();
+  expect(rays.elfSnapPoint("target", point)).toBe(true);
+  expect(point.toArray()).toEqual([0, 1.15, 10]);
+
+  const sample = (t: number, out: Vector3) =>
+    out.set(12 * t * (1 - t), 1.15, 10 * t);
+  expect(rays.clipElfBeam(sample, "source", "target", point)).toBe(true);
+  expect(point.x).toBeCloseTo(0.5);
+  expect(point.z).toBeGreaterThanOrEqual(9.5);
+  expect(point.z).toBeLessThan(10);
+
+  const blocker = shape();
+  blocker.position.set(3, 0, 5);
+  rays.register("obstruction", blocker, "Player");
+  expect(rays.clipElfBeam(sample, "source", "target", point)).toBe(false);
+  expect(rays.clipElfBeam(sample, "obstruction", "target", point)).toBe(true);
+});
+
 it("lightning accepts only the nearest exposed shape, including TSStatic occlusion of dynamic targets", () => {
   const rays = new RenderShapeRaycast(),
     target = shape(),
@@ -204,11 +227,11 @@ it("occludes the impact flare from the back and behind other objects, excluding 
     muzzle = new Vector3(-10, 0, 0);
   const camera = new Vector3(-12, 0, 0);
   rays.register("target", target, "StaticShape");
-  expect(rays.repairFlareVisible(camera, muzzle, end, "target", "source")).toBe(
+  expect(rays.linkFlareVisible(camera, muzzle, end, "target", "source")).toBe(
     true,
   );
   expect(
-    rays.repairFlareVisible(
+    rays.linkFlareVisible(
       new Vector3(12, 0, 0),
       muzzle,
       end,
@@ -218,15 +241,15 @@ it("occludes the impact flare from the back and behind other objects, excluding 
   ).toBe(false);
   blocker.position.x = -6;
   const stop = rays.register("blocker", blocker, "StaticShape");
-  expect(rays.repairFlareVisible(camera, muzzle, end, "target", "source")).toBe(
+  expect(rays.linkFlareVisible(camera, muzzle, end, "target", "source")).toBe(
     false,
   );
   stop();
   rays.register("source", blocker, "StaticShape");
   expect(
-    rays.repairFlareVisible(camera, muzzle, end, "target", "source", true),
+    rays.linkFlareVisible(camera, muzzle, end, "target", "source", true),
   ).toBe(true);
   expect(
-    rays.repairFlareVisible(camera, muzzle, end, "target", "source", false),
+    rays.linkFlareVisible(camera, muzzle, end, "target", "source", false),
   ).toBe(false);
 });

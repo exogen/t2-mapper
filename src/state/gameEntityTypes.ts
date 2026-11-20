@@ -210,6 +210,7 @@ export interface ShapeEntity extends PositionedBase {
   /** Item/ShapeBase built-in dynamic light from datablock. */
   lightType?: number;
   lightColor?: [number, number, number, number];
+  underwaterLightColor?: [number, number, number, number];
   lightTime?: number;
   lightRadius?: number;
   /** Projectile light withheld until this age in ms (missile flechette). */
@@ -220,6 +221,11 @@ export interface ShapeEntity extends PositionedBase {
   /** Projectile shapes: age in ms, mutated in place per tick (see
    *  Projectile threads in GenericShape). */
   projectileAgeMS?: number;
+  projectileInWater?: boolean;
+  /** The missile has yet to eject its flechette casing. */
+  seekerCasing?: boolean;
+  /** Render-clock boundary when a snapshot already includes the casing puff. */
+  seekerCasingSplitAtSec?: number;
   /** Linear projectiles: the shape's "activate" starts at this age. */
   projectileActivateDelayMS?: number;
 }
@@ -276,6 +282,7 @@ export interface BeamEntity extends PositionedBase {
   /** Torque-space beam endpoints (muzzle → impact). */
   beamStart: [number, number, number];
   beamEnd: [number, number, number];
+  linkSourceId?: string;
 }
 
 export interface TargetBeamEntity extends PositionedBase {

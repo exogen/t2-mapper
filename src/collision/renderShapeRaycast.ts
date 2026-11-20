@@ -7,7 +7,12 @@ import {
   updateCollisionWorldMatrix,
   type DTSCollisionMesh,
 } from "../dts/dtsCollision";
-import { castWorldRay, type Vec3, type WorldRayHit } from "./worldCollision";
+import {
+  castWorldRay,
+  withCollisionQueryBatch,
+  type Vec3,
+  type WorldRayHit,
+} from "./worldCollision";
 import { castWaterRay, type WaterRayHit } from "./waterLevel";
 import { segmentBoxEntry } from "./segmentBoxEntry";
 
@@ -45,6 +50,8 @@ export class RenderShapeRaycast {
   private readonly flareStart = new Vector3();
   private readonly flareDirection = new Vector3();
   private readonly beamFlareEnd = new Vector3();
+  private readonly elfStart = new Vector3();
+  private readonly elfEnd = new Vector3();
   private readonly updatedTransforms = new Set<Object3D>();
 
   register(
@@ -110,9 +117,9 @@ export class RenderShapeRaycast {
     return true;
   }
 
-  /** RepairProjectile::canRenderFlare: hide from the back and behind other
-   * container objects, excluding the target (and the source in first person). */
-  repairFlareVisible(
+  /** ELF and repair flares hide from the back and behind other container
+   * objects, excluding the target (and the source in first person). */
+  linkFlareVisible(
     camera: Vector3,
     muzzle: Vector3,
     end: Vector3,
@@ -137,6 +144,52 @@ export class RenderShapeRaycast {
       this.hitId === undefined &&
       !this.worldObstructed(this.flareStart, end, target.type, 1)
     );
+  }
+
+  /** ELFProjectile::calcSnapPoint targets the object box's center, with
+   * a downward LOS-hull test for hollow objects such as inventory stations. */
+  elfSnapPoint(targetId: string, out: Vector3): boolean {
+    const entry = this.shapes.get(targetId);
+    if (!entry?.active()) return false;
+    updateCollisionWorldMatrix(entry.shape, this.updatedTransforms);
+    const matrix = entry.shape.matrixWorld;
+    entry.box.getCenter(this.elfStart);
+    out.copy(this.elfStart).applyMatrix4(matrix);
+    if (entry.type !== "Player") {
+      this.elfStart.y += 1000;
+      this.elfEnd.copy(this.elfStart).applyMatrix4(matrix);
+      if (this.castHulls(out, this.elfEnd, entry, 1) === undefined) {
+        this.elfStart.y -= 2000;
+        this.elfEnd.copy(this.elfStart).applyMatrix4(matrix);
+        const hit = this.castHulls(out, this.elfEnd, entry, 1);
+        if (hit !== undefined) out.lerp(this.elfEnd, hit);
+      }
+    }
+    this.updatedTransforms.clear();
+    return true;
+  }
+
+  /** ELF tests the first contact along the quadratic curve, not the line
+   * from the muzzle to the target. A hit on another object hides the beam. */
+  clipElfBeam(
+    sample: (t: number, out: Vector3) => Vector3,
+    sourceId: string | undefined,
+    targetId: string,
+    out: Vector3,
+  ): boolean {
+    return withCollisionQueryBatch(() => {
+      sample(0, this.elfStart);
+      for (let i = 1; i <= 16; i++) {
+        sample(i / 16, this.elfEnd);
+        const hit = this.targetBeamHit(this.elfStart, this.elfEnd, sourceId);
+        if (hit) {
+          out.lerpVectors(this.elfStart, this.elfEnd, hit.t);
+          return "shapeId" in hit && hit.shapeId === targetId;
+        }
+        this.elfStart.copy(this.elfEnd);
+      }
+      return true;
+    });
   }
 
   /** TargetProjectile casts against the scene, water and ShapeBase LOS hulls. */
@@ -211,41 +264,58 @@ export class RenderShapeRaycast {
       // StaticObject bit with static targets. Terrain/interiors work likewise.
       if (entry.type === "TSStatic" && !isStatic(type)) continue;
       if (!entry.active()) continue;
-      // A frozen mount can still move with its parent. Use the same current
-      // ancestry for the broad-phase box and each animated LOS hull.
-      updateCollisionWorldMatrix(entry.shape, this.updatedTransforms);
-      this.inverse.copy(entry.shape.matrixWorld).invert();
-      this.start.copy(start).applyMatrix4(this.inverse);
-      this.end.copy(end).applyMatrix4(this.inverse);
-      const tBox = segmentBoxEntry(this.start, this.end, entry.box);
-      if (tBox === null || tBox > best) continue;
-      if (entry.type === "Player") {
-        best = tBox;
-        this.hitId = id;
-        continue;
-      }
-      entry.shape.catchUpPose?.();
-      entry.hulls ??= getDTSCollisionMeshes(
-        entry.shape,
-        entry.type === "TSStatic" ? "TSStatic" : "ShapeBase",
-      );
-      for (const hull of entry.hulls) {
-        if (!hull.updateForCollision(this.updatedTransforms)) continue;
-        this.inverse.copy(hull.matrixWorld).invert();
-        this.start.copy(start).applyMatrix4(this.inverse);
-        this.end.copy(end).applyMatrix4(this.inverse);
-        const t = castDTSHullRay(
-          getDTSHullPlanes(hull.geometry),
-          this.start,
-          this.end,
-          this.normal,
-        );
-        if (t === null || t > best) continue;
-        best = t;
-        this.hitId = id;
-      }
+      const t = this.castShape(start, end, entry, best);
+      if (t === undefined) continue;
+      best = t;
+      this.hitId = id;
     }
     this.updatedTransforms.clear();
+    return best;
+  }
+
+  private castShape(
+    start: Vector3,
+    end: Vector3,
+    entry: ShapeEntry,
+    limit: number,
+  ): number | undefined {
+    // Frozen mounts can move with their parents. Use current ancestry
+    // for the broad-phase box and each animated LOS hull.
+    updateCollisionWorldMatrix(entry.shape, this.updatedTransforms);
+    this.inverse.copy(entry.shape.matrixWorld).invert();
+    this.start.copy(start).applyMatrix4(this.inverse);
+    this.end.copy(end).applyMatrix4(this.inverse);
+    const tBox = segmentBoxEntry(this.start, this.end, entry.box);
+    if (tBox === null || tBox > limit) return;
+    if (entry.type === "Player") return tBox;
+    return this.castHulls(start, end, entry, limit);
+  }
+
+  private castHulls(
+    start: Vector3,
+    end: Vector3,
+    entry: ShapeEntry,
+    limit: number,
+  ): number | undefined {
+    entry.shape.catchUpPose?.();
+    entry.hulls ??= getDTSCollisionMeshes(
+      entry.shape,
+      entry.type === "TSStatic" ? "TSStatic" : "ShapeBase",
+    );
+    let best: number | undefined;
+    for (const hull of entry.hulls) {
+      if (!hull.updateForCollision(this.updatedTransforms)) continue;
+      this.inverse.copy(hull.matrixWorld).invert();
+      this.start.copy(start).applyMatrix4(this.inverse);
+      this.end.copy(end).applyMatrix4(this.inverse);
+      const t = castDTSHullRay(
+        getDTSHullPlanes(hull.geometry),
+        this.start,
+        this.end,
+        this.normal,
+      );
+      if (t !== null && t <= (best ?? limit)) best = t;
+    }
     return best;
   }
 

@@ -5,8 +5,10 @@ export class ParticleSnapshotIndex {
   private source?: StreamEntity[];
   readonly entities = new Map<string, StreamEntity>();
   readonly explosions: StreamEntity[] = [];
+  readonly splashes: StreamEntity[] = [];
   readonly shockLances: StreamEntity[] = [];
   readonly trails: StreamEntity[] = [];
+  readonly seekerLaunches: StreamEntity[] = [];
   readonly audio: StreamEntity[] = [];
 
   update(snapshot: StreamSnapshot): boolean {
@@ -14,15 +16,24 @@ export class ParticleSnapshotIndex {
     this.source = snapshot.entities;
     this.entities.clear();
     this.explosions.length =
+      this.splashes.length =
       this.shockLances.length =
       this.trails.length =
+      this.seekerLaunches.length =
       this.audio.length =
         0;
     for (const entity of snapshot.entities) {
       this.entities.set(entity.id, entity);
       if (entity.type === "Explosion") this.explosions.push(entity);
+      if (entity.type === "Splash") this.splashes.push(entity);
       if (entity.visual?.kind === "shockLance") this.shockLances.push(entity);
-      if (entity.maintainEmitterId) this.trails.push(entity);
+      if (
+        entity.bubbleEmitterId ||
+        (entity.projectileTrailMode !== "tick" &&
+          (entity.maintainEmitterId || entity.seekerLaunch?.delayEmitterId))
+      )
+        this.trails.push(entity);
+      if (entity.seekerLaunch) this.seekerLaunches.push(entity);
       if (entity.type === "Explosion" || entity.type === "Projectile")
         this.audio.push(entity);
     }

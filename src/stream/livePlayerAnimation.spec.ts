@@ -85,7 +85,6 @@ class PlayerStream extends TestLiveStream {
       spawnTick: 0,
       rotation: [0, 0, 0, 1],
       expiryTick: 3,
-      isExplosion: true,
     });
   }
 

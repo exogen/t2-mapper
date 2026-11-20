@@ -184,7 +184,12 @@ export class DebrisSimulation {
     gravity: number,
     random: () => number,
     depth: number,
-    options?: { shape?: string; part?: DebrisPart; explicitVelocity?: boolean },
+    options?: {
+      shape?: string;
+      part?: DebrisPart;
+      explicitVelocity?: boolean;
+      spin?: [number, number];
+    },
   ): void {
     const data = this.get(db) ?? {};
     const variance = n(data, "bounceVariance", 0);
@@ -220,6 +225,7 @@ export class DebrisSimulation {
       spinX *= factor;
       spinZ *= factor;
     }
+    if (options?.spin) [spinX, spinZ] = options.spin;
     const emitters: EmitterInstance[] = [];
     for (const [slot, ref] of [data.emitter0, data.emitter1].entries()) {
       const emitter = this.emitter(ref, random, gravity);
@@ -289,7 +295,7 @@ export class DebrisSimulation {
         event.gravity,
         random,
         0,
-        { explicitVelocity: true },
+        { explicitVelocity: true, spin: event.spin },
       );
     } else
       this.launchExplosion(

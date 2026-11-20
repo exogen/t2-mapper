@@ -91,11 +91,11 @@ import { firstPersonPlayerId, readClipViewAngles } from "./firstPersonPlayer";
 import { loadProjectileShapeData } from "./shapeCache";
 import { markTransformChanged } from "../transformChanges";
 import { PlayerCameraTransition } from "./playerCameraTransition";
+import { recordedCameraBlend } from "../stream/playerCameraBlend";
 import { exitToFreeFly } from "../state/watchFollow";
 import {
   applyObserverOrbit,
   applyPlayerControlCamera,
-  recordedCameraBlend,
   recordedObserverRotation,
 } from "./playerViewCamera";
 
@@ -424,6 +424,8 @@ export class StreamPlaybackSession {
     const currentIds = new Set<string>();
 
     for (const entity of snapshot.entities) {
+      // Splash effects are rendered directly from the stream snapshot.
+      if (entity.type === "Splash") continue;
       currentIds.add(entity.id);
       let renderEntity = map.get(entity.id);
 
@@ -700,23 +702,27 @@ export class StreamPlaybackSession {
       ctx.delta,
       (frame, playback) => {
         const isPlaying = playback.status === "playing";
-        const timeScale = playback.rate;
         const { snapshot, previousSnapshot, isSeeking, playbackDelta } = frame;
         if (this.pendingMissionInfo) stream.onMissionInfoChange?.();
         if (!isCurrentPlayback(this.recording, playback.seekNonce)) return;
         const previousWorldTime = streamClock.worldTime;
+        const wasWorldPaused = streamClock.worldPaused;
         streamClock.time = clock.time;
         streamClock.matchEndedAtSec = snapshot.matchEndedAtSec;
-        // Clip the final frame to the match-end boundary. Transport continues so
-        // final scores, chat, and the next mission can still arrive.
-        if (isPlaying && !isSeeking)
+        if (isPlaying && !isSeeking && playbackDelta > 0) {
+          const elapsed = Math.max(
+            0,
+            streamClock.worldTime - previousWorldTime,
+          );
+          // Transport keeps advancing during the debrief while the world is
+          // frozen. Resume without carrying that gap into the next mission.
           advanceEffectClock(
-            Math.min(
-              playbackDelta * timeScale,
-              Math.max(0, streamClock.worldTime - previousWorldTime),
-            ),
+            wasWorldPaused
+              ? Math.min(elapsed, playbackDelta * playback.rate)
+              : elapsed,
             1,
           );
+        }
 
         const renderCurrent = snapshot;
         const renderPrev = previousSnapshot;

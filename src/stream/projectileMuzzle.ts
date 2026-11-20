@@ -142,6 +142,7 @@ export function projectileMuzzlePosition(
   maxLookAngle = MAX_LOOK_ANGLE,
   constructorSequences: readonly string[] = noSequences,
   launch?: ProjectileMuzzleFrame,
+  directionOut?: [number, number, number],
 ): [number, number, number] | undefined {
   const image = launch ? launch.image : source.imageSlots?.[slot];
   if (!image) return;
@@ -234,11 +235,14 @@ export function projectileMuzzlePosition(
     );
   }
   const muzzleNode = getDTSNodeLookup(weapon).names.get("muzzlepoint") ?? -1;
-  return threeToTorque(
-    muzzle.setFromMatrixPosition(
-      muzzleMatrix
-        .multiply(getDTSImageMountTransform(weapon, image.mountOffset))
-        .multiply(imagePose.nodeMatrix(muzzleNode)),
-    ),
-  );
+  muzzleMatrix
+    .multiply(getDTSImageMountTransform(weapon, image.mountOffset))
+    .multiply(imagePose.nodeMatrix(muzzleNode));
+  if (directionOut) {
+    const direction = threeToTorque(
+      muzzle.set(0, 0, 1).transformDirection(muzzleMatrix),
+    );
+    [directionOut[0], directionOut[1], directionOut[2]] = direction;
+  }
+  return threeToTorque(muzzle.setFromMatrixPosition(muzzleMatrix));
 }
