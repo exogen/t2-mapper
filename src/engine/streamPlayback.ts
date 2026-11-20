@@ -1393,7 +1393,7 @@ export class StreamPlaybackSession {
     const projectileEnded =
       projectileTracking !== null &&
       (terminalPosition !== undefined || liveProjectile === undefined);
-    let orbitColliderId: string | undefined;
+    let orbitColliderExclusions: Parameters<typeof constrainOrbitCamera>[4];
     if (
       cameraMode !== "freeFly" &&
       (!isLive || isWatcher) &&
@@ -1411,6 +1411,17 @@ export class StreamPlaybackSession {
         const targetGroup = resolvedTarget?.group;
         const orbitEntity = resolvedTarget?.entity;
         const vehicleOrbit = localOrbit && orbitEntity?.type === "Vehicle";
+        if (localOrbit && resolvedTarget) {
+          // Flag follow targets the flag item or its carrier. Keep that
+          // direct target out of the ray even when orbiting its vehicle.
+          const targetCollider = cameraColliderId(
+            currentEntities.get(orbitTargetId),
+          );
+          orbitColliderExclusions =
+            vehicleOrbit && orbitEntity.id !== orbitTargetId
+              ? [targetCollider, cameraColliderId(orbitEntity)]
+              : targetCollider;
+        }
         if (terminalPosition) torqueVecToThree(terminalPosition, _orbitTarget);
         else if (liveProjectile) {
           interpolateStreamPosition(
@@ -1423,7 +1434,6 @@ export class StreamPlaybackSession {
           this.placeOrbitCenter(orbitEntity, targetGroup, 0.8);
         } else if (vehicleOrbit) {
           this.placeOrbitCenter(orbitEntity, targetGroup);
-          orbitColliderId = cameraColliderId(orbitEntity);
         } else if (targetGroup) _orbitTarget.copy(targetGroup.position);
         // Loose-spring target for the auto-director: ease toward where
         // the followed thing IS rather than teleporting with it through
@@ -1452,9 +1462,13 @@ export class StreamPlaybackSession {
           _orbitTarget.y += currentCamera.orbitOffset;
         } else if (!localOrbit && orbitEntity?.type === "Player") {
           _orbitTarget.y += 1.0;
-        } else if (((orbitEntity?.targetRenderFlags ?? 0) & 0x2) !== 0) {
-          // Flag follow (keys 1/2): the flag shape is ~2.35m tall with its
-          // origin at the base — orbit its center, not the ground.
+        } else if (
+          orbitEntity &&
+          orbitEntity.type !== "Player" &&
+          ((orbitEntity.targetRenderFlags ?? 0) & 0x2) !== 0
+        ) {
+          // The loose flag's origin is at the base. A carrier already has
+          // a player pivot; picking up the flag must not raise it.
           _orbitTarget.y += 1.2;
         }
 
@@ -1579,7 +1593,7 @@ export class StreamPlaybackSession {
                   rayDistance -
                     Math.min(ORBIT_OBSTACLE_CUSHION, rayDistance * 0.25),
                 ),
-              orbitColliderId,
+              orbitColliderExclusions,
             );
             // Ease the actual camera toward a validated destination, allowing
             // brief intersections rather than snapping when clearance changes.
@@ -1653,7 +1667,7 @@ export class StreamPlaybackSession {
               ? orbitCameraClearance(cameraRegistry.perspective)
               : undefined,
             undefined,
-            orbitColliderId,
+            orbitColliderExclusions,
           );
           streamCamera.quaternion.slerp(
             _followEyeCamera.quaternion,

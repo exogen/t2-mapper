@@ -1,18 +1,6 @@
 import type { AnimationClip, AnimationAction, AnimationMixer } from "three";
 import type { DTSAnimationClip } from "../dts/dtsModel";
-import { NUM_TABLE_ACTION_ANIMS } from "./playerAnimation";
-
-/** Table action names in engine order (indices 0-7). */
-export const TABLE_ACTION_NAMES = [
-  "root",
-  "run",
-  "back",
-  "side",
-  "fall",
-  "jet",
-  "jump",
-  "land",
-];
+import { NUM_TABLE_ACTION_ANIMS, TABLE_ACTION_NAMES } from "./playerAnimation";
 
 export interface ActionAnimEntry {
   /** DTS clip name (lowercase, e.g. "diehead"). */

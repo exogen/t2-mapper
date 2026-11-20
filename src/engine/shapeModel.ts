@@ -274,48 +274,46 @@ export function createShapeModel(
 
   const cleanups: Cleanup[] = [];
 
-  if (entityId != null && imageSlot != null)
-    cleanups.push(registerImageMuzzle(entityId, imageSlot, clonedScene));
-  if (entityId != null && imageSlot == null)
-    cleanups.push(
-      renderShapeRaycast.register(
-        entityId,
-        clonedScene,
-        type,
-        () =>
-          !isStreamShape ||
-          gameEntityStore.getState().streamEntities.has(entityId),
-      ),
-    );
+  if (imageSlot != null) {
+    // Mounted images aren't container objects, even if their DTS has hulls.
+    if (entityId != null)
+      cleanups.push(registerImageMuzzle(entityId, imageSlot, clonedScene));
+  } else {
+    if (entityId != null)
+      cleanups.push(
+        renderShapeRaycast.register(
+          entityId,
+          clonedScene,
+          type,
+          () =>
+            !isStreamShape ||
+            gameEntityStore.getState().streamEntities.has(entityId),
+        ),
+      );
 
-  // Mission-placed statics (a generator, a bunker prop) occlude a camera
-  // exactly like interior walls, so register their meshes as CAMERA
-  // occluders — a separate collider class, so projectile physics keeps
-  // colliding with exactly what it always did. DTS collision/LOS details
-  // select the authored hulls, including tree trunks without leaf planes.
-  // Keyed on the GHOST index, not `entity.id` (a per-session counter that
-  // differs between stacks), so a dump of this world is comparable with a
-  // headless build's.
-  const ghostIndex = readEntity()?.ghostIndex;
-  const colliderId =
-    ghostIndex != null
-      ? `ghost:${ghostIndex}`
-      : `shape:${++fallbackColliderCount}`;
-  const staticMeshes = staticShapeColliderMeshes({ root: clonedScene, type });
-  if (staticMeshes) {
-    registerStaticShapeCollider(colliderId, staticMeshes);
-    cleanups.push(() => unregisterStaticShapeCollider(colliderId));
-  }
-  if (type !== "Item") {
-    registerPlayerShapeCollider(
-      colliderId,
-      getDTSCollisionMeshes(
-        clonedScene,
-        type === "TSStatic" ? "TSStatic" : "ShapeBase",
-        "collision",
-      ),
-    );
-    cleanups.push(() => unregisterPlayerShapeCollider(colliderId));
+    // Use the ghost index to match headless world dumps. Authored LOS hulls
+    // occlude camera rays, while player movement uses the collision details.
+    const ghostIndex = readEntity()?.ghostIndex;
+    const colliderId =
+      ghostIndex != null
+        ? `ghost:${ghostIndex}`
+        : `shape:${++fallbackColliderCount}`;
+    const staticMeshes = staticShapeColliderMeshes({ root: clonedScene, type });
+    if (staticMeshes) {
+      registerStaticShapeCollider(colliderId, staticMeshes);
+      cleanups.push(() => unregisterStaticShapeCollider(colliderId));
+    }
+    if (type !== "Item") {
+      registerPlayerShapeCollider(
+        colliderId,
+        getDTSCollisionMeshes(
+          clonedScene,
+          type === "TSStatic" ? "TSStatic" : "ShapeBase",
+          "collision",
+        ),
+      );
+      cleanups.push(() => unregisterPlayerShapeCollider(colliderId));
+    }
   }
 
   // ── Threads ──

@@ -43,6 +43,8 @@ export interface WeaponAnimState {
   soundDataBlockIds: number[];
   /** Casing ejections requested by the states visited this tick. */
   shellEjections: number;
+  /** Start the owner's recoil thread on this full state entry. */
+  recoil: boolean;
   shockwave?: boolean;
   /** Index of the current state in the state machine. */
   stateIndex: number;
@@ -116,7 +118,7 @@ export class WeaponImageStateMachine {
    * The current state's outputs as if just entered. A newly mounted image
    * plays its initial state's sound and other entry effects.
    */
-  snapshot(onMount = false): WeaponAnimState {
+  snapshot(onMount = false, flags?: WeaponImageState): WeaponAnimState {
     const state = this.states[this.currentStateIndex];
     const sound = state?.soundDataBlockId ?? -1;
     return this.output(
@@ -125,6 +127,9 @@ export class WeaponImageStateMachine {
       onMount && sound >= 0 ? [sound] : [],
       onMount && state?.ejectShell ? 1 : 0,
       onMount && state?.shockwave === true,
+      onMount &&
+        !!state?.recoil &&
+        (!flags || this.evaluateConditions(state, flags) < 0),
     );
   }
 
@@ -134,6 +139,7 @@ export class WeaponImageStateMachine {
     soundDataBlockIds: number[],
     shellEjections: number,
     shockwave: boolean,
+    recoil: boolean,
   ): WeaponAnimState {
     const state = this.states[this.currentStateIndex];
     return {
@@ -149,6 +155,7 @@ export class WeaponImageStateMachine {
       entered,
       soundDataBlockIds,
       shellEjections,
+      recoil,
       shockwave,
       stateIndex: this.currentStateIndex,
     };
@@ -177,6 +184,7 @@ export class WeaponImageStateMachine {
         entered: false,
         soundDataBlockIds: [],
         shellEjections: 0,
+        recoil: false,
         stateIndex: -1,
       };
     }
@@ -198,12 +206,13 @@ export class WeaponImageStateMachine {
     let entered = false;
     let shellEjections = 0;
     let shockwave = false;
-    let forced = (forceFire || fireCountChanged) && this.fireStateIndex >= 0;
+    let recoil = false;
+    let forced = forceFire || fireCountChanged;
 
     // Per-tick transition evaluation (C++ updateImageState): check conditions
     // and timeout when delayTime <= 0 or waitForTimeout is false.
     let nextState = forced
-      ? this.fireStateIndex
+      ? Math.max(0, this.fireStateIndex) // getImageFireState falls back to slot 0.
       : this.evaluateTickTransitions(flags);
 
     // Process transitions. Self-transitions just reset delayTime (matching
@@ -272,6 +281,9 @@ export class WeaponImageStateMachine {
       // Entry transitions: check conditions immediately (no waitForTimeout,
       // no timeout). Matches C++ setImageState's recursive condition checks.
       nextState = this.evaluateEntryTransitions(flags);
+      // Retail 0x5f8860 calls onImageRecoil only after the immediate
+      // condition branches. Same-state timeouts return before this point.
+      if (nextState < 0 && next.recoil) recoil = true;
     }
 
     // Per-tick spin update (C++ updateImageState spin switch).
@@ -304,6 +316,7 @@ export class WeaponImageStateMachine {
       soundDataBlockIds,
       shellEjections,
       shockwave,
+      recoil,
     );
   }
 

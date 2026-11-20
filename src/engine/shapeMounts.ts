@@ -2,7 +2,7 @@ import { Group } from "three";
 import { createLogger } from "../logger";
 import { getDTSImageMountTransform } from "../dts/dtsMount";
 import type { DTSModel } from "../dts/dtsModel";
-import type { ImageSlot } from "../stream/types";
+import type { ImageSlot, StreamEntity } from "../stream/types";
 import { resolveEmapFromImageSlot } from "./resolveEmap";
 import { resolveImageLight } from "./imageLight";
 import { loadShape, peekShape } from "./shapeCache";
@@ -11,6 +11,7 @@ import type { MountPoints } from "./shapeMountPoints";
 import { attachFrozen } from "./staticMatrices";
 import { markTransformChanged } from "../transformChanges";
 import type { GameEngine } from "./gameEngine";
+import { createWeaponPushback } from "./weaponPushback";
 
 export { MountPoints } from "./shapeMountPoints";
 
@@ -29,6 +30,7 @@ interface MountedImage {
   mountOffset: ImageSlot["mountOffset"];
   model: ShapeModel | null;
   shape: DTSModel | null;
+  pushback?: ReturnType<typeof createWeaponPushback>;
   detach(): void;
   dispose(): void;
 }
@@ -67,6 +69,26 @@ export class ImageMounts {
       if (image) roots.push([slot, image.root]);
     });
     return roots;
+  }
+
+  updateWeaponPushback(
+    player: StreamEntity | undefined,
+    body: Group,
+    carrier?: StreamEntity,
+  ): void {
+    const image = this.images[0];
+    if (!image?.model) return;
+    image.pushback ??= createWeaponPushback(
+      image.root,
+      image.model.root,
+      image.model.scene,
+    );
+    image.pushback.update(
+      player,
+      body,
+      carrier,
+      carrier ? this.engine.entities.get(carrier.id)?.root : undefined,
+    );
   }
 
   sync(slots: readonly (ImageSlot | undefined)[] | undefined): void {

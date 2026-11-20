@@ -491,6 +491,20 @@ export function createPlayerView(
           shape,
         );
         stopExtras = combineCleanups(
+          engine.scheduler.add(FramePriority.WeaponPose, () => {
+            if (
+              !model ||
+              (model.scene.dormant &&
+                streamRenderFrame.firstPersonPlayerId !== entity.id)
+            )
+              return;
+            const current = streamRenderFrame.current;
+            const player = current?.get(entity.id);
+            const carrier = player?.mountObjectId
+              ? current?.get(player.mountObjectId)
+              : undefined;
+            images.updateWeaponPushback(player, model.root, carrier);
+          }),
           engine.scheduler.add(FramePriority.PostCamera, ({ camera }) =>
             nameplate.update(camera),
           ),

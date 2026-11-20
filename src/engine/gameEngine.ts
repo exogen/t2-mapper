@@ -21,6 +21,13 @@ import { createPlayerView, createShapeView } from "./shapeViews";
 import type { Cleanup } from "./storeReaction";
 import type { StreamSnapshot } from "../stream/types";
 import type { ClipSample } from "../../relay/clipTypes";
+import { renderShapeRaycast } from "../collision/renderShapeRaycast";
+
+const weaponPoseBatch = {
+  stage: FramePriority.WeaponPose,
+  run: (callbacks: () => void) =>
+    renderShapeRaycast.withWeaponRetractionBatch(callbacks),
+};
 
 /** What renders the engine's scene (see mountEngineCanvas). */
 export interface EngineHost {
@@ -227,7 +234,7 @@ export class GameEngine {
 
   /** Run every stage of the frame. */
   runFrame(frame: FrameContext): void {
-    this.scheduler.runAll(frame);
+    this.scheduler.runAll(frame, weaponPoseBatch);
   }
 
   /** Finish the frame once it has rendered. */

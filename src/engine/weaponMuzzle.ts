@@ -8,8 +8,13 @@ import { posedNodeWorldMatrix } from "./deferredPose";
 import { findOwnNode } from "../sceneNodes";
 import { streamRenderFrame } from "../stream/interpolateEntity";
 import { getPlayerHeadAngles } from "../stream/playerView";
+import { usesPlayerBodyMuzzleAim } from "../stream/playerAnimation";
 import { MAX_LOOK_ANGLE } from "../stream/quantizedPlayerAim";
 import { MAX_PITCH } from "../stream/streamHelpers";
+import {
+  findImageRetractionNode,
+  readUnshiftedMountedImagePosition,
+} from "./weaponPushback";
 
 const EYE_AIM_RANGE = 500;
 const EYE_AIM_MIN_DISTANCE = 6;
@@ -18,14 +23,26 @@ const EYE_AIM_EPSILON = 0.2;
 const eye = new Vector3();
 const eyeDirection = new Vector3();
 const eyeTarget = new Vector3();
+const imageStart = new Vector3();
+const retractionPoint = new Vector3();
 const headAngles = { pitch: 0, yaw: 0 };
 
 interface MountedImage {
   root: Object3D;
   muzzle: Object3D;
+  retraction: Object3D;
 }
 
 const mountedImages = new Map<string, Map<number, MountedImage>>();
+const playerMuzzleActions = new WeakMap<Object3D, string | number>();
+
+export function setPlayerMuzzleAction(
+  source: Object3D,
+  action: string | number | undefined,
+): void {
+  if (action === undefined) playerMuzzleActions.delete(source);
+  else playerMuzzleActions.set(source, action);
+}
 
 /** Register only this mounted image's own muzzle, realizing its lazy DTS path.
  * ShapeBase::getRenderImageTransform falls back to the image transform when
@@ -37,9 +54,11 @@ export function registerImageMuzzle(
 ): () => void {
   let slots = mountedImages.get(ownerId);
   if (!slots) mountedImages.set(ownerId, (slots = new Map()));
+  const muzzle = findOwnNode(image, "muzzlePoint") ?? image;
   const entry = {
     root: image,
-    muzzle: findOwnNode(image, "muzzlePoint") ?? image,
+    muzzle,
+    retraction: findImageRetractionNode(image, muzzle),
   };
   slots.set(slot, entry);
   return () => {
@@ -63,28 +82,56 @@ function mountedImage(
   }
 }
 
-/** Return a named node on the currently mounted image, without borrowing a
- * similarly named node from another slot or a replacement owner. */
-export function mountedImageNode(
+/** Sample a named node's logical position and return its posed orientation. */
+export function readMountedImageNodePosition(
   sourceId: string,
   source: Object3D,
   slot: number,
   name: string,
+  out: Vector3,
 ): Object3D | undefined {
   const entry = mountedImage(sourceId, source, slot);
-  return entry ? (findOwnNode(entry.root, name) ?? entry.root) : undefined;
+  if (!entry) return;
+  const node = findOwnNode(entry.root, name) ?? entry.root;
+  readUnshiftedMountedImagePosition(entry.root, node, out);
+  return node;
 }
 
-/** ShapeBase::getRenderMuzzlePoint(sourceSlot): the selected image's animated
- * muzzle in world space, or the source transform if no image is mounted. */
+function playerRetractionHit(
+  sourceId: string | undefined,
+  image: MountedImage,
+): number | undefined {
+  const player = sourceId && streamRenderFrame.current?.get(sourceId);
+  if (!player || player.type !== "Player" || player.damageState) return;
+  readUnshiftedMountedImagePosition(image.root, image.root, imageStart);
+  readUnshiftedMountedImagePosition(
+    image.root,
+    image.retraction,
+    retractionPoint,
+  );
+  return renderShapeRaycast.weaponRetractionHit(
+    imageStart,
+    retractionPoint,
+    player.id,
+    true,
+  );
+}
+
+/** Player::getRenderMuzzleTransform separately stops the logical muzzle
+ * at the first render ray hit. The weapon's visual offset is computed
+ * from a simulation ray and never changes these unshifted endpoints. */
 export function muzzleWorldPosition(
   sourceId: string | undefined,
   source: Object3D,
   slot: number,
   out: Vector3,
 ): Vector3 {
-  const node = mountedImage(sourceId, source, slot)?.muzzle ?? source;
-  return out.setFromMatrixPosition(posedNodeWorldMatrix(node));
+  const image = mountedImage(sourceId, source, slot);
+  if (!image) return out.setFromMatrixPosition(posedNodeWorldMatrix(source));
+  const hit = playerRetractionHit(sourceId, image);
+  if (hit !== undefined)
+    return out.lerpVectors(imageStart, retractionPoint, hit);
+  return readUnshiftedMountedImagePosition(image.root, image.muzzle, out);
 }
 
 export function imageMuzzleWorldDirection(
@@ -93,7 +140,13 @@ export function imageMuzzleWorldDirection(
   slot: number,
   out: Vector3,
 ): Vector3 {
-  const muzzle = mountedImage(sourceId, source, slot)?.muzzle;
+  const image = mountedImage(sourceId, source, slot);
+  const muzzle =
+    image &&
+    (image.muzzle !== image.retraction &&
+    playerRetractionHit(sourceId, image) !== undefined
+      ? image.retraction
+      : image.muzzle);
   // Native DTS +Y becomes model +Z; an unrotated entity root uses +X.
   const useModelAxes = muzzle || source instanceof DTSShape;
   return out
@@ -146,10 +199,8 @@ export function sourceAimDirection(
   const player = sourceId
     ? streamRenderFrame.current?.get(sourceId)
     : undefined;
-  if (
-    player?.type !== "Player" ||
-    (player.mountObjectId && typeof player.actionSlot?.action === "number")
-  ) {
+  const action = playerMuzzleActions.get(source) ?? player?.actionSlot?.action;
+  if (player?.type !== "Player" || !usesPlayerBodyMuzzleAim(action)) {
     return imageMuzzleWorldDirection(sourceId, source, slot, out);
   }
   const look = getPlayerHeadAngles(

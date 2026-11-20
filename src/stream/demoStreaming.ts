@@ -1787,9 +1787,10 @@ export class DemoStreamAdapter extends StreamEngine {
     entity: MutableEntity,
     data: ParsedData | undefined,
     precipitationSeed?: PrecipitationState,
+    initial?: boolean,
   ): void {
     const wasAlive = !entity.damageState;
-    super.applyGhostData(entity, data, precipitationSeed);
+    super.applyGhostData(entity, data, precipitationSeed, initial);
     if (!this.playerViewsEnabled || entity.type !== "Player") return;
     const unavailable =
       !entity.viewQuantized ||

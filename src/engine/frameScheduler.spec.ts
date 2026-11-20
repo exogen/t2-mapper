@@ -44,6 +44,33 @@ it("skips a callback removed earlier in the same pass", () => {
   expect(order).toEqual(["first", "first"]);
 });
 
+it("wraps just the batched frame stage's callbacks", () => {
+  const scheduler = new FrameScheduler();
+  const order: string[] = [];
+  const run = (callbacks: () => void) => {
+    order.push("start");
+    callbacks();
+    order.push("end");
+  };
+  scheduler.add(FramePriority.ShapeAnimation, () => order.push("pose"));
+  scheduler.add(FramePriority.WeaponEffects, () => order.push("effects"));
+  const batch = { stage: FramePriority.WeaponPose, run };
+  scheduler.runAll(frame, batch);
+  expect(order.splice(0)).toEqual(["pose", "effects"]);
+
+  scheduler.add(FramePriority.WeaponPose, () => order.push("weapon 1"));
+  scheduler.add(FramePriority.WeaponPose, () => order.push("weapon 2"));
+  scheduler.runAll(frame, batch);
+  expect(order).toEqual([
+    "pose",
+    "start",
+    "weapon 1",
+    "weapon 2",
+    "end",
+    "effects",
+  ]);
+});
+
 it("starts a callback added during a stage with its next run", () => {
   const scheduler = new FrameScheduler();
   const order: string[] = [];

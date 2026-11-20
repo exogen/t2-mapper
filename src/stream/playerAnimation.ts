@@ -89,10 +89,30 @@ export function pickMoveAnimation(
   return { animation: "side", timeScale: -1 };
 }
 
-/** Table actions (root, run, back, side, fall, jet, jump, land) occupy
- *  indices 0-7 of the engine's action list; anything above is a
- *  non-table action sent over the wire (deaths, cels, the PDA idle). */
-export const NUM_TABLE_ACTION_ANIMS = 8;
+/** Table actions occupy the first eight slots of the engine's action list. */
+export const TABLE_ACTION_NAMES = [
+  "root",
+  "run",
+  "back",
+  "side",
+  "fall",
+  "jet",
+  "jump",
+  "land",
+];
+
+export const NUM_TABLE_ACTION_ANIMS = TABLE_ACTION_NAMES.length;
+
+/** Player::getMuzzleTransform only overrides the aim of table actions.
+ * The locally predicted ski and standjump actions use authored poses. */
+export function usesPlayerBodyMuzzleAim(
+  action: string | number | undefined,
+): boolean {
+  if (action === undefined) return true; // Default root pose.
+  return typeof action === "number"
+    ? action >= 0 && action < NUM_TABLE_ACTION_ANIMS
+    : TABLE_ACTION_NAMES.includes(action);
+}
 
 export interface PlayerPose<Key extends string | number = string> {
   /** Unwrapped cycle position for animation triggers (including reverse play). */

@@ -38,7 +38,7 @@ export function constrainOrbitCamera(
   position: Vector3,
   clearance = MIN_CLEARANCE,
   chooseDistance?: (rayDistance: number) => number,
-  excludeStaticColliderId?: string,
+  excludeStaticColliders?: ClearanceOptions["excludeStaticColliders"],
 ): number {
   const desired = _direction.subVectors(position, target).length();
   if (desired === 0) return 0;
@@ -51,11 +51,11 @@ export function constrainOrbitCamera(
   _end[2] = position.y;
 
   const options =
-    excludeStaticColliderId === undefined
+    excludeStaticColliders === undefined
       ? clearanceOptions
       : {
           ...clearanceOptions,
-          excludeStaticColliders: excludeStaticColliderId,
+          excludeStaticColliders,
         };
   return withCollisionQueryBatch(() => {
     const hit = castWorldRay(_start, _end, options);

@@ -220,6 +220,22 @@ describe("follow camera obstruction", () => {
     ).toBe(8);
   });
 
+  it("excludes both the followed target and its mount while keeping unrelated obstacles", () => {
+    registerStaticShapeCollider("ghost:3", [box([2, 3, 3], [2, 0, 0])]);
+    registerStaticShapeCollider("ghost:4", [box([4, 20, 1], [8, 0, 0.7])]);
+    registerStaticShapeCollider("ghost:5", [box([2, 3, 3], [10, 0, 0])]);
+    const target = new Vector3();
+    const position = new Vector3(8, 0, 0);
+    const excluded = ["ghost:3", "ghost:4"];
+    expect(
+      constrainOrbitCamera(target, position, undefined, undefined, excluded),
+    ).toBe(8);
+    position.set(12, 0, 0);
+    expect(
+      constrainOrbitCamera(target, position, undefined, undefined, excluded),
+    ).toBeCloseTo(8.68);
+  });
+
   it("respects enabled forcefields, including clearance beside their edges", () => {
     registerForceFieldCollider(
       "field",

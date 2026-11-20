@@ -3,6 +3,8 @@ import {
   getProjectileShapeData,
   type ProjectileShapePoses,
 } from "../collision/projectileShapeAssets";
+import { castWaterRay } from "../collision/waterLevel";
+import { castWorldRay, type Vec3 } from "../collision/worldCollision";
 import { buildDTSAnimations } from "../dts/dtsAnimation";
 import { DTSAnimationMixer } from "../dts/dtsAnimationMixer";
 import { DTSShape } from "../dts/dtsModel";
@@ -14,12 +16,17 @@ import type { DTSShapeData } from "../dts/dtsTypes";
 import { turretThreadPositions } from "../engine/turretAim";
 import { threeToTorque } from "../scene/coordinates";
 import { SHAPE_MODEL_ROTATION_Y } from "../world/placement";
-import { ANIM_TRANSITION_TIME, samplePlayerPose } from "./playerAnimation";
+import {
+  ANIM_TRANSITION_TIME,
+  samplePlayerPose,
+  usesPlayerBodyMuzzleAim,
+} from "./playerAnimation";
 import {
   buildActionAnimMap,
   getPlayerAnimationActions,
 } from "./playerActionMap";
 import { getPlayerHeadAngles, playerLookPitchPosition } from "./playerView";
+import { createPlayerRecoil } from "./playerRecoil";
 import { imageThreadPosition } from "./imageAnimation";
 import { MAX_LOOK_ANGLE } from "./quantizedPlayerAim";
 import { shapeThreadTime } from "./shapeThreads";
@@ -28,9 +35,10 @@ import { MAX_PITCH } from "./streamHelpers";
 import type { ImageSlot, StreamEntity } from "./types";
 
 /** Image and control aim recorded when the launch's ghost was applied. */
-export type ProjectileMuzzleFrame = Pick<StreamEntity, "turretAim"> & {
-  image?: ImageSlot;
-};
+export type ProjectileMuzzleFrame = Pick<
+  StreamEntity,
+  "turretAim" | "recoilStartedAtSec"
+> & { image?: ImageSlot };
 
 type Shooter = Parameters<ProjectileShapePoses["get"]>[0] &
   Pick<
@@ -47,6 +55,7 @@ type Shooter = Parameters<ProjectileShapePoses["get"]>[0] &
     | "headPitch"
     | "headYaw"
     | "damageState"
+    | "recoilStartedAtSec"
   >;
 
 class ShapePose {
@@ -57,7 +66,10 @@ class ShapePose {
   private readonly clips: ReturnType<typeof buildDTSAnimations>;
   private readonly playerActionMaps = new WeakMap<
     readonly string[],
-    Map<string | number, AnimationAction>
+    {
+      actions: Map<string | number, AnimationAction>;
+      recoil: ReturnType<typeof createPlayerRecoil>;
+    }
   >();
 
   constructor(data: DTSShapeData) {
@@ -88,17 +100,24 @@ class ShapePose {
   }
 
   playerActions(shapeName: string, sequences: readonly string[]) {
-    let actions = this.playerActionMaps.get(sequences);
-    if (!actions) {
+    let player = this.playerActionMaps.get(sequences);
+    if (!player) {
       const prefix = shapeKey(shapeName).replace(/\.dts$/, "_");
-      actions = getPlayerAnimationActions(
+      const actions = getPlayerAnimationActions(
         this.clips,
         this.mixer,
         buildActionAnimMap(sequences, prefix, this.clips),
       );
-      this.playerActionMaps.set(sequences, actions);
+      player = {
+        actions,
+        recoil: createPlayerRecoil(
+          (name) => actions.get(name) ?? this.actions.get(name),
+          (action) => this.isCyclic(action),
+        ),
+      };
+      this.playerActionMaps.set(sequences, player);
     }
-    return actions;
+    return player;
   }
 
   isCyclic(action: AnimationAction): boolean {
@@ -106,7 +125,6 @@ class ShapePose {
   }
 
   nodeMatrix(index: number): Matrix4 {
-    this.mixer.update(0);
     const node = this.shape.getNode(index) ?? this.shape;
     node.updateWorldMatrix(true, false);
     return node.matrixWorld;
@@ -172,14 +190,19 @@ export function projectileMuzzlePosition(
     if (elevate != null) pose.hold(pose.actions.get("elevate"), elevate);
     if (turn != null) pose.hold(pose.actions.get("turn"), turn);
   }
+  let bodyAimPitch: number | undefined;
   if (source.type === "Player") {
-    const actions = pose.playerActions(bodyName, constructorSequences);
+    const { actions, recoil } = pose.playerActions(
+      bodyName,
+      constructorSequences,
+    );
     const getAction = (name: string | number) =>
       actions.get(name) ??
       (typeof name === "string" ? pose.actions.get(name) : undefined);
     const move = source.clientAnimation?.move;
+    let currentAction = source.actionSlot?.action;
     if (move) {
-      for (const body of samplePlayerPose(
+      const bodyPoses = samplePlayerPose(
         move,
         source,
         timeSec,
@@ -194,22 +217,34 @@ export function projectileMuzzlePosition(
             }
           );
         },
-      ))
+      );
+      currentAction = bodyPoses[0]?.name;
+      for (const body of bodyPoses)
         pose.hold(getAction(body.name), body.position, body.weight);
     }
-    if (!source.damageState) {
+    if (!source.damageState || directionOut) {
       const look = getPlayerHeadAngles(source, 1, headAngles);
       const pitchScale =
         source.playerDelta?.maxLookAngle ??
         (source.viewQuantized === false ? MAX_PITCH : maxLookAngle);
-      const pitch = playerLookPitchPosition(look.pitch * pitchScale);
-      const arm = source.armAction ?? "look";
-      pose.hold(getAction(arm) ?? getAction("look"), pitch);
-      pose.hold(getAction("head"), pitch);
-      pose.hold(getAction("headside"), (look.yaw + 1) / 2);
+      const pitch = look.pitch * pitchScale;
+      if (directionOut && usesPlayerBodyMuzzleAim(currentAction))
+        bodyAimPitch = pitch;
+      if (!source.damageState) {
+        const position = playerLookPitchPosition(pitch);
+        const arm = source.armAction ?? "look";
+        pose.hold(getAction(arm) ?? getAction("look"), position);
+        pose.hold(getAction("head"), position);
+        pose.hold(getAction("headside"), (look.yaw + 1) / 2);
+      }
     }
+    recoil?.(
+      timeSec,
+      launch ? launch.recoilStartedAtSec : source.recoilStartedAtSec,
+    );
   }
   const mount = getDTSNodeLookup(body).mounts[image.mountPoint] ?? -1;
+  pose.mixer.update(0);
   muzzleMatrix
     .copy(world)
     .multiply(modelRotation)
@@ -234,15 +269,45 @@ export function projectileMuzzlePosition(
       ),
     );
   }
-  const muzzleNode = getDTSNodeLookup(weapon).names.get("muzzlepoint") ?? -1;
-  muzzleMatrix
-    .multiply(getDTSImageMountTransform(weapon, image.mountOffset))
-    .multiply(imagePose.nodeMatrix(muzzleNode));
+  imagePose.mixer.update(0);
+  const nodes = getDTSNodeLookup(weapon).names;
+  const muzzleNode = nodes.get("muzzlepoint") ?? -1;
+  muzzleMatrix.multiply(getDTSImageMountTransform(weapon, image.mountOffset));
+  let node = muzzleNode;
+  let contact: Vec3 | undefined;
+  if (source.type === "Player" && !source.damageState) {
+    // Player::getMuzzleTransform casts from the raw image transform toward
+    // its retraction node, using the hit for the initial projectile warp.
+    const retractionNode = nodes.get("retractionpoint") ?? muzzleNode;
+    if (retractionNode >= 0) {
+      const from = threeToTorque(muzzle.setFromMatrixPosition(muzzleMatrix));
+      const to = threeToTorque(
+        muzzle
+          .setFromMatrixPosition(imagePose.nodeMatrix(retractionNode))
+          .applyMatrix4(muzzleMatrix),
+      );
+      if (from.some((value, axis) => value !== to[axis])) {
+        const solid = castWorldRay(from, to, { includeStatics: true });
+        const water = castWaterRay(from, to);
+        const hit = water && (!solid || water.t < solid.t) ? water : solid;
+        if (hit) {
+          contact = hit.point;
+          node = retractionNode;
+        }
+      }
+    }
+  }
+  if (!contact || (directionOut && bodyAimPitch === undefined))
+    muzzleMatrix.multiply(imagePose.nodeMatrix(node));
   if (directionOut) {
     const direction = threeToTorque(
-      muzzle.set(0, 0, 1).transformDirection(muzzleMatrix),
+      bodyAimPitch === undefined
+        ? muzzle.set(0, 0, 1).transformDirection(muzzleMatrix)
+        : muzzle
+            .set(Math.cos(bodyAimPitch), -Math.sin(bodyAimPitch), 0)
+            .transformDirection(world),
     );
     [directionOut[0], directionOut[1], directionOut[2]] = direction;
   }
-  return threeToTorque(muzzle.setFromMatrixPosition(muzzleMatrix));
+  return contact ?? threeToTorque(muzzle.setFromMatrixPosition(muzzleMatrix));
 }

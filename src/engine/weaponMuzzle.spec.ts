@@ -1,12 +1,26 @@
 import fs from "node:fs/promises";
 import { expect, it } from "vitest";
-import { Group, Object3D, PerspectiveCamera, Vector3 } from "three";
+import {
+  DoubleSide,
+  Group,
+  Mesh,
+  MeshBasicMaterial,
+  Object3D,
+  PerspectiveCamera,
+  PlaneGeometry,
+  Vector3,
+} from "three";
 import { DTSLoader } from "../dts/dtsLoader";
 import { DTSAnimationTransform, DTSNode } from "../dts/dtsModel";
+import {
+  registerInteriorCollider,
+  unregisterInteriorCollider,
+} from "../collision/worldCollision";
 import {
   imageMuzzleWorldDirection,
   muzzleWorldPosition,
   registerImageMuzzle,
+  setPlayerMuzzleAction,
   sourceAimDirection,
 } from "./weaponMuzzle";
 import { streamRenderFrame } from "../stream/interpolateEntity";
@@ -228,6 +242,71 @@ it("uses body orientation and head pitch for the normal player pose", () => {
   } finally {
     unregister();
     streamRenderFrame.current = current;
+  }
+});
+
+it("uses the retraction ray contact as the player's logical muzzle point", () => {
+  const previous = streamRenderFrame.current;
+  const player: StreamEntity = {
+    id: "blocked",
+    type: "Player",
+    actionSlot: { action: 8, calls: [{ timeSec: 0 }] },
+  };
+  streamRenderFrame.current = new Map([[player.id, player]]);
+  const root = new Group();
+  const gun = new Group();
+  const muzzle = new Object3D();
+  const retract = new Object3D();
+  const out = new Vector3();
+  root.add(gun);
+  muzzle.name = "MuzzlePoint";
+  muzzle.position.z = 2;
+  retract.name = "RetractionPoint";
+  retract.position.z = 4;
+  retract.rotation.y = -Math.PI / 2;
+  gun.add(muzzle, retract);
+  const unregister = registerImageMuzzle(player.id, 0, gun);
+
+  const wall = new Mesh(
+    new PlaneGeometry(4, 4),
+    new MeshBasicMaterial({ side: DoubleSide }),
+  );
+  wall.position.z = 3;
+  wall.updateMatrixWorld(true);
+  registerInteriorCollider("muzzle-test-wall", [wall]);
+
+  try {
+    expect(muzzleWorldPosition(player.id, root, 0, out).z).toBeCloseTo(3);
+    expect(imageMuzzleWorldDirection(player.id, root, 0, out).x).toBeCloseTo(
+      -1,
+    );
+    const camera = new PerspectiveCamera();
+    expect(
+      sourceAimDirection(player.id, root, 0, out, camera, out).x,
+    ).toBeCloseTo(-1);
+    for (const action of ["ski", "standjump"]) {
+      setPlayerMuzzleAction(root, action);
+      expect(
+        sourceAimDirection(player.id, root, 0, out, camera, out).x,
+      ).toBeCloseTo(-1);
+    }
+    // The server slot still holds the action after the client finishes it.
+    setPlayerMuzzleAction(root, "root");
+    expect(
+      sourceAimDirection(player.id, root, 0, out, camera, out).x,
+    ).toBeCloseTo(1);
+    player.damageState = 1;
+    expect(muzzleWorldPosition(player.id, root, 0, out).z).toBeCloseTo(2);
+    player.damageState = 0;
+    unregisterInteriorCollider("muzzle-test-wall");
+    expect(muzzleWorldPosition(player.id, root, 0, out).z).toBeCloseTo(2);
+    expect(imageMuzzleWorldDirection(player.id, root, 0, out).z).toBeCloseTo(1);
+  } finally {
+    unregister();
+    unregisterInteriorCollider("muzzle-test-wall");
+    wall.geometry.dispose();
+    wall.material.dispose();
+    streamRenderFrame.current = previous;
   }
 });
 

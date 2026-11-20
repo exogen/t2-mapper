@@ -47,6 +47,8 @@ export const FramePriority = {
   PlayerView: -45,
   /** Shape mixers: body, mounted images, turret aim, vehicle jets. */
   ShapeAnimation: -40,
+  /** Retract the player weapon after both mount and image animation. */
+  WeaponPose: -39.5,
   /** Muzzle flashes and casings sample the mounts after all shape mixers. */
   WeaponEffects: -39,
   /** Cosmetic debris, after animated weapon mounts have ejected casings. */

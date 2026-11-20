@@ -22,6 +22,7 @@ interface ShapeEntry {
   active: () => boolean;
   box: Box3;
   hulls?: DTSCollisionMesh[];
+  weaponPose?: { generation: number; inverse: Matrix4 };
 }
 
 export type BeamRayHit =
@@ -53,6 +54,26 @@ export class RenderShapeRaycast {
   private readonly elfStart = new Vector3();
   private readonly elfEnd = new Vector3();
   private readonly updatedTransforms = new Set<Object3D>();
+  private readonly weaponTransforms = new Set<Object3D>();
+  private weaponBatch = false;
+  private weaponGeneration = 0;
+
+  /** During WeaponPose only the drawn images move. They are not colliders,
+   * so each short retraction ray can reuse the same collision root poses. */
+  withWeaponRetractionBatch(update: () => void): void {
+    if (this.weaponBatch) {
+      update();
+      return;
+    }
+    this.weaponBatch = true;
+    this.weaponGeneration++;
+    try {
+      update();
+    } finally {
+      this.weaponBatch = false;
+      this.weaponTransforms.clear();
+    }
+  }
 
   register(
     id: string,
@@ -199,12 +220,24 @@ export class RenderShapeRaycast {
     sourceId: string | undefined,
     exclude?: BeamRayHit,
   ): BeamRayHit | undefined {
+    return this.containerRayHit(start, end, sourceId, exclude, true, false);
+  }
+
+  private containerRayHit(
+    start: Vector3,
+    end: Vector3,
+    sourceId: string | undefined,
+    exclude: BeamRayHit | undefined,
+    includeWater: boolean,
+    weaponPose: boolean,
+  ): BeamRayHit | undefined {
     const shapeT = this.castShapes(
       start,
       end,
       "TSStatic",
       sourceId,
       exclude && "shapeId" in exclude ? exclude.shapeId : undefined,
+      weaponPose,
     );
     this.setRayEndpoints(start, end);
     const world = castWorldRay(
@@ -212,17 +245,38 @@ export class RenderShapeRaycast {
       this.worldEnd,
       exclude && "world" in exclude ? { excludeHit: exclude.world } : undefined,
     );
-    const water = castWaterRay(
-      this.worldStart,
-      this.worldEnd,
-      exclude && "water" in exclude ? exclude.water.info : undefined,
-    );
+    const water = includeWater
+      ? castWaterRay(
+          this.worldStart,
+          this.worldEnd,
+          exclude && "water" in exclude ? exclude.water.info : undefined,
+        )
+      : null;
     const worldT = world?.t ?? Infinity;
     const waterT = water?.t ?? Infinity;
     if (this.hitId !== undefined && shapeT <= Math.min(worldT, waterT))
       return { t: shapeT, shapeId: this.hitId };
     if (water && waterT < worldT) return { t: waterT, water };
     if (world) return { t: worldT, world };
+  }
+
+  /** Player disables its own collision for the retraction segment. The
+   * mounted model excludes water, while the logical muzzle includes it. */
+  weaponRetractionHit(
+    start: Vector3,
+    end: Vector3,
+    sourceId: string,
+    includeWater: boolean,
+  ): number | undefined {
+    if (start.equals(end)) return;
+    return this.containerRayHit(
+      start,
+      end,
+      sourceId,
+      undefined,
+      includeWater,
+      this.weaponBatch,
+    )?.t;
   }
 
   /** TargetProjectile::canRenderEndFlare excludes the struck object from
@@ -255,6 +309,7 @@ export class RenderShapeRaycast {
     type: string,
     excludeA?: string,
     excludeB?: string,
+    weaponPose = false,
   ): number {
     let best = 1;
     this.hitId = undefined;
@@ -264,7 +319,7 @@ export class RenderShapeRaycast {
       // StaticObject bit with static targets. Terrain/interiors work likewise.
       if (entry.type === "TSStatic" && !isStatic(type)) continue;
       if (!entry.active()) continue;
-      const t = this.castShape(start, end, entry, best);
+      const t = this.castShape(start, end, entry, best, weaponPose);
       if (t === undefined) continue;
       best = t;
       this.hitId = id;
@@ -278,13 +333,28 @@ export class RenderShapeRaycast {
     end: Vector3,
     entry: ShapeEntry,
     limit: number,
+    weaponPose: boolean,
   ): number | undefined {
     // Frozen mounts can move with their parents. Use current ancestry
     // for the broad-phase box and each animated LOS hull.
-    updateCollisionWorldMatrix(entry.shape, this.updatedTransforms);
-    this.inverse.copy(entry.shape.matrixWorld).invert();
-    this.start.copy(start).applyMatrix4(this.inverse);
-    this.end.copy(end).applyMatrix4(this.inverse);
+    let inverse = this.inverse;
+    if (weaponPose) {
+      const cached = (entry.weaponPose ??= {
+        generation: 0,
+        inverse: new Matrix4(),
+      });
+      if (cached.generation !== this.weaponGeneration) {
+        updateCollisionWorldMatrix(entry.shape, this.weaponTransforms);
+        cached.inverse.copy(entry.shape.matrixWorld).invert();
+        cached.generation = this.weaponGeneration;
+      }
+      inverse = cached.inverse;
+    } else {
+      updateCollisionWorldMatrix(entry.shape, this.updatedTransforms);
+      inverse.copy(entry.shape.matrixWorld).invert();
+    }
+    this.start.copy(start).applyMatrix4(inverse);
+    this.end.copy(end).applyMatrix4(inverse);
     const tBox = segmentBoxEntry(this.start, this.end, entry.box);
     if (tBox === null || tBox > limit) return;
     if (entry.type === "Player") return tBox;

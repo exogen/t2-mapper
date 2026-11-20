@@ -92,6 +92,8 @@ export interface WeaponImageDataBlockState {
   timeoutValue?: number;
   waitForTimeout: boolean;
   fire: boolean;
+  /** ShapeBaseImageData's recoil state. Any nonzero value cues player recoil. */
+  recoil?: number;
   ejectShell?: boolean;
   shockwave?: boolean;
   sequence?: number;
@@ -434,6 +436,8 @@ export interface StreamEntity {
   energy?: number;
   /** See Keyframe.actionSlot. */
   actionSlot?: ActionSlot;
+  /** Start of the player's shared recoil thread, from a mounted image state. */
+  recoilStartedAtSec?: number;
   damageState?: number;
   /** Retail renderWhenDestroyed / player blowApart visibility. */
   destroyedHidden?: boolean;

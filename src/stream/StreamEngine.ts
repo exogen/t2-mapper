@@ -170,6 +170,7 @@ import type {
   FlagTargetInfo,
   WeaponsHudSlot,
   ServerMessageEvent,
+  WeaponImageState,
 } from "./types";
 import {
   explosionExplodeTicks,
@@ -272,6 +273,8 @@ export interface MutableEntity extends Omit<
   rotation: [number, number, number, number];
   /** Move tick when this ghost instance first entered scope. */
   spawnTick: number;
+  /** Fire counts belong to ShapeBase slots and survive unmounts. */
+  imageFireCounts?: number[];
   maxEnergy?: number;
   /** Retained across checkpoints to rebuild the canonical ambient emitter. */
   particleEmitterDataBlockId?: number;
@@ -1322,13 +1325,14 @@ export abstract class StreamEngine implements StreamingPlayback {
             // Refresh older checkpoints' cached state tables from the
             // parser's corrected datablock flags.
             let states = slot.imageStates;
-            if (states[0]?.shockwave === undefined) {
+            const legacyThreads = states[0]?.shockwave === undefined;
+            if (legacyThreads || states[0]?.recoil === undefined) {
               const block = this.getDataBlockData(slot.dataBlockId);
               if (block) states = parseWeaponImageStates(block) ?? states;
             }
             const migrated = states !== slot.imageStates;
             const image = new ImageAnimation(states, saved.timeSec, 0);
-            image.restoreState(saved, migrated);
+            image.restoreState(saved, legacyThreads && migrated);
             if (migrated) {
               entity.imageSlots = [...entity.imageSlots!];
               entity.imageSlots[i] = {
@@ -1927,6 +1931,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     return {
       image: slot == null ? undefined : source.imageSlots?.[slot],
       turretAim: source.turretAim,
+      recoilStartedAtSec: source.recoilStartedAtSec,
     };
   }
 
@@ -2120,7 +2125,12 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.className = className;
     entity.type = toEntityType(className);
     this.entityIdByGhostIndex.set(ghostIndex, entityId);
-    this.applyGhostData(entity, ghost.parsedData, weatherSeed?.precipitation);
+    this.applyGhostData(
+      entity,
+      ghost.parsedData,
+      weatherSeed?.precipitation,
+      !existingEntity,
+    );
     if (!existingEntity && entity.type === "Projectile")
       this.noteProjectileSpawn(entity, ghost.parsedData);
     if (ghost.type === "create" || ghost.parsedData?.targetId != null) {
@@ -2457,6 +2467,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity: MutableEntity,
     rawData: ParsedData | undefined,
     precipitationSeed?: PrecipitationState,
+    initial = false,
   ): void {
     if (!rawData) return;
     // Retail leaves an exploded linear ghost hidden until it leaves scope,
@@ -2477,6 +2488,8 @@ export abstract class StreamEngine implements StreamingPlayback {
 
     const dataBlockId = data.dataBlockId as number | undefined;
     if (dataBlockId != null) {
+      if (entity.type === "Player" && entity.dataBlockId !== dataBlockId)
+        entity.recoilStartedAtSec = undefined;
       entity.dataBlockId = dataBlockId;
       const blockData = this.getDataBlockData(dataBlockId);
       const shapeName = resolveShapeName(entity.className, blockData);
@@ -2745,6 +2758,19 @@ export abstract class StreamEngine implements StreamingPlayback {
         // from the slot index.
         for (const img of images) {
           if (img.index == null || img.index < 0 || img.index >= 8) continue;
+          const prevSlot = entity.imageSlots?.[img.index];
+          const prev = prevSlot?.imageState;
+          const previousFireCount =
+            entity.imageFireCounts?.[img.index] ?? prev?.fireCount ?? 0;
+          const fireCount = img.fireCount ?? previousFireCount;
+          // Native initial packets only seed mounted slots. A live catch-up
+          // create can include a later update to an empty slot without the
+          // initial firing bit; keep that slot's count too.
+          if (
+            img.fireCount != null &&
+            (!initial || img.dataBlockId || img.imageExtraFlag === undefined)
+          )
+            (entity.imageFireCounts ??= [])[img.index] = fireCount;
 
           if (img.dataBlockId && img.dataBlockId > 0) {
             const blockData = this.getDataBlockData(img.dataBlockId);
@@ -2762,8 +2788,6 @@ export abstract class StreamEngine implements StreamingPlayback {
 
             // Every slot carries its image state (a pack's trigger is
             // its activation); the state table is parsed once per datablock.
-            const prevSlot = entity.imageSlots?.[img.index];
-            const prev = prevSlot?.imageState;
             const imageState = {
               dataBlockId: img.dataBlockId,
               triggerDown: img.triggerDown ?? prev?.triggerDown ?? false,
@@ -2771,7 +2795,7 @@ export abstract class StreamEngine implements StreamingPlayback {
               loaded: img.loaded ?? prev?.loaded ?? true,
               target: img.target ?? prev?.target ?? false,
               wet: img.wet ?? prev?.wet ?? false,
-              fireCount: img.fireCount ?? prev?.fireCount ?? 0,
+              fireCount,
             };
             const imageStates =
               prevSlot?.dataBlockId === img.dataBlockId && prevSlot.imageStates
@@ -2781,31 +2805,39 @@ export abstract class StreamEngine implements StreamingPlayback {
                   : undefined;
 
             if (shapeName) {
-              // Keep image lifetime separate from its changing condition flags.
+              // ShapeBase::setImage preserves state on a skin-only update.
+              // ImageMounts still uses the skin when choosing the visual.
               const newImage =
                 !prevSlot ||
                 prevSlot.dataBlockId !== img.dataBlockId ||
-                prevSlot.shapeName !== shapeName ||
-                prevSlot.skinName !== skinName;
+                prevSlot.shapeName !== shapeName;
               let animations = this.imageAnimations.get(entity.id);
               if (!animations)
                 this.imageAnimations.set(entity.id, (animations = []));
+              const time = this.getTimeSec();
               if (newImage)
                 animations[img.index] = imageStates?.length
                   ? new ImageAnimation(
                       imageStates,
-                      this.getTimeSec(),
+                      time,
                       entity.ghostIndex * 65537 +
                         entity.spawnTick * 31 +
                         img.index,
+                      imageState,
                     )
                   : undefined;
               // unpackUpdate runs updateImageState(i, 0) after each packet;
               // fire notifications must not be lost between simulation ticks.
-              animations[img.index]?.advance(
-                this.getTimeSec(),
+              const animation = this.advanceMountedImage(
+                entity,
+                animations[img.index],
+                time,
                 imageState,
-                newImage && img.imageExtraFlag === true,
+                newImage &&
+                  (initial
+                    ? img.imageExtraFlag === true
+                    : fireCount !== previousFireCount),
+                newImage,
               );
               // Published snapshots retain their image flags at that tick.
               entity.imageSlots = [...(entity.imageSlots ?? [])];
@@ -2817,10 +2849,8 @@ export abstract class StreamEngine implements StreamingPlayback {
                 skinName,
                 imageState,
                 imageStates,
-                animation: animations[img.index]?.current,
-                mountedAtSec: newImage
-                  ? this.getTimeSec()
-                  : prevSlot.mountedAtSec,
+                animation,
+                mountedAtSec: newImage ? time : prevSlot.mountedAtSec,
               };
             }
           } else if (!img.dataBlockId) {
@@ -4608,6 +4638,26 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
   }
 
+  private advanceMountedImage(
+    entity: MutableEntity,
+    animation: ImageAnimation | undefined,
+    time: number,
+    flags: WeaponImageState,
+    forceFire = false,
+    mounted = false,
+  ) {
+    if (!animation) return;
+    const previous = animation.current;
+    const state = animation.advance(time, flags, forceFire);
+    if (
+      entity.type === "Player" &&
+      ((mounted && previous.state.recoil) ||
+        (state !== previous && state.state.recoil))
+    )
+      entity.recoilStartedAtSec = time;
+    return state;
+  }
+
   /** Advance client animations even while their render assets are absent. */
   protected advanceShapeAnimations(): void {
     const time = this.getTimeSec();
@@ -4626,7 +4676,12 @@ export abstract class StreamEngine implements StreamingPlayback {
         const animation = animations[i],
           slot = entity.imageSlots[i];
         if (!animation || !slot?.imageState) continue;
-        const state = animation.advance(time, slot.imageState);
+        const state = this.advanceMountedImage(
+          entity,
+          animation,
+          time,
+          slot.imageState,
+        );
         if (state === slot.animation) continue;
         if (!changed) entity.imageSlots = [...entity.imageSlots];
         changed = true;
@@ -5617,6 +5672,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         health: entity.health,
         energy: entity.energy,
         actionSlot: entity.actionSlot,
+        recoilStartedAtSec: entity.recoilStartedAtSec,
         armAction: entity.armAction,
         damageState: entity.damageState,
         destroyedHidden: entity.destroyedHidden,

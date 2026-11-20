@@ -755,6 +755,7 @@ export function parseWeaponImageStates(
       timeoutValue: s.timeoutValue as number | undefined,
       waitForTimeout: (s.waitForTimeout as boolean) ?? true,
       fire: (s.fire as boolean) ?? false,
+      recoil: (s.recoil as number) ?? 0,
       ejectShell: s.ejectShell === true,
       shockwave: s.shockwave === true,
       sequence: s.sequence as number | undefined,

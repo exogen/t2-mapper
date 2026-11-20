@@ -12,7 +12,7 @@ import { timelineRandom } from "../stream/timelineRandom";
 import { findOwnNode } from "../sceneNodes";
 import { SHAPE_MODEL_ROTATION_Y } from "../world/placement";
 import { requestShockwave } from "./shockwaveRequests";
-import { posedNodeWorldMatrix } from "./deferredPose";
+import { readUnshiftedMountedImagePosition } from "./weaponPushback";
 import { FramePriority } from "./framePriority";
 import type { FrameScheduler } from "./frameScheduler";
 import type { ImageStateEffects } from "./imageStateAnimation";
@@ -69,9 +69,8 @@ export function imageFlashTransform(
     node = findOwnNode(image, "mount0") ?? image;
     mountNodes.set(image, node);
   }
-  const matrix = posedNodeWorldMatrix(node);
-  origin.setFromMatrixPosition(matrix);
-  axis.set(0, 0, 1).transformDirection(matrix);
+  readUnshiftedMountedImagePosition(image, node, origin);
+  axis.set(0, 0, 1).transformDirection(node.matrixWorld);
 }
 
 /** ShapeBase::ejectShell (0x005f9600) launches a Debris at the image's

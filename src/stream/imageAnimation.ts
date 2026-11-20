@@ -44,6 +44,7 @@ export class ImageAnimation {
     states: WeaponImageDataBlockState[],
     timeSec: number,
     seed: number,
+    mountFlags?: WeaponImageState,
   ) {
     // Sequence indices are valid before DTS resources load. Resolve names only
     // at the renderer, using that image's own sequence table.
@@ -57,7 +58,7 @@ export class ImageAnimation {
     );
     this.random = timelineRandom(seed);
     this.timeSec = timeSec;
-    const state = this.machine.snapshot(true);
+    const state = this.machine.snapshot(true, mountFlags);
     this.current = {
       state,
       revision: 0,

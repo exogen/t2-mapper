@@ -28,6 +28,10 @@ import {
   getKeyframeAtTime,
 } from "../stream/playbackUtils";
 import { samplePlayerPose } from "../stream/playerAnimation";
+import {
+  createPlayerRecoil,
+  playerRecoilStartAt,
+} from "../stream/playerRecoil";
 import type { DTSModel, DTSShape } from "../dts/dtsModel";
 import { createDtsDamageThreads } from "../dts/dtsDamage";
 import {
@@ -70,6 +74,7 @@ import { combineCleanups, type Cleanup } from "./storeReaction";
 import { FramePriority } from "./framePriority";
 import { createPlayerPresentation } from "./playerPresentation";
 import { firstPersonSpineNodes } from "./firstPersonPlayer";
+import { setPlayerMuzzleAction } from "./weaponMuzzle";
 import { markTransformChanged } from "../transformChanges";
 import type { GameEngine } from "./gameEngine";
 
@@ -250,6 +255,12 @@ export function createPlayerModel(
   let activeArm: AnimationAction | null = actions.get("look") ?? null;
   if (activeArm) holdDtsAction(activeArm, 0);
 
+  const sampleRecoil = createPlayerRecoil(
+    (name) => actions.get(name),
+    (action) => cyclicSequences.has(action.getClip().name.toLowerCase()),
+  );
+  sampleRecoil?.(0);
+
   // Force initial pose evaluation.
   mixer.update(0);
 
@@ -326,6 +337,7 @@ export function createPlayerModel(
       markTransformChanged(root);
 
     const recorded = current?.clientAnimation;
+    let muzzleAction = current?.actionSlot?.action;
     if (recorded?.move) {
       const poses = samplePlayerPose(
         recorded.move,
@@ -343,6 +355,7 @@ export function createPlayerModel(
           );
         },
       );
+      muzzleAction = poses[0]?.name;
       firstPersonAction = poses[0]?.firstPerson === true;
       const selected: AnimationAction[] = [];
       for (const pose of poses) {
@@ -356,6 +369,7 @@ export function createPlayerModel(
         if (!selected.includes(action)) action.stop();
       bodyActions = selected;
     }
+    setPlayerMuzzleAction(clonedScene, muzzleAction);
 
     // Player::updateAnimationTree (Tribes2.exe 0x5d6590): for the viewed
     // player, use bind position/rotation on the spine before additive
@@ -408,6 +422,15 @@ export function createPlayerModel(
       blend.headside.time = yawPos * blend.headside.getClip().duration;
       blend.headside.weight = blendWeight;
     }
+    if (sampleRecoil)
+      sampleRecoil(
+        time,
+        playerRecoilStartAt(
+          current?.recoilStartedAtSec,
+          streamRenderFrame.previous?.get(entity.id)?.recoilStartedAtSec,
+          time,
+        ),
+      );
 
     // Jet flare thread (Player::processTick FUN_005d2d60): the non-cyclic
     // JetFlare sequence runs at time scale +1 while jetting and −1

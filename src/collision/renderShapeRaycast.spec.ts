@@ -1,5 +1,5 @@
-import { afterEach, expect, it } from "vitest";
-import { BoxGeometry, Group, Mesh, Vector3 } from "three";
+import { afterEach, expect, it, vi } from "vitest";
+import { Box3, BoxGeometry, Group, Matrix4, Mesh, Vector3 } from "three";
 import { buildDTS } from "../dts/dtsBuilder";
 import { createDTSCollisionTestShape } from "../dts/dtsTestFixtures";
 import { RenderShapeRaycast } from "./renderShapeRaycast";
@@ -8,7 +8,6 @@ import {
   registerForceFieldCollider,
   registerInteriorCollider,
 } from "./worldCollision";
-import { Box3, Matrix4 } from "three";
 import { setWaterInfo } from "./waterLevel";
 
 afterEach(() => {
@@ -21,6 +20,68 @@ function shape() {
   data.bounds = { min: [-10, -10, -10], max: [10, 10, 10] };
   return buildDTS(data).scene;
 }
+
+it("casts weapon retraction against nearby walls, ignoring the owner and optionally water", () => {
+  const rays = new RenderShapeRaycast();
+  rays.register("player", shape(), "Player");
+  const start = new Vector3(0, 1, 0),
+    end = new Vector3(0, -3, 0);
+  expect(
+    rays.weaponRetractionHit(start, start, "other-owner", false),
+  ).toBeUndefined();
+  setWaterInfo({
+    surfaceZ: 0,
+    waveMagnitude: 0,
+    liquidType: 0,
+    minX: 0,
+    minY: 0,
+    sizeX: 2048,
+    sizeY: 2048,
+  });
+  expect(rays.weaponRetractionHit(start, end, "player", false)).toBeUndefined();
+  expect(rays.weaponRetractionHit(start, end, "player", true)).toBeCloseTo(
+    0.25,
+  );
+
+  const wall = new Mesh(new BoxGeometry(2, 0.5, 2));
+  wall.position.y = -2;
+  wall.updateMatrixWorld();
+  registerInteriorCollider("wall", [wall]);
+  expect(rays.weaponRetractionHit(start, end, "player", false)).toBeCloseTo(
+    0.6875,
+  );
+  expect(rays.weaponRetractionHit(start, end, "player", true)).toBeCloseTo(
+    0.25,
+  );
+});
+
+it("shares collider transforms within a weapon pose pass and refreshes them for other rays", () => {
+  const rays = new RenderShapeRaycast();
+  const blocker = shape();
+  const carrier = new Group();
+  carrier.add(blocker);
+  blocker.position.z = 2;
+  rays.register("other-player", blocker, "Player");
+  const updateWorldMatrix = vi.spyOn(blocker, "updateWorldMatrix");
+  const start = new Vector3(0, 1, 0);
+  const end = new Vector3(0, 1, 4);
+
+  rays.withWeaponRetractionBatch(() => {
+    expect(rays.weaponRetractionHit(start, end, "a", false)).toBeCloseTo(0.375);
+    expect(rays.weaponRetractionHit(start, end, "b", false)).toBeCloseTo(0.375);
+    expect(updateWorldMatrix).toHaveBeenCalledOnce();
+  });
+
+  carrier.position.z = -1;
+  expect(rays.targetBeamHit(start, end, undefined)?.t).toBeCloseTo(0.125);
+  expect(updateWorldMatrix).toHaveBeenCalledTimes(2);
+
+  carrier.position.z = 1;
+  rays.withWeaponRetractionBatch(() => {
+    expect(rays.weaponRetractionHit(start, end, "a", false)).toBeCloseTo(0.625);
+  });
+  expect(updateWorldMatrix).toHaveBeenCalledTimes(3);
+});
 
 it("clips the ELF curve to the target's collision box", () => {
   const rays = new RenderShapeRaycast();

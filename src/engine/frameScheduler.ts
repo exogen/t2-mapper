@@ -28,6 +28,11 @@ interface Subscription {
   removed: boolean;
 }
 
+interface StageBatch {
+  stage: FrameStage;
+  run: (callbacks: () => void) => void;
+}
+
 /**
  * Runs frame callbacks stage by stage, and within a stage in the order
  * they were added. A callback added while its stage runs starts with the
@@ -66,7 +71,11 @@ export class FrameScheduler {
   }
 
   /** Every stage in order, as one frame. */
-  runAll(frame: FrameContext): void {
-    for (const stage of STAGES) this.run(stage, frame);
+  runAll(frame: FrameContext, batch?: StageBatch): void {
+    for (const stage of STAGES) {
+      if (batch?.stage === stage && this.callbacks.has(stage))
+        batch.run(() => this.run(stage, frame));
+      else this.run(stage, frame);
+    }
   }
 }

@@ -44,6 +44,7 @@ import type { SplashDataBlock } from "t2-demo-parser";
 import { takeShockwaveRequests } from "./shockwaveRequests";
 import {
   nodeEmitters,
+  readNodeEmitterAxis,
   readNodeEmitterTransform,
   type NodeEmitter,
 } from "./nodeEmitters";
@@ -80,8 +81,7 @@ import { reaction, combineCleanups } from "./storeReaction";
 import { FramePriority } from "./framePriority";
 import type { GameEngine } from "./gameEngine";
 import { torqueVecToThree } from "../scene/coordinates";
-import { posedNodeWorldMatrix } from "./deferredPose";
-import { mountedImageNode } from "./weaponMuzzle";
+import { readMountedImageNodePosition } from "./weaponMuzzle";
 
 const log = createLogger("ParticleEffects");
 
@@ -745,6 +745,8 @@ function readNodeFrame(entry: ActiveEmitter, node: NodeEmitter): void {
   vel[2] = node.frame.velocity[2];
 }
 
+const exhaustPosition = new Vector3();
+
 function emitLauncherExhaust(
   entry: ActiveEmitter,
   launch: NonNullable<ActiveEmitter["launcherExhaust"]>,
@@ -760,10 +762,19 @@ function emitLauncherExhaust(
   if (duration > 0 && projectile && !projectile.hasExploded && source) {
     const owner = engine.entities.get(source.id)?.root;
     const node =
-      owner && mountedImageNode(source.id, owner, launch.slot, launch.node);
+      owner &&
+      readMountedImageNodePosition(
+        source.id,
+        owner,
+        launch.slot,
+        launch.node,
+        exhaustPosition,
+      );
     if (node) {
-      posedNodeWorldMatrix(node);
-      readNodeEmitterTransform(node, entry.origin, entry.emitAxis!);
+      readNodeEmitterAxis(node.matrixWorld, entry.emitAxis!);
+      entry.origin[0] = exhaustPosition.z;
+      entry.origin[1] = exhaustPosition.x;
+      entry.origin[2] = exhaustPosition.y;
       // SeekerProjectile::processTick sends velocity opposite to that of
       // the owner, and an emission segment whose two ends are the same node.
       const velocity =

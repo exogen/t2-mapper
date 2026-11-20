@@ -188,6 +188,7 @@ function mountWeaponSounds() {
         entered: true,
         soundDataBlockIds: [7],
         shellEjections: 0,
+        recoil: false,
       },
     },
     // Only the sound profile is read when restoring a latched firing state.

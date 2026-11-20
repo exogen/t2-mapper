@@ -1,4 +1,4 @@
-import type { Object3D } from "three";
+import type { Matrix4, Object3D } from "three";
 
 /**
  * A particle emitter a shape keeps alive at one of its nodes: player jet
@@ -33,7 +33,6 @@ export interface NodeEmitterFrame {
   dtScale: number;
 }
 
-/** Player::updateJet (0x005d65e0) reads the nozzle's native +Y column. */
 export function readNodeEmitterTransform(
   anchor: Object3D,
   origin: [number, number, number],
@@ -41,10 +40,19 @@ export function readNodeEmitterTransform(
 ): void {
   anchor.updateWorldMatrix(true, false);
   const m = anchor.matrixWorld.elements;
-  // Native DTS +Y is model +Z. Swizzle Three world back to Torque [z,x,y].
+  // Swizzle Three world back to Torque [z,x,y].
   origin[0] = m[14];
   origin[1] = m[12];
   origin[2] = m[13];
+  readNodeEmitterAxis(anchor.matrixWorld, axis);
+}
+
+/** Native DTS +Y is model +Z, as in Player::updateJet (0x005d65e0). */
+export function readNodeEmitterAxis(
+  matrixWorld: Matrix4,
+  axis: [number, number, number],
+): void {
+  const m = matrixWorld.elements;
   const length = Math.hypot(m[8], m[9], m[10]) || 1;
   axis[0] = m[10] / length;
   axis[1] = m[8] / length;

@@ -40,6 +40,7 @@ const states: WeaponImageDataBlockState[] = [
   state({
     name: "Fire",
     fire: true,
+    recoil: 1,
     sequence: 1,
     timeoutValue: 0.3,
     transitionOnTimeout: RELOAD,
@@ -80,7 +81,22 @@ describe("WeaponImageStateMachine fire entry", () => {
     expect(out.transitioned).toBe(true);
     expect(out.isFiring).toBe(true);
     expect(out.sequenceName).toBe("fire");
+    expect(out.recoil).toBe(true);
     expect(out.soundDataBlockIds).toEqual([77]);
+  });
+
+  it("restarts state zero on a fire notification if no fire state is defined", () => {
+    const sm = new WeaponImageStateMachine(
+      [state({ name: "Ready", recoil: 1 })],
+      [],
+    );
+    sm.tick(0, flags({}));
+    expect(sm.tick(0, flags({ fireCount: 1 }))).toMatchObject({
+      stateIndex: 0,
+      entered: true,
+      recoil: true,
+      isFiring: false,
+    });
   });
 
   it("re-enters the fire state when another shot lands mid-fire", () => {
@@ -91,6 +107,7 @@ describe("WeaponImageStateMachine fire entry", () => {
     const out = sm.tick(0.032, flags({ fireCount: 2 }));
     expect(sm.stateIndex).toBe(FIRE);
     expect(out.transitioned).toBe(true);
+    expect(out.recoil).toBe(true);
     expect(out.soundDataBlockIds).toEqual([77]);
     // The timeout restarted: 0.3 s more before Reload.
     sm.tick(0.2, flags({ fireCount: 2 }));
@@ -105,6 +122,7 @@ describe("WeaponImageStateMachine fire entry", () => {
       state({
         name: "Fire",
         fire: true,
+        recoil: 1,
         sequence: 0,
         flashSequence: true,
         sequenceVis: 1,
@@ -118,13 +136,34 @@ describe("WeaponImageStateMachine fire entry", () => {
     sm.tick(0.032, flags({}));
     const first = sm.tick(0.032, flags({ triggerDown: true, fireCount: 1 }));
     expect(first.entered).toBe(true);
+    expect(first.recoil).toBe(true);
     expect(first.flashSequence).toBe(true);
     expect(first.visSequenceName).toBe("fire_vis");
     const again = sm.tick(0.2, flags({ triggerDown: true, fireCount: 1 }));
     expect(sm.stateIndex).toBe(1);
     expect(again.transitioned).toBe(true);
     expect(again.entered).toBe(false);
+    expect(again.recoil).toBe(false);
     expect(again.soundDataBlockIds).toEqual([]);
+  });
+
+  it("skips recoil when an immediate condition bypasses the state", () => {
+    const bypass = new WeaponImageStateMachine(
+      [
+        state({ name: "Mount", recoil: 1, transitionOnLoaded: RELOAD }),
+        state({
+          name: "Fire",
+          fire: true,
+          recoil: 2,
+          transitionOnLoaded: RELOAD,
+        }),
+        state({ name: "Ready" }),
+      ],
+      seqNames,
+    );
+    expect(bypass.snapshot(true, flags({})).recoil).toBe(false);
+    expect(bypass.tick(0, flags({}), true).recoil).toBe(false);
+    expect(bypass.stateIndex).toBe(RELOAD);
   });
 
   it("times out through reload back to ready", () => {
