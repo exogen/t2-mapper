@@ -158,9 +158,10 @@
   font: inherit;
   min-width: 0;
 }
-.HudOptions {
+fieldset.ViewerOptions {
   display: grid;
   gap: 6px;
+  padding-block: 14px 4px;
 }
 .DraftActions,
 .Viewing {

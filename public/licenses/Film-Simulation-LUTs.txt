@@ -1,0 +1,16 @@
+Film simulation LUTs
+
+Fuji Velvia 50, Kodak Portra 160 NC, and Ilford HP5 Plus 400 are film
+emulation presets by Pat David, distributed in Natron's HaldCLUT collection
+under the Creative Commons Attribution-ShareAlike 4.0 International license.
+https://github.com/NatronGitHub/clut
+https://creativecommons.org/licenses/by-sa/4.0/
+
+Original HaldCLUT files
+https://github.com/NatronGitHub/clut/blob/af7b50d4caf6244fb6895a647f5b6a84efe7931a/colorslide/fuji_velvia_50.png
+https://github.com/NatronGitHub/clut/blob/af7b50d4caf6244fb6895a647f5b6a84efe7931a/negative_color/kodak_portra_160_nc.png
+https://github.com/NatronGitHub/clut/blob/af7b50d4caf6244fb6895a647f5b6a84efe7931a/bw/ilford_hp5_plus_400.png
+
+MapGenius resampled the original sRGB HaldCLUT images to 32×32×32,
+8-bit RGB LUT strips. The adapted PNGs in luts/film are distributed under
+the same license. The film stock names identify the looks being approximated.

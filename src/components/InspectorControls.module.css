@@ -129,7 +129,7 @@
   max-width: 112px;
 }
 
-.Field output {
+:is(.Field, .CheckboxField) output {
   opacity: 0.7;
 }
 
@@ -159,6 +159,79 @@
 
 .IffOptions > .Field {
   margin-bottom: 8px;
+}
+
+fieldset.GraphicsEffects {
+  margin-top: 16px;
+  margin-bottom: 12px;
+}
+
+.GraphicsEffects > :is(.Field, .CheckboxField) {
+  margin-bottom: 4px;
+}
+
+.GraphicsEffects > .Field:has([data-range-slider]) {
+  margin-top: 0;
+}
+
+.GraphicsEffects > .CheckboxField:last-child {
+  margin-bottom: 0;
+}
+
+.GraphicsEffects [data-range-slider] {
+  max-width: 64px;
+  flex-basis: 64px;
+}
+
+.GraphicsEffects output {
+  min-inline-size: 4.5ch;
+  font-size: 11px;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.GraphicsEffectsToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.GraphicsEffectsStatus:not(:empty) {
+  margin-inline-start: 8px;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.GraphicsEffectsStatus[data-error] {
+  color: #ffb7ad;
+  opacity: 1;
+}
+
+.GraphicsEffectsRetry {
+  margin: -5px 0 -5px 2px;
+  padding: 5px 4px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--control-muted);
+  font: inherit;
+  font-size: 11px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.GraphicsEffectsRetry:hover:not(:disabled) {
+  color: var(--control-text);
+}
+
+.GraphicsEffectsRetry:focus-visible {
+  outline: 2px solid var(--control-focus);
+}
+
+.GraphicsEffectsRetry:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .IffDistanceValue {

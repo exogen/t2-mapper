@@ -18,6 +18,7 @@ import {
 } from "./collision/worldCollision";
 import {
   createShapeLightState,
+  finishTerrainLightmapBake,
   probeShapeLighting,
   SHAPE_LIGHT_SLEW_PER_MS,
   setShapeSun,
@@ -195,6 +196,35 @@ describe("probeShapeLighting", () => {
 });
 
 describe("updateShapeLighting", () => {
+  it("uses the finished terrain bake for stationary shapes while paused", () => {
+    setTerrainCollisionData({ heightMap: flatHeightMap(50), squareSize: 8 });
+    const ndotl = new Uint8Array(512 * 512).fill(255);
+    setTerrainLightmap({
+      ndotl,
+      size: 512,
+      squareSize: 8,
+      originX: -1024,
+      originY: -1024,
+      sunColor: new Color(0.6, 0.6, 0.6),
+      ambient: new Color(0.3, 0.2, 0.1),
+    });
+    const root = new Group();
+    root.position.y = 60;
+    root.updateMatrixWorld(true);
+    const state = createShapeLightState(root, undefined);
+    updateShapeLighting(state, 0);
+    const color = state.uniforms.shapeLightColor.value;
+    expect(color.r).toBeCloseTo(0.9);
+
+    ndotl.fill(0);
+    updateShapeLighting(state, 0);
+    expect(color.r).toBeCloseTo(0.9);
+    finishTerrainLightmapBake();
+    updateShapeLighting(state, 0);
+    expect(state.uniforms.shapeLightMode.value).toBe(2);
+    expect(color.r).toBeCloseTo(0.3);
+  });
+
   it("refreshes a stationary shape from the native alarm atlas without rebuilding colliders", () => {
     const model = createDIFModel(
       createDIFTestBuffer({ collision: true, alarm: true }).buffer,

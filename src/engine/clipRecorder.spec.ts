@@ -517,6 +517,32 @@ it("owns the final camera and preserves horizontal FOV framing on another aspect
   );
 });
 
+it.each(["ready", "timeout"])(
+  "holds the starting frame while effects initialize, then plays on %s",
+  (resume) => {
+    const { engine, frame } = fixture();
+    clipStore.getState().play({
+      ...take(),
+      graphicsEffects: { intensity: { bloom: 0.5 } },
+    });
+    const effects = clipStore.getState().playbackEffects!;
+    expect(effects.getState().awaitingFirstFrame).toBe(true);
+    engine.scheduler.run(FramePriority.ClipTransport, frame(0.1));
+    engine.scheduler.run(FramePriority.ClipCamera, frame(0.1));
+    expect(engineStore.getState().playback.status).toBe("paused");
+    expect(clipStore.getState().playheadMs).toBe(0);
+
+    if (resume === "ready") effects.setState({ awaitingFirstFrame: false });
+    const next = { ...frame(0.1), elapsed: resume === "ready" ? 0.2 : 10 };
+    engine.scheduler.run(FramePriority.ClipTransport, next);
+    expect(engineStore.getState().playback.status).toBe("playing");
+    expect(effects.getState().awaitingFirstFrame).toBe(false);
+    streamClock.time = 10.1;
+    engine.scheduler.run(FramePriority.ClipCamera, next);
+    expect(clipStore.getState().playheadMs).toBe(100);
+  },
+);
+
 it("uses a replacement clip's camera track even at the same playhead time", () => {
   const { engine, frame } = fixture();
   for (const x of [1, 9]) {

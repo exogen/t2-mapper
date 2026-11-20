@@ -65,7 +65,7 @@ it.each(["freeFly", "orbitOverride", "firstPersonOverride"] as const)(
 );
 
 it("uses absolute recorded FOVs, including fractional zoom and normal FOV", () => {
-  for (const fov of [104, 20.8, 10.4, 104]) {
+  for (const fov of [104, 20.8, 10.4, 155]) {
     streamRenderFrame.camera!.fov = fov;
     updateObserverCameraFov(camera, 90);
     expect(horizontalFov()).toBeCloseTo(fov, 10);

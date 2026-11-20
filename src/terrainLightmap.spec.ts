@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { BoxGeometry, Mesh, Vector3 } from "three";
+import { BoxGeometry, Mesh, RepeatWrapping, Vector3 } from "three";
 import {
   clearWorldColliders,
   registerInteriorCollider,
@@ -75,6 +75,48 @@ describe("generateTerrainLightmap", () => {
     // Flat ground, normal straight up, sun at 45 degrees: NdotL = 0.577.
     expect(texelAt(data, 0, 0) / 255).toBeCloseTo(0.57735, 2);
   });
+
+  it.each(["x", "z"] as const)(
+    "lights a ridge across the %s tile edge as if it were inside the tile",
+    (axis) => {
+      const sun = new Vector3(0, -0.25, 0);
+      sun[axis] = -1;
+      const shift = 32;
+      const shiftedTexels = shift * LIGHTMAP_TEXELS_PER_SQUARE;
+      const ridge = (heightOffset: number) => {
+        const heights = flatHeightMap(100);
+        for (let i = 0; i < TERRAIN_SIZE; i++) {
+          for (let ridgeStep = 0; ridgeStep < 2; ridgeStep++) {
+            const cell = (heightOffset + ridgeStep) % TERRAIN_SIZE;
+            const index =
+              axis === "x" ? cell * TERRAIN_SIZE + i : i * TERRAIN_SIZE + cell;
+            heights[index] = (130 + ridgeStep * 5) * 32;
+          }
+        }
+        return runBake(heights, sun, SQUARE_SIZE, ORIGIN);
+      };
+      const atEdge = ridge(0);
+      const inside = ridge(shift);
+      const at = (texture: typeof atEdge, i: number) =>
+        (texture.image.data as Uint8Array)[
+          axis === "x" ? i * LIGHTMAP_SIZE : i
+        ];
+      const shadow = LIGHTMAP_SIZE - 8;
+      expect(at(atEdge, shadow)).toBe(0);
+      expect(at(atEdge, LIGHTMAP_SIZE - 64)).toBeGreaterThan(0);
+      // Moving the ridge into the middle shifts its light and shadow profile,
+      // including the texels where the original crossed the tile boundary.
+      for (let i = 0; i < LIGHTMAP_SIZE; i++) {
+        expect(at(atEdge, i)).toBe(
+          at(inside, (i + shiftedTexels) % LIGHTMAP_SIZE),
+        );
+      }
+      expect(atEdge.wrapS).toBe(RepeatWrapping);
+      expect(atEdge.wrapT).toBe(RepeatWrapping);
+      atEdge.dispose();
+      inside.dispose();
+    },
+  );
 
   it("has no occluder when no interior is registered", () => {
     expect(createInteriorSunOccluder(towardSun())).toBeNull();

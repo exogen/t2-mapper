@@ -3,6 +3,10 @@ import type { AccountUser } from "../../relay/accountTypes";
 import { appAccountStore } from "./appAccountStore";
 import { demoLoadStore } from "./demoLoadStore";
 import { engineStore } from "./engineStore";
+import {
+  captureClipGraphicsEffects,
+  graphicsEffectsStore,
+} from "./graphicsEffectsStore";
 import { DEMOS_BASE_URL } from "../stream/demoIndex";
 import {
   canStartClipRecording,
@@ -331,6 +335,67 @@ it("seeks and replays saved clips without losing their camera or playback intent
   });
   expect(engineStore.getState().playback.seekTime).toBe(0);
   expect(confirm).not.toHaveBeenCalled();
+});
+
+it("uses saved effects throughout playback and restores the viewer's settings on exit", () => {
+  const defaults = graphicsEffectsStore.getInitialState();
+  const saved = captureClipGraphicsEffects({
+    ...defaults,
+    bloom: true,
+    tiltShift: true,
+    intensity: { ...defaults.intensity, bloom: 0, tiltShift: 0.7 },
+    colorGrade: "Fuji Velvia 50",
+    gradeIntensity: 0.5,
+  });
+  expect(saved).toEqual({
+    intensity: { tiltShift: 0.7 },
+    grade: { name: "Fuji Velvia 50", intensity: 0.5 },
+  });
+  graphicsEffectsStore.setState({ grain: true });
+  const viewer = graphicsEffectsStore.getState();
+  const take = {
+    version: 1 as const,
+    sourceDemo: "game.rec",
+    samples: [sample(0), sample(1000)],
+  };
+  try {
+    clipStore.getState().play({ ...take, graphicsEffects: saved });
+    const effects = clipStore.getState().playbackEffects!;
+    expect(effects.getState()).toMatchObject({
+      enabled: true,
+      bloom: false,
+      tiltShift: true,
+      grain: false,
+      colorGrade: "Fuji Velvia 50",
+      gradeIntensity: 0.5,
+      intensity: { tiltShift: 0.7 },
+    });
+    effects.setState({ gradeStatus: "error" });
+    clipStore.getState().pause();
+    clipStore.getState().seek(500);
+    clipStore.getState().resume();
+    expect(clipStore.getState().playbackEffects).toBe(effects);
+    expect(graphicsEffectsStore.getState()).toBe(viewer);
+    clipStore.getState().stopPlayback();
+    expect(clipStore.getState().playbackEffects).toBeNull();
+    expect(graphicsEffectsStore.getState()).toBe(viewer);
+
+    clipStore.getState().play({
+      ...take,
+      graphicsEffects: captureClipGraphicsEffects({
+        ...viewer,
+        enabled: false,
+      }),
+    });
+    expect(clipStore.getState().playbackEffects?.getState().enabled).toBe(
+      false,
+    );
+    clipStore.getState().play(take);
+    expect(clipStore.getState().playbackEffects).toBeNull();
+    expect(graphicsEffectsStore.getState()).toBe(viewer);
+  } finally {
+    graphicsEffectsStore.setState(defaults, true);
+  }
 });
 
 it("previews smoothing from the raw take without changing trim, playhead or transport", () => {

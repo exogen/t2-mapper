@@ -9,11 +9,11 @@
  * no shadow acne and needs no bias, so shadows stay attached to the ground.
  */
 import {
-  ClampToEdgeWrapping,
   DataTexture,
   LinearFilter,
   NoColorSpace,
   RedFormat,
+  RepeatWrapping,
   UnsignedByteType,
   Vector3,
 } from "three";
@@ -26,6 +26,8 @@ import {
 } from "./terrain";
 
 const log = createLogger("terrainLightmap");
+const HEIGHT_MASK = TERRAIN_SIZE - 1;
+const LIGHTMAP_MASK = LIGHTMAP_SIZE - 1;
 
 /** The highest point of the heightfield, in world units. */
 function maxWorldHeight(heightMap: Uint16Array): number {
@@ -36,73 +38,34 @@ function maxWorldHeight(heightMap: Uint16Array): number {
   return terrainHeightToWorld(max);
 }
 
-/**
- * Ray-march through heightmap to determine if a point is in shadow.
- * Uses the same coordinate system as the terrain geometry.
- *
- * @param startCol - Starting column in heightmap coordinates
- * @param startRow - Starting row in heightmap coordinates
- * @param startHeight - Starting height in world units
- * @param lightDir - Direction TOWARD the light (normalized)
- * @param squareSize - World units per heightmap cell
- * @param getHeight - Height sampler along the ray
- * @param ceiling - World height above which no terrain can occlude
- * @returns 1.0 if lit, 0.0 if in shadow
- */
-function rayMarchShadow(
-  startCol: number,
-  startRow: number,
-  startHeight: number,
+/** Trace the sun ray through the repeating terrain, including adjacent tiles. */
+function createTerrainShadowSampler(
   lightDir: Vector3,
   squareSize: number,
   getHeight: (col: number, row: number) => number,
   ceiling: number,
-): number {
-  // Convert light direction to heightmap coordinate steps
-  // World coordinate mapping (after geometry rotations):
-  // - col (U) → world +Z, so lightDir.z affects col
-  // - row (V) → world +X, so lightDir.x affects row
-  // - height → world +Y, so lightDir.y affects height
-  const stepCol = lightDir.z / squareSize;
-  const stepRow = lightDir.x / squareSize;
-  const stepHeight = lightDir.y;
-  // Normalize to step ~0.5 heightmap units per iteration for good sampling
-  const horizontalLen = Math.sqrt(stepCol * stepCol + stepRow * stepRow);
-  if (horizontalLen < 0.0001) {
-    // Light is nearly vertical - no self-shadowing possible
-    return 1.0;
-  }
+) {
+  // Columns map to world +Z and rows to +X. Step half a terrain square.
+  const horizontalLen = Math.hypot(lightDir.z, lightDir.x);
+  if (horizontalLen < 0.0001 * squareSize) return () => 1;
   const stepScale = 0.5 / horizontalLen;
-  const dCol = stepCol * stepScale;
-  const dRow = stepRow * stepScale;
-  const dHeight = stepHeight * stepScale;
-  let col = startCol;
-  let row = startRow;
-  let height = startHeight + 0.1; // Small offset to avoid self-intersection
-  // March until we exit terrain bounds or confirm we're lit
-  const maxSteps = TERRAIN_SIZE * 3; // Enough to cross terrain diagonally
-  for (let i = 0; i < maxSteps; i++) {
-    col += dCol;
-    row += dRow;
-    height += dHeight;
-    // Check if ray exited terrain bounds horizontally
-    if (col < 0 || col >= TERRAIN_SIZE || row < 0 || row >= TERRAIN_SIZE) {
-      return 1.0; // Exited terrain, not in shadow
+  const dCol = lightDir.z * stepScale;
+  const dRow = lightDir.x * stepScale;
+  const dHeight = lightDir.y * stepScale * squareSize;
+  // The height ceiling ends most rays quickly. Bound the work for a nearly
+  // horizontal sun too, allowing a full block on a diagonal before stopping.
+  const maxSteps = TERRAIN_SIZE * 3;
+  return (col: number, row: number, surfaceHeight: number): number => {
+    let height = surfaceHeight + 0.1;
+    for (let i = 0; i < maxSteps; i++) {
+      height += dHeight;
+      if (height > ceiling) break;
+      col += dCol;
+      row += dRow;
+      if (height < getHeight(col, row)) return 0;
     }
-    // Above the highest ground there is nothing left to occlude. Using the
-    // heightfield's real maximum rather than a fixed ceiling is what keeps
-    // the march short enough to bake at more than one texel per square.
-    if (height > ceiling) {
-      return 1.0; // Above all terrain, not in shadow
-    }
-    // Sample terrain height at current position
-    const terrainHeight = getHeight(col, row);
-    // If ray is below terrain surface, we're in shadow
-    if (height < terrainHeight) {
-      return 0.0;
-    }
-  }
-  return 1.0; // Reached max steps, assume not in shadow
+    return 1;
+  };
 }
 /**
  * Generate a terrain lightmap texture with smooth normals and ray-traced shadows.
@@ -145,22 +108,21 @@ export function bakeTerrainLightmap(
 ): TerrainLightmapBake {
   const ceiling = maxWorldHeight(heightMap);
   const started = performance.now();
-  // Helper to get bilinearly interpolated height at any fractional position
-  // Supports negative and out-of-range coordinates via clamping for shadow rays
+  // TerrainBlock::getHeight wraps both axes. Use the same periodic surface
+  // for the bake, including gradients and shadow rays across tile edges.
   const getInterpolatedHeight = (col: number, row: number): number => {
-    // Clamp to valid range (don't wrap for shadow rays)
-    const clampedCol = Math.max(0, Math.min(TERRAIN_SIZE - 1, col));
-    const clampedRow = Math.max(0, Math.min(TERRAIN_SIZE - 1, row));
-    const col0 = Math.floor(clampedCol);
-    const row0 = Math.floor(clampedRow);
-    const col1 = Math.min(col0 + 1, TERRAIN_SIZE - 1);
-    const row1 = Math.min(row0 + 1, TERRAIN_SIZE - 1);
-    const fx = clampedCol - col0;
-    const fy = clampedRow - row0;
-    const h00 = heightMap[row0 * TERRAIN_SIZE + col0];
-    const h10 = heightMap[row0 * TERRAIN_SIZE + col1];
-    const h01 = heightMap[row1 * TERRAIN_SIZE + col0];
-    const h11 = heightMap[row1 * TERRAIN_SIZE + col1];
+    const c = Math.floor(col);
+    const r = Math.floor(row);
+    const col0 = c & HEIGHT_MASK;
+    const col1 = (c + 1) & HEIGHT_MASK;
+    const row0 = (r & HEIGHT_MASK) * TERRAIN_SIZE;
+    const row1 = ((r + 1) & HEIGHT_MASK) * TERRAIN_SIZE;
+    const fx = col - c;
+    const fy = row - r;
+    const h00 = heightMap[row0 + col0];
+    const h10 = heightMap[row0 + col1];
+    const h01 = heightMap[row1 + col0];
+    const h11 = heightMap[row1 + col1];
     // Bilinear interpolation
     const h0 = h00 * (1 - fx) + h10 * fx;
     const h1 = h01 * (1 - fx) + h11 * fx;
@@ -172,6 +134,12 @@ export function bakeTerrainLightmap(
     -sunDirection.y,
     -sunDirection.z,
   ).normalize();
+  const sampleTerrainShadow = createTerrainShadowSampler(
+    lightDir,
+    squareSize,
+    getInterpolatedHeight,
+    ceiling,
+  );
   const lightmapData = new Uint8Array(LIGHTMAP_SIZE * LIGHTMAP_SIZE);
   // Epsilon for gradient sampling (in heightmap units)
   // Use 0.5 to sample across a reasonable distance for smooth gradients
@@ -234,8 +202,8 @@ export function bakeTerrainLightmap(
   // and the refinement pass re-uploads this texture every frame while it
   // runs — regenerating an unused chain each time.
   texture.generateMipmaps = false;
-  texture.wrapS = ClampToEdgeWrapping;
-  texture.wrapT = ClampToEdgeWrapping;
+  // Filter the last texel together with the first at either tile boundary.
+  texture.wrapS = texture.wrapT = RepeatWrapping;
   texture.magFilter = LinearFilter;
   texture.minFilter = LinearFilter;
   texture.needsUpdate = true;
@@ -246,18 +214,9 @@ export function bakeTerrainLightmap(
     row: number,
     surfaceHeight: number,
   ): number {
-    const shadow = rayMarchShadow(
-      col,
-      row,
-      surfaceHeight,
-      lightDir,
-      squareSize,
-      getInterpolatedHeight,
-      ceiling,
-    );
-    if (shadow === 0) return 0;
+    if (sampleTerrainShadow(col, row, surfaceHeight) === 0) return 0;
     if (!occludedByInterior) return 1;
-    // col indexes world +Z and row world +X (see rayMarchShadow).
+    // Columns index world +Z and rows index world +X.
     const worldX = origin.x + row * squareSize;
     const worldZ = origin.z + col * squareSize;
     return occludedByInterior(worldX, surfaceHeight, worldZ) ? 0 : 1;
@@ -293,12 +252,9 @@ export function bakeTerrainLightmap(
     const index = lRow * LIGHTMAP_SIZE + lCol;
     const here = lit[index];
     for (let dRow = -1; dRow <= 1; dRow++) {
-      const r = lRow + dRow;
-      if (r < 0 || r >= LIGHTMAP_SIZE) continue;
+      const row = ((lRow + dRow) & LIGHTMAP_MASK) * LIGHTMAP_SIZE;
       for (let dCol = -1; dCol <= 1; dCol++) {
-        const c = lCol + dCol;
-        if (c < 0 || c >= LIGHTMAP_SIZE) continue;
-        const other = r * LIGHTMAP_SIZE + c;
+        const other = row + ((lCol + dCol) & LIGHTMAP_MASK);
         if (unshadowed[other] !== 0 && lit[other] !== here) return true;
       }
     }

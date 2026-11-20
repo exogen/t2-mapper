@@ -12,6 +12,10 @@ import { appAccountStore } from "./appAccountStore";
 import { demoLoadStore } from "./demoLoadStore";
 import { publishedDemoFilename } from "./editableGame";
 import { addPlaybackSeekGuard, engineStore } from "./engineStore";
+import {
+  createClipGraphicsEffectsStore,
+  type GraphicsEffectsStore,
+} from "./graphicsEffectsStore";
 import { streamPlaybackStore } from "./streamPlaybackStore";
 import { streamSnapshotStore } from "./streamSnapshotStore";
 import {
@@ -26,6 +30,7 @@ export interface ClipState {
   trimEndMs: number;
   elapsedMs: number;
   active: ClipTake | null;
+  playbackEffects: GraphicsEffectsStore | null;
   playheadMs: number;
   playing: boolean;
   smoothingLevel: ClipSmoothingLevel;
@@ -91,6 +96,7 @@ export const clipStore = createStore<ClipState>((set, get) => ({
   trimEndMs: 0,
   elapsedMs: 0,
   active: null,
+  playbackEffects: null,
   playheadMs: 0,
   playing: false,
   smoothingLevel: 0,
@@ -157,6 +163,7 @@ export const clipStore = createStore<ClipState>((set, get) => ({
       recording: false,
       draft: null,
       active: null,
+      playbackEffects: null,
       trimStartMs: 0,
       trimEndMs: 0,
       elapsedMs: 0,
@@ -175,6 +182,9 @@ export const clipStore = createStore<ClipState>((set, get) => ({
     if (get().recording) get().discard();
     set({
       active,
+      playbackEffects: active.graphicsEffects
+        ? createClipGraphicsEffectsStore(active.graphicsEffects)
+        : null,
       playheadMs: 0,
       playing: true,
       smoothingLevel: 0,
@@ -198,7 +208,13 @@ export const clipStore = createStore<ClipState>((set, get) => ({
       set({ playing: false });
       return;
     }
-    set({ active: null, playing: false, playheadMs: 0, smoothingLevel: 0 });
+    set({
+      active: null,
+      playbackEffects: null,
+      playing: false,
+      playheadMs: 0,
+      smoothingLevel: 0,
+    });
   },
   setTrimRange(startMs, endMs) {
     const state = get();

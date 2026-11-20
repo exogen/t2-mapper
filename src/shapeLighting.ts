@@ -124,11 +124,17 @@ interface TerrainLightmap {
 
 let terrainLightmap: TerrainLightmap | null = null;
 let terrainLightmapVersion = 0;
+let completedTerrainLightmapVersion = -1;
 
 /** TerrainBlock registers its generated lightmap here; null on unmount. */
 export function setTerrainLightmap(data: TerrainLightmap | null): void {
   terrainLightmap = data;
   terrainLightmapVersion++;
+}
+
+/** Recheck stationary shapes when the shared lightmap has finished baking. */
+export function finishTerrainLightmapBake(): void {
+  completedTerrainLightmapVersion = ++terrainLightmapVersion;
 }
 
 /**
@@ -469,16 +475,24 @@ export function updateShapeLighting(
   const moved =
     !state.lastProbe ||
     state.lastProbe.distanceToSquared(_world) > PROBE_MOVE_EPSILON ** 2;
+  const terrainChanged = terrainLightmapVersion !== state.lastTerrain;
   if (
     moved ||
     interiors !== state.lastInteriors ||
     interiorLightingVersion !== state.lastInteriorLighting ||
-    terrainLightmapVersion !== state.lastTerrain
+    terrainChanged
   ) {
+    const settledTerrain =
+      !moved &&
+      state.target.mode === 2 &&
+      terrainChanged &&
+      terrainLightmapVersion === completedTerrainLightmapVersion;
     _torque[0] = _world.z;
     _torque[1] = _world.x;
     _torque[2] = _world.y;
     probeShapeLighting(_torque, state.target);
+    // The finished bake replaces provisional lighting even if the world is paused.
+    if (settledTerrain && state.target.mode === 2) state.slewing = false;
     state.lastProbe = (state.lastProbe ?? new Vector3()).copy(_world);
     state.lastInteriors = interiors;
     state.lastInteriorLighting = interiorLightingVersion;

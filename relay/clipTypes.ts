@@ -1,4 +1,10 @@
 import {
+  COLOR_GRADE_PATHS,
+  GRAPHICS_EFFECT_KEYS,
+  type ClipGraphicsEffects,
+  type GraphicsEffect,
+} from "../src/graphicsEffects.js";
+import {
   normalizePlayerInterpolation,
   samePlayerInterpolation,
   type PlayerInterpolationSettings,
@@ -50,6 +56,8 @@ export interface ClipTake {
   playerInterpolation?: Readonly<PlayerInterpolationSettings>;
   /** Omitted by older clips, which retain the viewer's HUD preferences. */
   hud?: ClipHudSettings;
+  /** An empty snapshot turns effects off. Omission uses the viewer's settings. */
+  graphicsEffects?: ClipGraphicsEffects;
 }
 
 export interface ClipCreateRequest {
@@ -125,7 +133,41 @@ export function readClipHudSettings(value: unknown): ClipHudSettings {
   };
 }
 
-/** Normalize untrusted camera data into the one persisted clip format. */
+function readClipGraphicsEffects(value: unknown): ClipGraphicsEffects {
+  const effects = value as Partial<ClipGraphicsEffects> | null;
+  const invalid = "Invalid clip graphics effects";
+  if (
+    !effects?.intensity ||
+    typeof effects.intensity !== "object" ||
+    Array.isArray(effects.intensity)
+  )
+    throw new Error(invalid);
+  const intensity: Partial<Record<GraphicsEffect, number>> = {};
+  for (const key of GRAPHICS_EFFECT_KEYS) {
+    if (!Object.hasOwn(effects.intensity, key)) continue;
+    const strength = effects.intensity[key];
+    if (!finite(strength, 0, 1)) throw new Error(invalid);
+    if (strength > 0) intensity[key] = strength;
+  }
+  const grade = effects.grade;
+  if (
+    grade !== undefined &&
+    (!grade ||
+      typeof grade.name !== "string" ||
+      !Object.hasOwn(COLOR_GRADE_PATHS, grade.name) ||
+      !finite(grade.intensity, 0, 1))
+  )
+    throw new Error(invalid);
+  return {
+    intensity,
+    ...(grade &&
+      grade.intensity > 0 && {
+        grade: { name: grade.name, intensity: grade.intensity },
+      }),
+  };
+}
+
+/** Normalize untrusted data into the persisted clip format. */
 export function readClipTake(value: unknown): ClipTake {
   const take = value as Partial<ClipTake> | null;
   if (
@@ -139,6 +181,10 @@ export function readClipTake(value: unknown): ClipTake {
     throw new Error("Invalid clip recording");
   const hud =
     take.hud === undefined ? undefined : readClipHudSettings(take.hud);
+  const graphicsEffects =
+    take.graphicsEffects === undefined
+      ? undefined
+      : readClipGraphicsEffects(take.graphicsEffects);
   const playerInterpolation = normalizePlayerInterpolation(
     take.playerInterpolation,
   );
@@ -218,6 +264,7 @@ export function readClipTake(value: unknown): ClipTake {
     sourceDemo: take.sourceDemo,
     samples,
     ...(hud && { hud }),
+    ...(graphicsEffects && { graphicsEffects }),
     ...(take.playerInterpolation && { playerInterpolation }),
   };
 }
@@ -321,6 +368,7 @@ export function trimClipTake(
     version: CLIP_VERSION,
     sourceDemo: take.sourceDemo,
     ...(take.hud && { hud: { ...take.hud } }),
+    ...(take.graphicsEffects && { graphicsEffects: take.graphicsEffects }),
     ...(take.playerInterpolation && {
       playerInterpolation: { ...take.playerInterpolation },
     }),

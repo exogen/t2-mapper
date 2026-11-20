@@ -227,6 +227,14 @@ it("debounces saves and writes only once preferences change", () => {
   expect(localStorage.setItem).toHaveBeenCalledTimes(1);
 });
 
+it.each([
+  [180, 150],
+  [140, 140],
+])("restores saved FOV %s as %s", (fov, expected) => {
+  stubSaved({ fov });
+  expect(createSettingsStore().getState().fov).toBe(expected);
+});
+
 it("restores a hidden Broadcast Match HUD without losing its style", () => {
   stubSaved({ showMatchHud: false, matchHudStyle: "broadcast" });
   const state = createSettingsStore().getState();

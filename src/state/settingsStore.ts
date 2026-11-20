@@ -61,6 +61,8 @@ const SERVER_BROWSER_VIEW_VALUES: readonly ServerBrowserView[] = [
 
 export type TouchMode = "dualStick" | "moveLookStick";
 
+export const MAX_PREFERRED_FOV = 150;
+
 export const MIN_JOYSTICK_OPACITY = 0.1;
 export const MAX_JOYSTICK_OPACITY = 1;
 
@@ -283,7 +285,12 @@ export function restorePreferences(
       MIN_MOUSE_SENSITIVITY,
       MAX_MOUSE_SENSITIVITY,
     );
-  copy("fov");
+  if (
+    typeof saved.fov === "number" &&
+    Number.isFinite(saved.fov) &&
+    saved.fov > 0
+  )
+    restored.fov = Math.min(saved.fov, MAX_PREFERRED_FOV);
   copy("clickToCycle", isBoolean);
   copy("touchMode");
   if (

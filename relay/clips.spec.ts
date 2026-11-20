@@ -535,6 +535,10 @@ it("trims camera data, generates its own title and serves a ready clip/checkpoin
     showMatchHud: true,
     matchHudStyle: "broadcast",
   };
+  body.take.graphicsEffects = {
+    intensity: { bloom: 0.4, tiltShift: 0.6 },
+    grade: { name: "Kodak Portra 160 NC", intensity: 0.5 },
+  };
   const created = await save(f, body);
   expect(f.prepare).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -566,11 +570,14 @@ it("trims camera data, generates its own title and serves a ready clip/checkpoin
     [500, 10.75, 750],
   ]);
   expect(JSON.stringify(clip)).not.toContain("CLIENT TITLE");
-  expect(clip.timeline?.hud).toEqual(body.take.hud);
+  const presentation = {
+    hud: body.take.hud,
+    graphicsEffects: body.take.graphicsEffects,
+  };
+  expect(clip.timeline).toMatchObject(presentation);
   expect(
-    JSON.parse(f.objects.get(`demos/clips/${created.id}/timeline.json`)!.body)
-      .hud,
-  ).toEqual(body.take.hud);
+    JSON.parse(f.objects.get(`demos/clips/${created.id}/timeline.json`)!.body),
+  ).toMatchObject(presentation);
   const checkpoint = await f.request("GET", clip.checkpointUrl);
   expect(checkpoint.status).toBe(200);
   expect(await checkpoint.text()).toBe('{"checkpoint":"prepared"}');

@@ -16,6 +16,10 @@ import { useAppAccount, appAccountStore } from "../state/appAccountStore";
 import { useDemoLoad, demoLoadStore } from "../state/demoLoadStore";
 import { publishedDemoFilename } from "../state/editableGame";
 import { useEngineSelector, engineStore } from "../state/engineStore";
+import {
+  captureClipGraphicsEffects,
+  graphicsEffectsStore,
+} from "../state/graphicsEffectsStore";
 import { setPreference, settingsStore } from "../state/settingsStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import {
@@ -27,6 +31,7 @@ import {
 import { demoSha256 } from "../stream/demoCheckpoints";
 import { useAppNavigation } from "./useAppNavigation";
 import { ClipControlsContext } from "./clipControlsContext";
+import { Checkbox } from "./Checkbox";
 import { ChatHudControl, MatchHudControl } from "./HudControls";
 import { ClipRecordingHelpDialog } from "./ClipRecordingHelpDialog";
 import { ClipSavedDialog } from "./ClipSavedDialog";
@@ -40,7 +45,8 @@ import {
 } from "../stream/clipSmoothing";
 import buttonStyles from "./Button.module.css";
 import playbackStyles from "./DemoPlaybackControls.module.css";
-import inspectorStyles from "./InspectorControls.module.css";
+import hudStyles from "./HudControls.module.css";
+import fieldsetStyles from "./SidebarFieldset.module.css";
 import styles from "./ClipControls.module.css";
 
 interface ClipSaveOptions {
@@ -48,7 +54,7 @@ interface ClipSaveOptions {
   take: ClipTake;
   start: number;
   end: number;
-  hud: ClipHudSettings;
+  presentation: Pick<ClipTake, "hud" | "graphicsEffects">;
 }
 
 function selectClipHud({
@@ -108,6 +114,7 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
   const [showSaved, setShowSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [includeEffects, setIncludeEffects] = useState(false);
   const [showRecordingHelp, setShowRecordingHelp] = useState(false);
   const recordButtonRef = useRef<HTMLButtonElement>(null);
   const [copied, setCopied] = useState(false);
@@ -116,7 +123,7 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
     take: ClipTake;
     start: number;
     end: number;
-    hudKey: string;
+    presentationKey: string;
     id: string;
   } | null>(null);
   const owner = account.user?.discordId;
@@ -181,6 +188,7 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
 
   function startRecording() {
     if (!clip.start()) return false;
+    setIncludeEffects(false);
     setPreference("sidebarOpen", true);
     return true;
   }
@@ -224,9 +232,9 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
       take: previewTake,
       start: trimStartMs,
       end: trimEndMs,
-      hud,
+      presentation,
     } = options;
-    const take = { ...previewTake, hud };
+    const take = { ...previewTake, ...presentation };
     const controller = new AbortController();
     transfer.current = controller;
     clip.pause();
@@ -299,18 +307,31 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
       take: current.active,
       start: current.trimStartMs,
       end: current.trimEndMs,
-      hud: selectClipHud(settingsStore.getState()),
+      presentation: {
+        hud: selectClipHud(settingsStore.getState()),
+        ...(includeEffects && {
+          graphicsEffects: captureClipGraphicsEffects(
+            graphicsEffectsStore.getState(),
+          ),
+        }),
+      },
     };
-    const { take, start, end, hud } = options;
-    const hudKey = JSON.stringify(hud);
+    const { take, start, end, presentation } = options;
+    const presentationKey = JSON.stringify(presentation);
     if (
       !request.current ||
       request.current.take !== take ||
       request.current.start !== start ||
       request.current.end !== end ||
-      request.current.hudKey !== hudKey
+      request.current.presentationKey !== presentationKey
     )
-      request.current = { take, start, end, hudKey, id: crypto.randomUUID() };
+      request.current = {
+        take,
+        start,
+        end,
+        presentationKey,
+        id: crypto.randomUUID(),
+      };
     void save(options, request.current.id);
   }
 
@@ -439,10 +460,23 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
                 ))}
               </div>
             </div>
-            <div className={styles.HudOptions}>
-              <p className={inspectorStyles.Description}>
-                Which HUDs should viewers see?
-              </p>
+            <fieldset
+              className={`${fieldsetStyles.Fieldset} ${styles.ViewerOptions}`}
+            >
+              <legend>Override viewer settings?</legend>
+              <div className={hudStyles.Field}>
+                <Checkbox
+                  id="clipIncludeEffects"
+                  checked={includeEffects}
+                  disabled={saving}
+                  onChange={(event) =>
+                    setIncludeEffects(event.currentTarget.checked)
+                  }
+                />
+                <label htmlFor="clipIncludeEffects">
+                  Current graphics effects
+                </label>
+              </div>
               <ChatHudControl
                 id="clipShowChatHud"
                 checked={hud.showChat}
@@ -465,7 +499,7 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
                 }
                 disabled={saving}
               />
-            </div>
+            </fieldset>
             {draftActions}
           </div>
         </Accordion>

@@ -110,15 +110,7 @@ export function createTerrainGeometry(
   return geometry;
 }
 
-/**
- * Displace terrain vertices on CPU and compute smooth normals from heightmap gradients.
- *
- * Height sampling uses NEAREST filtering to match the GPU DataTexture default:
- * texel = floor(uv * textureWidth), clamped to valid range.
- *
- * Normals use bilinear interpolation for smooth gradients, preventing banding
- * that would occur with face normals from computeVertexNormals().
- */
+/** Displace vertices and compute smooth normals from the periodic heightfield. */
 export function displaceTerrainAndComputeNormals(
   geometry: BufferGeometry,
   heightMap: Uint16Array,
@@ -131,79 +123,22 @@ export function displaceTerrainAndComputeNormals(
   const uvs = uvAttr.array as Float32Array;
   const normals = normalAttr.array as Float32Array;
   const vertexCount = posAttr.count;
-  // Helper to get height at heightmap coordinates with clamping (integer coords)
-  const getHeightInt = (col: number, row: number): number => {
-    col = Math.max(0, Math.min(TERRAIN_SIZE - 1, col));
-    row = Math.max(0, Math.min(TERRAIN_SIZE - 1, row));
-    return terrainHeightToWorld(heightMap[row * TERRAIN_SIZE + col]);
-  };
-  // Helper to get bilinearly interpolated height (matches GPU texture sampling)
-  const getHeight = (col: number, row: number): number => {
-    col = Math.max(0, Math.min(TERRAIN_SIZE - 1, col));
-    row = Math.max(0, Math.min(TERRAIN_SIZE - 1, row));
-    const col0 = Math.floor(col);
-    const row0 = Math.floor(row);
-    const col1 = Math.min(col0 + 1, TERRAIN_SIZE - 1);
-    const row1 = Math.min(row0 + 1, TERRAIN_SIZE - 1);
-    const fx = col - col0;
-    const fy = row - row0;
-    const h00 = terrainHeightToWorld(heightMap[row0 * TERRAIN_SIZE + col0]);
-    const h10 = terrainHeightToWorld(heightMap[row0 * TERRAIN_SIZE + col1]);
-    const h01 = terrainHeightToWorld(heightMap[row1 * TERRAIN_SIZE + col0]);
-    const h11 = terrainHeightToWorld(heightMap[row1 * TERRAIN_SIZE + col1]);
-    // Bilinear interpolation
-    const h0 = h00 * (1 - fx) + h10 * fx;
-    const h1 = h01 * (1 - fx) + h11 * fx;
-    return h0 * (1 - fy) + h1 * fy;
-  };
-  // Process each vertex
+  const mask = TERRAIN_SIZE - 1;
+  const getHeight = (col: number, row: number): number =>
+    terrainHeightToWorld(heightMap[(row & mask) * TERRAIN_SIZE + (col & mask)]);
+
   for (let i = 0; i < vertexCount; i++) {
-    const u = uvs[i * 2];
-    const v = uvs[i * 2 + 1];
-    // Map UV to heightmap coordinates - must match Torque's terrain sampling.
-    // Torque formula: floor(worldPos / squareSize) & BlockMask
-    // UV 0→1 maps to world 0→2048, squareSize=8, so: floor(UV * 256) & 255
-    // This wraps at edges for seamless terrain tiling.
-    const col = Math.floor(u * TERRAIN_SIZE) & (TERRAIN_SIZE - 1);
-    const row = Math.floor(v * TERRAIN_SIZE) & (TERRAIN_SIZE - 1);
-    // Use direct integer sampling to match GPU nearest-neighbor filtering
-    const height = getHeightInt(col, row);
-    positions[i * 3 + 1] = height;
-    // Compute normal using central differences on heightmap with smooth interpolation.
-    // Use fractional coordinates for gradient sampling to get smooth normals.
-    const colF = u * (TERRAIN_SIZE - 1);
-    const rowF = v * (TERRAIN_SIZE - 1);
-    const hL = getHeight(colF - 1, rowF); // left
-    const hR = getHeight(colF + 1, rowF); // right
-    const hD = getHeight(colF, rowF + 1); // down (increasing row)
-    const hU = getHeight(colF, rowF - 1); // up (decreasing row)
-    // Gradients in heightmap space (col increases = +U, row increases = +V)
-    const dCol = (hR - hL) / 2; // height change per column
-    const dRow = (hD - hU) / 2; // height change per row
-    // Now map heightmap gradients to world-space normal
-    // After rotateX(-PI/2) and rotateY(-PI/2):
-    // - U direction (col) maps to world +Z
-    // - V direction (row) maps to world +X
-    //
-    // For heightfield normal: n = normalize(-dh/dx, 1, -dh/dz) in world space
-    // But we need the normal to face outward (toward the viewer), so use positive signs
-    let nx = dRow;
-    let ny = squareSize;
-    let nz = dCol;
-    // Normalize
-    const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-    if (len > 0) {
-      nx /= len;
-      ny /= len;
-      nz /= len;
-    } else {
-      nx = 0;
-      ny = 1;
-      nz = 0;
-    }
-    normals[i * 3] = nx;
-    normals[i * 3 + 1] = ny;
-    normals[i * 3 + 2] = nz;
+    const col = Math.floor(uvs[i * 2] * TERRAIN_SIZE);
+    const row = Math.floor(uvs[i * 2 + 1] * TERRAIN_SIZE);
+    positions[i * 3 + 1] = getHeight(col, row);
+    // Rows run along world +X and columns along +Z. Sample both sides
+    // of each vertex, so the two copies of an edge have the same normal.
+    const nx = (getHeight(col, row - 1) - getHeight(col, row + 1)) / 2;
+    const nz = (getHeight(col - 1, row) - getHeight(col + 1, row)) / 2;
+    const len = Math.sqrt(nx * nx + squareSize * squareSize + nz * nz);
+    normals[i * 3] = nx / len;
+    normals[i * 3 + 1] = squareSize / len;
+    normals[i * 3 + 2] = nz / len;
   }
   posAttr.needsUpdate = true;
   normalAttr.needsUpdate = true;

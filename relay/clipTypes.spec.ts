@@ -190,6 +190,50 @@ it("preserves older HUD settings without a chat style", () => {
   expect(trimClipTake(normalized, 100, 900).hud).toEqual(hud);
 });
 
+it("retains only active graphics effects and their strengths through trimming", () => {
+  const graphicsEffects = {
+    intensity: { bloom: 0.6, grain: 0, unknown: 0.9 },
+    grade: { name: "Fuji Velvia 50", intensity: 0.4 },
+  };
+  const normalized = readClipTake({ ...take(), graphicsEffects });
+  expect(trimClipTake(normalized, 100, 900).graphicsEffects).toEqual({
+    intensity: { bloom: 0.6 },
+    grade: { name: "Fuji Velvia 50", intensity: 0.4 },
+  });
+  graphicsEffects.intensity.bloom = 0;
+  graphicsEffects.grade.intensity = 0;
+  expect(normalized.graphicsEffects?.intensity.bloom).toBe(0.6);
+  expect(normalized.graphicsEffects?.grade?.intensity).toBe(0.4);
+});
+
+it("distinguishes a clip with effects off from a clip using the viewer's effects", () => {
+  const legacy = readClipTake(take());
+  expect(trimClipTake(legacy, 100, 900)).not.toHaveProperty("graphicsEffects");
+  const blank = readClipTake({ ...take(), graphicsEffects: { intensity: {} } });
+  expect(trimClipTake(blank, 100, 900).graphicsEffects).toEqual({
+    intensity: {},
+  });
+});
+
+it.each([
+  null,
+  {},
+  { intensity: [] },
+  { intensity: { bloom: NaN } },
+  { intensity: { grain: -0.1 } },
+  { intensity: { tiltShift: "0.5" } },
+  { intensity: {}, grade: { name: "Bourbon 64", intensity: 1.1 } },
+  {
+    intensity: {},
+    grade: { name: "https://example.com/lut.png", intensity: 1 },
+  },
+  { intensity: {}, grade: { name: "constructor", intensity: 1 } },
+])("rejects invalid clip effects %j", (graphicsEffects) => {
+  expect(() => readClipTake({ ...take(), graphicsEffects })).toThrow(
+    "Invalid clip graphics effects",
+  );
+});
+
 it.each([
   { sourceDemo: "../private.rec" },
   { version: 2 },

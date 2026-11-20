@@ -36,7 +36,10 @@ import { createInteriorSunOccluder } from "../terrainInteriorShadow";
 import { setShadowCasterBounds } from "../shadowBounds";
 import { setTerrainCollisionData } from "../collision/terrainCollision";
 import { registerCollisionLoadFailure } from "../collision/collisionContext";
-import { setTerrainLightmap } from "../shapeLighting";
+import {
+  finishTerrainLightmapBake,
+  setTerrainLightmap,
+} from "../shapeLighting";
 import { clearFogTerrainRows, setFogTerrainRows } from "../globalFogUniforms";
 import {
   DEFAULT_TERRAIN_SQUARE_SIZE,
@@ -468,7 +471,10 @@ export function createTerrainView(
       engine.invalidate();
     }),
     engine.scheduler.add(FramePriority.PostCamera, () => {
-      if (bake && !bakeDone) bakeDone = bake.step(8);
+      if (!bake || bakeDone) return;
+      bakeDone = bake.step(8);
+      if (bakeDone) finishTerrainLightmapBake();
+      engine.invalidate();
     }),
     engine.scheduler.add(FramePriority.PostCamera, ({ camera }) => {
       const mesh = pooledMesh;

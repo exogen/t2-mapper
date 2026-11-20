@@ -5,6 +5,7 @@ import { clipStore } from "../state/clipStore";
 import { useDemoLoad } from "../state/demoLoadStore";
 import { useEngineSelector, engineStore } from "../state/engineStore";
 import { publishedDemoFilename } from "../state/editableGame";
+import { graphicsEffectsStore } from "../state/graphicsEffectsStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { ClipApiError, readClipCheckpoint } from "../stream/clipApi";
 import { startClipPlayback } from "../stream/clipPlayback";
@@ -18,6 +19,13 @@ export function ClipLoader() {
   const { exitClip } = useAppNavigation();
   const [route, setRoute] = useNavigationQueryState();
   const id = navigationMode(route) === "demo" ? route.clip : null;
+  const clipEffects = useStore(clipStore, (state) =>
+    state.playheadMs === 0 ? state.playbackEffects : null,
+  );
+  const applyingEffects = useStore(
+    clipEffects ?? graphicsEffectsStore,
+    (effects) => effects.awaitingFirstFrame,
+  );
   const recording = useEngineSelector((state) => state.playback.recording);
   const buffer = useEngineSelector((state) => state.playback.demoBuffer);
   const complete = useEngineSelector(
@@ -165,7 +173,9 @@ export function ClipLoader() {
           ? "Loading the source demo…"
           : preparing || prepared?.id !== id || prepared.recording !== recording
             ? "Restoring the clip’s starting view…"
-            : "";
+            : applyingEffects
+              ? "Applying the clip’s graphics effects…"
+              : "";
   if (!message) return null;
   return (
     <div className={styles.Loading} role={failed ? "alert" : "status"}>

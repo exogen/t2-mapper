@@ -113,6 +113,7 @@ beforeEach(() => {
     trimEndMs: 1000,
     elapsedMs: 0,
     active: null,
+    playbackEffects: null,
     playheadMs: 0,
     playing: false,
     error: null,
@@ -329,7 +330,7 @@ it.each(["firstPersonOverride", "original"])(
   },
 );
 
-it("offers the current HUD settings in the accordion before saving", () => {
+it("offers graphics effects and HUD settings in the accordion before saving", () => {
   vi.spyOn(settingsStore, "getInitialState").mockImplementation(() =>
     settingsStore.getState(),
   );
@@ -345,10 +346,23 @@ it("offers the current HUD settings in the accordion before saving", () => {
   const markup = render();
   const panelStart = markup.indexOf("data-clip-editor-panel");
   const actionsStart = markup.indexOf('aria-label="Discard clip"');
-  for (const id of ["clipShowChatHud", "clipShowMatchHud"]) {
-    expect(markup.indexOf(`id="${id}"`)).toBeGreaterThan(panelStart);
-    expect(markup.indexOf(`id="${id}"`)).toBeLessThan(actionsStart);
-  }
+  const legend = markup.indexOf("<legend>Override viewer settings?</legend>");
+  const fieldsetStart = markup.lastIndexOf("<fieldset", legend);
+  const fieldsetEnd = markup.indexOf("</fieldset>", legend);
+  const effects = markup.indexOf('id="clipIncludeEffects"');
+  const chat = markup.indexOf('id="clipShowChatHud"');
+  const match = markup.indexOf('id="clipShowMatchHud"');
+  expect(fieldsetStart).toBeGreaterThan(panelStart);
+  expect(legend).toBeGreaterThan(fieldsetStart);
+  expect(effects).toBeGreaterThan(legend);
+  expect(chat).toBeGreaterThan(effects);
+  expect(match).toBeGreaterThan(chat);
+  expect(fieldsetEnd).toBeGreaterThan(match);
+  expect(actionsStart).toBeGreaterThan(fieldsetEnd);
+  expect(markup).toContain('for="clipIncludeEffects">Current graphics effects');
+  expect(
+    markup.match(/<input[^>]*id="clipIncludeEffects"[^>]*>/)?.[0],
+  ).not.toContain('checked=""');
   expect(
     markup.match(/<input[^>]*id="clipShowChatHud"[^>]*>/)?.[0],
   ).not.toContain('checked=""');

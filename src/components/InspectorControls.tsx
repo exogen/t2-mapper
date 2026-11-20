@@ -1,12 +1,14 @@
 import { CastPanel } from "./CastPanel";
 import { QuickCamPanel } from "./QuickCamPanel";
 import { IffOptions } from "./IffOptions";
+import { GraphicsEffects } from "./GraphicsEffects";
 import { InterpolationControls } from "./InterpolationControls";
 import { Select } from "./Select";
 import { RangeSlider } from "./RangeSlider";
 import { Checkbox } from "./Checkbox";
 import { ChatHudControl, MatchHudControl } from "./HudControls";
 import { useCommentaryTracks } from "../state/commentaryTracksStore";
+import { MAX_PREFERRED_FOV } from "../state/settingsStore";
 import { memo } from "react";
 import { BiSolidHelpCircle } from "react-icons/bi";
 import { FaRotateRight } from "react-icons/fa6";
@@ -327,7 +329,7 @@ export const InspectorControls = memo(function InspectorControls({
                       aria-labelledby="fovInput-label"
                       aria-valuetext={`${fov} degrees`}
                       min={75}
-                      max={120}
+                      max={MAX_PREFERRED_FOV}
                       step={5}
                       value={fov}
                       onValueChange={setFov}
@@ -791,6 +793,7 @@ export const InspectorControls = memo(function InspectorControls({
                     Enable shadows
                   </label>
                 </div>
+                <GraphicsEffects />
                 <div className={styles.Field}>
                   <label id="renderScaleInput-label" htmlFor="renderScaleInput">
                     Render scale

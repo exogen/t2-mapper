@@ -7,16 +7,26 @@ import {
   Timer,
   WebGLRenderer,
 } from "three";
+import { clipStore } from "../state/clipStore";
 import {
   selectIffFollowTarget,
   selectIffVisibilityTarget,
 } from "../state/iffView";
+import {
+  graphicsEffectsStore,
+  hasSelectedGraphicsEffects,
+  hasVisibleGraphicsEffects,
+  type GraphicsEffects,
+} from "../state/graphicsEffectsStore";
 import { settingsStore } from "../state/settingsStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { setDTSCullCamera } from "../dts/dtsModel";
+import { createLogger } from "../logger";
 import { flushTransformChanges } from "../transformChanges";
 import { registerShadowRenderer } from "./shadowControl";
 import type { GameEngine } from "./gameEngine";
+
+const log = createLogger("EngineCanvas");
 
 /** Frames an invalidate() keeps the on-demand loop running for, at most. */
 const MAX_PENDING_FRAMES = 60;
@@ -93,6 +103,15 @@ export function mountEngineCanvas(
   let raf = 0;
   let pendingFrames = 0;
   let lastLimitedFrame = 0;
+  let effectsStore =
+    clipStore.getState().playbackEffects ?? graphicsEffectsStore;
+  let effectsSettings = effectsStore.getState();
+  let effectsVisible = false;
+  let effectsRequested = false;
+  let effectsModule: typeof import("./gamePostProcessing") | undefined;
+  let postProcessing:
+    | ReturnType<typeof import("./gamePostProcessing").createGamePostProcessing>
+    | undefined;
   // Pauses while the page is hidden.
   const timer = new Timer();
   timer.connect(document);
@@ -113,7 +132,24 @@ export function mountEngineCanvas(
     const camera = engine.cameras.active;
     setDTSCullCamera(camera);
     try {
-      renderer.render(scene, camera);
+      if (effectsVisible && effectsModule) {
+        postProcessing ??= effectsModule.createGamePostProcessing(
+          renderer,
+          scene,
+          camera,
+          effectsStore,
+        );
+      }
+      const composed =
+        effectsSettings.enabled &&
+        postProcessing?.render(camera, frame.delta, effectsSettings);
+      if (!composed) renderer.render(scene, camera);
+      if (
+        effectsSettings.awaitingFirstFrame &&
+        (effectsSettings.gradeStatus === "error" ||
+          (composed && effectsSettings.gradeStatus === "idle"))
+      )
+        effectsStore.setState({ awaitingFirstFrame: false });
     } finally {
       setDTSCullCamera(null);
     }
@@ -157,11 +193,57 @@ export function mountEngineCanvas(
   const resize = () => {
     const { width, height } = container.getBoundingClientRect();
     renderer.setSize(width, height);
+    postProcessing?.resize();
     invalidate();
   };
   resize();
   const observer = new ResizeObserver(resize);
   observer.observe(container);
+  const syncEffects = (effects: GraphicsEffects) => {
+    effectsSettings = effects;
+    const hasSelection = hasSelectedGraphicsEffects(effects);
+    effectsVisible = effects.enabled && hasVisibleGraphicsEffects(effects);
+    // Bypassing effects keeps the loaded LUT and pipeline ready to re-enable.
+    if (!hasSelection) {
+      postProcessing?.dispose();
+      postProcessing = undefined;
+    } else if (effectsVisible && !effectsRequested) {
+      effectsRequested = true;
+      void import("./gamePostProcessing").then(
+        (module) => {
+          if (disposed) return;
+          effectsModule = module;
+          invalidate();
+        },
+        (error: unknown) => {
+          if (disposed) return;
+          log.error("Post-processing failed to load: %o", error);
+          const hasGrade =
+            effectsSettings.enabled &&
+            effectsSettings.colorGrade !== "off" &&
+            effectsSettings.gradeIntensity > 0;
+          if (hasGrade || effectsSettings.awaitingFirstFrame)
+            effectsStore.setState({
+              awaitingFirstFrame: false,
+              ...(hasGrade && { gradeStatus: "error" }),
+            });
+          effectsRequested = false;
+        },
+      );
+    }
+    invalidate();
+  };
+  let unsubscribeEffects = effectsStore.subscribe(syncEffects);
+  const unsubscribeClipEffects = clipStore.subscribe((state, previous) => {
+    if (state.playbackEffects === previous.playbackEffects) return;
+    unsubscribeEffects();
+    postProcessing?.dispose();
+    postProcessing = undefined;
+    effectsStore = state.playbackEffects ?? graphicsEffectsStore;
+    unsubscribeEffects = effectsStore.subscribe(syncEffects);
+    syncEffects(effectsStore.getState());
+  });
+  syncEffects(effectsSettings);
   // A loop paused for render-on-demand picks up when it's turned off.
   const unsubscribe = settingsStore.subscribe((state, previous) => {
     if (
@@ -205,6 +287,7 @@ export function mountEngineCanvas(
       const ratio = dpr ?? defaultPixelRatio();
       if (ratio === renderer.getPixelRatio()) return;
       renderer.setPixelRatio(ratio);
+      postProcessing?.resize();
       invalidate();
     },
     dispose() {
@@ -214,6 +297,9 @@ export function mountEngineCanvas(
       observer.disconnect();
       unsubscribe();
       unsubscribeIffFollow();
+      unsubscribeClipEffects();
+      unsubscribeEffects();
+      postProcessing?.dispose();
       flushTransformChanges(scene);
       disconnect();
       registerShadowRenderer(null);

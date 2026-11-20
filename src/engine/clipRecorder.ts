@@ -22,6 +22,7 @@ import type { GameEngine } from "./gameEngine";
 import { combineCleanups } from "./storeReaction";
 
 const SAMPLE_INTERVAL_MS = 1000 / 30;
+const MAX_CLIP_EFFECTS_WAIT_SEC = 8;
 const rounded = (value: number, places = 6) => Number(value.toFixed(places));
 
 function transport(status: "playing" | "paused", rate?: number) {
@@ -48,6 +49,7 @@ export function installClipRecorder(engine: GameEngine): () => void {
   let lastFollowedBodyId: string | undefined;
   let lastFollowedBodyDead = false;
   let plannedMs = 0;
+  let effectsDeadline: number | undefined;
   let planned: { take: ClipTake; sample: ClipSample } | null = null;
   const plannedSample = (take: ClipTake): ClipSample => {
     if (planned?.take !== take || planned.sample.timeMs !== plannedMs)
@@ -67,6 +69,8 @@ export function installClipRecorder(engine: GameEngine): () => void {
     installClipStateGuards(),
     clipStore.subscribe((state, previous) => {
       if (state.active !== previous.active) engine.clipCameraSample = null;
+      if (state.playbackEffects !== previous.playbackEffects)
+        effectsDeadline = undefined;
       if (state.recording && !previous.recording) recording = false;
       if (previous.recording && !state.recording && document.pointerLockElement)
         document.exitPointerLock();
@@ -101,7 +105,7 @@ export function installClipRecorder(engine: GameEngine): () => void {
       if (clip.recording || clip.draft) clip.discard();
       else clip.stopPlayback();
     },
-    engine.scheduler.add(FramePriority.ClipTransport, ({ delta }) => {
+    engine.scheduler.add(FramePriority.ClipTransport, ({ delta, elapsed }) => {
       const clip = clipStore.getState();
       if (!clip.active) return;
       if (engineStore.getState().playback.status === "seeking") {
@@ -110,13 +114,26 @@ export function installClipRecorder(engine: GameEngine): () => void {
       }
       engine.input.clear();
       const endMs = clip.draft ? clip.trimEndMs : clipDurationMs(clip.active);
+      let playing = clip.playing;
+      // Let the renderer draw the starting view while its pipeline and LUT
+      // load. Slow or failed effects must not prevent watching the clip.
+      const effects = clip.playbackEffects;
+      if (
+        playing &&
+        clip.playheadMs === 0 &&
+        effects?.getState().awaitingFirstFrame
+      ) {
+        effectsDeadline ??= elapsed + MAX_CLIP_EFFECTS_WAIT_SEC;
+        playing = elapsed >= effectsDeadline;
+        if (playing) effects.setState({ awaitingFirstFrame: false });
+      }
       plannedMs = Math.min(
         endMs,
-        clip.playheadMs + (clip.playing ? Math.max(0, delta * 1000) : 0),
+        clip.playheadMs + (playing ? Math.max(0, delta * 1000) : 0),
       );
       const target = plannedSample(clip.active);
       const sourceAdvance = target.demoTimeSec - streamClock.time;
-      if (clip.playing && sourceAdvance > 1e-7 && delta > 0)
+      if (playing && sourceAdvance > 1e-7 && delta > 0)
         transport("playing", Math.min(16, sourceAdvance / delta));
       else transport("paused");
     }),
