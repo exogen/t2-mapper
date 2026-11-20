@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { TimelineEvent } from "../state/demoTimelineStore";
 import { IFF_PALETTE, rgbString, type TeamColorScheme } from "../iffTheme";
-import type { ClipTake } from "../../relay/clipTypes";
+import type { ClipSample, ClipTake } from "../../relay/clipTypes";
 import { ClipControlsContext } from "./clipControlsContext";
 import { DemoPlaybackControls } from "./DemoPlaybackControls";
 
@@ -26,6 +26,7 @@ const state = vi.hoisted(() => ({
     playheadMs: 0,
     trimStartMs: 0,
     trimEndMs: 0,
+    jumpTransitions: new Set<number>(),
   },
   playback: {
     rate: 1,
@@ -108,16 +109,37 @@ beforeEach(() => {
     playheadMs: 0,
     trimStartMs: 0,
     trimEndMs: 0,
+    jumpTransitions: new Set(),
   };
 
   state.observerTeamColors = "blueOrange";
   state.playback.status = "paused";
 });
 
+function clipSample(timeMs: number, jump?: ClipSample["jump"]): ClipSample {
+  return {
+    timeMs,
+    demoTimeSec: timeMs / 1000,
+    position: [0, 0, 0],
+    quaternion: [0, 0, 0, 1],
+    fov: 70,
+    aspect: 1.5,
+    projection: "perspective",
+    cameraMode: "freeFly",
+    targetId: null,
+    flagSlot: null,
+    rate: 1,
+    playing: true,
+    ...(jump && { jump, cut: true }),
+  };
+}
+
 function editingDraft() {
-  const draft = {
-    samples: [{ timeMs: 0 }, { timeMs: 5000 }],
-  } as ClipTake;
+  const draft: ClipTake = {
+    version: 1,
+    sourceDemo: "test.rec",
+    samples: [clipSample(0), clipSample(5000)],
+  };
   state.clip = {
     draft,
     active: draft,
@@ -125,6 +147,7 @@ function editingDraft() {
     playheadMs: 5000,
     trimStartMs: 1000,
     trimEndMs: 4000,
+    jumpTransitions: new Set(),
   };
 }
 
@@ -143,6 +166,7 @@ it("replaces demo transport with an inline clip trim timeline until saved or dis
 
 it("disables draft transport and trim controls during save", () => {
   editingDraft();
+  state.clip.draft!.samples.splice(1, 0, clipSample(2500, "quickCam"));
   const markup = renderToStaticMarkup(
     <ClipControlsContext
       value={{
@@ -157,6 +181,21 @@ it("disables draft transport and trim controls during save", () => {
   );
   expect(markup).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Play clip"/);
   expect(markup).toMatch(/aria-label="Clip start"[^>]*data-disabled=""/);
+  expect(markup).toMatch(/data-type="clip-jump"[^>]*disabled=""/);
+});
+
+it("shows jump markers from the draft and their selected preview choices", () => {
+  editingDraft();
+  state.clip.active = {
+    ...state.clip.draft!,
+    samples: [...state.clip.draft!.samples],
+  };
+  state.clip.draft!.samples.splice(1, 0, clipSample(2500, "quickCam"));
+  state.clip.jumpTransitions.add(2500);
+  const markup = renderToStaticMarkup(<DemoPlaybackControls />);
+  expect(markup).toMatch(
+    /data-type="clip-jump"[^>]*aria-label="Transition for Quick cam at 2.500s"[^>]*aria-pressed="true"/,
+  );
 });
 
 it("uses clip time and duration for saved clips and offers replay at the end", () => {
@@ -247,7 +286,7 @@ it("adds capture markers with no held time in their labels alongside the match-s
   expect(result).toHaveLength(3);
   expect(result[0]).toContain("left:10%");
   expect(result[0]).toContain('title="Match started – 0:10"');
-  expect(result[0]).not.toContain("<svg");
+  expect(result[0]).toContain('d="M12 4.3v15.4"');
   expect(result[1]).toContain(`left:25%;color:${green}`);
   expect(result[1]).toContain("<svg");
   expect(result[1]).toContain('title="Storm scores (Teammate) – 0:25"');

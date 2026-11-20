@@ -185,6 +185,12 @@ fieldset.ViewerOptions {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+.RecordingOption {
+  composes: Field from "./HudControls.module.css";
+}
+.EditorPanel > .RecordingOption {
+  margin: 0;
+}
 .SmoothingField {
   composes: Field from "./InspectorControls.module.css";
   column-gap: 8px;

@@ -109,6 +109,129 @@ it.each([
   },
 );
 
+it("preserves target-relative orbit distance and projectile identity through trimming", () => {
+  const projectile = { ghostIndex: 0, spawnTick: 320 };
+  const clip = readClipTake(
+    take([
+      frame(0, 11, {
+        cameraMode: "orbitOverride",
+        orbitDistance: 0,
+        projectile,
+      }),
+      frame(1000, 12, {
+        cameraMode: "orbitOverride",
+        orbitDistance: 10,
+        projectile,
+      }),
+    ]),
+  );
+  expect(clip.samples[0].orbitDistance).toBe(0);
+  const trimmed = trimClipTake(clip, 250, 750);
+  expect(readClipTake(JSON.parse(JSON.stringify(trimmed)))).toEqual(trimmed);
+  expect(trimmed.samples.map(({ orbitDistance }) => orbitDistance)).toEqual([
+    2.5, 7.5,
+  ]);
+  expect(trimmed.samples.map((sample) => sample.projectile)).toEqual([
+    projectile,
+    projectile,
+  ]);
+  expect(clip.samples[0].projectile).not.toBe(projectile);
+  expect(readClipTake(take()).samples[0]).not.toHaveProperty("orbitDistance");
+  expect(readClipTake(take()).samples[0]).not.toHaveProperty("projectile");
+});
+
+it.each<Partial<ClipSample>>([
+  { targetId: 8 },
+  { flagSlot: 1 },
+  { projectile: { ghostIndex: 3, spawnTick: 320 } },
+])(
+  "keeps the camera with the old anchor until the target changes %j",
+  (anchor) => {
+    const initial = {
+      cameraMode: "orbitOverride",
+      orbitDistance: 5,
+      ...(anchor.targetId && { targetId: 7 }),
+      ...(anchor.flagSlot && { flagSlot: 0 }),
+      ...(anchor.projectile && {
+        projectile: { ghostIndex: 3, spawnTick: 310 },
+      }),
+    };
+    const clip = take([
+      frame(0, 10, initial),
+      frame(1000, 11, { ...initial, ...anchor, orbitDistance: 20 }),
+    ]);
+    expect(sampleClipTake(clip, 500)).toMatchObject({
+      ...initial,
+      demoTimeSec: 10.5,
+      position: clip.samples[0].position,
+    });
+    expect(sampleClipTake(clip, 1000)).toMatchObject({
+      ...anchor,
+      orbitDistance: 20,
+    });
+  },
+);
+
+it("retains the saved world path during an orbit-to-eye transition", () => {
+  const clip = take([
+    frame(0, 10, {
+      cameraMode: "orbitOverride",
+      orbitDistance: 6,
+      targetId: 9,
+    }),
+    frame(1000, 11, {
+      cameraMode: "firstPersonOverride",
+      firstPersonPose: false,
+      targetId: 9,
+    }),
+    frame(2000, 12, {
+      cameraMode: "firstPersonOverride",
+      firstPersonPose: true,
+      targetId: 9,
+    }),
+  ]);
+  expect(sampleClipTake(clip, 500)).toMatchObject({
+    position: [500, 2, 3],
+    firstPersonPose: false,
+  });
+  expect(sampleClipTake(clip, 500)).not.toHaveProperty("orbitDistance");
+  expect(() => readClipTake(trimClipTake(clip, 500, 1500))).not.toThrow();
+});
+
+it("keeps the same trim samples for legacy world-space follow clips", () => {
+  const clip = take([
+    frame(0, 10, { cameraMode: "orbitOverride", targetId: 3 }),
+    frame(1000, 11, { cameraMode: "orbitOverride", targetId: 9 }),
+    frame(2000, 12, {
+      cameraMode: "firstPersonOverride",
+      firstPersonPose: false,
+      targetId: 9,
+    }),
+  ]);
+  const trimmed = trimClipTake(clip, 500, 1500);
+  expect(trimmed.samples.map(({ position }) => position[0])).toEqual([
+    500, 1000, 1500,
+  ]);
+  expect(trimmed.samples[2]).not.toHaveProperty("firstPersonPose");
+});
+
+it.each([
+  { orbitDistance: -1 },
+  { orbitDistance: Infinity },
+  { orbitDistance: 1e8 },
+  { orbitDistance: 5, cameraMode: "freeFly" },
+  { orbitDistance: 5, firstPersonPose: false },
+  { projectile: null },
+  { projectile: { ghostIndex: -1, spawnTick: 310 } },
+  { projectile: { ghostIndex: 2, spawnTick: 320.5 } },
+])("rejects invalid clip orbit metadata %j", (overrides) => {
+  const clip = take([
+    frame(0, 10, { cameraMode: "orbitOverride" }),
+    { ...frame(1000, 11, { cameraMode: "orbitOverride" }), ...overrides },
+  ] as ClipSample[]);
+  expect(() => readClipTake(clip)).toThrow("Invalid clip camera orbit");
+});
+
 it("retains the creator's four interpolation values through validation and trimming", () => {
   const settings = {
     maxLatencyTicks: 1.5,
@@ -299,6 +422,152 @@ it("retains smooth movement when a trim ends after a camera cut", () => {
   expect(sampleClipTake(trimmed, 750).position).toEqual([1250, 2, 3]);
   expect(trimmed.samples.at(-1)).not.toHaveProperty("cut");
   expect(trimClipTake(original, 0, 1000).samples.at(-1)?.cut).toBe(true);
+});
+
+it("keeps jump markers only at their samples and preserves transition progress through trimming", () => {
+  const clip = readClipTake({
+    ...take([
+      frame(0, 10),
+      frame(200, 10.2, { cut: true, jump: "quickCam" }),
+      frame(1800, 11.8),
+    ]),
+    transitions: [
+      {
+        startMs: 200,
+        durationMs: 1000,
+        position: [1, 2, 3],
+        quaternion: [0, 0, 0, 1],
+        fov: 70,
+        aspect: 1.5,
+        projection: "perspective",
+      },
+    ],
+  });
+  expect(sampleClipTake(clip, 200).jump).toBe("quickCam");
+  expect(sampleClipTake(clip, 201).jump).toBeUndefined();
+  expect(readClipTake(trimClipTake(clip, 300, 800)).transitions).toEqual([
+    { ...clip.transitions![0], startMs: -100 },
+  ]);
+  expect(readClipTake(trimClipTake(clip, 100, 400)).transitions).toEqual([
+    { ...clip.transitions![0], startMs: 100 },
+  ]);
+  const trimmed = trimClipTake(clip, 1100, 1500);
+  expect(readClipTake(JSON.parse(JSON.stringify(trimmed))).transitions).toEqual(
+    [{ ...clip.transitions![0], startMs: -900 }],
+  );
+  expect(trimClipTake(clip, 1200, 1500).transitions).toBeUndefined();
+  expect(() =>
+    readClipTake({
+      ...clip,
+      transitions: [{ ...clip.transitions![0], durationMs: 1001 }],
+    }),
+  ).toThrow("Invalid clip camera transition");
+});
+
+it("reloads adjacent transitions after trimming while rejecting real overlaps", () => {
+  const clip = readClipTake({
+    ...take([
+      frame(0, 10),
+      frame(100.111, 10.1, { cut: true, jump: "quickCam" }),
+      frame(250.019, 10.25, { cut: true, jump: "quickCam" }),
+      frame(1000, 11),
+    ]),
+    transitions: [
+      {
+        ...frame(0, 10),
+        startMs: 100.111,
+        durationMs: 250.019 - 100.111,
+      },
+      { ...frame(100.111, 10.1), startMs: 250.019, durationMs: 600 },
+    ],
+  });
+  const trimmed = trimClipTake(clip, 124, 700);
+  expect(readClipTake(JSON.parse(JSON.stringify(trimmed)))).toEqual(trimmed);
+
+  const [first, next] = trimmed.transitions!;
+  expect(() =>
+    readClipTake({
+      ...trimmed,
+      transitions: [first, { ...next, startMs: next.startMs - 0.001 }],
+    }),
+  ).toThrow("Invalid clip camera transition");
+});
+
+it.each([undefined, 0, 0.25])(
+  "preserves camera aim timing %s through trimming and reload",
+  (aimLead) => {
+    const clip = readClipTake({
+      ...take(),
+      transitions: [
+        { ...frame(0, 10), startMs: 100, durationMs: 300, aimLead },
+      ],
+    });
+    const trimmed = trimClipTake(clip, 200, 900);
+    const reloaded = readClipTake(JSON.parse(JSON.stringify(trimmed)));
+    expect(reloaded.transitions?.[0]).toMatchObject({
+      startMs: -100,
+      durationMs: 300,
+    });
+    expect(reloaded.transitions?.[0].aimLead).toBe(aimLead);
+  },
+);
+
+it.each([-0.001, 0.251, NaN, Infinity, null, "0.2"])(
+  "rejects invalid camera aim timing %j",
+  (aimLead) => {
+    expect(() =>
+      readClipTake({
+        ...take(),
+        transitions: [
+          { ...frame(0, 10), startMs: 100, durationMs: 300, aimLead },
+        ],
+      }),
+    ).toThrow("Invalid clip camera transition");
+  },
+);
+
+it("copies the outgoing camera anchor when reading and trimming a take", () => {
+  const anchor = {
+    kind: "orbit",
+    distance: 8,
+    targetId: null,
+    flagSlot: null,
+    projectile: { ghostIndex: 42, spawnTick: 100 },
+  } as const;
+  const clip = readClipTake({
+    ...take(),
+    transitions: [{ ...frame(0, 10), startMs: 100, durationMs: 300, anchor }],
+  });
+  const readAnchor = clip.transitions?.[0].anchor;
+  const trimmedAnchor = trimClipTake(clip, 200, 900).transitions?.[0].anchor;
+  expect(readAnchor).toEqual(anchor);
+  expect(readAnchor).not.toBe(anchor);
+  expect(trimmedAnchor).toEqual(anchor);
+  expect(trimmedAnchor).not.toBe(readAnchor);
+  expect(trimmedAnchor?.kind === "orbit" && trimmedAnchor.projectile).not.toBe(
+    readAnchor?.kind === "orbit" && readAnchor.projectile,
+  );
+});
+
+it.each([
+  { kind: "playerEye", targetId: null },
+  { kind: "playerEye", targetId: 65_536 },
+  { kind: "orbit", distance: -1, targetId: 1, flagSlot: null },
+  { kind: "orbit", distance: 8, targetId: null, flagSlot: null },
+  {
+    kind: "orbit",
+    distance: 8,
+    targetId: null,
+    flagSlot: null,
+    projectile: { ghostIndex: 42, spawnTick: -1 },
+  },
+])("rejects an invalid outgoing camera anchor %j", (anchor) => {
+  expect(() =>
+    readClipTake({
+      ...take(),
+      transitions: [{ ...frame(0, 10), startMs: 100, durationMs: 300, anchor }],
+    }),
+  ).toThrow("Invalid clip camera transition");
 });
 
 it("accepts a 60-second clip and rejects one past the recording limit", () => {

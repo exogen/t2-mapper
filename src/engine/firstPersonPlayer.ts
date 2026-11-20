@@ -1,5 +1,4 @@
-import { Quaternion, Vector3 } from "three";
-import type { PlayerViewAngles } from "../stream/playerView";
+import type { ClipSample } from "../../relay/clipTypes";
 import { getDTSNodeLookup } from "../dts/dtsNodeLookup";
 import type { DTSShapeData } from "../dts/dtsTypes";
 import type { DemoCameraMode } from "../state/streamPlaybackStore";
@@ -13,24 +12,18 @@ const FIRST_PERSON_SPINE = [
   "bip01 neck",
   "bip01 head",
 ] as const;
-const clipRotation = new Quaternion();
-const worldToMount = new Quaternion();
-const clipForward = new Vector3();
-
-/** Recover the recorded view angles without a second fit of the demo. */
-export function readClipViewAngles(
-  quaternion: readonly [number, number, number, number],
-  out: PlayerViewAngles,
-  mountRotation?: Quaternion,
-): void {
-  clipRotation.fromArray(quaternion);
-  if (mountRotation)
-    clipRotation.premultiply(worldToMount.copy(mountRotation).invert());
-  clipForward.set(0, 0, -1).applyQuaternion(clipRotation);
-  out.yaw = Math.atan2(clipForward.z, clipForward.x);
-  out.pitch = Math.atan2(
-    -clipForward.y,
-    Math.hypot(clipForward.x, clipForward.z),
+export function shouldUseClipFollowEye(
+  sample: Pick<ClipSample, "cameraMode" | "firstPersonPose">,
+  eyeFollowId: string | undefined,
+  followEntityId: string | null,
+): boolean {
+  // The stream's original observer camera can supply an orbit target when
+  // the clip's player is absent. That target does not own the clip eye.
+  return (
+    sample.cameraMode === "firstPersonOverride" &&
+    sample.firstPersonPose !== false &&
+    eyeFollowId !== undefined &&
+    eyeFollowId === followEntityId
   );
 }
 

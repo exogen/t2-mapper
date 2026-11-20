@@ -5,6 +5,7 @@ import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { useDataSource } from "../state/gameEntityStore";
 import { useIsWatchSpectator } from "./useIsWatchSpectator";
 import { textureToUrl } from "../loaders";
+import { clipCameraTransitionAt } from "../stream/clipJumpTransitions";
 import type { StreamEntity, WeaponsHudSlot } from "../stream/types";
 import styles from "./PlayerHUD.module.css";
 import { ChatWindow } from "./ChatWindow";
@@ -29,12 +30,15 @@ function Compass({
   const isWatcher = useIsWatchSpectator();
   const dataSource = useDataSource();
   const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
+  const clipActive = useStore(clipStore, (s) => s.active !== null);
   const yaw = useStreamSnapshot((snap) => snap?.camera?.yaw);
-  // Watch mode (always) and demo camera overrides (free-fly / follow /
-  // first-person / flag follow): the view camera is client-controlled,
-  // so the stream camera's yaw is the RECORDER's view, not what's on
-  // screen — track the render camera instead.
-  if (isWatcher || (dataSource === "demo" && cameraMode !== "original")) {
+  // Clips can turn independently even during transitions into Original view.
+  // Track the rendered view for clips, spectators and demo camera overrides.
+  if (
+    clipActive ||
+    isWatcher ||
+    (dataSource === "demo" && cameraMode !== "original")
+  ) {
     return (
       <LocalCameraCompass
         commandCircuitActive={commandCircuitActive}
@@ -172,8 +176,11 @@ function normalizeWeaponName(shape: string | undefined): string {
 function Reticle() {
   const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
   const followEntityId = useStore(streamPlaybackStore, (s) => s.followEntityId);
+  const cameraInTransit = useStore(clipStore, ({ active, playheadMs }) =>
+    Boolean(active && clipCameraTransitionAt(active, playheadMs)),
+  );
   const weaponShape = useStreamSnapshot((snap) => {
-    if (!snap) return undefined;
+    if (!snap || cameraInTransit) return undefined;
     let viewedId: string | undefined;
     if (cameraMode === "firstPersonOverride") {
       viewedId = followEntityId ?? undefined;

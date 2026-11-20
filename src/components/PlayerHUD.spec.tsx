@@ -273,6 +273,19 @@ it("uses the replay viewer's local compass instead of the recorder's heading", (
   expect(replay).toContain('<svg viewBox="0 0 72 72"');
 });
 
+it("uses the rendered compass heading for a clip in Original view", () => {
+  settings.showCompass = true;
+  fixture.cameraYaw = Math.PI / 2;
+  activateClip();
+  const render = () =>
+    renderToStaticMarkup(<PlayerHUD onOpenScoreScreen={() => {}} />);
+  const clip = render();
+  expect(clip).toContain('<svg viewBox="0 0 72 72"');
+  expect(clip).not.toContain('transform="rotate(-90 36 36)"');
+  clipStore.getState().stopPlayback();
+  expect(render()).toContain('transform="rotate(-90 36 36)"');
+});
+
 it("shows the followed replay player's health and equipment rather than the recorder's inventory", () => {
   fixture.replay = true;
   fixture.entities = [
@@ -320,4 +333,46 @@ it("hides the reticle while following a corpse that still has a weapon", () => {
   expect(render()).toContain("ReticleImage");
   fixture.entities = [{ ...player, damageState: 1 }];
   expect(render()).not.toContain("ReticleImage");
+});
+
+it("shows the reticle only after a clip transition into first person lands", () => {
+  settings.showReticle = true;
+  fixture.entities = [
+    {
+      id: "followed",
+      type: "Player",
+      className: "Player",
+      imageSlots: [
+        { shapeName: "weapon_disc.dts", mountPoint: 0, dataBlockId: 1 },
+      ],
+    } as StreamEntity,
+  ];
+  streamPlaybackStore.setState({
+    cameraMode: "firstPersonOverride",
+    followEntityId: "followed",
+  });
+  clipStore.setState({
+    active: {
+      version: 1,
+      sourceDemo: "test.rec",
+      samples: [],
+      transitions: [
+        {
+          startMs: 500,
+          durationMs: 500,
+          projection: "perspective",
+          position: [0, 0, 0],
+          quaternion: [0, 0, 0, 1],
+          fov: 70,
+          aspect: 1,
+        },
+      ],
+    },
+    playheadMs: 500,
+  });
+  const render = () =>
+    renderToStaticMarkup(<PlayerHUD onOpenScoreScreen={() => {}} />);
+  expect(render()).not.toContain("ReticleImage");
+  clipStore.setState({ playheadMs: 1_000 });
+  expect(render()).toContain("ReticleImage");
 });

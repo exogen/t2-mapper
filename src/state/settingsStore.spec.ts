@@ -62,6 +62,24 @@ it.each([null, 1, "true", {}])(
   },
 );
 
+it("remembers whether paused demos pause clip recording", () => {
+  const store = createSettingsStore();
+  expect(store.getState().pauseClipRecordingWhenDemoPaused).toBe(false);
+  setPreference("pauseClipRecordingWhenDemoPaused", true, store);
+  vi.advanceTimersByTime(500);
+  stubSaved(lastSaved());
+  const restored = createSettingsStore();
+  expect(restored.getState().pauseClipRecordingWhenDemoPaused).toBe(true);
+  setPreference("pauseClipRecordingWhenDemoPaused", false, restored);
+  vi.advanceTimersByTime(500);
+  expect(lastSaved().pauseClipRecordingWhenDemoPaused).toBe(false);
+
+  stubSaved({ pauseClipRecordingWhenDemoPaused: "true" });
+  expect(
+    createSettingsStore().getState().pauseClipRecordingWhenDemoPaused,
+  ).toBe(false);
+});
+
 it("retains the aim correction preference and drops the old smoothing flag on save", () => {
   stubSaved({ aimCorrection: false, aimSmoothing: true });
   const store = createSettingsStore();

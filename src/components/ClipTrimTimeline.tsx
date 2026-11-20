@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as Slider from "@radix-ui/react-slider";
+import type { ClipJumpReason } from "../../relay/clipTypes";
+import { clipJumpTransitionEndInRange } from "../stream/clipJumpTransitions";
+import {
+  TimelineMarkerButton,
+  TimelineMarkerLayer,
+} from "./TimelineMarkerButton";
 import styles from "./ClipTrimTimeline.module.css";
 
 interface ClipTrimTimelineProps {
@@ -7,13 +13,25 @@ interface ClipTrimTimelineProps {
   startMs: number;
   endMs: number;
   playheadMs: number;
+  jumps: readonly {
+    timeMs: number;
+    jump: ClipJumpReason;
+    transitionEndMs: number | undefined;
+  }[];
+  jumpTransitions: ReadonlySet<number>;
   disabled?: boolean;
   onPause(): void;
   onTrim(startMs: number, endMs: number): void;
   onSeek(timeMs: number): void;
+  onToggleJump(timeMs: number): void;
 }
 
 const seconds = (ms: number) => `${(ms / 1000).toFixed(3)}s`;
+const jumpLabels: Record<ClipJumpReason, string> = {
+  quickCam: "Quick cam",
+  cameraChange: "Camera change",
+  resume: "Resumed recording",
+};
 
 /** Trim handles and a separate playhead share the recorded take's time axis. */
 export function ClipTrimTimeline({
@@ -21,10 +39,13 @@ export function ClipTrimTimeline({
   startMs,
   endMs,
   playheadMs,
+  jumps,
+  jumpTransitions,
   disabled = false,
   onPause,
   onTrim,
   onSeek,
+  onToggleJump,
 }: ClipTrimTimelineProps) {
   const [trim, setTrim] = useState<[number, number] | null>(null);
   const [head, setHead] = useState<number | null>(null);
@@ -149,6 +170,34 @@ export function ClipTrimTimeline({
           aria-valuetext={seconds(bounded(head ?? playheadMs))}
         />
       </Slider.Root>
+      {jumps.length > 0 && durationMs > 0 && (
+        <TimelineMarkerLayer>
+          {jumps.map(({ timeMs, jump, transitionEndMs }) => {
+            const available =
+              clipJumpTransitionEndInRange(
+                timeMs,
+                transitionEndMs,
+                range[0],
+                range[1],
+              ) !== undefined;
+            const transition = available && jumpTransitions.has(timeMs);
+            const description = `${jumpLabels[jump]} at ${seconds(timeMs)}`;
+            const mode = transition ? "Transition" : "Jump cut";
+            return (
+              <TimelineMarkerButton
+                key={timeMs}
+                kind="clip-jump"
+                position={timeMs / durationMs}
+                title={`${mode} – click to toggle`}
+                aria-label={`Transition for ${description}`}
+                aria-pressed={transition}
+                disabled={disabled || !available}
+                onActivate={() => onToggleJump(timeMs)}
+              />
+            );
+          })}
+        </TimelineMarkerLayer>
+      )}
     </div>
   );
 }

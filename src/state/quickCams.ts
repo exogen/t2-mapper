@@ -158,6 +158,7 @@ export function restoreQuickCam(slot: QuickCamSlot): SavedCamera | undefined {
     projectileFollow: null,
     orbitTargetDamping: null,
     orbitSnapNonce: s.orbitSnapNonce + 1,
+    quickCamRecallNonce: s.quickCamRecallNonce + 1,
   }));
   if (flagSlot != null) {
     followFlag(flagSlot);

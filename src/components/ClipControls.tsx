@@ -11,7 +11,11 @@ import {
   type ClipTake,
   type ClipView,
 } from "../../relay/clipTypes";
-import { canStartClipRecording, clipStore } from "../state/clipStore";
+import {
+  canStartClipRecording,
+  clipStore,
+  shouldPauseClipRecording,
+} from "../state/clipStore";
 import { useAppAccount, appAccountStore } from "../state/appAccountStore";
 import { useDemoLoad, demoLoadStore } from "../state/demoLoadStore";
 import { publishedDemoFilename } from "../state/editableGame";
@@ -110,6 +114,18 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
   );
   const captureReady = useStreamSnapshot(() => canStartClipRecording());
   const hud = useStoreWithEqualityFn(settingsStore, selectClipHud, shallow);
+  const pauseClipRecordingWhenDemoPaused = useStoreWithEqualityFn(
+    settingsStore,
+    (state) => state.pauseClipRecordingWhenDemoPaused,
+  );
+  const recordingPaused = useEngineSelector(
+    (state) =>
+      clip.recording &&
+      shouldPauseClipRecording(
+        state.playback.status,
+        pauseClipRecordingWhenDemoPaused,
+      ),
+  );
   const [saved, setSaved] = useState<ClipView | null>(null);
   const [showSaved, setShowSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -402,7 +418,8 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
             {clip.recording && (
               <>
                 <p className={styles.RecordingStatus} role="status">
-                  Recording… {(clip.elapsedMs / 1000).toFixed(1)}s / 60s
+                  {recordingPaused ? "Recording paused" : "Recording…"}{" "}
+                  {(clip.elapsedMs / 1000).toFixed(1)}s / 60s
                 </p>
                 <button
                   type="button"
@@ -420,6 +437,21 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
                     Stop recording
                   </span>
                 </button>
+                <div className={styles.RecordingOption}>
+                  <Checkbox
+                    id="clipPauseRecordingWhenDemoPaused"
+                    checked={pauseClipRecordingWhenDemoPaused}
+                    onChange={(event) =>
+                      setPreference(
+                        "pauseClipRecordingWhenDemoPaused",
+                        event.currentTarget.checked,
+                      )
+                    }
+                  />
+                  <label htmlFor="clipPauseRecordingWhenDemoPaused">
+                    Pause recording when demo is paused
+                  </label>
+                </div>
               </>
             )}
             <div

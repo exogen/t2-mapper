@@ -109,6 +109,7 @@ export interface Preferences {
   invertJoystick: boolean;
   sidebarOpen: boolean;
   hasSeenClipRecordingHelp: boolean;
+  pauseClipRecordingWhenDemoPaused: boolean;
   fpsLimit: number | null;
   /** 3D view resolution as a fraction of the standard render resolution
    *  (devicePixelRatio clamped to [1, 2]). 1 = 100%. */
@@ -181,6 +182,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   invertJoystick: false,
   sidebarOpen: false,
   hasSeenClipRecordingHelp: false,
+  pauseClipRecordingWhenDemoPaused: false,
   fpsLimit: null,
   renderScale: 1,
   showInputOverlay: true,
@@ -312,6 +314,7 @@ export function restorePreferences(
   copy("invertDrag");
   copy("invertJoystick");
   copy("hasSeenClipRecordingHelp", isBoolean);
+  copy("pauseClipRecordingWhenDemoPaused", isBoolean);
   if (saved.fpsLimit === null || Number.isInteger(saved.fpsLimit))
     restored.fpsLimit = saved.fpsLimit;
   copy("renderScale", (value) => RENDER_SCALE_OPTIONS.includes(value));

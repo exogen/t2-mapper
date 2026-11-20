@@ -7,7 +7,7 @@ import {
 } from "../stream/interpolateEntity";
 import { createLogger } from "../logger";
 import { orbitSpringDebug } from "../state/cameraDebug";
-import { Quaternion, Vector3 } from "three";
+import { MathUtils, Quaternion, Vector3 } from "three";
 import type { Group, Object3D } from "three";
 import { DEFAULT_EYE_HEIGHT, STREAM_TICK_SEC } from "../stream/playbackUtils";
 import { readEyePosition, readWorldCameraNodes } from "./eyePositions";
@@ -61,6 +61,7 @@ import {
 } from "../director/cameraRig";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import {
+  MAX_ORBIT_DISTANCE,
   streamClock,
   streamPlaybackStore,
   resetStreamPlayback,
@@ -70,6 +71,7 @@ import {
   updateGameEntityFromStream,
 } from "../stream/entityBridge";
 import { sameImageMounts } from "../stream/imageMount";
+import { findFollowedProjectile } from "../stream/projectileFollowIdentity";
 import { getShapeCenter, getShapeLocalCenter } from "../stream/shapeBounds";
 import {
   yawPitchToQuaternion,
@@ -87,12 +89,20 @@ import type {
 import type { GameEntity } from "../state/gameEntityTypes";
 import { isSceneEntity } from "../state/gameEntityTypes";
 import { torqueVecToThree } from "../scene/coordinates";
-import { firstPersonPlayerId, readClipViewAngles } from "./firstPersonPlayer";
+import {
+  firstPersonPlayerId,
+  shouldUseClipFollowEye,
+} from "./firstPersonPlayer";
 import { loadProjectileShapeData } from "./shapeCache";
 import { markTransformChanged } from "../transformChanges";
 import { PlayerCameraTransition } from "./playerCameraTransition";
 import { recordedCameraBlend } from "../stream/playerCameraBlend";
-import { exitToFreeFly } from "../state/watchFollow";
+import {
+  exitToFreeFly,
+  findLivingEntityByTargetId,
+  resolveFlagEntityId,
+} from "../state/watchFollow";
+import type { ClipCameraTransition } from "../../relay/clipTypes";
 import {
   applyObserverOrbit,
   applyPlayerControlCamera,
@@ -100,6 +110,12 @@ import {
 } from "./playerViewCamera";
 
 type EntityById = Map<string, StreamEntity>;
+type OrbitColliderExclusions = Parameters<typeof constrainOrbitCamera>[4];
+
+interface OrbitTarget {
+  group: Object3D;
+  entity: StreamEntity | undefined;
+}
 
 interface StreamFrame {
   renderCurrent: StreamSnapshot;
@@ -268,11 +284,58 @@ const _followEyeCamera = {
   position: new Vector3(),
   quaternion: new Quaternion(),
 };
+const _clipTransitionOrigin = {
+  position: new Vector3(),
+  quaternion: new Quaternion(),
+};
+const _clipOrbitCamera = {
+  position: _orbitCandidate,
+  quaternion: new Quaternion(),
+  orbitTransition: false,
+};
 
 function cameraColliderId(
   entity: StreamEntity | undefined,
 ): string | undefined {
   return entity?.ghostIndex == null ? undefined : `ghost:${entity.ghostIndex}`;
+}
+
+function followOrbitColliders(
+  target: StreamEntity | undefined,
+  pivot: StreamEntity | undefined,
+): OrbitColliderExclusions {
+  const collider = cameraColliderId(target);
+  return pivot?.type === "Vehicle" && pivot.id !== target?.id
+    ? [collider, cameraColliderId(pivot)]
+    : collider;
+}
+
+function raiseLooseFlagPivot(entity: StreamEntity | undefined): void {
+  // The loose flag's origin is at its base; carriers already have a pivot.
+  if (
+    entity &&
+    entity.type !== "Player" &&
+    (entity.targetRenderFlags ?? 0) & 0x2
+  )
+    _orbitTarget.y += 1.2;
+}
+
+function placeClipOrbit(
+  camera: { position: Vector3; quaternion: Quaternion },
+  distance: number,
+  exclusions?: OrbitColliderExclusions,
+): void {
+  _orbitDir.set(0, 0, 1).applyQuaternion(camera.quaternion);
+  camera.position.copy(_orbitTarget).addScaledVector(_orbitDir, distance);
+  constrainOrbitCamera(
+    _orbitTarget,
+    camera.position,
+    cameraRegistry.perspective
+      ? orbitCameraClearance(cameraRegistry.perspective)
+      : undefined,
+    undefined,
+    exclusions,
+  );
 }
 
 /**
@@ -310,7 +373,7 @@ function resolveCameraTarget(
   root: Group,
   entities: EntityById,
   id: string,
-): { group: Object3D; entity: StreamEntity | undefined } | null {
+): OrbitTarget | null {
   let targetId = id;
   let entity = entities.get(id);
   for (
@@ -970,12 +1033,18 @@ export class StreamPlaybackSession {
       originalControl?.id ?? camera?.controlEntityId,
     );
     const clipSample = owner === "clip" ? this.engine.clipCameraSample : null;
-    const clipInTransition =
-      viewTargetId && clipSample?.firstPersonPose === false;
-    streamRenderFrame.firstPersonPlayerId = clipInTransition ? null : id;
-    if (!id || clipInTransition) return;
+    const clipCannotUseEye =
+      clipSample?.cameraMode === "firstPersonOverride" &&
+      !shouldUseClipFollowEye(
+        clipSample,
+        viewTargetId,
+        streamPlaybackStore.getState().followEntityId,
+      );
+    streamRenderFrame.firstPersonPlayerId = clipCannotUseEye ? null : id;
+    if (!id || clipCannotUseEye) return;
     streamRenderFrame.maskFirstPersonPose =
-      !viewTargetId || !localPlayerFollow || this.followCameraBlend === 0;
+      !this.engine.clipCameraTransition &&
+      (!viewTargetId || !localPlayerFollow || this.followCameraBlend === 0);
     const player = this.followEyeTarget;
     if (!player) return;
     const mounted = player.mountObjectId && entities.has(player.mountObjectId);
@@ -994,17 +1063,9 @@ export class StreamPlaybackSession {
       id,
       bodyRotation,
       streamRenderFrame.aimCorrection,
-      owner !== "clip",
       this.firstPersonAim,
     );
-    if (clipSample) {
-      readClipViewAngles(
-        clipSample.quaternion,
-        aim,
-        mounted ? group.getWorldQuaternion(_mountRotation) : undefined,
-      );
-      aim.headYaw = clipSample.headYaw ?? aim.headYaw;
-    } else if (this.followCameraBlend) {
+    if (this.followCameraBlend) {
       const orbitAim = getPlayerRenderAim(
         bodyRotation,
         player,
@@ -1073,7 +1134,6 @@ export class StreamPlaybackSession {
     id: string,
     bodyRotation: Quaternion,
     aimCorrection: boolean,
-    useLookahead: boolean,
     out: PlayerRenderAim,
   ): PlayerRenderAim {
     const player = getEntityMap(renderCurrent).get(id);
@@ -1106,7 +1166,7 @@ export class StreamPlaybackSession {
       interpolateAim
         ? (bufferingView ?? renderCurrent.previousPlayerViews?.get(id))
         : undefined,
-      interpolateAim && useLookahead && !bufferingView
+      interpolateAim && !bufferingView
         ? this.stream?.getPlayerAim?.(id)
         : undefined,
     );
@@ -1118,8 +1178,8 @@ export class StreamPlaybackSession {
     playerId: string,
     target: StreamEntity,
     aimCorrection: boolean,
+    camera = _followEyeCamera,
   ): boolean {
-    const camera = _followEyeCamera;
     const { id } = target;
     const turret = target.className === "Turret";
     if (turret && readWorldCameraNodes(id, camera.position, camera.quaternion))
@@ -1148,7 +1208,6 @@ export class StreamPlaybackSession {
           ? this.readMountedPlayerRotation(frame, target)
           : group.quaternion,
         aimCorrection,
-        resolveCameraOwner() !== "clip",
         _followAim,
       );
     if (mounted) {
@@ -1183,6 +1242,60 @@ export class StreamPlaybackSession {
     return true;
   }
 
+  private readClipTransitionOrigin(
+    from: ClipCameraTransition,
+    frame: StreamFrame,
+    entities: EntityById,
+    root: Group | null,
+    aimCorrection: boolean,
+  ): typeof _clipTransitionOrigin | undefined {
+    const anchor = from.anchor;
+    if (!anchor) return;
+    const origin = _clipTransitionOrigin;
+    if (anchor.kind === "playerEye") {
+      const id = findLivingEntityByTargetId(anchor.targetId);
+      if (!root || !id) return;
+      const target = this.resolveFollowEyeTarget(
+        frame.renderCurrent,
+        entities,
+        entities.get(id),
+      );
+      if (
+        target &&
+        this.readFollowEye(frame, root, id, target, aimCorrection, origin)
+      )
+        return origin;
+      return;
+    }
+
+    let exclusions: OrbitColliderExclusions;
+    if (anchor.projectile) {
+      const projectile = findFollowedProjectile(entities, anchor.projectile);
+      if (!projectile) return;
+      this.placeProjectileOrbitPivot(projectile, frame);
+    } else {
+      const id =
+        anchor.flagSlot !== null
+          ? resolveFlagEntityId(anchor.flagSlot)
+          : anchor.targetId === null
+            ? null
+            : findLivingEntityByTargetId(anchor.targetId);
+      if (!root || !id) return;
+      const target = resolveCameraTarget(root, entities, id);
+      if (!target) return;
+      this.placeFollowOrbitPivot(target);
+      raiseLooseFlagPivot(target.entity);
+      exclusions = followOrbitColliders(entities.get(id), target.entity);
+    }
+    origin.quaternion.fromArray(from.quaternion);
+    placeClipOrbit(
+      origin,
+      Math.min(MAX_ORBIT_DISTANCE, anchor.distance),
+      exclusions,
+    );
+    return origin;
+  }
+
   // ── The stream's camera pose: the recorded view, the orbit follow, or
   // first person. Runs after the shapes have animated (the first-person
   // eye node) and after the director has set its orbit parameters.
@@ -1200,7 +1313,25 @@ export class StreamPlaybackSession {
       return;
     const isPlaying = playback.status === "playing";
     const currentEntities = getEntityMap(renderCurrent);
-    const root = streamPlaybackStore.getState().root;
+    const { root, followEntityId } = streamPlaybackStore.getState();
+    const owner = resolveCameraOwner();
+    const clipSample = owner === "clip" ? this.engine.clipCameraSample : null;
+    const transition = this.engine.clipCameraTransition;
+    if (clipSample && transition)
+      transition.origin = this.readClipTransitionOrigin(
+        transition.from,
+        frame,
+        currentEntities,
+        root,
+        aimCorrection,
+      );
+    const clipOrbit =
+      clipSample?.cameraMode === "orbitOverride" ? clipSample : null;
+    const hasClipOrbitDistance = clipOrbit?.orbitDistance !== undefined;
+    const clipProjectile =
+      hasClipOrbitDistance && clipOrbit.projectile
+        ? findFollowedProjectile(currentEntities, clipOrbit.projectile)
+        : undefined;
 
     const currentCamera = renderCurrent.camera;
     streamRenderFrame.camera = currentCamera;
@@ -1218,10 +1349,19 @@ export class StreamPlaybackSession {
       cameraMode,
       isLive,
       isWatcher,
-      orbitTargetId,
+      orbitTargetId: selectedOrbitTargetId,
       firstPersonFollowId,
       projectileTracking,
     } = this.cameraSelection(currentCamera);
+    let orbitTargetId = selectedOrbitTargetId;
+    if (clipOrbit) {
+      // Older clips only recorded a world pose. The clip camera can play it directly.
+      orbitTargetId = undefined;
+      if (hasClipOrbitDistance)
+        orbitTargetId = clipOrbit.projectile
+          ? clipProjectile?.id
+          : (followEntityId ?? undefined);
+    }
     // In live mode, InputConsumer owns camera position and rotation
     // (moves are applied locally, matching how the real Tribes 2 client
     // handles its control Camera). StreamPlaybackSession still handles
@@ -1361,7 +1501,8 @@ export class StreamPlaybackSession {
       this.orbitDistance.reset();
       this.lastOrbitSnapNonce = orbitSnapNonce;
     }
-    const localOrbit = orbitOverride && resolveCameraOwner() === "input";
+    const localOrbit = orbitOverride && owner === "input";
+    const followOrbit = localOrbit || hasClipOrbitDistance;
     const { followFlagSlot } = streamPlaybackStore.getState();
     // Both springs follow the flag across carrier/item hand-offs. A drop also
     // unlocks at the last smoothed view angle instead of restoring old angles.
@@ -1374,7 +1515,7 @@ export class StreamPlaybackSession {
       if (
         orbitOverride &&
         orbitSpringKey === lastLockedOrbit.targetId &&
-        resolveCameraOwner() === "input"
+        owner === "input"
       ) {
         streamPlaybackStore.setState({
           orbitOverrideYaw: lastLockedOrbit.yaw,
@@ -1386,14 +1527,14 @@ export class StreamPlaybackSession {
     const projectile = projectileTracking
       ? currentEntities.get(projectileTracking.projectileId)
       : undefined;
-    const liveProjectile = isTrackableProjectile(projectile)
-      ? projectile
-      : undefined;
+    const liveProjectile =
+      clipProjectile ??
+      (isTrackableProjectile(projectile) ? projectile : undefined);
     const terminalPosition = projectileTracking?.terminalPosition;
     const projectileEnded =
       projectileTracking !== null &&
       (terminalPosition !== undefined || liveProjectile === undefined);
-    let orbitColliderExclusions: Parameters<typeof constrainOrbitCamera>[4];
+    let orbitColliderExclusions: OrbitColliderExclusions;
     if (
       cameraMode !== "freeFly" &&
       (!isLive || isWatcher) &&
@@ -1404,37 +1545,27 @@ export class StreamPlaybackSession {
       orbitTargetId
     ) {
       const resolvedTarget =
-        root && !projectileTracking
+        root && !projectileTracking && !clipProjectile
           ? resolveCameraTarget(root, currentEntities, orbitTargetId)
           : null;
       if (resolvedTarget || liveProjectile || terminalPosition) {
         const targetGroup = resolvedTarget?.group;
         const orbitEntity = resolvedTarget?.entity;
-        const vehicleOrbit = localOrbit && orbitEntity?.type === "Vehicle";
-        if (localOrbit && resolvedTarget) {
+        const vehicleOrbit = followOrbit && orbitEntity?.type === "Vehicle";
+        if (followOrbit && resolvedTarget) {
           // Flag follow targets the flag item or its carrier. Keep that
           // direct target out of the ray even when orbiting its vehicle.
-          const targetCollider = cameraColliderId(
+          orbitColliderExclusions = followOrbitColliders(
             currentEntities.get(orbitTargetId),
+            orbitEntity,
           );
-          orbitColliderExclusions =
-            vehicleOrbit && orbitEntity.id !== orbitTargetId
-              ? [targetCollider, cameraColliderId(orbitEntity)]
-              : targetCollider;
         }
         if (terminalPosition) torqueVecToThree(terminalPosition, _orbitTarget);
-        else if (liveProjectile) {
-          interpolateStreamPosition(
-            _orbitTarget,
-            liveProjectile,
-            getEntityMap(renderPrev).get(orbitTargetId),
-            interpT,
-          );
-        } else if (localOrbit && orbitEntity?.type === "Player") {
-          this.placeOrbitCenter(orbitEntity, targetGroup, 0.8);
-        } else if (vehicleOrbit) {
-          this.placeOrbitCenter(orbitEntity, targetGroup);
-        } else if (targetGroup) _orbitTarget.copy(targetGroup.position);
+        else if (liveProjectile)
+          this.placeProjectileOrbitPivot(liveProjectile, frame);
+        else if (followOrbit && resolvedTarget)
+          this.placeFollowOrbitPivot(resolvedTarget);
+        else if (targetGroup) _orbitTarget.copy(targetGroup.position);
         // Loose-spring target for the auto-director: ease toward where
         // the followed thing IS rather than teleporting with it through
         // drops, passes and pickups. A jump far beyond hand-off range is
@@ -1444,7 +1575,8 @@ export class StreamPlaybackSession {
         // the home base mid-shot — freeze on the last framing instead
         // and let the next shot (the aftermath) own what follows.
         const spState = streamPlaybackStore.getState();
-        const damping = projectileTracking ? null : spState.orbitTargetDamping;
+        const damping =
+          projectileTracking || clipOrbit ? null : spState.orbitTargetDamping;
         if (damping != null) {
           advanceFollowSpring(
             this.spring,
@@ -1458,18 +1590,33 @@ export class StreamPlaybackSession {
           this.spring.seeded = false;
           orbitSpringDebug.active = false;
         }
-        if (!localOrbit && currentCamera?.orbitOffset) {
+        if (!followOrbit && currentCamera?.orbitOffset) {
           _orbitTarget.y += currentCamera.orbitOffset;
-        } else if (!localOrbit && orbitEntity?.type === "Player") {
+        } else if (!followOrbit && orbitEntity?.type === "Player") {
           _orbitTarget.y += 1.0;
-        } else if (
-          orbitEntity &&
-          orbitEntity.type !== "Player" &&
-          ((orbitEntity.targetRenderFlags ?? 0) & 0x2) !== 0
-        ) {
-          // The loose flag's origin is at the base. A carrier already has
-          // a player pivot; picking up the flag must not raise it.
-          _orbitTarget.y += 1.2;
+        } else raiseLooseFlagPivot(orbitEntity);
+
+        if (clipOrbit?.orbitDistance !== undefined) {
+          const { quaternion } = _clipOrbitCamera;
+          quaternion.fromArray(clipOrbit.quaternion);
+          let distance = Math.min(MAX_ORBIT_DISTANCE, clipOrbit.orbitDistance);
+          const fromDistance = transition?.from.orbitDistance;
+          _clipOrbitCamera.orbitTransition = fromDistance !== undefined;
+          if (transition && fromDistance !== undefined) {
+            // Stay on an orbit around the current subject throughout the move.
+            quaternion.slerp(
+              _interpQuatA.fromArray(transition.from.quaternion),
+              1 - transition.fraction,
+            );
+            distance = MathUtils.lerp(
+              Math.min(MAX_ORBIT_DISTANCE, fromDistance),
+              distance,
+              transition.fraction,
+            );
+          }
+          placeClipOrbit(_clipOrbitCamera, distance, orbitColliderExclusions);
+          this.engine.clipFollowCamera = _clipOrbitCamera;
+          return;
         }
 
         let hasDirection = false;
@@ -1616,6 +1763,13 @@ export class StreamPlaybackSession {
               ? _orbitTarget
               : _tmpVec.copy(_orbitTarget).sub(_orbitDir),
           );
+          if (
+            localOrbit &&
+            cameraMode === "orbitOverride" &&
+            (followBlend === null || followBlend === 1)
+          )
+            this.engine.recordingOrbitDistance =
+              _orbitCandidate.distanceTo(_orbitTarget);
         }
       }
     }
@@ -1655,6 +1809,9 @@ export class StreamPlaybackSession {
           aimCorrection,
         )
       ) {
+        if (owner === "input")
+          this.engine.recordingFollowEye =
+            cameraMode === "firstPersonOverride" && !followBlend;
         if (followBlend) {
           streamCamera.position.lerp(
             _followEyeCamera.position,
@@ -1676,6 +1833,11 @@ export class StreamPlaybackSession {
         } else {
           streamCamera.position.copy(_followEyeCamera.position);
           streamCamera.quaternion.copy(_followEyeCamera.quaternion);
+          if (
+            clipSample &&
+            shouldUseClipFollowEye(clipSample, eyeFollowId, followEntityId)
+          )
+            this.engine.clipFollowCamera = _followEyeCamera;
         }
       }
     }
@@ -1732,12 +1894,13 @@ export class StreamPlaybackSession {
           );
         }
       }
+      const blend = recordedCameraBlend(currentCamera, interpT);
       applyPlayerControlCamera(
         streamCamera,
         group,
         recordedControl.id,
         Math.max(0, max - min),
-        recordedCameraBlend(currentCamera, interpT),
+        blend,
         {
           cameraOffset:
             typeof db?.cameraOffset === "number" ? db.cameraOffset : 0,
@@ -1747,6 +1910,19 @@ export class StreamPlaybackSession {
           shapeEye,
         },
       );
+      if (
+        clipSample?.cameraMode === "original" &&
+        blend === 0 &&
+        group &&
+        !recordedControl.damageState &&
+        (recordedControl.type === "Player" ||
+          recordedControl.type === "Vehicle" ||
+          recordedControl.className === "Turret")
+      ) {
+        _followEyeCamera.position.copy(streamCamera.position);
+        _followEyeCamera.quaternion.copy(streamCamera.quaternion);
+        this.engine.clipFollowCamera = _followEyeCamera;
+      }
     }
   }
 
@@ -1773,6 +1949,24 @@ export class StreamPlaybackSession {
     return entity?.dataBlockId === undefined
       ? undefined
       : this.stream?.getDataBlockData(entity.dataBlockId);
+  }
+
+  private placeProjectileOrbitPivot(
+    projectile: StreamEntity,
+    frame: StreamFrame,
+  ): void {
+    interpolateStreamPosition(
+      _orbitTarget,
+      projectile,
+      getEntityMap(frame.renderPrev).get(projectile.id),
+      frame.interpT,
+    );
+  }
+
+  private placeFollowOrbitPivot({ entity, group }: OrbitTarget): void {
+    if (entity?.type === "Player") this.placeOrbitCenter(entity, group, 0.8);
+    else if (entity?.type === "Vehicle") this.placeOrbitCenter(entity, group);
+    else _orbitTarget.copy(group.position);
   }
 
   private placeOrbitCenter(

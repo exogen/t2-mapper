@@ -1,0 +1,83 @@
+/* Use the same offset from the track center in both timeline layouts. */
+.Layer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(50% + var(--playback-seek-height) / 2);
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* Click targets hang above the control, centered on the timestamp. */
+.Tick,
+.FlagTick {
+  position: absolute;
+  bottom: -2px;
+  pointer-events: auto;
+  cursor: pointer;
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.Tick {
+  width: 14px;
+  height: 15px;
+  margin-left: -7px;
+  color: rgba(255, 255, 255, 0.75);
+  opacity: 0.45;
+}
+
+.FlagTick {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.8;
+  font-size: 12px;
+  width: 12px;
+  height: 14px;
+  margin-left: -6px;
+}
+
+.FlagIcon {
+  margin-top: 4px;
+}
+
+.TickIcon {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 2px);
+  transform: translate(-50%, -50%);
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+
+.TickIcon path {
+  vector-effect: non-scaling-stroke;
+  stroke-width: 2px;
+}
+
+.Tick[aria-pressed="true"] .TickIcon {
+  /* The curved path sits half a viewBox unit right of center. */
+  transform: translate(-52%, -50%);
+}
+
+.Tick:hover:not(:disabled),
+.Tick:focus-visible,
+.FlagTick:hover,
+.FlagTick:focus-visible {
+  opacity: 1;
+}
+
+.Tick:focus-visible,
+.FlagTick:focus-visible {
+  outline: 2px solid rgba(63, 140, 255, 0.8);
+  outline-offset: 1px;
+}
+
+.Tick:disabled {
+  opacity: 0.15;
+  cursor: default;
+}

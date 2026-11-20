@@ -1,5 +1,6 @@
 import {
   sampleClipTake,
+  sameClipFollowTarget,
   type ClipSample,
   type ClipTake,
 } from "../../relay/clipTypes";
@@ -21,7 +22,7 @@ export function canSmoothClipCamera(
   return (
     cameraMode !== "firstPersonOverride" &&
     cameraMode !== "original" &&
-    !(cameraMode === "orbitOverride" && firstPersonPose === false)
+    !(cameraMode === "orbitOverride" && firstPersonPose !== undefined)
   );
 }
 
@@ -43,8 +44,9 @@ function startsSegment(previous: ClipSample, sample: ClipSample): boolean {
   return (
     !!sample.cut ||
     sample.cameraMode !== previous.cameraMode ||
-    sample.targetId !== previous.targetId ||
-    sample.flagSlot !== previous.flagSlot ||
+    !sameClipFollowTarget(previous, sample) ||
+    (sample.orbitDistance === undefined) !==
+      (previous.orbitDistance === undefined) ||
     sample.projection !== previous.projection ||
     sample.aspect !== previous.aspect ||
     canSmoothClipCamera(sample.cameraMode, sample.firstPersonPose) !==
@@ -60,7 +62,7 @@ function copySample(sample: ClipSample): ClipSample {
   };
 }
 
-/** Bake a seek-independent camera path, keeping transport and deliberate cuts intact. */
+/** Bake camera motion independently of playback. Follow targets stay in the demo. */
 export function smoothClipTake(
   take: ClipTake,
   level: ClipSmoothingLevel,
@@ -79,6 +81,7 @@ export function smoothClipTake(
       start = end;
       continue;
     }
+    const followOrbit = cameraMode === "orbitOverride";
     for (let index = start + 1; index < end - 1; index++) {
       const original = take.samples[index];
       const radius = Math.min(
@@ -90,6 +93,7 @@ export function smoothClipTake(
       const quaternion: ClipSample["quaternion"] = [0, 0, 0, 0];
       let fov = original.fov;
       let viewHeight = original.viewHeight ?? 0;
+      let orbitDistance = original.orbitDistance ?? 0;
       for (const { offset, weight } of kernel(
         Math.ceil(radius / TAP_INTERVAL_MS),
       )) {
@@ -101,9 +105,21 @@ export function smoothClipTake(
           ),
         );
         const nearby = sampleClipTake(take, timeMs);
-        for (let axis = 0; axis < 3; axis++)
-          position[axis] +=
-            (nearby.position[axis] - original.position[axis]) * weight;
+        if (!followOrbit) {
+          for (let axis = 0; axis < 3; axis++)
+            position[axis] +=
+              (nearby.position[axis] - original.position[axis]) * weight;
+          fov += (nearby.fov - original.fov) * weight;
+          if (original.projection === "orthographic")
+            viewHeight += (nearby.viewHeight! - original.viewHeight!) * weight;
+        } else if (
+          !original.projectile &&
+          original.orbitDistance !== undefined &&
+          nearby.orbitDistance !== undefined
+        ) {
+          orbitDistance +=
+            (nearby.orbitDistance - original.orbitDistance) * weight;
+        }
         // q and -q represent the same rotation; average one local hemisphere.
         const sign =
           nearby.quaternion.reduce(
@@ -114,9 +130,6 @@ export function smoothClipTake(
             : 1;
         for (let axis = 0; axis < 4; axis++)
           quaternion[axis] += nearby.quaternion[axis] * sign * weight;
-        fov += (nearby.fov - original.fov) * weight;
-        if (original.projection === "orthographic")
-          viewHeight += (nearby.viewHeight! - original.viewHeight!) * weight;
       }
       const length = Math.hypot(...quaternion);
       samples[index] = {
@@ -127,6 +140,9 @@ export function smoothClipTake(
         ) as ClipSample["quaternion"],
         fov,
         ...(original.projection === "orthographic" && { viewHeight }),
+        ...(original.orbitDistance !== undefined && {
+          orbitDistance,
+        }),
       };
     }
     start = end;

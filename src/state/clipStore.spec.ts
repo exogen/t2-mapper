@@ -304,6 +304,83 @@ it("previews either adjusted trim boundary even when the playhead is inside the 
   expect(engineStore.getState().playback.seekTime).toBeCloseTo(0.9);
 });
 
+it("keeps jump choices independent of smoothing and restores the cut on a second toggle", () => {
+  const state = clipStore.getState();
+  state.start();
+  state.appendSample(sample(0));
+  state.appendSample({
+    ...sample(500),
+    position: [10, 0, 0],
+    cut: true,
+    jump: "quickCam",
+  });
+  state.appendSample({ ...sample(1000), position: [11, 0, 0] });
+  state.stop();
+
+  state.toggleJumpTransition(0);
+  expect(clipStore.getState().active?.transitions).toBeUndefined();
+  state.toggleJumpTransition(500);
+  expect(clipStore.getState().jumpTransitions.has(500)).toBe(true);
+  expect(clipStore.getState().active?.transitions).toMatchObject([
+    { startMs: 500 },
+  ]);
+  state.setSmoothingLevel(2);
+  expect(clipStore.getState().active?.transitions).toMatchObject([
+    { startMs: 500 },
+  ]);
+  state.setTrimRange(0, 550);
+  expect(clipStore.getState().active?.transitions).toMatchObject([
+    { durationMs: 50 },
+  ]);
+  state.toggleJumpTransition(500);
+  expect(clipStore.getState().active?.transitions).toBeUndefined();
+  expect(clipStore.getState().active?.samples[1]).toMatchObject({
+    cut: true,
+    jump: "quickCam",
+  });
+  state.discard();
+  expect(clipStore.getState().jumpTransitions.size).toBe(0);
+});
+
+it("allows changing a jump whose transition starts at or overlaps the trim start", () => {
+  const state = clipStore.getState();
+  state.start();
+  state.appendSample(sample(0));
+  state.appendSample({
+    ...sample(1000.75),
+    position: [50, 0, 0],
+    cut: true,
+    jump: "quickCam",
+  });
+  state.appendSample(sample(2000));
+  state.stop();
+
+  state.setTrimRange(1000.75, 2000);
+  state.toggleJumpTransition(1000.75);
+  expect(clipStore.getState().active?.transitions).toMatchObject([
+    { startMs: 1000.75 },
+  ]);
+  state.setTrimRange(1100, 2000);
+  state.toggleJumpTransition(1000.75);
+  expect(clipStore.getState().active?.transitions).toBeUndefined();
+  state.toggleJumpTransition(1000.75);
+  expect(clipStore.getState().active?.transitions).toHaveLength(1);
+});
+
+it("does not select a transition when the trim leaves less than one millisecond", () => {
+  const state = clipStore.getState();
+  state.start();
+  state.appendSample(sample(0));
+  state.appendSample({ ...sample(1000.75), cut: true, jump: "resume" });
+  state.appendSample(sample(2000));
+  state.stop();
+
+  state.setTrimRange(0, 1001);
+  state.toggleJumpTransition(1000.75);
+  expect(clipStore.getState().jumpTransitions.size).toBe(0);
+  expect(clipStore.getState().active?.transitions).toBeUndefined();
+});
+
 it("seeks and replays saved clips without losing their camera or playback intent", () => {
   clipStore.getState().start();
   clipStore.getState().appendSample(sample(0));

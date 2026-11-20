@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { Group, Object3D, PerspectiveCamera, Scene, Vector3 } from "three";
 import { BlockTypeInfo, type ParsedData } from "t2-demo-parser";
+import type { ClipSample } from "../../relay/clipTypes";
 import type { ProjectileShapeLoader } from "../collision/projectileShapeAssets";
 import { DTSShape } from "../dts/dtsModel";
 import { createDTSTestShape } from "../dts/dtsTestFixtures";
@@ -8,6 +9,7 @@ import { registerEyeNode } from "../engine/eyePositions";
 import { FrameScheduler, type FrameContext } from "../engine/frameScheduler";
 import type { GameEngine } from "../engine/gameEngine";
 import { StreamPlaybackSession } from "../engine/streamPlayback";
+import { clipStore } from "../state/clipStore";
 import { effectNow, engineStore } from "../state/engineStore";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { settingsStore } from "../state/settingsStore";
@@ -480,6 +482,214 @@ it.each([true, false])(
     }
   },
 );
+
+it("only rebuilds clip orbits with a recorded distance", () => {
+  const stream = demo(new Map(), new Map());
+  vi.spyOn(stream, "stepToTime").mockReturnValue({
+    ...stream.getSnapshot(),
+    camera: null,
+    exhausted: false,
+    entities: [{ id: "flag", type: "Item", position: [3, 4, 5] }],
+  });
+  vi.spyOn(stream, "findSceneReadyTime").mockReturnValue(0);
+  const recording: StreamRecording = {
+    source: "demo",
+    duration: 1,
+    missionName: null,
+    gameType: null,
+    serverDisplayName: null,
+    recorderName: null,
+    recordingDate: null,
+    streamingPlayback: stream,
+  };
+  const sample: ClipSample = {
+    timeMs: 0,
+    demoTimeSec: 0,
+    position: [20, 30, 40],
+    quaternion: [0, 0, 0, 1],
+    projection: "perspective",
+    fov: 70,
+    aspect: 1.5,
+    cameraMode: "orbitOverride",
+    targetId: null,
+    flagSlot: 2,
+    rate: 1,
+    playing: false,
+  };
+  const scheduler = new FrameScheduler();
+  const engine = {
+    scheduler,
+    streamSnapshot: { current: null },
+    assetsLoading: () => false,
+    invalidate: vi.fn(),
+    clipFollowCamera: null,
+    clipCameraSample: sample,
+  } as unknown as GameEngine;
+  engineStore.getState().setRecording(recording);
+  const session = new StreamPlaybackSession(engine, recording);
+  try {
+    clipStore.getState().play({
+      sourceDemo: "test.rec",
+      version: 1,
+      samples: [sample, { ...sample, timeMs: 200, demoTimeSec: 0.2 }],
+    });
+    const root = new Group();
+    const flag = new Group();
+    flag.name = "flag";
+    root.add(flag);
+    streamPlaybackStore.setState({
+      root,
+      cameraMode: "orbitOverride",
+      followEntityId: "flag",
+    });
+    const camera = new PerspectiveCamera();
+    const scene = new Scene();
+    const render = () =>
+      scheduler.runAll({
+        camera,
+        scene,
+        delta: 0,
+        elapsed: 0,
+        frame: 1,
+        renderer: {} as FrameContext["renderer"],
+      });
+    render();
+    expect(engine.clipFollowCamera).toBeNull();
+
+    for (const orbitDistance of [0, 4]) {
+      engine.clipCameraSample = { ...sample, orbitDistance };
+      render();
+      expect(engine.clipFollowCamera?.position.toArray()).toEqual([
+        4,
+        5,
+        3 + orbitDistance,
+      ]);
+    }
+  } finally {
+    clipStore.getState().stopPlayback();
+    session.dispose();
+    engineStore.getState().setRecording(null);
+    gameEntityStore.getState().endStreaming();
+    vi.restoreAllMocks();
+  }
+});
+
+it("resolves a transition's outgoing projectile orbit at the sought frame", () => {
+  const stream = demo(new Map(), new Map());
+  const first = stream.getSnapshot();
+  let projectileId = "shot";
+  vi.spyOn(stream, "stepToTime").mockImplementation((timeSec) => {
+    const tick = Math.floor((timeSec + 1e-9) / STREAM_TICK_SEC);
+    return {
+      ...first,
+      camera: null,
+      exhausted: false,
+      timeSec: tick * STREAM_TICK_SEC,
+      entities: [
+        {
+          id: projectileId,
+          type: "Projectile",
+          ghostIndex: 7,
+          spawnTimeSec: 0,
+          position: [1, 4 + 4 * tick, 8],
+        },
+      ],
+    };
+  });
+  vi.spyOn(stream, "findSceneReadyTime").mockReturnValue(0);
+  const recording: StreamRecording = {
+    source: "demo",
+    duration: 1,
+    missionName: null,
+    gameType: null,
+    serverDisplayName: null,
+    recorderName: null,
+    recordingDate: null,
+    streamingPlayback: stream,
+  };
+  const sample: ClipSample = {
+    timeMs: 0,
+    demoTimeSec: 0,
+    position: [-100, 10, -100],
+    quaternion: [0, 0, 0, 1],
+    projection: "perspective",
+    fov: 70,
+    aspect: 1.5,
+    cameraMode: "freeFly",
+    targetId: null,
+    flagSlot: null,
+    rate: 1,
+    playing: false,
+  };
+  const transition: NonNullable<GameEngine["clipCameraTransition"]> = {
+    fraction: 0.5,
+    aimFraction: 0.5,
+    from: {
+      ...sample,
+      startMs: 20,
+      durationMs: 150,
+      anchor: {
+        kind: "orbit",
+        distance: 4,
+        targetId: null,
+        flagSlot: null,
+        projectile: { ghostIndex: 7, spawnTick: 0 },
+      },
+    },
+  };
+  const scheduler = new FrameScheduler();
+  const engine = {
+    scheduler,
+    streamSnapshot: { current: null },
+    assetsLoading: () => false,
+    invalidate: vi.fn(),
+    clipCameraSample: sample,
+    clipCameraTransition: transition,
+  } as unknown as GameEngine;
+  engineStore.getState().setRecording(recording);
+  const session = new StreamPlaybackSession(engine, recording);
+  try {
+    clipStore.getState().play({
+      sourceDemo: "test.rec",
+      version: 1,
+      samples: [sample, { ...sample, timeMs: 200, demoTimeSec: 0.2 }],
+      transitions: [transition.from],
+    });
+    const camera = new PerspectiveCamera();
+    const scene = new Scene();
+    const seek = (tick: number, x: number) => {
+      expect(engineStore.getState().seekPlayback(tick * STREAM_TICK_SEC)).toBe(
+        true,
+      );
+      scheduler.runAll({
+        camera,
+        scene,
+        delta: 0,
+        elapsed: 0,
+        frame: 1,
+        renderer: {} as FrameContext["renderer"],
+      });
+      expect(engineStore.getState().playback.status).not.toBe("seeking");
+      const origin = transition.origin!;
+      expect(origin.position.x).toBeCloseTo(x);
+      expect(origin.position.y).toBe(8);
+      expect(origin.position.z).toBe(5);
+      expect(origin.quaternion.toArray()).toEqual(sample.quaternion);
+    };
+    // Enter the transition without ever rendering its outgoing shot.
+    seek(1.5, 10);
+    // Seeking can assign new runtime entity IDs, even for the same flight.
+    projectileId = "restored-shot";
+    seek(3.5, 18);
+    seek(1.5, 10);
+  } finally {
+    clipStore.getState().stopPlayback();
+    session.dispose();
+    engineStore.getState().setRecording(null);
+    gameEntityStore.getState().endStreaming();
+    vi.restoreAllMocks();
+  }
+});
 
 it.each([
   { seat: 1, turretScoped: true, eye: "turret" },

@@ -96,6 +96,8 @@ export interface StreamPlaybackState {
    *  SNAP to its target only when this changed (a cut) — any large
    *  jump mid-shot is a capture/return teleport, never a real move. */
   orbitSnapNonce: number;
+  /** Changes when a quick camera is recalled, including within one camera mode. */
+  quickCamRecallNonce: number;
   /**
    * Spectate mode: the entity being followed by the client-side orbit
    * camera (the stream has no orbit target — the relay's server camera
@@ -149,6 +151,7 @@ export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
   orbitOverrideDistance: DEFAULT_ORBIT_DISTANCE,
   orbitTargetDamping: null,
   orbitSnapNonce: 0,
+  quickCamRecallNonce: 0,
   followEntityId: null,
   followTargetId: null,
   followPlayer: null,

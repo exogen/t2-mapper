@@ -11,7 +11,11 @@ import {
 import { appAccountStore } from "./appAccountStore";
 import { demoLoadStore } from "./demoLoadStore";
 import { publishedDemoFilename } from "./editableGame";
-import { addPlaybackSeekGuard, engineStore } from "./engineStore";
+import {
+  addPlaybackSeekGuard,
+  engineStore,
+  type PlaybackStatus,
+} from "./engineStore";
 import {
   createClipGraphicsEffectsStore,
   type GraphicsEffectsStore,
@@ -22,6 +26,11 @@ import {
   smoothClipTake,
   type ClipSmoothingLevel,
 } from "../stream/clipSmoothing";
+import {
+  applyClipJumpTransitions,
+  clipJumpTransitionEnd,
+  clipJumpTransitionEndInRange,
+} from "../stream/clipJumpTransitions";
 
 export interface ClipState {
   recording: boolean;
@@ -34,6 +43,7 @@ export interface ClipState {
   playheadMs: number;
   playing: boolean;
   smoothingLevel: ClipSmoothingLevel;
+  jumpTransitions: ReadonlySet<number>;
   error: string | null;
   start(): boolean;
   stop(): void;
@@ -44,6 +54,7 @@ export interface ClipState {
   stopPlayback(): void;
   setTrimRange(startMs: number, endMs: number): void;
   setSmoothingLevel(level: ClipSmoothingLevel): void;
+  toggleJumpTransition(timeMs: number): void;
   seek(timeMs: number): boolean;
   /** Engine-owned final rendered camera samples. */
   appendSample(sample: ClipSample): void;
@@ -55,10 +66,19 @@ let recordingOwner: string | null = null;
 let captureInterpolation = DEFAULT_PLAYER_INTERPOLATION;
 let releaseCaptureInterpolation: (() => void) | undefined;
 let clipSeekDepth = 0;
+const NO_JUMP_TRANSITIONS: ReadonlySet<number> = new Set();
 
 function releaseCapture(): void {
   releaseCaptureInterpolation?.();
   releaseCaptureInterpolation = undefined;
+}
+
+export function shouldPauseClipRecording(
+  status: PlaybackStatus,
+  pauseWhenDemoPaused: boolean,
+): boolean {
+  // A newly opened demo is stopped until its first Play.
+  return pauseWhenDemoPaused && (status === "paused" || status === "stopped");
 }
 
 /** Wait for the opening scene and its collision reconstruction before capturing. */
@@ -100,6 +120,7 @@ export const clipStore = createStore<ClipState>((set, get) => ({
   playheadMs: 0,
   playing: false,
   smoothingLevel: 0,
+  jumpTransitions: NO_JUMP_TRANSITIONS,
   error: null,
   start() {
     if (get().recording) return false;
@@ -123,7 +144,13 @@ export const clipStore = createStore<ClipState>((set, get) => ({
       stream.currentPlayerInterpolation ?? DEFAULT_PLAYER_INTERPOLATION;
     releaseCaptureInterpolation =
       stream.holdPlayerInterpolation?.(captureInterpolation);
-    set({ recording: true, elapsedMs: 0, smoothingLevel: 0, error: null });
+    set({
+      recording: true,
+      elapsedMs: 0,
+      smoothingLevel: 0,
+      jumpTransitions: NO_JUMP_TRANSITIONS,
+      error: null,
+    });
     return true;
   },
   stop() {
@@ -170,6 +197,7 @@ export const clipStore = createStore<ClipState>((set, get) => ({
       playheadMs: 0,
       playing: false,
       smoothingLevel: 0,
+      jumpTransitions: NO_JUMP_TRANSITIONS,
       error: null,
     });
   },
@@ -223,7 +251,20 @@ export const clipStore = createStore<ClipState>((set, get) => ({
     const duration = clipDurationMs(state.draft);
     const start = Math.max(0, Math.min(duration - 1, startMs));
     const end = Math.max(start + 1, Math.min(duration, endMs));
-    set({ trimStartMs: start, trimEndMs: end, playing: false });
+    set({
+      trimStartMs: start,
+      trimEndMs: end,
+      playing: false,
+      ...(end !== state.trimEndMs &&
+        state.active &&
+        state.jumpTransitions.size && {
+          active: applyClipJumpTransitions(
+            state.active,
+            state.jumpTransitions,
+            end,
+          ),
+        }),
+    });
     engineStore.getState().setPlaybackStatus("paused");
     const time =
       end !== state.trimEndMs
@@ -236,7 +277,39 @@ export const clipStore = createStore<ClipState>((set, get) => ({
   setSmoothingLevel(level) {
     const state = get();
     if (!state.draft || level === state.smoothingLevel) return;
-    set({ smoothingLevel: level, active: smoothClipTake(state.draft, level) });
+    set({
+      smoothingLevel: level,
+      active: applyClipJumpTransitions(
+        smoothClipTake(state.draft, level),
+        state.jumpTransitions,
+        state.trimEndMs,
+      ),
+    });
+  },
+  toggleJumpTransition(timeMs) {
+    const state = get();
+    if (!state.draft || !state.active) return;
+    const samples = state.draft.samples;
+    const index = samples.findIndex((sample) => sample.timeMs === timeMs);
+    if (
+      clipJumpTransitionEndInRange(
+        timeMs,
+        clipJumpTransitionEnd(samples, index),
+        state.trimStartMs,
+        state.trimEndMs,
+      ) === undefined
+    )
+      return;
+    const jumpTransitions = new Set(state.jumpTransitions);
+    if (!jumpTransitions.delete(timeMs)) jumpTransitions.add(timeMs);
+    set({
+      jumpTransitions,
+      active: applyClipJumpTransitions(
+        state.active,
+        jumpTransitions,
+        state.trimEndMs,
+      ),
+    });
   },
   seek(timeMs) {
     const state = get();

@@ -1,12 +1,12 @@
 import { Quaternion, Vector3 } from "three";
 import { cameraRegistry } from "../state/cameraRegistry";
 import { streamClock, streamPlaybackStore } from "../state/streamPlaybackStore";
+import { streamRenderFrame } from "../stream/interpolateEntity";
 import {
-  isTrackableProjectile,
-  streamRenderFrame,
-} from "../stream/interpolateEntity";
-import { streamTimeToTick } from "../stream/streamHelpers";
-import type { StreamEntity } from "../stream/types";
+  findFollowedProjectile,
+  projectileFollowIdentity,
+  type ProjectileFollowIdentity,
+} from "../stream/projectileFollowIdentity";
 import { encodeViewHash, parseViewHash } from "../viewHash";
 
 type FlyMomentCamera = {
@@ -16,8 +16,6 @@ type FlyMomentCamera = {
 };
 
 type MomentOrbit = { yaw: number; pitch: number; distance: number };
-
-type ProjectileMomentIdentity = { ghostIndex: number; spawnTick: number };
 
 /**
  * A moment in a demo that a link can point at: the time the viewer
@@ -40,7 +38,7 @@ export type DemoMomentCamera =
   | (MomentOrbit & { kind: "follow" | "fp"; targetId: number })
   | (MomentOrbit & { kind: "flag"; slot: number })
   | (MomentOrbit &
-      ProjectileMomentIdentity & {
+      ProjectileFollowIdentity & {
         kind: "projectile";
         fallback: FlyMomentCamera;
       });
@@ -171,36 +169,9 @@ export function parseCameraHash(hash: string): DemoMomentCamera {
     : { kind, targetId: id, ...orbit };
 }
 
-function projectileMomentIdentity(
-  entity: StreamEntity | undefined,
-): ProjectileMomentIdentity | undefined {
-  if (
-    !isTrackableProjectile(entity) ||
-    entity.ghostIndex == null ||
-    !Number.isSafeInteger(entity.ghostIndex) ||
-    entity.ghostIndex < 0 ||
-    entity.spawnTimeSec == null
-  )
-    return undefined;
-  const spawnTick = streamTimeToTick(entity.spawnTimeSec);
-  if (Number.isSafeInteger(spawnTick) && spawnTick >= 0)
-    return { ghostIndex: entity.ghostIndex, spawnTick };
-}
-
 /** Find a recorded flight using its ghost slot and lifetime after a seek. */
-export function findDemoMomentProjectile({
-  ghostIndex,
-  spawnTick,
-}: ProjectileMomentIdentity): StreamEntity | undefined {
-  const entities = streamRenderFrame.current;
-  if (!entities) return undefined;
-  for (const entity of entities.values()) {
-    if (
-      entity.ghostIndex === ghostIndex &&
-      projectileMomentIdentity(entity)?.spawnTick === spawnTick
-    )
-      return entity;
-  }
+export function findDemoMomentProjectile(identity: ProjectileFollowIdentity) {
+  return findFollowedProjectile(streamRenderFrame.current, identity);
 }
 
 /** The moment the viewer is on right now, camera included. */
@@ -244,7 +215,7 @@ export function captureDemoMoment(): DemoMoment | null {
     };
     const identity =
       tracking &&
-      projectileMomentIdentity(
+      projectileFollowIdentity(
         streamRenderFrame.current?.get(tracking.projectileId),
       );
     if (identity)

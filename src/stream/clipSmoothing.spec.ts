@@ -159,6 +159,7 @@ it("does not smooth a pullback into the surrounding steady orbit", () => {
         cameraMode: index === 0 ? "firstPersonOverride" : "orbitOverride",
         ...(index === 0 && { firstPersonPose: true }),
         ...(index >= 1 && index <= 4 && { firstPersonPose: false }),
+        ...(index > 4 && { orbitDistance: index % 2 ? 2 : 8 }),
         position: [index % 2 ? 10 : 0, 0, 0],
       }),
     ),
@@ -167,9 +168,58 @@ it("does not smooth a pullback into the surrounding steady orbit", () => {
   for (const level of [1, 2] as const) {
     const smoothed = smoothClipTake(input, level);
     expect(smoothed.samples.slice(0, 6)).toEqual(input.samples.slice(0, 6));
-    expect(smoothed.samples[8].position).not.toEqual(input.samples[8].position);
+    expect(smoothed.samples[8].position).toEqual(input.samples[8].position);
+    expect(smoothed.samples[8].orbitDistance).toBeLessThan(8);
     expect(sampleClipTake(smoothed, 113)).toEqual(sampleClipTake(input, 113));
   }
+});
+
+it.each<Partial<ClipSample>>([
+  { targetId: 12 },
+  { flagSlot: 1 },
+  { projectile: { ghostIndex: 6, spawnTick: 309 } },
+])("smooths the orbit independently of follow target motion %j", (anchor) => {
+  const input = take(
+    Array.from({ length: 9 }, (_, index) =>
+      sample(index * 50, {
+        ...anchor,
+        cameraMode: "orbitOverride",
+        orbitDistance: index === 4 ? 16 : 4,
+        position: [index * 8, index % 2, 0],
+        quaternion: index === 4 ? [0, 0.7071068, 0, 0.7071068] : [0, 0, 0, 1],
+        fov: 75 + (index % 2),
+      }),
+    ),
+  );
+  const smoothed = smoothClipTake(input, 2);
+  expect(smoothed.samples.map((frame) => frame.position)).toEqual(
+    input.samples.map((frame) => frame.position),
+  );
+  expect(smoothed.samples.map((frame) => frame.fov)).toEqual(
+    input.samples.map((frame) => frame.fov),
+  );
+  expect(smoothed.samples[4].quaternion[1]).toBeLessThan(0.7071068);
+  if (anchor.projectile) {
+    expect(smoothed.samples[4].orbitDistance).toBe(16);
+  } else {
+    expect(smoothed.samples[4].orbitDistance).toBeLessThan(16);
+    expect(smoothed.samples[4].orbitDistance).toBeGreaterThan(4);
+  }
+  expect(() => readClipTake(smoothed)).not.toThrow();
+});
+
+it("separates reused projectile ghost slots into separate orbit segments", () => {
+  const input = take(
+    Array.from({ length: 10 }, (_, index) =>
+      sample(index * 40, {
+        cameraMode: "orbitOverride",
+        projectile: { ghostIndex: 3, spawnTick: index < 5 ? 300 : 306 },
+        orbitDistance: 6,
+        quaternion: index < 5 ? [0, 0, 0, 1] : [0, 1, 0, 0],
+      }),
+    ),
+  );
+  expect(smoothClipTake(input, 2)).toEqual(input);
 });
 
 it("preserves straight motion with uneven sample spacing instead of favoring dense frames", () => {

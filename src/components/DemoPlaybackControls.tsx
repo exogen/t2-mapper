@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "zustand";
 import { clipStore } from "../state/clipStore";
 import { clipDurationMs } from "../../relay/clipTypes";
+import { clipJumpTransitionEnd } from "../stream/clipJumpTransitions";
 import { ClipPlaybackControls } from "./ClipControls";
 import { ClipTrimTimeline } from "./ClipTrimTimeline";
 import { useClipDraftSaving } from "./clipControlsContext";
@@ -20,7 +21,6 @@ import {
 } from "./usePlayback";
 import { GrPauseFill, GrPlayFill } from "react-icons/gr";
 import { RiMovieAiLine } from "react-icons/ri";
-import { GoDotFill } from "react-icons/go";
 import {
   exitDirector,
   startDirector,
@@ -28,13 +28,20 @@ import {
 } from "../state/demoDirectorStore";
 import { isCurrentPlayback, useEngineSelector } from "../state/engineStore";
 import { useDemoLoad } from "../state/demoLoadStore";
-import { useDemoTimeline } from "../state/demoTimelineStore";
+import {
+  type TimelineEvent,
+  useDemoTimeline,
+} from "../state/demoTimelineStore";
 import { formatPlayheadTime, formatPlayheadTimeAligned } from "./demoFormat";
 import { LoadingIndicator } from "./LoadingIndicator";
 import { useSettings } from "./SettingsProvider";
 import { timelineFlagColor } from "./demoTimelineColors";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import { PlaybackSeekBar } from "./PlaybackSeekBar";
+import {
+  TimelineMarkerButton,
+  TimelineMarkerLayer,
+} from "./TimelineMarkerButton";
 import playbackStyles from "./PlaybackControls.module.css";
 import styles from "./DemoPlaybackControls.module.css";
 
@@ -83,6 +90,22 @@ export function DemoPlaybackControls() {
   }, [recordingClip]);
   const activeClip = useStore(clipStore, (state) => state.active);
   const draft = useStore(clipStore, (state) => state.draft);
+  const clipJumps = useMemo(
+    () =>
+      draft?.samples.flatMap(({ timeMs, jump }, index, samples) =>
+        jump
+          ? [
+              {
+                timeMs,
+                jump,
+                transitionEndMs: clipJumpTransitionEnd(samples, index),
+              },
+            ]
+          : [],
+      ) ?? [],
+    [draft],
+  );
+  const jumpTransitions = useStore(clipStore, (state) => state.jumpTransitions);
   const trimStartMs = useStore(clipStore, (state) => state.trimStartMs);
   const trimEndMs = useStore(clipStore, (state) => state.trimEndMs);
   const clipHeadMs = useStore(clipStore, (state) =>
@@ -262,7 +285,12 @@ export function DemoPlaybackControls() {
   const seekMarkers = useMemo(
     () =>
       (timelineEvents ?? [])
-        .filter((e) => e.type === "match-start" || e.type === "flag-cap")
+        .filter(
+          (
+            event,
+          ): event is TimelineEvent & { type: "match-start" | "flag-cap" } =>
+            event.type === "match-start" || event.type === "flag-cap",
+        )
         .map((event) => {
           if (event.type !== "flag-cap") return event;
           const teamName =
@@ -357,12 +385,17 @@ export function DemoPlaybackControls() {
             startMs={trimStartMs}
             endMs={trimEndMs}
             playheadMs={clipHeadMs}
+            jumps={clipJumps}
+            jumpTransitions={jumpTransitions}
             disabled={savingClip}
             onPause={() => clipStore.getState().pause()}
             onTrim={(start, end) =>
               clipStore.getState().setTrimRange(start, end)
             }
             onSeek={(time) => clipStore.getState().seek(time)}
+            onToggleJump={(time) =>
+              clipStore.getState().toggleJumpTransition(time)
+            }
           />
         </div>
       </div>
@@ -509,51 +542,23 @@ export function DemoPlaybackControls() {
             its overflow: hidden), and AFTER the thumb in the DOM so the
             playhead comes first in the tab order. */}
         {seekMarkers.length > 0 && duration > 0 && (
-          <div className={styles.SeekMarkers}>
+          <TimelineMarkerLayer>
             {seekMarkers.map((event, i) => (
-              <button
+              <TimelineMarkerButton
                 key={`${event.type}-${event.timeSec}-${i}`}
-                type="button"
-                className={
-                  event.type === "flag-cap"
-                    ? styles.SeekFlagTick
-                    : styles.SeekMissionTick
-                }
-                data-type={event.type}
+                kind={event.type}
+                position={event.timeSec / duration}
+                color={timelineFlagColor(event, observerTeamColors)}
                 title={`${event.description} – ${formatPlayheadTime(event.timeSec)}`}
                 aria-label={`Seek to ${event.description} – ${formatPlayheadTime(event.timeSec)}`}
-                onPointerDown={(e) => e.stopPropagation()}
-                // Keys pressed here reach the slider root, where Home and
-                // End would move the playhead (arrows and Page keys it
-                // already leaves alone). Prevented rather than stopped,
-                // they still reach the app's key bindings.
-                onKeyDown={(e) => {
-                  if (e.key === "Home" || e.key === "End") e.preventDefault();
-                }}
-                onClick={(e) => {
+                onActivate={() => {
                   scrubRecording.current = null;
                   // Match timeline clicks with a three-second lead-in.
                   seek(Math.max(0, event.timeSec - 3));
-                  // A pointer click leaves the button focused, where a
-                  // later Space re-seeks instead of toggling playback —
-                  // blur, but only for pointer activations (detail 0 =
-                  // keyboard, which must keep its focus position).
-                  if (e.detail > 0) e.currentTarget.blur();
                 }}
-                style={{
-                  left: `${Math.max(0, Math.min(100, (event.timeSec / duration) * 100))}%`,
-                  color: timelineFlagColor(event, observerTeamColors),
-                }}
-              >
-                {event.type === "flag-cap" && (
-                  <GoDotFill
-                    className={styles.SeekFlagIcon}
-                    aria-hidden="true"
-                  />
-                )}
-              </button>
+              />
             ))}
-          </div>
+          </TimelineMarkerLayer>
         )}
       </PlaybackSeekBar>
       <div

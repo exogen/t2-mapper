@@ -1,4 +1,4 @@
-import type { Camera, Scene, WebGLRenderer } from "three";
+import type { Camera, Quaternion, Scene, Vector3, WebGLRenderer } from "three";
 import { FramePriority } from "./framePriority";
 import { FrameScheduler, type FrameContext } from "./frameScheduler";
 import { TickClock } from "./tickClock";
@@ -20,7 +20,7 @@ import { createSkyView } from "./skyView";
 import { createPlayerView, createShapeView } from "./shapeViews";
 import type { Cleanup } from "./storeReaction";
 import type { StreamSnapshot } from "../stream/types";
-import type { ClipSample } from "../../relay/clipTypes";
+import type { ClipCameraTransition, ClipSample } from "../../relay/clipTypes";
 import { renderShapeRaycast } from "../collision/renderShapeRaycast";
 
 const weaponPoseBatch = {
@@ -89,6 +89,22 @@ export class GameEngine {
   frame: FrameContext | null = null;
   /** The clip view chosen for the current frame, before player animation. */
   clipCameraSample: ClipSample | null = null;
+  clipCameraTransition: {
+    from: ClipCameraTransition;
+    fraction: number;
+    aimFraction: number;
+    origin?: { position: Vector3; quaternion: Quaternion };
+  } | null = null;
+  /** The stream's resolved follow pose for that clip frame, if available. */
+  clipFollowCamera: {
+    position: Vector3;
+    quaternion: Quaternion;
+    orbitTransition?: boolean;
+  } | null = null;
+  /** Follow camera data produced by the stream before clip capture. */
+  recordingOrbitDistance: number | undefined;
+  /** True at the follow eye, false while transitioning to or from it. */
+  recordingFollowEye: boolean | undefined;
   /** The playing stream's latest snapshot, every tick (the store's
    *  published snapshot can lag it while assets load). */
   readonly streamSnapshot: { current: StreamSnapshot | null } = {

@@ -25,7 +25,8 @@ vi.mock("react", async (original) => ({
   useEffect: (effect: () => void | (() => void)) =>
     fixture.effects.push(effect),
 }));
-vi.mock("../state/clipStore", () => ({
+vi.mock("../state/clipStore", async (original) => ({
+  ...(await original<typeof import("../state/clipStore")>()),
   canStartClipRecording: () => fixture.captureReady,
   clipStore: {
     getState: () => fixture.clip,
@@ -129,6 +130,8 @@ beforeEach(() => {
     appendSample: vi.fn(),
     smoothingLevel: 0,
     setSmoothingLevel: vi.fn(),
+    jumpTransitions: new Set(),
+    toggleJumpTransition: vi.fn(),
   };
   fixture.account = {
     status: "ready",
@@ -162,6 +165,7 @@ afterEach(() => {
     settingsStore.getInitialState();
   settingsStore.setState({
     hasSeenClipRecordingHelp: false,
+    pauseClipRecordingWhenDemoPaused: false,
     showChat,
     chatHudStyle,
     showMatchHud,
@@ -237,6 +241,31 @@ it("keeps the visible label fixed while recording and exposes the stop action", 
   expect(markup).toContain(">Stop recording</span>");
   expect(markup).not.toContain('aria-label="Discard clip"');
   expect(markup).toMatch(/id="clipCameraSmoothing"[^>]*disabled=""/);
+});
+
+it("offers pause-on-pause only while recording and shows when recording is paused", () => {
+  vi.spyOn(settingsStore, "getInitialState").mockImplementation(() =>
+    settingsStore.getState(),
+  );
+  const checkboxId = 'id="clipPauseRecordingWhenDemoPaused"';
+  expect(render()).not.toContain(checkboxId);
+  fixture.clip.recording = true;
+  fixture.clip.elapsedMs = 1234;
+  expect(render()).toContain("Pause recording when demo is paused");
+  expect(render()).not.toMatch(new RegExp(`${checkboxId}[^>]*checked=""`));
+
+  settingsStore.setState({ pauseClipRecordingWhenDemoPaused: true });
+  const paused = render();
+  expect(paused).toMatch(new RegExp(`${checkboxId}[^>]*checked=""`));
+  expect(paused).toContain("Recording paused 1.2s / 60s");
+  fixture.playback.status = "stopped";
+  expect(render()).toContain("Recording paused 1.2s / 60s");
+  fixture.playback.status = "playing";
+  expect(render()).toContain("Recording… 1.2s / 60s");
+
+  fixture.clip.recording = false;
+  fixture.clip.draft = fixture.clip.active = take;
+  expect(render()).not.toContain(checkboxId);
 });
 
 it("uses the record button's action for R, including stopping during source preparation", () => {

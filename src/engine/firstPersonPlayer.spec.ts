@@ -1,8 +1,9 @@
-import { Quaternion, Vector3 } from "three";
 import { expect, it } from "vitest";
 import type { StreamCamera, StreamEntity } from "../stream/types";
-import { yawPitchToQuaternion } from "../stream/streamHelpers";
-import { firstPersonPlayerId, readClipViewAngles } from "./firstPersonPlayer";
+import {
+  firstPersonPlayerId,
+  shouldUseClipFollowEye,
+} from "./firstPersonPlayer";
 
 const camera: StreamCamera = {
   time: 0,
@@ -18,24 +19,32 @@ const followed = { id: "followed", type: "Player" } as StreamEntity;
 const vehicle = { id: "vehicle", type: "FlyingVehicle" } as StreamEntity;
 const entities = new Map([recorder, followed, vehicle].map((e) => [e.id, e]));
 
-it("recovers aim for a mounted weapon from the clip camera's orientation", () => {
-  const quaternion = yawPitchToQuaternion(-2.7, 1.1);
-  const aim = { yaw: 0, pitch: 0, headYaw: 0.4 };
-  readClipViewAngles(quaternion, aim);
-  expect(aim.yaw).toBeCloseTo(-2.7);
-  expect(aim.pitch).toBeCloseTo(1.1);
-  expect(aim.headYaw).toBe(0.4);
-});
-
-it("recovers a passenger's aim relative to their seat in a clip", () => {
-  const seat = new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), 0.7);
-  const camera = new Quaternion()
-    .fromArray(yawPitchToQuaternion(-2.7, 1.1))
-    .premultiply(seat);
-  const aim = { yaw: 0, pitch: 0 };
-  readClipViewAngles(camera.toArray(), aim, seat);
-  expect(aim.yaw).toBeCloseTo(-2.7);
-  expect(aim.pitch).toBeCloseTo(1.1);
+it("uses the followed player's eye for steady first-person shots, including legacy clips", () => {
+  const sample = { cameraMode: "firstPersonOverride" };
+  for (const firstPersonPose of [true, undefined])
+    expect(
+      shouldUseClipFollowEye(
+        { ...sample, firstPersonPose },
+        followed.id,
+        followed.id,
+      ),
+    ).toBe(true);
+  expect(
+    shouldUseClipFollowEye(
+      { ...sample, firstPersonPose: false },
+      followed.id,
+      followed.id,
+    ),
+  ).toBe(false);
+  expect(shouldUseClipFollowEye(sample, followed.id, null)).toBe(false);
+  expect(shouldUseClipFollowEye(sample, recorder.id, followed.id)).toBe(false);
+  expect(
+    shouldUseClipFollowEye(
+      { cameraMode: "orbitOverride" },
+      followed.id,
+      followed.id,
+    ),
+  ).toBe(false);
 });
 
 it("masks the control player in the recorded first-person view", () => {
