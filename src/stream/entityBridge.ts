@@ -8,6 +8,7 @@ import type {
   ExplosionEntity,
   TracerEntity,
   BeamEntity,
+  TargetBeamEntity,
   LinkBeamEntity,
   ShockLanceEntity,
   SpriteEntity,
@@ -108,9 +109,15 @@ export function updateGameEntityFromStream(
       e.lightning = stream.lightning;
       break;
     case "Beam":
-      // Sniper beam swing updates move the endpoint on the live ghost.
       if (stream.beamStart) e.beamStart = stream.beamStart;
       if (stream.beamEnd) e.beamEnd = stream.beamEnd;
+      break;
+    case "TargetBeam":
+      if (stream.beamStart) renderEntity.beamStart = stream.beamStart;
+      if (stream.beamEnd) renderEntity.beamEnd = stream.beamEnd;
+      renderEntity.targetBeam = stream.targetBeam;
+      renderEntity.linkSourceId = stream.linkSourceId;
+      renderEntity.sourceSlot = stream.sourceSlot;
       break;
     case "Tracer":
       // Live bolt orientation: a bouncing blaster bolt re-aims along
@@ -310,6 +317,18 @@ export function streamEntityToGameEntity(
         beamEnd: end,
       } satisfies BeamEntity;
     }
+    case "targetBeam":
+      if (!entity.beamStart || !entity.beamEnd) break;
+      return {
+        ...positionedBase(entity, spawnTime),
+        renderType: "TargetBeam",
+        visual: entity.visual,
+        beamStart: entity.beamStart,
+        beamEnd: entity.beamEnd,
+        targetBeam: entity.targetBeam,
+        linkSourceId: entity.linkSourceId,
+        sourceSlot: entity.sourceSlot,
+      } satisfies TargetBeamEntity;
   }
 
   switch (entity.className) {

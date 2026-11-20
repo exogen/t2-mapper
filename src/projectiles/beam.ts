@@ -15,8 +15,12 @@ import type { BeamEntity, LinkBeamEntity } from "../state/gameEntityTypes";
 import {
   muzzleWorldPosition,
   sourceAimDirection,
-} from "../engine/linkBeamSource";
-import { writeLinkRibbon, writeRibbonQuad } from "./projectileGeometry";
+} from "../engine/weaponMuzzle";
+import {
+  setRibbonUV,
+  writeLinkRibbon,
+  writeRibbonQuad,
+} from "./projectileGeometry";
 import {
   effectMesh,
   effectMaterial,
@@ -24,10 +28,11 @@ import {
   disposeGeometry,
 } from "./geometry";
 import { projectileLight } from "./light";
-import type { ProjectileView } from "./types";
+import type { ProjectileEntityLookup, ProjectileView } from "./types";
 import { renderShapeRaycast } from "../collision/renderShapeRaycast";
 import { RepairBeamEndpoint, repairBeamWithinCutoff } from "./repairBeam";
 import { torqueVecToThree } from "../scene/coordinates";
+import { posedNodeWorldMatrix } from "../engine/deferredPose";
 const _upY = new Vector3(0, 1, 0);
 const _linkPoint = new Vector3();
 
@@ -44,7 +49,6 @@ const BEAM_RIP_RATE = 10;
 
 const _beamA = new Vector3();
 const _beamB = new Vector3();
-const _beamOrigin = new Vector3();
 const _beamDir = new Vector3();
 const _beamFromCam = new Vector3();
 const _beamCross = new Vector3();
@@ -97,27 +101,11 @@ export function createBeamView(
       disposeGeometry(root);
     },
     update(entity, camera) {
-      const group = root;
-      const mainPos = mainPosition;
-      const pulsePos = pulsePosition;
-      const pulseUv = pulseUV;
-      const mainMat = mainMaterial;
-      const pulseMat = pulseMaterial;
-      if (
-        !group ||
-        !mainPos ||
-        !pulsePos ||
-        !pulseUv ||
-        !mainMat ||
-        !pulseMat
-      ) {
-        return;
-      }
       const elapsed = streamClock.worldTime - (entity.spawnTime ?? 0);
       const t = elapsed / Math.max(0.001, visual.fadeTime);
       const endLight = light.light;
       if (t < 0 || t >= 1) {
-        group.visible = false;
+        root.visible = false;
         if (endLight) endLight.intensity = 0;
         return;
       }
@@ -126,23 +114,19 @@ export function createBeamView(
       _beamDir.subVectors(_beamB, _beamA);
       const length = _beamDir.length();
       if (length < 1e-3) {
-        group.visible = false;
+        root.visible = false;
+        if (endLight) endLight.intensity = 0;
         return;
       }
       _beamDir.normalize();
-      // Local space: the wrapper's group sits at the ghost position (the
-      // muzzle), so verts are world minus the group's world position.
-      group.getWorldPosition(_beamOrigin);
-      _beamA.sub(_beamOrigin);
-      _beamB.sub(_beamOrigin);
-      _beamFromCam.copy(_beamA).add(_beamOrigin).sub(camera.position);
+      _beamFromCam.copy(_beamA).sub(camera.position);
       _beamCross.crossVectors(_beamFromCam, _beamDir);
       if (_beamCross.lengthSq() < 1e-8) {
         _beamCross.crossVectors(_upY, _beamDir);
         if (_beamCross.lengthSq() < 1e-8) _beamCross.set(1, 0, 0);
       }
       _beamCross.normalize();
-      group.visible = true;
+      root.visible = true;
       const width =
         visual.startWidth + (visual.endWidth - visual.startWidth) * t;
       _beamScaledCross.copy(_beamCross).multiplyScalar(width * 0.5);
@@ -150,30 +134,25 @@ export function createBeamView(
         endLight.offset.copy(_beamB);
         endLight.intensity = 1 - t;
       }
-      writeRibbonQuad(mainPos, _beamA, _beamB, _beamScaledCross);
+      writeRibbonQuad(mainPosition, _beamA, _beamB, _beamScaledCross);
       _beamScaledCross
         .copy(_beamCross)
         .multiplyScalar(width * BEAM_PULSE_WIDTH_SCALE * 0.5);
-      writeRibbonQuad(pulsePos, _beamA, _beamB, _beamScaledCross);
-      mainMat.opacity = 1 - t;
-      pulseMat.opacity = 1 - t;
+      writeRibbonQuad(pulsePosition, _beamA, _beamB, _beamScaledCross);
+      mainMaterial.opacity = 1 - t;
+      pulseMaterial.opacity = 1 - t;
       // Overlay: scrolling repeat along the beam, texture by fade stage.
       const u0 = -visual.pulseSpeed * elapsed * BEAM_PULSE_SCROLL_RATE;
       const u1 = u0 + length * visual.pulseLength;
-      const uv = pulseUv.array as Float32Array;
-      uv[0] = u0;
-      uv[2] = u0;
-      uv[4] = u1;
-      uv[6] = u1;
-      pulseUv.needsUpdate = true;
+      setRibbonUV(pulseUV, u0, u1);
       const ripIndex = Math.min(
         textures.length - 1,
         Math.max(0, Math.round(t * BEAM_RIP_RATE + 1) - 1),
       );
       const rip = textures[ripIndex];
-      if (pulseMat.map !== rip) {
-        pulseMat.map = rip;
-        pulseMat.needsUpdate = true;
+      if (pulseMaterial.map !== rip) {
+        pulseMaterial.map = rip;
+        pulseMaterial.needsUpdate = true;
       }
     },
   };
@@ -191,7 +170,6 @@ const LIGHTNING_RESEED_SEC = 1 / 15;
 /** Target attach height (body/object centre). */
 const LINK_TARGET_LIFT = 1.0;
 
-const _linkOrigin = new Vector3();
 const _linkStart = new Vector3();
 const _linkEnd = new Vector3();
 const _linkControl = new Vector3();
@@ -213,6 +191,7 @@ const _linkFlareUp = new Vector3();
 export function createLinkBeamView(
   visual: LinkBeamEntity["visual"],
   textures: Texture[],
+  findEntity: ProjectileEntityLookup,
 ): ProjectileView<LinkBeamEntity> {
   const viewRoot = new Group(),
     segments = LINK_BEAM_SEGMENTS[visual.variant];
@@ -269,24 +248,14 @@ export function createLinkBeamView(
     },
     update(entity, camera) {
       const group = viewRoot;
-      const mainPos = mainPosition;
-      const mainUv = mainUV;
-      if (!group || !mainPos || !mainUv) return;
-      const root = streamPlaybackStore.getState().root;
-      const source = entity.linkSourceId
-        ? (root?.children.find((c) => c.name === entity.linkSourceId) ??
-          renderShapeRaycast.getShape(entity.linkSourceId))
-        : undefined;
-      const target = entity.linkTargetId
-        ? (root?.children.find((c) => c.name === entity.linkTargetId) ??
-          renderShapeRaycast.getShape(entity.linkTargetId))
-        : undefined;
+      const sourceView = findEntity(entity.linkSourceId);
+      const source = sourceView?.mounts?.model ?? sourceView?.root;
+      const target = findEntity(entity.linkTargetId)?.root;
       if (!source || !target) {
         group.visible = false;
         return;
       }
       group.visible = true;
-      group.getWorldPosition(_linkOrigin);
       muzzleWorldPosition(
         entity.linkSourceId,
         source,
@@ -297,6 +266,8 @@ export function createLinkBeamView(
         entity.linkSourceId,
         source,
         entity.sourceSlot ?? 0,
+        _linkStart,
+        camera,
         _linkAim,
       );
       if (visual.variant === "repair") {
@@ -332,7 +303,7 @@ export function createLinkBeamView(
           return;
         }
       } else {
-        target.getWorldPosition(_linkEnd);
+        _linkEnd.setFromMatrixPosition(posedNodeWorldMatrix(target));
         _linkEnd.y += LINK_TARGET_LIFT;
       }
       const length = _linkStart.distanceTo(_linkEnd);
@@ -363,13 +334,12 @@ export function createLinkBeamView(
       const u0 = -age * visual.scrollSpeed;
       const uLength = length * visual.texRepeat;
       writeLinkRibbon(
-        mainPos,
-        mainUv,
+        mainPosition,
+        mainUV,
         sample,
         segments,
         visual.width * 0.5,
         camera,
-        _linkOrigin,
         u0,
         uLength,
       );
@@ -426,7 +396,6 @@ export function createLinkBeamView(
             LIGHTNING_POINTS,
             (visual.lightningWidth ?? 0.1) * 0.5,
             camera,
-            _linkOrigin,
             0,
             1,
           );
@@ -465,9 +434,7 @@ export function createLinkBeamView(
           .applyQuaternion(camera.quaternion)
           .multiplyScalar(half);
         const p = flarePos.array as Float32Array;
-        const cx = _linkEnd.x - _linkOrigin.x;
-        const cy = _linkEnd.y - _linkOrigin.y;
-        const cz = _linkEnd.z - _linkOrigin.z;
+        const { x: cx, y: cy, z: cz } = _linkEnd;
         p[0] = cx - _linkFlareRight.x - _linkFlareUp.x;
         p[1] = cy - _linkFlareRight.y - _linkFlareUp.y;
         p[2] = cz - _linkFlareRight.z - _linkFlareUp.z;

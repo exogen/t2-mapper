@@ -37,6 +37,15 @@ export function writeRibbonQuad(
   attr.needsUpdate = true;
 }
 
+export function setRibbonUV(attr: BufferAttribute, start: number, end: number) {
+  const uv = attr.array as Float32Array;
+  uv[0] = start;
+  uv[2] = start;
+  uv[4] = end;
+  uv[6] = end;
+  attr.needsUpdate = true;
+}
+
 /** Quad indices for a two-verts-per-point ribbon of `count` points. */
 export function ribbonIndices(count: number): Uint16Array {
   const idx = new Uint16Array((count - 1) * 6);
@@ -60,7 +69,6 @@ export function writeLinkRibbon(
   count: number,
   halfWidth: number,
   camera: { position: Vector3 },
-  origin: Vector3,
   u0: number,
   uLength: number,
 ): void {
@@ -81,12 +89,12 @@ export function writeLinkRibbon(
     _linkCross.normalize().multiplyScalar(halfWidth);
     const u = u0 + uLength * t;
     const o = i * 6;
-    pos[o] = _linkPoint.x + _linkCross.x - origin.x;
-    pos[o + 1] = _linkPoint.y + _linkCross.y - origin.y;
-    pos[o + 2] = _linkPoint.z + _linkCross.z - origin.z;
-    pos[o + 3] = _linkPoint.x - _linkCross.x - origin.x;
-    pos[o + 4] = _linkPoint.y - _linkCross.y - origin.y;
-    pos[o + 5] = _linkPoint.z - _linkCross.z - origin.z;
+    pos[o] = _linkPoint.x + _linkCross.x;
+    pos[o + 1] = _linkPoint.y + _linkCross.y;
+    pos[o + 2] = _linkPoint.z + _linkCross.z;
+    pos[o + 3] = _linkPoint.x - _linkCross.x;
+    pos[o + 4] = _linkPoint.y - _linkCross.y;
+    pos[o + 5] = _linkPoint.z - _linkCross.z;
     const uo = i * 4;
     uv[uo] = u;
     uv[uo + 1] = 0;

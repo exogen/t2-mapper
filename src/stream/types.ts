@@ -10,6 +10,7 @@ import type { ParsedData } from "t2-demo-parser";
 import type { SceneObject } from "../scene/types";
 import type { ServerLoadInfo } from "../../relay/types";
 import type { DTSImageOffset } from "../dts/dtsMount";
+import type { ProjectileShapeLoader } from "../collision/projectileShapeAssets";
 import type { ImageAnimationState } from "./imageAnimation";
 import type { WheelState } from "./vehicleWheels";
 import type { EmitterDataResolved } from "../particles/types";
@@ -76,6 +77,8 @@ export interface WeaponImageDataBlockState {
   timeoutValue?: number;
   waitForTimeout: boolean;
   fire: boolean;
+  ejectShell?: boolean;
+  shockwave?: boolean;
   sequence?: number;
   /**
    * stateSequenceRandomFlash: the anim thread freezes `sequence` at a
@@ -169,6 +172,31 @@ export interface BeamVisual {
   /** The datablock's 12 textures: [0] flare, [1] nonlingradient,
    *  [2..10] laserrip01-09, [11] the main beam (sniper00). */
   textures: string[];
+}
+
+export interface TargetBeamVisual {
+  kind: "targetBeam";
+  color: { r: number; g: number; b: number };
+  range: number;
+  width: number;
+  pulseWidth: number;
+  pulseSpeed: number;
+  pulseLength: number;
+  flareAngle: number;
+  minFlareSize: number;
+  maxFlareSize: number;
+  /** Main ribbon, muzzle flare, scrolling pulse, impact flare. */
+  textures: [string, string, string, string];
+}
+
+export interface TargetBeamState {
+  clientOwned: boolean;
+  warp?: {
+    from: [number, number, number];
+    startedAtSec: number;
+    /** Optional for checkpoints made before variable-duration warps. */
+    durationSec?: number;
+  };
 }
 
 export interface SpriteVisual {
@@ -284,6 +312,7 @@ export type StreamVisual =
   | FlareVisual
   | BeamVisual
   | LinkBeamVisual
+  | TargetBeamVisual
   | ShockLanceVisual;
 
 /**
@@ -351,6 +380,7 @@ export interface StreamEntity {
    *  (SniperProjectile initialPosition/endPos). */
   beamStart?: [number, number, number];
   beamEnd?: [number, number, number];
+  targetBeam?: TargetBeamState;
   /** ShockLanceProjectile: whether the bolt pinned to its target
    *  (hitObject) — a miss only sparks at the muzzle. */
   beamHit?: boolean;
@@ -364,6 +394,8 @@ export interface StreamEntity {
   /** Position in Torque space [x, y, z]. */
   position?: [number, number, number];
   playerDelta?: PlayerRenderDelta;
+  /** Linear projectile's position in Torque space at the start of this tick. */
+  linearTickStart?: [number, number, number];
   /** Quaternion in Three.js space [x, y, z, w]. */
   rotation?: [number, number, number, number];
   /** Velocity in Torque world space [x, y, z]. */
@@ -788,6 +820,10 @@ export interface StreamingPlayback {
   readonly canStartSeek?: boolean;
   /** A restored scene that must mount its collision assets during a pending seek. */
   readonly seekSceneSnapshot?: StreamSnapshot | null;
+  /** Last completed tick while the next one is waiting for projectile assets. */
+  readonly projectileAssetBoundarySec?: number;
+  /** Settles when the currently requested projectile shapes are ready or unavailable. */
+  readonly projectileAssetWait?: Promise<void>;
   setPlayerPredictionEnabled?(enabled: boolean): void;
   setPlayerInterpolation?(
     settings: Readonly<PlayerInterpolationSettings>,
@@ -802,6 +838,7 @@ export interface StreamingPlayback {
   subscribeProjectileLifecycle?(
     listener: (event: ProjectileLifecycleEvent) => void,
   ): () => void;
+  setProjectileShapeLoader?(loader: ProjectileShapeLoader | undefined): void;
   /** Aim lookahead for the observed player at the current demo tick. */
   getPlayerAim?(entityId: string): DemoPlayerAim | undefined;
   /** Demo work can be bounded in ticks or wall time; a partial snapshot resumes

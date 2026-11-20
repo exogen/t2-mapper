@@ -6,6 +6,8 @@ import type {
   TurretAim,
   TracerVisual,
   BeamVisual,
+  TargetBeamState,
+  TargetBeamVisual,
   LinkBeamVisual,
   ShockLanceVisual,
   SpriteVisual,
@@ -47,6 +49,7 @@ export type RenderType =
   | "Explosion"
   | "Tracer"
   | "Beam"
+  | "TargetBeam"
   | "LinkBeam"
   | "ShockLance"
   | "Sprite"
@@ -275,6 +278,16 @@ export interface BeamEntity extends PositionedBase {
   beamEnd: [number, number, number];
 }
 
+export interface TargetBeamEntity extends PositionedBase {
+  renderType: "TargetBeam";
+  visual: TargetBeamVisual;
+  beamStart: [number, number, number];
+  beamEnd: [number, number, number];
+  targetBeam?: TargetBeamState;
+  linkSourceId?: string;
+  sourceSlot?: number;
+}
+
 export interface LinkBeamEntity extends PositionedBase {
   renderType: "LinkBeam";
   visual: LinkBeamVisual;
@@ -372,6 +385,7 @@ export type GameEntity =
   | ExplosionEntity
   | TracerEntity
   | BeamEntity
+  | TargetBeamEntity
   | LinkBeamEntity
   | ShockLanceEntity
   | SpriteEntity

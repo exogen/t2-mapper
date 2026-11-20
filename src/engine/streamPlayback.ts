@@ -1,5 +1,6 @@
 import {
   applyStreamEntityPose,
+  applyStreamEntityRotation,
   interpolateStreamPosition,
   isTrackableProjectile,
   streamRenderFrame,
@@ -28,6 +29,7 @@ import {
   blendPlayerRenderAim,
   getPlayerRenderAim,
   getPlayerViewAngles,
+  playerBodyYawCorrection,
   type PlayerRenderAim,
   type PlayerViewAngles,
 } from "../stream/playerView";
@@ -86,6 +88,7 @@ import type { GameEntity } from "../state/gameEntityTypes";
 import { isSceneEntity } from "../state/gameEntityTypes";
 import { torqueVecToThree } from "../scene/coordinates";
 import { firstPersonPlayerId, readClipViewAngles } from "./firstPersonPlayer";
+import { loadProjectileShapeData } from "./shapeCache";
 import { markTransformChanged } from "../transformChanges";
 import { PlayerCameraTransition } from "./playerCameraTransition";
 import { exitToFreeFly } from "../state/watchFollow";
@@ -102,6 +105,7 @@ interface StreamFrame {
   renderCurrent: StreamSnapshot;
   renderPrev: StreamSnapshot;
   interpT: number;
+  worldGeneration: number | undefined;
 }
 
 const camlog = createLogger("camdbg");
@@ -258,6 +262,7 @@ const _orbitFeedForward = new Vector3();
 const _playerView = { yaw: 0, pitch: 0 };
 const _followAim: PlayerRenderAim = { yaw: 0, pitch: 0, headYaw: 0 };
 const _viewBodyRotation = new Quaternion();
+const _mountRotation = new Quaternion();
 const _mountedHeadRotation = new Quaternion();
 const _followEyeCamera = {
   position: new Vector3(),
@@ -298,7 +303,7 @@ function computeFirstPersonCamera(
 }
 
 /**
- * Resolve the top-level group for an orbit or fallback view. A rider's
+ * Resolve the top-level group for an orbit. A rider's
  * group is attached to its mount node, so walk to the outermost carrier.
  */
 function resolveCameraTarget(
@@ -344,6 +349,7 @@ export class StreamPlaybackSession {
   };
   private readonly followTransition = new PlayerCameraTransition();
   private followCameraBlend: number | null = null;
+  private followEyeTarget: StreamEntity | undefined;
   private corpseView: { id: string; seekNonce: number; yaw: number } | null =
     null;
   private readonly clock = new PlaybackClock();
@@ -357,6 +363,7 @@ export class StreamPlaybackSession {
   private lastPublishTime = 0;
   private lastSyncedSnapshot: StreamSnapshot | null = null;
   private streamRevision: number | undefined;
+  private projectileAssetWait?: Promise<void>;
   private teardown: (() => void) | null = null;
   private readonly removeFrameCallbacks: () => void;
 
@@ -384,6 +391,18 @@ export class StreamPlaybackSession {
     this.removeFrameCallbacks();
     this.teardown?.();
     this.teardown = null;
+  }
+
+  private watchProjectileAssets(stream: StreamingPlayback): void {
+    const wait = stream.projectileAssetWait;
+    if (!wait || wait === this.projectileAssetWait) return;
+    this.projectileAssetWait = wait;
+    const wake = () => {
+      if (this.stream !== stream || this.projectileAssetWait !== wait) return;
+      this.projectileAssetWait = undefined;
+      this.engine.invalidate();
+    };
+    void wait.then(wake, wake);
   }
 
   private syncRenderableEntities(snapshot: StreamSnapshot): void {
@@ -421,6 +440,10 @@ export class StreamPlaybackSession {
         renderEntity.ghostIndex !== entity.ghostIndex ||
         renderEntity.dataBlockId !== entity.dataBlockId ||
         renderEntity.shapeHint !== entity.shapeHint ||
+        (entity.visual?.kind === "targetBeam" &&
+          renderEntity.renderType !== "TargetBeam" &&
+          entity.beamStart != null &&
+          entity.beamEnd != null) ||
         (hasShapeName &&
           entity.dataBlock != null &&
           getField(renderEntity, "shapeName") !== entity.dataBlock) ||
@@ -583,10 +606,12 @@ export class StreamPlaybackSession {
     // their first seconds, so a paused start would show black — begin at
     // the first frame that has something to render. Retail demos carry
     // the scene in their initial block, so this is ~0 (no skip).
+    stream.setProjectileShapeLoader?.((name) => loadProjectileShapeData(name));
     const snapshot =
       this.recording.source === "demo"
         ? stream.stepToTime(stream.findSceneReadyTime())
         : stream.getSnapshot();
+    this.watchProjectileAssets(stream);
 
     streamClock.time = snapshot.timeSec;
     streamClock.matchEndedAtSec = snapshot.matchEndedAtSec;
@@ -624,6 +649,8 @@ export class StreamPlaybackSession {
       if (stream.onMissionInfoChange === onMissionInfoChange) {
         stream.onMissionInfoChange = undefined;
       }
+      stream.setProjectileShapeLoader?.(undefined);
+      this.projectileAssetWait = undefined;
       this.renderFrame = null;
       stopAllTrackedSounds();
       stopAssetPrefetch();
@@ -751,6 +778,7 @@ export class StreamPlaybackSession {
         streamRenderFrame.current = currentEntities;
         streamRenderFrame.previous = previousEntities;
         streamRenderFrame.interpT = interpT;
+        streamRenderFrame.reconstructing = isSeeking;
         streamRenderFrame.aimCorrection = aimCorrection;
         const renderEntities = gameEntityStore.getState().streamEntities;
         const root = streamPlaybackStore.getState().root;
@@ -778,9 +806,15 @@ export class StreamPlaybackSession {
         }
 
         // Hand the camera pass the tick pair it must interpolate between.
-        this.renderFrame = { renderCurrent, renderPrev, interpT };
+        this.renderFrame = {
+          renderCurrent,
+          renderPrev,
+          interpT,
+          worldGeneration: stream.worldGeneration,
+        };
       },
     );
+    this.watchProjectileAssets(stream);
     if (engineStore.getState().playback.status === "seeking")
       this.engine.invalidate();
   }
@@ -840,6 +874,7 @@ export class StreamPlaybackSession {
     streamRenderFrame.firstPersonAim = null;
     streamRenderFrame.maskFirstPersonPose = false;
     this.followCameraBlend = null;
+    this.followEyeTarget = undefined;
     const owner = resolveCameraOwner();
     if (
       (owner !== "input" && owner !== "clip") ||
@@ -913,11 +948,18 @@ export class StreamPlaybackSession {
         : this.followCameraBlend < 1
           ? orbitTargetId
           : undefined;
+    if (viewTargetId) {
+      this.followEyeTarget = this.resolveFollowEyeTarget(
+        renderCurrent,
+        entities,
+        followEntity,
+      );
+    }
     const id = firstPersonPlayerId(
       entities,
       camera,
       viewTargetId ? "firstPersonOverride" : cameraMode,
-      viewTargetId,
+      this.followEyeTarget?.id,
       camera !== null && recordedCameraBlend(camera, frame.interpT) === 0,
       originalControl?.id ?? camera?.controlEntityId,
     );
@@ -928,27 +970,38 @@ export class StreamPlaybackSession {
     if (!id || clipInTransition) return;
     streamRenderFrame.maskFirstPersonPose =
       !viewTargetId || !localPlayerFollow || this.followCameraBlend === 0;
-    if (!viewTargetId) return;
-    const group = streamPlaybackStore
-      .getState()
-      .root?.children.find((child) => child.name === id);
+    const player = this.followEyeTarget;
+    if (!player) return;
+    const mounted = player.mountObjectId && entities.has(player.mountObjectId);
+    const group = mounted
+      ? this.engine.entities.get(id)?.root
+      : streamPlaybackStore
+          .getState()
+          .root?.children.find((child) => child.name === id);
     if (!group) return;
 
+    const bodyRotation = mounted
+      ? this.readMountedPlayerRotation(frame, player)
+      : group.quaternion;
     const aim = this.sampleFollowAim(
       frame,
       id,
-      group.quaternion,
+      bodyRotation,
       streamRenderFrame.aimCorrection,
       owner !== "clip",
       this.firstPersonAim,
     );
     if (clipSample) {
-      readClipViewAngles(clipSample.quaternion, aim);
+      readClipViewAngles(
+        clipSample.quaternion,
+        aim,
+        mounted ? group.getWorldQuaternion(_mountRotation) : undefined,
+      );
       aim.headYaw = clipSample.headYaw ?? aim.headYaw;
     } else if (this.followCameraBlend) {
       const orbitAim = getPlayerRenderAim(
-        group.quaternion,
-        followEntity,
+        bodyRotation,
+        player,
         frame.interpT,
         _followAim,
         streamRenderFrame.aimCorrection,
@@ -956,6 +1009,9 @@ export class StreamPlaybackSession {
       blendPlayerRenderAim(orbitAim, aim, 1 - this.followCameraBlend);
     }
     streamRenderFrame.firstPersonAim = aim;
+    // Mounted body yaw belongs to the animated model inside the mount
+    // container. The container itself supplies the seat's coordinate frame.
+    if (mounted) return;
 
     // Keep freelook in the head. The eye rotates by body yaw + head yaw;
     // the held weapon follows the body, even when the player looks aside.
@@ -964,6 +1020,46 @@ export class StreamPlaybackSession {
       group.quaternion.copy(_viewBodyRotation);
       markTransformChanged(group);
     }
+  }
+
+  private resolveFollowEyeTarget(
+    snapshot: StreamSnapshot,
+    entities: EntityById,
+    player: StreamEntity | undefined,
+  ): StreamEntity | undefined {
+    const mount =
+      player?.type === "Player" && player.mountObjectId
+        ? entities.get(player.mountObjectId)
+        : undefined;
+    if (mount?.type !== "Vehicle") return player;
+    if (player?.mountNode === 0) return mount;
+    if (player?.mountNode !== 1) return player;
+    // Only the dedicated Beowulf and Thundersword gunner seats take over
+    // the turret on slot 10. Other passengers keep their own eye and weapon.
+    return (
+      snapshot.entities.find(
+        (candidate) =>
+          candidate.className === "Turret" &&
+          candidate.mountObjectId === mount.id &&
+          candidate.mountNode === 10 &&
+          this.entityDatablock(candidate)?.useEyePoint === true,
+      ) ?? player
+    );
+  }
+
+  private readMountedPlayerRotation(
+    frame: StreamFrame,
+    player: StreamEntity,
+  ): Quaternion {
+    const rotation = _viewBodyRotation.identity();
+    applyStreamEntityRotation(
+      rotation,
+      player,
+      getEntityMap(frame.renderPrev).get(player.id),
+      frame.interpT,
+      playerBodyYawCorrection(player, streamRenderFrame.aimCorrection),
+    );
+    return rotation;
   }
 
   private sampleFollowAim(
@@ -1008,6 +1104,77 @@ export class StreamPlaybackSession {
         ? this.stream?.getPlayerAim?.(id)
         : undefined,
     );
+  }
+
+  private readFollowEye(
+    frame: StreamFrame,
+    root: Group,
+    playerId: string,
+    target: StreamEntity,
+    aimCorrection: boolean,
+  ): boolean {
+    const camera = _followEyeCamera;
+    const { id } = target;
+    const turret = target.className === "Turret";
+    if (turret && readWorldCameraNodes(id, camera.position, camera.quaternion))
+      return true;
+
+    const mounted =
+      target.type === "Player" &&
+      target.mountObjectId &&
+      getEntityMap(frame.renderCurrent).has(target.mountObjectId);
+    const group = mounted
+      ? this.engine.entities.get(id)?.root
+      : root.children.find(
+          (child) => child.name === (turret ? target.mountObjectId : id),
+        );
+    if (!group?.parent) return false;
+    const sharedAim =
+      streamRenderFrame.firstPersonPlayerId === playerId
+        ? streamRenderFrame.firstPersonAim
+        : null;
+    const aim =
+      sharedAim ??
+      this.sampleFollowAim(
+        frame,
+        playerId,
+        mounted
+          ? this.readMountedPlayerRotation(frame, target)
+          : group.quaternion,
+        aimCorrection,
+        resolveCameraOwner() !== "clip",
+        _followAim,
+      );
+    if (mounted) {
+      const head = _mountedHeadRotation.fromArray(
+        yawPitchToQuaternion(aim.headYaw, aim.pitch),
+      );
+      if (
+        readWorldCameraNodes(
+          id,
+          camera.position,
+          camera.quaternion,
+          undefined,
+          head,
+        )
+      )
+        return true;
+      camera.position.copy(
+        group.localToWorld(_tmpVec.set(0, DEFAULT_EYE_HEIGHT, 0)),
+      );
+      camera.quaternion
+        .fromArray(yawPitchToQuaternion(aim.yaw, aim.pitch))
+        .premultiply(group.getWorldQuaternion(_mountRotation));
+    } else {
+      computeFirstPersonCamera(
+        camera,
+        group,
+        readEyePosition(group.name, _tmpVec) ??
+          _tmpVec.set(0, DEFAULT_EYE_HEIGHT, 0),
+        aim,
+      );
+    }
+    return true;
   }
 
   // ── The stream's camera pose: the recorded view, the orbit follow, or
@@ -1457,58 +1624,17 @@ export class StreamPlaybackSession {
         applyObserverOrbit(streamCamera, _orbitTarget);
         return;
       }
-    } else if (root && eyeFollowId) {
+    } else if (root && eyeFollowId && this.followEyeTarget) {
       // During a Tab transition, the orbit endpoint uses spectator controls.
-      const resolvedTarget = resolveCameraTarget(
-        root,
-        currentEntities,
-        eyeFollowId,
-      );
-      if (resolvedTarget) {
-        const { group, entity } = resolvedTarget;
-        const gunner = currentEntities.get(eyeFollowId);
-        // The stock Beowulf and Thundersword configure seat 1 to control
-        // the turret mounted in slot 10 (vehicle.cs). Its own Eye tracks aim.
-        const turret =
-          entity?.type === "Vehicle" &&
-          gunner?.type === "Player" &&
-          gunner.mountNode === 1
-            ? renderCurrent.entities.find(
-                (candidate) =>
-                  candidate.className === "Turret" &&
-                  candidate.mountObjectId === entity.id &&
-                  candidate.mountNode === 10 &&
-                  this.entityDatablock(candidate)?.useEyePoint === true,
-              )
-            : undefined;
-        if (
-          !turret ||
-          !readWorldCameraNodes(
-            turret.id,
-            _followEyeCamera.position,
-            _followEyeCamera.quaternion,
-          )
-        ) {
-          const sharedAim =
-            streamRenderFrame.firstPersonPlayerId === eyeFollowId
-              ? streamRenderFrame.firstPersonAim
-              : null;
-          const eyePos = readEyePosition(group.name, _tmpVec);
-          computeFirstPersonCamera(
-            _followEyeCamera,
-            group,
-            eyePos ?? _tmpVec.set(0, DEFAULT_EYE_HEIGHT, 0),
-            sharedAim ??
-              this.sampleFollowAim(
-                frame,
-                eyeFollowId,
-                group.quaternion,
-                aimCorrection,
-                resolveCameraOwner() !== "clip",
-                _followAim,
-              ),
-          );
-        }
+      if (
+        this.readFollowEye(
+          frame,
+          root,
+          eyeFollowId,
+          this.followEyeTarget,
+          aimCorrection,
+        )
+      ) {
         if (followBlend) {
           streamCamera.position.lerp(
             _followEyeCamera.position,

@@ -1,10 +1,16 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { TimelineEvent } from "../state/demoTimelineStore";
-import type { TeamColorScheme } from "../iffTheme";
+import { IFF_PALETTE, rgbString, type TeamColorScheme } from "../iffTheme";
 import type { ClipTake } from "../../relay/clipTypes";
 import { ClipControlsContext } from "./clipControlsContext";
 import { DemoPlaybackControls } from "./DemoPlaybackControls";
+
+const green = rgbString(IFF_PALETTE.green);
+const red = rgbString(IFF_PALETTE.red);
+const orange = rgbString(IFF_PALETTE.orange);
+const blueMap = rgbString(IFF_PALETTE.blueMap);
+const neutral = rgbString(IFF_PALETTE.neutral);
 
 const state = vi.hoisted(() => ({
   actions: new Map<string, () => void>(),
@@ -242,13 +248,13 @@ it("adds capture markers with no held time in their labels alongside the match-s
   expect(result[0]).toContain("left:10%");
   expect(result[0]).toContain('title="Match started – 0:10"');
   expect(result[0]).not.toContain("<svg");
-  expect(result[1]).toContain("left:25%;color:rgb(0, 212, 71)");
+  expect(result[1]).toContain(`left:25%;color:${green}`);
   expect(result[1]).toContain("<svg");
   expect(result[1]).toContain('title="Storm scores (Teammate) – 0:25"');
   expect(result[1]).toContain(
     'aria-label="Seek to Storm scores (Teammate) – 0:25"',
   );
-  expect(result[2]).toContain("left:75%;color:rgb(255, 60, 10)");
+  expect(result[2]).toContain(`left:75%;color:${red}`);
   expect(result[2]).toContain('title="Inferno scores (Opponent) – 1:15"');
 });
 
@@ -268,9 +274,9 @@ it("uses the scoring team's custom name rather than the captured flag's team", (
 });
 
 it.each([
-  ["blueOrange", "rgb(45, 162, 255)", "rgb(255, 100, 15)"],
-  ["greenRed", "rgb(0, 212, 71)", "rgb(255, 60, 10)"],
-  ["redGreen", "rgb(255, 60, 10)", "rgb(0, 212, 71)"],
+  ["blueOrange", blueMap, orange],
+  ["greenRed", green, red],
+  ["redGreen", red, green],
 ] as const)(
   "uses the scoring team's %s observer color",
   (scheme, team1, team2) => {
@@ -301,13 +307,13 @@ it.each([
 it("keeps an unknown scoring team neutral", () => {
   expect(
     markers({ type: "flag-cap", timeSec: 25, description: "Flag captured" })[0],
-  ).toContain("color:rgb(200, 200, 200)");
+  ).toContain(`color:${neutral}`);
 });
 
 it.each([
-  ["blueOrange", "rgb(45, 162, 255)", "rgb(255, 100, 15)"],
-  ["greenRed", "rgb(0, 212, 71)", "rgb(255, 60, 10)"],
-  ["redGreen", "rgb(255, 60, 10)", "rgb(0, 212, 71)"],
+  ["blueOrange", blueMap, orange],
+  ["greenRed", green, red],
+  ["redGreen", red, green],
 ] as const)(
   "uses %s team colors for captures after a player returns to observer mode",
   (scheme, team1, team2) => {
@@ -348,11 +354,11 @@ it.each([
         teamAffinity: "neutral",
       },
     );
-    expect(result[0]).toContain("color:rgb(0, 212, 71)");
-    expect(result[1]).toContain("color:rgb(255, 60, 10)");
+    expect(result[0]).toContain(`color:${green}`);
+    expect(result[1]).toContain(`color:${red}`);
     expect(result[2]).toContain(`color:${team1}`);
     expect(result[3]).toContain(`color:${team2}`);
-    expect(result[4]).toContain("color:rgb(200, 200, 200)");
+    expect(result[4]).toContain(`color:${neutral}`);
   },
 );
 
@@ -381,9 +387,9 @@ it("handles a capture-only timeline and multiple captures at the same timestamp"
     },
   );
   expect(result).toHaveLength(3);
-  expect(result[0]).toContain("color:rgb(0, 212, 71)");
-  expect(result[1]).toContain("color:rgb(45, 162, 255)");
-  expect(result[2]).toContain("color:rgb(255, 100, 15)");
+  expect(result[0]).toContain(`color:${green}`);
+  expect(result[1]).toContain(`color:${blueMap}`);
+  expect(result[2]).toContain(`color:${orange}`);
 });
 
 it("omits markers before scanning and when the duration is zero", () => {

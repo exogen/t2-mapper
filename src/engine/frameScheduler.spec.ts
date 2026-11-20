@@ -11,6 +11,7 @@ it("runs stages lowest first, and a stage's callbacks in the order added", () =>
   scheduler.add(FramePriority.StreamPlayback, () => order.push("playback"));
   scheduler.add(FramePriority.CameraSelect, () => order.push("select 1"));
   scheduler.add(FramePriority.CameraSelect, () => order.push("select 2"));
+  scheduler.add(FramePriority.Debris, () => order.push("debris"));
   scheduler.add(FramePriority.PlayerView, () => order.push("view"));
   scheduler.add(FramePriority.ShapeAnimation, () => order.push("animate"));
   scheduler.add(FramePriority.CameraStream, () => order.push("eye"));
@@ -21,6 +22,7 @@ it("runs stages lowest first, and a stage's callbacks in the order added", () =>
     "select 2",
     "view",
     "animate",
+    "debris",
     "eye",
     "labels",
   ]);

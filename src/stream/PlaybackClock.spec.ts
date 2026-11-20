@@ -92,6 +92,43 @@ async function setup() {
 }
 
 describe("playback clock with the installed demo parser", () => {
+  it("keeps a seek pending while its interpolation tick needs projectile assets", () => {
+    const clock = new PlaybackClock();
+    const before = { timeSec: STREAM_TICK_SEC } as StreamSnapshot;
+    const after = { timeSec: 2 * STREAM_TICK_SEC } as StreamSnapshot;
+    let ready = false;
+    const stream = {
+      get projectileAssetBoundarySec() {
+        return ready ? undefined : STREAM_TICK_SEC;
+      },
+      stepToTime: vi.fn((time: number) =>
+        ready && time >= after.timeSec ? after : before,
+      ),
+    };
+    const controls = {
+      status: "seeking",
+      rate: 1,
+      seekTime: STREAM_TICK_SEC,
+      seekNonce: 1,
+    } as const;
+    expect(clock.step(stream, controls, 0)).toBeNull();
+    expect(clock.seekNonce).toBe(0);
+    expect(stream.stepToTime).toHaveBeenLastCalledWith(
+      after.timeSec,
+      Infinity,
+      Infinity,
+      false,
+    );
+
+    ready = true;
+    expect(clock.step(stream, controls, 0)).toMatchObject({
+      isSeeking: true,
+      snapshot: after,
+      previousSnapshot: before,
+    });
+    expect(clock.seekNonce).toBe(1);
+  });
+
   it("accepts same-tick live updates without replacing the previous interpolation tick", () => {
     const previous = { timeSec: 1.024 } as StreamSnapshot;
     let latest = { timeSec: 1.056, matchEnded: false } as StreamSnapshot;

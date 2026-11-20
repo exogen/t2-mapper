@@ -209,16 +209,24 @@ export function isPointSubmerged(
  * underwater picks its muzzle speed (disc 55 vs 95), so letting a wave
  * crest flip that at the boundary would be wrong.
  */
+export function stillWaterAt(
+  torqueX: number,
+  torqueY: number,
+  torqueZ: number,
+): WaterInfo | null {
+  for (const info of collisionState().water.values()) {
+    if (torqueZ > info.surfaceZ) continue;
+    if (coversColumn(info, torqueX, torqueY)) return info;
+  }
+  return null;
+}
+
 export function isPointSubmergedSimple(
   torqueX: number,
   torqueY: number,
   torqueZ: number,
 ): boolean {
-  for (const info of collisionState().water.values()) {
-    if (torqueZ > info.surfaceZ) continue;
-    if (coversColumn(info, torqueX, torqueY)) return true;
-  }
-  return false;
+  return stillWaterAt(torqueX, torqueY, torqueZ) !== null;
 }
 
 export interface WaterRayHit {
@@ -241,9 +249,14 @@ export interface WaterRayHit {
  * below the waterline but outside the fluid footprint (hence not a wet
  * start) can travel into the body and exit through the top.
  */
-export function castWaterRay(start: Vec3, end: Vec3): WaterRayHit | null {
+export function castWaterRay(
+  start: Vec3,
+  end: Vec3,
+  excludeWater?: WaterInfo,
+): WaterRayHit | null {
   let best: WaterRayHit | null = null;
   for (const info of collisionState().water.values()) {
+    if (info === excludeWater) continue;
     const surface = info.surfaceZ;
     // Both ends the same side of the plane: no crossing.
     if (start[2] > surface === end[2] > surface) continue;

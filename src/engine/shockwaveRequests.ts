@@ -1,8 +1,8 @@
 /**
  * A shockwave ring some shape wants spawned this frame, in Torque space.
  * Mounted images post their muzzle flash here (ShapeBase::setImageState
- * spawns the image datablock's muzzleFlash Shockwave on the client when
- * a fire state is entered); ParticleEffects drains the queue each frame.
+ * spawns the image datablock's muzzleFlash Shockwave for states with
+ * stateShockwave enabled); ParticleEffects drains the queue each frame.
  */
 export interface ShockwaveRequest {
   /** ShockwaveData datablock id. */

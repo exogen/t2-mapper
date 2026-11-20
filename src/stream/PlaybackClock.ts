@@ -62,7 +62,12 @@ export class PlaybackClock {
       | "streamComplete"
       | "seekSceneSnapshot"
     > &
-      Partial<Pick<StreamingPlayback, "playbackRevision" | "getSnapshot">>,
+      Partial<
+        Pick<
+          StreamingPlayback,
+          "playbackRevision" | "getSnapshot" | "projectileAssetBoundarySec"
+        >
+      >,
     playback: PlaybackControls,
     delta: number,
   ) {
@@ -132,6 +137,11 @@ export class PlaybackClock {
       // during playback, including the extra interpolation tick after a seek.
       false,
     );
+    const assetBoundary = stream.projectileAssetBoundarySec;
+    if (assetBoundary !== undefined) {
+      if (!isSeeking) this.time = Math.min(targetTime, assetBoundary);
+      return null;
+    }
     if (isSeeking && snapshot.exhausted && stream.streamComplete === false) {
       return null;
     }
@@ -148,8 +158,12 @@ export class PlaybackClock {
     this.pendingSeekNonce = null;
 
     const current = this.currentSnapshot;
-    if (seekPrevious) this.previousSnapshot = seekPrevious;
-    else if (
+    if (seekPrevious) {
+      this.previousSnapshot =
+        snapshot.timeSec - seekPrevious.timeSec > STREAM_TICK_SEC * 1.5
+          ? snapshot
+          : seekPrevious;
+    } else if (
       !current ||
       snapshot.timeSec < current.timeSec ||
       snapshot.timeSec - current.timeSec > STREAM_TICK_SEC * 1.5

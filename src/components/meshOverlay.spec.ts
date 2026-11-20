@@ -11,7 +11,7 @@ import { buildDTS } from "../dts/dtsBuilder";
 import { batchDTSRigidMeshes } from "../dts/dtsRigidBatch";
 import { createDTSRigidTestShape } from "../dts/dtsTestFixtures";
 import { createChestDeformation } from "../player/chestDeformation";
-import { streamClock, streamPlaybackStore } from "../state/streamPlaybackStore";
+import { streamClock } from "../state/streamPlaybackStore";
 import type { ShockLanceEntity } from "../state/gameEntityTypes";
 import {
   createTourHighlightMesh,
@@ -20,7 +20,6 @@ import {
 import { createShockLanceView } from "../projectiles/shockLance";
 
 afterEach(() => {
-  streamPlaybackStore.setState({ root: null });
   streamClock.time = 0;
 });
 
@@ -87,8 +86,12 @@ describe("live mesh overlays", () => {
             textures: [],
           },
         };
-        streamPlaybackStore.setState({ root });
-        const view = createShockLanceView(entity.visual, [new Texture()], true);
+        const view = createShockLanceView(
+          entity.visual,
+          [new Texture()],
+          true,
+          (id) => (id === "target" ? { root: target } : undefined),
+        );
         view.update(entity, camera, 0);
         overlays = view.root.children.at(-1)!.children as Mesh[];
         dispose = () => view.dispose();

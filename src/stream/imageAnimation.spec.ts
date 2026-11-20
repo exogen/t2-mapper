@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { ImageAnimation, imageThreadPosition } from "./imageAnimation";
 import { parseWeaponImageStates } from "./streamHelpers";
 import type { WeaponImageState } from "./types";
+import { TestLiveStream } from "./streamTestFixtures";
 const flags: WeaponImageState = {
   dataBlockId: 1,
   loaded: true,
@@ -17,6 +18,7 @@ const table = parseWeaponImageStates({
     {
       name: "Fire",
       fire: true,
+      ejectShell: true,
       sequence: 1,
       sequenceVis: 2,
       flashSequence: true,
@@ -26,6 +28,83 @@ const table = parseWeaponImageStates({
     },
   ],
 })!;
+
+it("counts repeated shell ejections between renders and carries the baseline through restore", () => {
+  const image = new ImageAnimation(table, 0, 42);
+  image.advance(0, flags);
+  image.advance(0.032, { ...flags, fireCount: 1 });
+  const twoShots = image.advance(0.064, { ...flags, fireCount: 2 });
+  expect(twoShots.shellEjections).toBe(2);
+
+  const restored = new ImageAnimation(table, 0, 42);
+  restored.restoreState(image.saveState());
+  expect(restored.advance(0.096, { ...flags, fireCount: 2 })).toBe(twoShots);
+  expect(
+    restored.advance(0.128, { ...flags, fireCount: 3 }).shellEjections,
+  ).toBe(3);
+});
+
+it("repairs active image threads and ejection flags when restoring an older checkpoint", () => {
+  const stream = new TestLiveStream("play", "Player");
+  stream.getDataBlockData = (id) =>
+    id === 2
+      ? {
+          shapeName: "weapon_chaingun.dts",
+          casing: 3,
+          states: [
+            { name: "Ready" },
+            {
+              name: "Fire",
+              fire: true,
+              ejectShell: true,
+              sequence: 1,
+              sequenceVis: 2,
+              flashSequence: true,
+              scaleAnimation: true,
+              direction: true,
+              timeoutValue: 0.5,
+            },
+          ],
+        }
+      : undefined;
+  stream.createGhost(0, 1, {
+    dataBlockId: 1,
+    position: { x: 1, y: 2, z: 3 },
+    images: [{ index: 0, dataBlockId: 2, fireCount: 0 }],
+  });
+  stream.updateGhost(0, {
+    images: [{ index: 0, dataBlockId: 2, fireCount: 1 }],
+  });
+  const old = structuredClone(stream.checkpoint());
+  const [shared] = old.shared.values();
+  const savedStates = shared.imageSlots![0]!.imageStates!;
+  for (const state of savedStates) {
+    delete state.ejectShell;
+    delete state.shockwave;
+  }
+  const [images] = old.images.values();
+  const saved = images[0]!.current;
+  saved.state.reverse = saved.anim!.reverse = true;
+  saved.state.scaleAnimation = false;
+  delete saved.anim!.timeout;
+  delete saved.flash!.timeout;
+  delete saved.shellEjections;
+  const before = structuredClone(old);
+
+  stream.restore(old);
+  expect(stream.entityAt(0)?.imageSlots?.[0]?.animation).toMatchObject({
+    state: { reverse: false, scaleAnimation: true },
+    anim: { ...saved.anim, reverse: false, timeout: 0.5 },
+    flash: { ...saved.flash, timeout: 0.5 },
+  });
+  stream.updateGhost(0, {
+    images: [{ index: 0, dataBlockId: 2, fireCount: 2 }],
+  });
+  expect(stream.entityAt(0)?.imageSlots?.[0]?.animation?.shellEjections).toBe(
+    1,
+  );
+  expect(old).toEqual(before);
+});
 
 it("honors the initial ghost's firing bit and reconstructs random flash poses deterministically", () => {
   const a = new ImageAnimation(table, 10, 42),
@@ -62,6 +141,25 @@ it("retains a finishing one-shot through a no-sequence state but resets cyclic t
   expect(imageThreadPosition(finished.anim!, 6, 2, false)).toBe(0.5);
   expect(imageThreadPosition(finished.anim!, 7, 2, false)).toBe(1);
   expect(imageThreadPosition(finished.anim!, 6, 2, true)).toBe(0);
+});
+
+it("preserves an inherited image thread when repairing a legacy state", () => {
+  const states = parseWeaponImageStates({
+    states: [
+      {
+        name: "Activate",
+        sequence: 0,
+        timeoutValue: 0.1,
+        transitionOnTimeout: 2,
+      },
+      { name: "Ready", direction: false },
+    ],
+  })!;
+  const image = new ImageAnimation(states, 0, 42);
+  const ready = image.advance(0.2, flags);
+  const restored = new ImageAnimation(states, 0, 42);
+  restored.restoreState(image.saveState(), true);
+  expect(restored.current.anim).toBe(ready.anim);
 });
 
 it("restores the image timer, spin phase and random flash generator repeatedly", () => {

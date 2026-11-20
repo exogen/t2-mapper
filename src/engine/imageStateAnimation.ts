@@ -1,4 +1,3 @@
-import { Vector3 } from "three";
 import type {
   AnimationAction,
   AudioListener,
@@ -6,16 +5,11 @@ import type {
   Object3D,
   PositionalAudio,
 } from "three";
-import type {
-  WeaponImageStateMachine,
-  WeaponAnimState,
-} from "../stream/weaponStateMachine";
+import type { WeaponAnimState } from "../stream/weaponStateMachine";
 import type { ImageSlot } from "../stream/types";
-import { engineStore } from "../state/engineStore";
+import { engineStore, type PlaybackStatus } from "../state/engineStore";
 import { streamClock } from "../state/streamPlaybackStore";
 import { audioToUrl } from "../loaders";
-import { requestShockwave } from "./shockwaveRequests";
-import { findOwnNode } from "../sceneNodes";
 import { getAudioGraph } from "./audioGraph";
 import { settingsStore } from "../state/settingsStore";
 import {
@@ -34,7 +28,13 @@ import {
   type ImageAnimationState,
   type ImageAnimationThread,
 } from "../stream/imageAnimation";
-import { threeToTorque } from "../scene/coordinates";
+import { streamRenderFrame } from "../stream/interpolateEntity";
+
+export interface ImageStateEffects {
+  dataBlockId: number;
+  shellCount: number;
+  shockwave: boolean;
+}
 
 /** What the hook drives on the mounted image's own model. */
 export interface ImageStateAnimationTarget {
@@ -45,8 +45,6 @@ export interface ImageStateAnimationTarget {
    * is: state sounds attach here and the muzzle flash spawns here.
    */
   imageRoot: Object3D;
-  /** The owner entity id, for effect bookkeeping. */
-  ownerId?: string;
   /** DTS sequence index → lower-cased name, as the state table indexes. */
   seqIndexToName: readonly string[];
   /** Lower-cased names of the shape's cyclic sequences. */
@@ -64,6 +62,14 @@ interface Box<T> {
   current: T;
 }
 
+function playingWeaponAnimation(status: PlaybackStatus): boolean {
+  return (
+    status === "playing" &&
+    !streamClock.worldPaused &&
+    !streamRenderFrame.reconstructing
+  );
+}
+
 /**
  * Sample the stream's reconstructed image threads on this model. Only new
  * state entries emit one-shot effects; seeks restore poses and looping audio.
@@ -72,33 +78,34 @@ interface Box<T> {
 export function createImageStateAnimation(
   readSlot: () => ImageSlot | undefined,
   target: ImageStateAnimationTarget,
-): { update(): void; dispose(): void } {
+) {
   const { audioLoader, audioListener } = getAudioGraph();
 
   const animThreadRef: Box<ImageThread | null> = { current: null };
   const flashThreadRef: Box<ImageThread | null> = { current: null };
-  let lastActions: ReadonlyMap<string, AnimationAction> | null = null;
   let lastSeek = engineStore.getState().playback.seekNonce;
   const loopingSoundRef: Box<PositionalAudio | null> = { current: null };
   const loopingSoundStateRef: Box<number> = { current: -1 };
   let recordedState: ImageAnimationState | null = null;
+  let previousMountTime: number | undefined;
+  let disposed = false;
   let lastSoundAttempt = {
     revision: -1,
     audioEnabled: false,
     playing: false,
     seekNonce: -1,
     generation: -1,
-    actions: null as ReadonlyMap<string, AnimationAction> | null,
   };
 
-  function update(): void {
+  function update(): ImageStateEffects | undefined {
+    if (disposed) return;
     const { audioEnabled, animationEnabled } = settingsStore.getState();
     const playback = engineStore.getState().playback;
     if (playback.status === "seeking") {
       stopLoopingSound(loopingSoundRef, loopingSoundStateRef);
       return;
     }
-    const isPlaying = playback.status === "playing" && !streamClock.worldPaused;
+    const isPlaying = playingWeaponAnimation(playback.status);
     const actions = target.actions;
 
     const imageSlot = readSlot();
@@ -108,10 +115,15 @@ export function createImageStateAnimation(
     if (imageSlot?.animation) {
       const recorded = imageSlot.animation;
       const previous = recordedState;
-      const rebuilt = actions !== lastActions;
-      lastActions = actions;
+      const sameMount = previousMountTime === imageSlot.mountedAtSec;
+      previousMountTime = imageSlot.mountedAtSec;
       recordedState = recorded;
       const now = streamClock.worldTime;
+      const continuingMount = previous && sameMount;
+      const freshMount =
+        !continuingMount &&
+        imageSlot.mountedAtSec != null &&
+        Math.abs(now - imageSlot.mountedAtSec) < 0.1;
       const apply = (
         thread: ImageAnimationThread | undefined,
         ref: Box<ImageThread | null>,
@@ -175,6 +187,7 @@ export function createImageStateAnimation(
       if (
         loopingSoundRef.current &&
         (!audioEnabled ||
+          !sameMount ||
           streamClock.worldPaused ||
           !loopingSoundRef.current.isPlaying ||
           loopingSoundStateRef.current !== recorded.state.stateIndex)
@@ -184,49 +197,48 @@ export function createImageStateAnimation(
       // playback. A seek/late model applies the pose without replaying sounds.
       const entered =
         !seeking &&
-        (rebuilt || !previous
-          ? imageSlot.mountedAtSec != null &&
-            Math.abs(now - imageSlot.mountedAtSec) < 0.1
-          : previous.revision !== recorded.revision) &&
+        (continuingMount
+          ? previous.revision !== recorded.revision
+          : freshMount) &&
         isPlaying &&
         Math.abs(now - recorded.changedAtSec) < 0.1;
-      const currentState = {
-        get stateIndex() {
-          return readSlot()?.animation?.state.stateIndex ?? -1;
-        },
-      };
-      if (entered && audioEnabled && audioLoader && audioListener)
-        playStateSounds(recorded.state, currentState, target, playback, {
-          audioLoader,
-          audioListener,
-          loopingSoundRef,
-          loopingSoundStateRef,
-        });
       const attempted = lastSoundAttempt;
       const generation = getSoundGeneration();
       const retrySound =
+        !sameMount ||
         attempted.revision !== recorded.revision ||
         attempted.audioEnabled !== audioEnabled ||
         attempted.playing !== isPlaying ||
         attempted.seekNonce !== playback.seekNonce ||
-        attempted.generation !== generation ||
-        attempted.actions !== actions;
-      if (
-        !entered &&
-        retrySound &&
-        isPlaying &&
-        audioEnabled &&
-        audioLoader &&
-        audioListener &&
-        !loopingSoundRef.current
-      ) {
-        const sound =
-          imageSlot.imageStates?.[recorded.state.stateIndex]
-            ?.soundDataBlockId ?? -1;
-        if (sound >= 0)
+        attempted.generation !== generation;
+      if (isPlaying && audioEnabled && audioLoader && audioListener) {
+        const stateIndex = recorded.state.stateIndex;
+        const fallbackSound =
+          retrySound && !loopingSoundRef.current
+            ? (imageSlot.imageStates?.[stateIndex]?.soundDataBlockId ?? -1)
+            : -1;
+        if (entered || fallbackSound >= 0) {
+          const { recording, seekNonce } = playback;
+          const { mountedAtSec, dataBlockId } = imageSlot;
+          const canStartLoop = () => {
+            const current = engineStore.getState().playback;
+            const slot = readSlot();
+            return (
+              !disposed &&
+              settingsStore.getState().audioEnabled &&
+              playingWeaponAnimation(current.status) &&
+              current.recording === recording &&
+              current.seekNonce === seekNonce &&
+              slot?.dataBlockId === dataBlockId &&
+              slot.mountedAtSec === mountedAtSec &&
+              slot.animation?.state.stateIndex === stateIndex
+            );
+          };
           playStateSounds(
-            { ...recorded.state, soundDataBlockIds: [sound] },
-            currentState,
+            entered
+              ? recorded.state
+              : { ...recorded.state, soundDataBlockIds: [fallbackSound] },
+            canStartLoop,
             target,
             playback,
             {
@@ -235,8 +247,9 @@ export function createImageStateAnimation(
               loopingSoundRef,
               loopingSoundStateRef,
             },
-            false,
+            entered,
           );
+        }
       }
       if (retrySound)
         lastSoundAttempt = {
@@ -245,19 +258,32 @@ export function createImageStateAnimation(
           playing: isPlaying,
           seekNonce: playback.seekNonce,
           generation,
-          actions,
         };
-      if (entered && recorded.state.transitioned && recorded.state.isFiring)
-        emitMuzzleFlash(imageSlot, target);
+      // A fresh mount can already be firing on its initial ghost update.
+      // A seek or late model load only establishes the count baseline.
+      if (!seeking && isPlaying && (continuingMount || freshMount)) {
+        const shellCount = Math.max(
+          0,
+          (recorded.shellEjections ?? 0) -
+            (continuingMount ? (previous.shellEjections ?? 0) : 0),
+        );
+        const shockwave = entered && recorded.state.shockwave === true;
+        if (shellCount || shockwave)
+          return { dataBlockId: imageSlot.dataBlockId, shellCount, shockwave };
+      }
       return;
     }
 
+    recordedState = null;
     stopLoopingSound(loopingSoundRef, loopingSoundStateRef);
   }
 
   return {
     update,
-    dispose: () => stopLoopingSound(loopingSoundRef, loopingSoundStateRef),
+    dispose() {
+      disposed = true;
+      stopLoopingSound(loopingSoundRef, loopingSoundStateRef);
+    },
   };
 }
 
@@ -269,7 +295,7 @@ export function createImageStateAnimation(
  */
 function playStateSounds(
   animState: WeaponAnimState,
-  sm: Pick<WeaponImageStateMachine, "stateIndex">,
+  canStartLoop: () => boolean,
   target: ImageStateAnimationTarget,
   playback: ReturnType<typeof engineStore.getState>["playback"],
   audio: {
@@ -278,7 +304,7 @@ function playStateSounds(
     loopingSoundRef: Box<PositionalAudio | null>;
     loopingSoundStateRef: Box<number>;
   },
-  oneShots = true,
+  oneShots: boolean,
 ): void {
   if (animState.soundDataBlockIds.length === 0) return;
   const sp = playback.recording?.streamingPlayback;
@@ -305,11 +331,12 @@ function playStateSounds(
       const url = audioToUrl(resolved.filename);
       const gen = getSoundGeneration();
       getCachedAudioBuffer(url, audioLoader, (buffer) => {
-        // The state may have moved on by the time the buffer loads.
-        if (gen !== getSoundGeneration() || streamClock.worldPaused) return;
-        if (loopingSoundRef.current) return;
-        const currentIdx = sm.stateIndex;
-        if (currentIdx !== animState.stateIndex) return;
+        if (
+          gen !== getSoundGeneration() ||
+          loopingSoundRef.current ||
+          !canStartLoop()
+        )
+          return;
         const sound = createPositionalAudio(audioListener, resolved);
         sound.setBuffer(buffer);
         sound.setPlaybackRate(getEffectiveSoundRate());
@@ -318,70 +345,12 @@ function playStateSounds(
         trackSound(sound);
         sound.play();
         loopingSoundRef.current = sound;
-        loopingSoundStateRef.current = currentIdx;
+        loopingSoundStateRef.current = animState.stateIndex;
       });
     } catch {
       /* expected */
     }
   }
-}
-
-const _flashPos = new Vector3();
-const _flashDir = new Vector3();
-function emitMuzzleFlash(
-  slot: ImageSlot,
-  target: ImageStateAnimationTarget,
-): void {
-  const flashId = resolveMuzzleFlash(slot.dataBlockId);
-  if (flashId == null) return;
-  imageFlashTransform(target.imageRoot, _flashPos, _flashDir);
-  requestShockwave({
-    dataBlockId: flashId,
-    origin: threeToTorque(_flashPos),
-    normal: threeToTorque(_flashDir),
-    ownerId: target.ownerId ?? "",
-  });
-}
-/** Per recording, since datablock ids are reused between recordings. */
-const _flashNodeCache = new WeakMap<Object3D, Object3D>();
-
-/** ShapeBase muzzle flash (FUN_005f9a80): own mount0 position and +Y axis,
- * which is +Z in native DTS model coordinates, including the root fallback. */
-export function imageFlashTransform(
-  imageRoot: Object3D,
-  position: Vector3,
-  direction: Vector3,
-): void {
-  let node = _flashNodeCache.get(imageRoot);
-  if (!node) {
-    node = findOwnNode(imageRoot, "mount0") ?? imageRoot;
-    _flashNodeCache.set(imageRoot, node);
-  }
-  node.updateWorldMatrix(true, false);
-  position.setFromMatrixPosition(node.matrixWorld);
-  direction.set(0, 0, 1).transformDirection(node.matrixWorld);
-}
-
-const _muzzleFlashCache = new WeakMap<object, Map<number, number | null>>();
-
-/**
- * The image datablock's muzzleFlash ShockwaveData id (a Tribes 2 field
- * at ShapeBaseImageData+0xce4), cached per datablock.
- */
-function resolveMuzzleFlash(imageDataBlockId: number): number | null {
-  const sp = engineStore.getState().playback.recording?.streamingPlayback;
-  if (!sp) return null;
-  let cache = _muzzleFlashCache.get(sp);
-  if (!cache) {
-    cache = new Map();
-    _muzzleFlashCache.set(sp, cache);
-  }
-  const cached = cache.get(imageDataBlockId);
-  if (cached !== undefined) return cached;
-  const raw = sp.getDataBlockData(imageDataBlockId)?.muzzleFlash;
-  const id = typeof raw === "number" && raw > 0 ? raw : null;
-  cache.set(imageDataBlockId, id);
-  return id;
 }
 
 function stopLoopingSound(

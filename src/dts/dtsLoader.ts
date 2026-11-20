@@ -7,19 +7,24 @@ import {
 } from "three";
 import { parseDTS } from "./dts";
 import { buildDTS } from "./dtsBuilder";
-import { mergeDSQ, parseDSQ, type DSQData } from "./dsq";
+import {
+  mergeDSQ,
+  mergeDTSSequenceSources,
+  type DSQData,
+  type DTSSequenceSource,
+} from "./dsq";
 import {
   loadDTSImageLists,
   defaultDTSImageResolver,
   type DTSImageListSource,
 } from "./dtsTextures";
-import { DTSMaterialFlags } from "./dtsTypes";
+import { DTSMaterialFlags, type DTSShapeData } from "./dtsTypes";
 import type { DTSModel } from "./dtsModel";
 
-export interface DTSSequenceSource {
-  url: string;
-  name?: string;
-}
+export type { DTSSequenceSource } from "./dsq";
+
+const DTS_DOWNLOAD_TIMEOUT_MS = 8_000;
+
 /** Browser and Node-compatible native loader. parse() needs neither a DOM nor
  * a WebGL context. Texture/DSQ resolution can follow the host application's
  * resource rules without importing them into the format reader. */
@@ -44,80 +49,98 @@ export class DTSLoader extends Loader<DTSModel> {
     onProgress?: Parameters<FileLoader["load"]>[2],
     onError?: (error: unknown) => void,
   ): void {
-    const loader = new FileLoader(this.manager)
-      .setPath(this.path)
+    void this.loadShapeData(url, onProgress).then(async (data) => {
+      try {
+        const textureLoader = new TextureLoader(this.manager).setCrossOrigin(
+          this.crossOrigin,
+        );
+        const texture =
+          this.textureResolver ??
+          ((name: string, flags: number) =>
+            flags & DTSMaterialFlags.IflMaterial
+              ? null
+              : textureLoader.load(
+                  (this.resourcePath ||
+                    this.path ||
+                    url.slice(0, url.lastIndexOf("/") + 1)) +
+                    (/\.[a-z0-9]+$/i.test(name) ? name : `${name}.png`),
+                ));
+        const model = this.buildModel(data, texture);
+        await loadDTSImageLists(
+          model,
+          this.imageListResolver ??
+            defaultDTSImageResolver(
+              this.resourcePath ||
+                this.path ||
+                url.slice(0, url.lastIndexOf("/") + 1),
+              this.manager,
+            ),
+          this.manager,
+        );
+        onLoad(model);
+      } catch (error) {
+        if (onError) onError(error);
+        else console.error(error);
+        this.manager.itemError(url);
+      }
+    }, onError ?? console.error);
+  }
+
+  /** Authored shape and sequences without textures or a view hierarchy. */
+  loadShapeData(
+    url: string,
+    onProgress?: Parameters<FileLoader["load"]>[2],
+  ): Promise<DTSShapeData> {
+    const shapeLoader = this.fileLoader().setPath(this.path);
+    const sequenceLoader = this.fileLoader();
+    // Release Three's shared in-flight requests as well as the render wait.
+    const timeout = setTimeout(() => {
+      shapeLoader.abort();
+      sequenceLoader.abort();
+    }, DTS_DOWNLOAD_TIMEOUT_MS);
+    return shapeLoader
+      .loadAsync(url, onProgress)
+      .then(async (buffer) => {
+        try {
+          const shape = parseDTS(buffer as ArrayBuffer);
+          const sources = this.sequenceResolver?.(url) ?? [];
+          return await mergeDTSSequenceSources(
+            shape,
+            sources,
+            async (file) =>
+              (await sequenceLoader.loadAsync(file)) as ArrayBuffer,
+          );
+        } catch (error) {
+          this.manager.itemError(url);
+          throw error;
+        }
+      })
+      .finally(() => clearTimeout(timeout));
+  }
+
+  private fileLoader(): FileLoader {
+    return new FileLoader(this.manager)
       .setResponseType("arraybuffer")
       .setRequestHeader(this.requestHeader)
       .setWithCredentials(this.withCredentials);
-    loader.load(
-      url,
-      async (buffer) => {
-        try {
-          const sources = this.sequenceResolver?.(url) ?? [];
-          const sequences = await Promise.all(
-            sources.map(async (source) => {
-              const data = await new FileLoader(this.manager)
-                .setResponseType("arraybuffer")
-                .setRequestHeader(this.requestHeader)
-                .setWithCredentials(this.withCredentials)
-                .loadAsync(source.url);
-              // An empty optional DSQ ships with medium_male. It contains no sequence.
-              return (data as ArrayBuffer).byteLength
-                ? { data: parseDSQ(data as ArrayBuffer), name: source.name }
-                : null;
-            }),
-          );
-          const textureLoader = new TextureLoader(this.manager).setCrossOrigin(
-            this.crossOrigin,
-          );
-          const texture =
-            this.textureResolver ??
-            ((name: string, flags: number) =>
-              flags & DTSMaterialFlags.IflMaterial
-                ? null
-                : textureLoader.load(
-                    (this.resourcePath ||
-                      this.path ||
-                      url.slice(0, url.lastIndexOf("/") + 1)) +
-                      (/\.[a-z0-9]+$/i.test(name) ? name : `${name}.png`),
-                  ));
-          const model = this.parse(
-            buffer as ArrayBuffer,
-            sequences.filter(
-              (s): s is { data: DSQData; name: string | undefined } =>
-                s !== null,
-            ),
-            texture,
-          );
-          await loadDTSImageLists(
-            model,
-            this.imageListResolver ??
-              defaultDTSImageResolver(
-                this.resourcePath ||
-                  this.path ||
-                  url.slice(0, url.lastIndexOf("/") + 1),
-                this.manager,
-              ),
-            this.manager,
-          );
-          onLoad(model);
-        } catch (error) {
-          if (onError) onError(error);
-          else console.error(error);
-          this.manager.itemError(url);
-        }
-      },
-      onProgress,
-      onError,
-    );
   }
+
   parse(
     buffer: ArrayBuffer,
     sequences: readonly { data: DSQData; name?: string }[] = [],
     texture = this.textureResolver,
   ): DTSModel {
-    const parsed = parseDTS(buffer);
-    const data = sequences.length ? mergeDSQ(parsed, sequences) : parsed;
+    const shape = parseDTS(buffer);
+    return this.buildModel(
+      sequences.length ? mergeDSQ(shape, sequences) : shape,
+      texture,
+    );
+  }
+
+  private buildModel(
+    data: DTSShapeData,
+    texture: DTSLoader["textureResolver"],
+  ): DTSModel {
     return buildDTS(data, {
       texture: texture
         ? (name, index) => texture(name, data.materials[index].flags)

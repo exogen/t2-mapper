@@ -26,6 +26,8 @@ export interface ImageAnimationState {
   flash?: ImageAnimationThread;
   spinTime: number;
   spinTimeSec: number;
+  /** Accumulated per mount so render frames can span several state updates. */
+  shellEjections?: number;
 }
 
 /** ShapeBase's image state belongs to the stream's clock, even without a model.
@@ -76,12 +78,54 @@ export class ImageAnimation {
     };
   }
 
-  restoreState(state: ReturnType<ImageAnimation["saveState"]>): void {
+  restoreState(
+    state: ReturnType<ImageAnimation["saveState"]>,
+    repairLegacyThreads = false,
+  ): void {
     this.machine.restoreState(state.machine);
     this.random.state = state.randomState;
     this.spinTime = state.spinTime;
     this.timeSec = state.timeSec;
-    this.current = state.current;
+    this.current = repairLegacyThreads
+      ? this.restoreLegacyThreads(state.current)
+      : state.current;
+  }
+
+  private restoreLegacyThreads(
+    current: ImageAnimationState,
+  ): ImageAnimationState {
+    const {
+      reverse,
+      scaleAnimation,
+      timeoutValue,
+      sequenceName,
+      flashSequence,
+      visSequenceName,
+    } = this.machine.snapshot();
+    const { anim, flash, changedAtSec } = current;
+    // A thread can outlive the state that started it. Only change threads
+    // we can attribute to this state's entry, keeping their original clocks.
+    const active =
+      anim &&
+      sequenceName != null &&
+      anim.sequence === Number(sequenceName) &&
+      anim.startedAtSec === changedAtSec;
+    const timeout =
+      scaleAnimation && timeoutValue > 0 ? timeoutValue : undefined;
+    const activeFlash =
+      active &&
+      flashSequence &&
+      flash &&
+      visSequenceName != null &&
+      flash.sequence === Number(visSequenceName) &&
+      flash.scaleSequence === anim.sequence &&
+      flash.startedAtSec === changedAtSec;
+    return {
+      ...current,
+      state: { ...current.state, reverse, scaleAnimation },
+      anim: active ? { ...anim, reverse, timeout } : anim,
+      flash: activeFlash ? { ...flash, timeout } : flash,
+    };
   }
 
   advance(
@@ -93,17 +137,31 @@ export class ImageAnimation {
     this.spinTime += dt * this.current.state.spinTimeScale;
     this.timeSec = timeSec;
     const state = this.machine.tick(dt, flags, forceFire);
-    if (state.entered || (state.transitioned && state.flashSequence)) {
+    if (
+      state.entered ||
+      state.shockwave ||
+      (state.transitioned && state.flashSequence)
+    ) {
       this.enter(state, timeSec);
-    } else if (state.spinTimeScale !== this.current.state.spinTimeScale) {
+    } else if (
+      state.shellEjections ||
+      state.spinTimeScale !== this.current.state.spinTimeScale
+    ) {
       this.current = {
         ...this.current,
         state,
+        shellEjections: this.shellEjections(state),
         spinTime: this.spinTime,
         spinTimeSec: timeSec,
       };
     }
     return this.current;
+  }
+
+  private shellEjections(state: WeaponAnimState): number | undefined {
+    return state.shellEjections
+      ? (this.current.shellEjections ?? 0) + state.shellEjections
+      : this.current.shellEjections;
   }
 
   private enter(state: WeaponAnimState, timeSec: number): void {
@@ -145,6 +203,7 @@ export class ImageAnimation {
       flash,
       spinTime: this.spinTime,
       spinTimeSec: timeSec,
+      shellEjections: this.shellEjections(state),
     };
   }
 }

@@ -1,15 +1,13 @@
 /**
- * Background prefetch of game assets the current session will certainly
- * render, scoped by the stream's own state instead of blanket-loading
+ * Background prefetch of game assets scoped by the stream's own state
+ * instead of blanket-loading
  * shapes.vl2. Priority order comes from the provider: scene geometry
  * first (the terrain file and interior DIFs detected from scene ghosts —
  * the world's biggest visual chunks), then native shapes from static scene
- * ghosts and datablock categories certain to appear (player armors, held
- * weapon/pack images, items, static shapes). T2 servers send the mod's
- * ENTIRE datablock set at connect regardless of map, so category
- * membership is the useful signal; vehicles, turrets, and deployables
- * load on demand at first sight. Drip-fed so
- * the prefetch never competes with on-demand loads.
+ * ghosts and datablock categories needed for rendering or collision.
+ * T2 servers send the mod's entire datablock set at connect regardless
+ * of map, so only selected categories are prefetched. Batches are spaced
+ * out to limit competition with on-demand loads.
  */
 
 import { loadInterior } from "./engine/interiorCache";

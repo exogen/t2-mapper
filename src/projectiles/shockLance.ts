@@ -31,20 +31,22 @@ import {
   Matrix4,
   Mesh,
   MeshBasicMaterial,
+  Quaternion,
   Vector2,
   Vector3,
 } from "three";
 import type { BufferGeometry, Object3D, Texture } from "three";
 import { isVisibleInHierarchy } from "../objectUtils";
 import { createWorldMeshOverlay } from "../meshOverlay";
+import { posedNodeWorldMatrix } from "../engine/deferredPose";
 import { insertAfterChunk, replaceChunk } from "../shaderUtils";
-import { streamClock, streamPlaybackStore } from "../state/streamPlaybackStore";
+import { streamClock } from "../state/streamPlaybackStore";
 import { orientationAlongDirection } from "../stream/streamHelpers";
 import type { ShockLanceEntity } from "../state/gameEntityTypes";
 import {
   muzzleWorldPosition,
   sourceAimDirection,
-} from "../engine/linkBeamSource";
+} from "../engine/weaponMuzzle";
 import {
   SHOCK_LANCE_MAX_POINTS,
   SHOCK_LANCE_MISS_AMP,
@@ -64,7 +66,6 @@ import {
  *  (its model may mount after the bolt, or swap detail). */
 const ZAP_RESCAN_SEC = 0.25;
 
-const _origin = new Vector3();
 const _start = new Vector3();
 const _end = new Vector3();
 const _dir = new Vector3();
@@ -72,8 +73,9 @@ const _aim = new Vector3();
 const _fromCam = new Vector3();
 const _right = new Vector3();
 const _scaledRight = new Vector3();
-const _localStart = new Vector3();
-const _localEnd = new Vector3();
+const _cameraWorld = new Vector3();
+const _cameraInBolt = new Vector3();
+const _inverseBoltRotation = new Quaternion();
 const _box = new Box3();
 const _size = new Vector3();
 const _targetInverse = new Matrix4();
@@ -204,12 +206,13 @@ import {
   ribbonGeometry,
   disposeGeometry,
 } from "./geometry";
-import type { ProjectileView } from "./types";
+import type { ProjectileEntityLookup, ProjectileView } from "./types";
 import { torqueVecToThree, threeToTorque } from "../scene/coordinates";
 export function createShockLanceView(
   visual: ShockLanceEntity["visual"],
   textures: Texture[],
   hit: boolean,
+  findEntity: ProjectileEntityLookup,
 ): ProjectileView<ShockLanceEntity> {
   const viewRoot = new Group(),
     bolts = new Group(),
@@ -286,7 +289,6 @@ export function createShockLanceView(
     update(entity, camera) {
       const group = viewRoot;
       const boltGroup = bolts;
-      if (!group || !boltGroup) return;
       const now = streamClock.worldTime;
       const age = now - (entity.spawnTime ?? 0);
       const zap = zapState;
@@ -297,14 +299,9 @@ export function createShockLanceView(
       }
       group.visible = true;
       const fade = 1 - age / zapDuration;
-      const root = streamPlaybackStore.getState().root;
-      const source = entity.linkSourceId
-        ? root?.children.find((c) => c.name === entity.linkSourceId)
+      const target = entity.beamHit
+        ? findEntity(entity.linkTargetId)?.root
         : undefined;
-      const target =
-        entity.beamHit && entity.linkTargetId
-          ? root?.children.find((c) => c.name === entity.linkTargetId)
-          : undefined;
 
       // Endpoints: a pinned bolt keeps the ghost's; a miss re-derives a
       // 0.2 m spark from the live muzzle each frame (FUN_0064f960), or
@@ -316,6 +313,8 @@ export function createShockLanceView(
       if (!entity.beamHit) {
         density = SHOCK_LANCE_MISS_DENSITY;
         amp = SHOCK_LANCE_MISS_AMP;
+        const sourceView = findEntity(entity.linkSourceId);
+        const source = sourceView?.mounts?.model ?? sourceView?.root;
         if (source) {
           muzzleWorldPosition(
             entity.linkSourceId,
@@ -327,6 +326,8 @@ export function createShockLanceView(
             entity.linkSourceId,
             source,
             entity.sourceSlot ?? 0,
+            _start,
+            camera,
             _aim,
           );
           _end.copy(_start).addScaledVector(_aim, SHOCK_LANCE_MISS_LENGTH);
@@ -341,9 +342,7 @@ export function createShockLanceView(
         return;
       }
       _dir.normalize();
-      group.getWorldPosition(_origin);
-      _localStart.copy(_start).sub(_origin);
-      _localEnd.copy(_end).sub(_origin);
+      camera.getWorldPosition(_cameraWorld);
 
       // Lightning regeneration at lightningFreq (advanceTime FUN_0064f840:
       // one regeneration per frame once the period has elapsed; the bolts
@@ -369,13 +368,19 @@ export function createShockLanceView(
       }
 
       // Ribbons live in the bolt frame (forward = +X) at the start point.
-      boltGroup.position.copy(_localStart);
+      boltGroup.position.copy(_start);
       boltGroup.quaternion.set(
         orientation[0],
         orientation[1],
         orientation[2],
         orientation[3],
       );
+      _cameraInBolt
+        .copy(_cameraWorld)
+        .sub(_start)
+        .applyQuaternion(
+          _inverseBoltRotation.copy(boltGroup.quaternion).invert(),
+        );
       boltMaterial.opacity = fade;
       for (let b = 0; b < 2; b++) {
         const geometry = boltGeoRefs[b];
@@ -393,14 +398,14 @@ export function createShockLanceView(
           boltPoints[b],
           count,
           visual.lightningWidth * 0.5,
-          camera.position,
+          _cameraInBolt,
         );
         geometry.setDrawRange(0, (count - 1) * 6);
       }
 
       // Strips (pinned bolts only, FUN_00650150).
       if (entity.beamHit) {
-        _fromCam.copy(_start).sub(camera.position);
+        _fromCam.copy(_start).sub(_cameraWorld);
         _right.crossVectors(_fromCam, _dir);
         if (_right.lengthSq() > 1e-8) _right.normalize();
         for (let i = 0; i < 2; i++) {
@@ -417,8 +422,8 @@ export function createShockLanceView(
             pos,
             uv,
             color,
-            _localStart,
-            _localEnd,
+            _start,
+            _end,
             _scaledRight,
             u0,
             u0 - visual.texWrap[i],
@@ -456,9 +461,10 @@ export function createShockLanceView(
       if (zapMaterial.map !== frame) zapMaterial.map = frame;
       zapMaterial.opacity = fade;
       zapUniforms.zapScroll.value.set(ZAP_SCROLL_S * age, age);
-      _targetInverse.copy(target.matrixWorld).invert();
+      const targetWorld = posedNodeWorldMatrix(target);
+      _targetInverse.copy(targetWorld).invert();
       zapUniforms.zapScale.value
-        .copy(target.matrixWorld)
+        .copy(targetWorld)
         .multiply(_zapScaleLocal)
         .multiply(_targetInverse);
       for (const { source: mesh, overlay } of zap.overlays) {

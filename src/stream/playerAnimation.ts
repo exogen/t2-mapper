@@ -9,6 +9,9 @@
 
 import { resolveActionSlot, type ActionSlot } from "./actionSlot";
 
+/** Torque's animation crossfade duration in seconds. */
+export const ANIM_TRANSITION_TIME = 0.25;
+
 /** Minimum velocity dot product to count as intentional movement. */
 const MOVE_THRESHOLD = 0.1;
 

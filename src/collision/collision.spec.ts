@@ -18,7 +18,7 @@ import {
 import {
   buildLinearSegment,
   bounceVelocity,
-  linearSegmentPosition,
+  sampleLinearSegment,
   stepBallistic,
 } from "./projectilePhysics";
 import { setWaterInfo } from "./waterLevel";
@@ -307,10 +307,10 @@ describe("buildLinearSegment", () => {
     expect(seg.endPoint[2]).toBeCloseTo(0, 2);
 
     const pos: [number, number, number] = [0, 0, 0];
-    linearSegmentPosition(seg, 512, pos);
+    sampleLinearSegment(seg, 512, pos);
     expect(pos[0]).toBeCloseTo(51.2, 3);
     // Past the end, clamps to the hit point.
-    linearSegmentPosition(seg, 999999, pos);
+    sampleLinearSegment(seg, 999999, pos);
     expect(pos[2]).toBeCloseTo(0, 2);
   });
 
@@ -383,6 +383,7 @@ describe("water impact", () => {
     expect(seg.next!.vel[0]).toBeCloseTo(94, 5);
     expect(seg.next!.vel[2]).toBeCloseTo(14, 5);
     expect(seg.next!.start[2]).toBeCloseTo(20, 5);
+    expect(seg.next!.endNormal[2]).toBeCloseTo(-14 / Math.hypot(94, 14));
   });
 
   it("explodes when it arrives steeply", () => {
@@ -520,7 +521,7 @@ describe("water impact", () => {
       reflectOnWaterImpactAngle: DISC_REFLECT,
     });
     const pos: [number, number, number] = [0, 0, 0];
-    linearSegmentPosition(seg, seg.msEnd + 100, pos);
+    sampleLinearSegment(seg, seg.msEnd + 100, pos);
     // Climbing away from the surface after the skip.
     expect(pos[2]).toBeGreaterThan(20);
     expect(pos[0]).toBeGreaterThan(seg.endPoint[0]);

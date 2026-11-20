@@ -22,7 +22,11 @@ import type {
   PlayerDataBlock,
   TurretPacketData,
 } from "t2-demo-parser";
-import { withCollisionQueryBatch } from "../collision/worldCollision";
+import {
+  castWorldRay,
+  withCollisionQueryBatch,
+  type Vec3 as Point3,
+} from "../collision/worldCollision";
 import {
   DEFAULT_PLAYER_INTERPOLATION,
   RETAIL_PLAYER_INTERPOLATION,
@@ -39,12 +43,35 @@ import { updateInteriorAlarm } from "../scene/interiorAlarm";
 import { getImageMountOffset } from "./imageMount";
 import {
   buildLinearSegment,
-  linearSegmentPosition,
+  createLinearLaunchWarp,
+  LINEAR_LAUNCH_WARP_TICKS,
+  sampleLinearSegment,
+  sampleLinearTick,
   stepBallistic,
+  type LinearLaunchWarp,
   type LinearSegment,
 } from "../collision/projectilePhysics";
-import { castWorldRay } from "../collision/worldCollision";
-import { isPointSubmergedSimple } from "../collision/waterLevel";
+import {
+  getMountedVehicleIds,
+  isProjectileCollisionTarget,
+  ProjectileDynamicCollision,
+  type ProjectileCollisionTarget,
+} from "../collision/projectileDynamicCollision";
+import {
+  getProjectileShapeAsset,
+  prepareProjectileShapes,
+  ProjectileShapePoses,
+  type ProjectileShapeLoader,
+} from "../collision/projectileShapeAssets";
+import {
+  projectileMuzzlePosition,
+  type ProjectileMuzzleFrame,
+} from "./projectileMuzzle";
+import {
+  isPointSubmergedSimple,
+  liquidLabel,
+  stillWaterAt,
+} from "../collision/waterLevel";
 import {
   linearProjectileClassNames,
   ballisticProjectileClassNames,
@@ -79,8 +106,12 @@ import {
   resolveBoltVisual,
   resolveBeamVisual,
   resolveLinkBeamVisual,
+  resolveTargetBeamVisual,
   resolveShockLanceVisual,
   resolveSpriteVisual,
+  targetBeamWarpDuration,
+  targetBeamWarpProgress,
+  TARGET_BEAM_PLAYER_WARP_SEC,
   parseWeaponImageStates,
   stripTaggedStringMarkup,
   detectColorCode,
@@ -168,6 +199,11 @@ const MAX_SERVER_EVENTS = 2000;
 
 /** Scratch segment end for advanceItems' swept casts (not retained). */
 const _itemCastEnd: [number, number, number] = [0, 0, 0];
+const linearTickStart: Point3 = [0, 0, 0];
+const linearTickEnd: Point3 = [0, 0, 0];
+
+// Projectile::onAdd seeds 7; processTick decrements before collision.
+const LINEAR_SOURCE_GRACE_TICKS = 6;
 
 export type { Vec3 };
 
@@ -248,9 +284,19 @@ export interface MutableEntity extends Omit<
   projActivateDelayMS?: number;
   /** Link beams (ELF/repair): the target's ghost index. */
   linkTargetGhostIndex?: number;
+  /** Beam endpoint lifetimes resolved from the last network update. */
+  beamSourceId?: string | null;
+  beamTargetId?: string | null;
   /** Precomputed flight segment for linear projectiles (Torque model:
    *  one static-world raycast at spawn, closed-form position per tick). */
   linearSegment?: LinearSegment;
+  /** Packet launch parameters, before the tick's collision world is ready. */
+  linearLaunch?: Omit<Parameters<typeof buildLinearSegment>[0], "wetStart">;
+  linearLaunchWarp?: LinearLaunchWarp;
+  linearDynamicHits?: boolean;
+  linearTickStart?: Point3;
+  /** Bound at scope-in so a reused ghost slot is never mistaken for the shooter. */
+  linearExclusions?: { sourceId?: string; vehicleId?: string };
   /** Grenade-family bounce parameters resolved from the datablock. */
   projElasticity?: number;
   projFriction?: number;
@@ -268,6 +314,10 @@ export interface MutableEntity extends Omit<
    *  When set, the entity's rendered position is derived from the mount
    *  target's transform, not from its own ghost position. */
   mountObjectGhostIndex?: number;
+  /** Bound mount lifetime, independent of the reusable wire ghost slot. */
+  mountParentId?: string | null;
+  /** The image and control turret aim belonging to this specific shot. */
+  linearMuzzle?: ProjectileMuzzleFrame;
   /** Active fade animation state. Set when CloakMask fading=true. */
   fadeState?: { fadeOut: boolean; fadeTime: number; elapsed: number };
   /** Whether the cloak is active (mCloaked). */
@@ -327,6 +377,10 @@ export abstract class StreamEngine implements StreamingPlayback {
   private readonly projectileListeners = new Set<
     (event: ProjectileLifecycleEvent) => void
   >();
+  private projectileShapeLoader?: ProjectileShapeLoader;
+  private projectileShapeWait?: Promise<void>;
+  private pendingLinearLaunches: MutableEntity[] = [];
+  protected pendingProjectileEvents?: ProjectileLifecycleEvent[];
   private projectileGhostBatch?: {
     finish?: (() => void)[];
     hydrating: boolean;
@@ -896,6 +950,62 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.projectileListeners.add(listener);
     return () => this.projectileListeners.delete(listener);
   }
+  setProjectileShapeLoader(loader: ProjectileShapeLoader | undefined): void {
+    this.projectileShapeLoader = loader;
+    this.projectileShapeWait = undefined;
+  }
+
+  get projectileAssetWait(): Promise<void> | undefined {
+    return this.projectileShapeWait;
+  }
+
+  /** Load only the shapes needed to predict flights active in this tick. */
+  protected prepareProjectileAssets(): Promise<void> | undefined {
+    if (!this.projectileShapeLoader) return;
+    const names = new Set<string>();
+    const add = (entity: MutableEntity) => {
+      const shape = entity.shapeHint ?? entity.dataBlock;
+      if (shape) names.add(shape);
+    };
+    let dynamicHits = false;
+    for (const flight of this.entities.values()) {
+      if (
+        (!flight.linearSegment && !flight.linearLaunch) ||
+        !flight.position ||
+        flight.hasExploded
+      )
+        continue;
+      dynamicHits ||= this.usesDynamicProjectileHits(flight);
+      if (
+        (!flight.linearLaunch && !flight.linearLaunchWarp) ||
+        flight.spawnTick !== this.tickCount
+      )
+        continue;
+      const id = flight.linearExclusions?.sourceId;
+      const source = id ? this.entities.get(id) : undefined;
+      const image = flight.linearMuzzle
+        ? flight.linearMuzzle.image
+        : flight.sourceSlot != null
+          ? source?.imageSlots?.[flight.sourceSlot]
+          : undefined;
+      if (!source || !image) continue;
+      names.add(image.shapeName);
+      add(source);
+      for (const parent of this.projectileMountParents(source)) add(parent);
+    }
+    if (dynamicHits) {
+      for (const entity of this.entities.values()) {
+        if (!this.canTakeProjectileHit(entity)) continue;
+        if (entity.type !== "Player") add(entity);
+        for (const parent of this.projectileMountParents(entity)) add(parent);
+      }
+    }
+    this.projectileShapeWait = prepareProjectileShapes(
+      names,
+      this.projectileShapeLoader,
+    );
+    return this.projectileShapeWait;
+  }
   abstract stepToTime(
     targetTimeSec: number,
     maxMoveTicks?: number,
@@ -1041,13 +1151,61 @@ export abstract class StreamEngine implements StreamingPlayback {
           : undefined,
       })) ?? null;
     this.entities = new Map();
+    this.pendingLinearLaunches.length = 0;
+    this.projectileShapeWait = undefined;
     this.imageAnimations = new Map();
+    const restoreGhostReference = (
+      id: string | null | undefined,
+      index: number | undefined,
+    ) => {
+      const saved =
+        id === undefined && index != null
+          ? state.entityIdByGhostIndex.get(index)
+          : id;
+      return saved ? (ids.get(saved) ?? null) : null;
+    };
     for (const [oldId, mutable] of state.entities) {
       const entity: MutableEntity = {
         ...mutable,
         ...checkpoint.shared.get(oldId),
         id: ids.get(oldId)!,
       };
+      if (entity.projectilePhysics === "linear" && entity.hasExploded) {
+        entity.position = undefined;
+        entity.simulatedVelocity = undefined;
+      } else if (
+        entity.linearLaunch ||
+        (entity.linearLaunchWarp && entity.spawnTick === this.tickCount)
+      ) {
+        this.pendingLinearLaunches.push(entity);
+      }
+      const linkBeam = entity.visual?.kind === "linkBeam";
+      if (entity.targetBeam || linkBeam || entity.beamSourceId !== undefined)
+        entity.beamSourceId = restoreGhostReference(
+          entity.beamSourceId,
+          entity.sourceGhostIndex,
+        );
+      if (linkBeam || entity.beamTargetId !== undefined)
+        entity.beamTargetId = restoreGhostReference(
+          entity.beamTargetId,
+          entity.linkTargetGhostIndex,
+        );
+      if (entity.mountObjectGhostIndex != null)
+        entity.mountParentId = restoreGhostReference(
+          entity.mountParentId,
+          entity.mountObjectGhostIndex,
+        );
+      const exclusions = entity.linearExclusions;
+      if (exclusions) {
+        entity.linearExclusions = {
+          sourceId: exclusions.sourceId
+            ? ids.get(exclusions.sourceId)
+            : undefined,
+          vehicleId: exclusions.vehicleId
+            ? ids.get(exclusions.vehicleId)
+            : undefined,
+        };
+      }
       entity.pendingWeather = entity.pendingWeather?.map((update) =>
         "strike" in update
           ? {
@@ -1082,12 +1240,24 @@ export abstract class StreamEngine implements StreamingPlayback {
           images.map((saved, i) => {
             const slot = entity.imageSlots?.[i];
             if (!saved || !slot?.imageStates) return undefined;
-            const image = new ImageAnimation(
-              slot.imageStates,
-              saved.timeSec,
-              0,
-            );
-            image.restoreState(saved);
+            // Refresh older checkpoints' cached state tables from the
+            // parser's corrected datablock flags.
+            let states = slot.imageStates;
+            if (states[0]?.shockwave === undefined) {
+              const block = this.getDataBlockData(slot.dataBlockId);
+              if (block) states = parseWeaponImageStates(block) ?? states;
+            }
+            const migrated = states !== slot.imageStates;
+            const image = new ImageAnimation(states, saved.timeSec, 0);
+            image.restoreState(saved, migrated);
+            if (migrated) {
+              entity.imageSlots = [...entity.imageSlots!];
+              entity.imageSlots[i] = {
+                ...slot,
+                imageStates: states,
+                animation: image.current,
+              };
+            }
             return image;
           }),
         );
@@ -1143,6 +1313,8 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.groundLifetimeData.clear();
     this.ambientEmitterData.clear();
     this.entities.clear();
+    this.pendingLinearLaunches.length = 0;
+    this.projectileShapeWait = undefined;
     this.imageAnimations.clear();
     this.entityIdByGhostIndex.clear();
     this.entityGeneration++;
@@ -1604,13 +1776,56 @@ export abstract class StreamEngine implements StreamingPlayback {
   }
 
   private publishProjectileEvent(event: ProjectileLifecycleEvent): void {
+    if (this.pendingProjectileEvents) {
+      this.pendingProjectileEvents.push(event);
+      return;
+    }
     for (const listener of this.projectileListeners) listener(event);
   }
 
-  private projectileSource(ghostIndex: number | undefined) {
+  protected flushProjectileEvents(): void {
+    const events = this.pendingProjectileEvents;
+    this.pendingProjectileEvents = undefined;
+    for (const event of events ?? []) this.publishProjectileEvent(event);
+  }
+
+  private projectileSource(
+    ghostIndex: number | undefined,
+    boundId?: string | null,
+  ) {
+    if (boundId !== undefined)
+      return boundId ? this.entities.get(boundId) : undefined;
     if (ghostIndex == null) return undefined;
     const id = this.entityIdByGhostIndex.get(ghostIndex);
     return id == null ? undefined : this.entities.get(id);
+  }
+
+  private bindBeamEndpoint(
+    entity: MutableEntity,
+    endpoint: "source" | "target",
+  ): MutableEntity | undefined {
+    const indexKey =
+      endpoint === "source" ? "sourceGhostIndex" : "linkTargetGhostIndex";
+    const idKey = endpoint === "source" ? "beamSourceId" : "beamTargetId";
+    const index = entity[indexKey];
+    const source = this.projectileSource(index);
+    entity[idKey] = source?.id ?? null;
+    if (!source && index != null && this.projectileGhostBatch) {
+      // An initial snapshot or packet can list the beam before its endpoint.
+      this.completeProjectileEvent(() => {
+        if (entity[indexKey] === index && entity[idKey] === null)
+          entity[idKey] = this.projectileSource(index)?.id ?? null;
+      });
+    }
+    return source;
+  }
+
+  private visibleBeamEndpoint(
+    id: string | null | undefined,
+    index: number | undefined,
+  ): string | undefined {
+    if (id !== undefined) return id && this.entities.has(id) ? id : undefined;
+    return index == null ? undefined : this.entityIdByGhostIndex.get(index);
   }
 
   private captureProjectileSourceName(
@@ -1623,12 +1838,31 @@ export abstract class StreamEngine implements StreamingPlayback {
       (source.className === "Turret" ? "Turret" : undefined);
   }
 
+  private captureProjectileMuzzle(
+    source: MutableEntity,
+    slot: number | undefined,
+  ): ProjectileMuzzleFrame {
+    if (source.className === "Turret" && this.nestedControlEntity() === source)
+      this.syncControlTurret(source);
+    return {
+      image: slot == null ? undefined : source.imageSlots?.[slot],
+      turretAim: source.turretAim,
+    };
+  }
+
   private noteProjectileSpawn(projectile: MutableEntity, data?: ParsedData) {
     // Catch-up copies previously merged ghosts. Their source slots can have
     // changed occupants since the shot, so they cannot identify a new flight.
     if (this.projectileGhostBatch?.hydrating) return;
     const sourceIndex = projectile.sourceGhostIndex;
     const source = this.projectileSource(sourceIndex);
+    const linear = projectile.linearLaunch ?? projectile.linearSegment;
+    const vehicleIndex = getNumberField(data, ["vehicleObject"]);
+    const vehicle = linear ? this.projectileSource(vehicleIndex) : undefined;
+    const muzzle =
+      linear && source
+        ? this.captureProjectileMuzzle(source, projectile.sourceSlot)
+        : undefined;
     if (source) this.captureProjectileSourceName(projectile, source);
     const spawn =
       this.projectileListeners.size > 0 &&
@@ -1636,10 +1870,11 @@ export abstract class StreamEngine implements StreamingPlayback {
       !projectile.hasExploded;
     const pendingSource =
       !source && sourceIndex != null && this.projectileGhostBatch;
-    if (!spawn && !pendingSource) return;
+    if (!spawn && !pendingSource && !linear) return;
     const timeSec = this.getTimeSec();
     const age = data?.currTick;
     const direction =
+      linear?.vel ??
       projectile.simulatedVelocity ??
       projectile.velocity ??
       projectile.direction;
@@ -1647,6 +1882,30 @@ export abstract class StreamEngine implements StreamingPlayback {
       const samePacketSource = source ?? this.projectileSource(sourceIndex);
       if (!source && samePacketSource)
         this.captureProjectileSourceName(projectile, samePacketSource);
+      if (
+        linear &&
+        this.entities.get(projectile.id) === projectile &&
+        projectile.position &&
+        !projectile.hasExploded
+      ) {
+        projectile.linearExclusions = {
+          sourceId: samePacketSource?.id,
+          vehicleId: (vehicle ?? this.projectileSource(vehicleIndex))?.id,
+        };
+        if (
+          samePacketSource &&
+          this.entities.has(samePacketSource.id) &&
+          projectile.sourceSlot != null &&
+          projectile.sourceSlot >= 0
+        ) {
+          projectile.linearMuzzle =
+            muzzle ??
+            this.captureProjectileMuzzle(
+              samePacketSource,
+              projectile.sourceSlot,
+            );
+        }
+      }
       if (spawn)
         this.publishProjectileEvent({
           type: "spawn",
@@ -1688,16 +1947,28 @@ export abstract class StreamEngine implements StreamingPlayback {
         ? prevEntity.targetId
         : undefined;
 
-    // Scope loss and slot replacement both terminate the original flight.
+    // Scope loss and slot replacement end tracking. Only a flight that
+    // already reached its simulated endpoint can produce a local impact.
     if (
       prevEntity?.type === "Projectile" &&
       !prevEntity.hasExploded &&
       prevEntity.position &&
       ghost.type !== "update"
     ) {
-      if (prevEntity.explosionDataBlockId != null)
-        this.spawnExplosion(prevEntity, [...prevEntity.position]);
-      else this.endProjectileFlight(prevEntity, prevEntity.position);
+      // An aged ghost can be removed before we get its first tick. Preserve
+      // its terminal outcome using the collision geometry available now.
+      if (prevEntity.projAgeTicks) this.initializeLinearFlight(prevEntity);
+      const segment = prevEntity.linearSegment;
+      const end = segment?.next ?? segment;
+      if (
+        end &&
+        (prevEntity.projAgeTicks ?? 0) * TICK_DURATION_MS >= end.msEnd
+      ) {
+        // The server can delete the ghost during its final render interval.
+        this.finishLinearFlight(prevEntity, end);
+      } else {
+        this.endProjectileFlight(prevEntity, prevEntity.position);
+      }
     }
 
     if (ghost.type === "delete") {
@@ -1909,16 +2180,17 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   /** ProcessList::advanceObjects: one 32 ms tick, regardless of packet source. */
   protected processTick(): void {
+    if (!this.matchEnded) this.sampleProjectileLaunches();
     this.tickCount++;
     // The viewer holds the final scene at MissionEnd while transport keeps
     // consuming the debrief and next mission. This is a viewer pause policy.
     if (this.matchEnded) return;
     this.debrisHistory.prune(this.getTimeSec());
     this.lightningHistory.prune(this.getTimeSec());
-    this.advanceProjectiles();
     this.advanceItems();
     this.advanceControlVehicle();
     this.advancePlayers();
+    this.advanceProjectiles();
     this.lastClientMoveId = this.nextPlayerMoveId;
     this.advanceFades();
     this.advanceShapeAnimations();
@@ -2090,7 +2362,16 @@ export abstract class StreamEngine implements StreamingPlayback {
     precipitationSeed?: PrecipitationState,
   ): void {
     if (!rawData) return;
+    // Retail leaves an exploded linear ghost hidden until it leaves scope,
+    // including when its final server update arrives after a predicted hit.
+    if (entity.projectilePhysics === "linear" && entity.hasExploded) return;
     const data = rawData;
+    if (
+      (entity.linearSegment || entity.linearLaunch) &&
+      !isValidPosition(data.explodePosition as Vec3) &&
+      !isValidPosition(data.explodePoint as Vec3)
+    )
+      return; // A repeated initial update cannot restart an existing flight.
 
     const dataBlockId = data.dataBlockId as number | undefined;
     if (dataBlockId != null) {
@@ -2101,6 +2382,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         resolveTracerVisual(entity.className, blockData) ??
         resolveBoltVisual(entity.className, blockData) ??
         resolveBeamVisual(entity.className, blockData) ??
+        resolveTargetBeamVisual(entity.className, blockData) ??
         resolveLinkBeamVisual(entity.className, blockData) ??
         resolveShockLanceVisual(entity.className, blockData) ??
         resolveSpriteVisual(entity.className, blockData);
@@ -2521,18 +2803,21 @@ export abstract class StreamEngine implements StreamingPlayback {
 
     // Link beams (ELF/repair): shooter and zapped/repaired object, by
     // ghost index — the endpoints are LIVE and re-derived per frame.
-    if (
+    const isLinkBeam =
       entity.className === "ELFProjectile" ||
-      entity.className === "RepairProjectile" ||
-      entity.className === "ShockLanceProjectile"
-    ) {
-      if (typeof data.sourceObject === "number" && data.sourceObject >= 0) {
-        entity.sourceGhostIndex = data.sourceObject;
+      entity.className === "RepairProjectile";
+    if (isLinkBeam || entity.className === "ShockLanceProjectile") {
+      if (typeof data.sourceObject === "number") {
+        entity.sourceGhostIndex =
+          data.sourceObject >= 0 ? data.sourceObject : undefined;
+        if (data.sourceObject < 0) entity.sourceSlot = undefined;
+        if (isLinkBeam) this.bindBeamEndpoint(entity, "source");
       }
       const target = (data.targetObject ?? data.repairingObject) as
         number | undefined;
-      if (typeof target === "number" && target >= 0) {
-        entity.linkTargetGhostIndex = target;
+      if (typeof target === "number") {
+        entity.linkTargetGhostIndex = target >= 0 ? target : undefined;
+        if (isLinkBeam) this.bindBeamEndpoint(entity, "target");
       }
     }
 
@@ -2548,15 +2833,77 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (typeof data.hitObject === "boolean") entity.beamHit = data.hitObject;
     }
 
-    // Beam endpoints (SniperProjectile): the ghost carries the muzzle
-    // and the impact point; swing updates move the endpoint.
-    if (entity.className === "SniperProjectile") {
+    // Both beam ghosts carry the muzzle and end point. A swing with a scoped
+    // shooter gives us the image slot in place of the muzzle position.
+    if (
+      entity.className === "SniperProjectile" ||
+      entity.className === "TargetProjectile"
+    ) {
       const start = data.initialPosition as Vec3 | undefined;
       const end = data.endPos as Vec3 | undefined;
+      const targeting = entity.className === "TargetProjectile";
       if (isValidPosition(start)) {
         entity.beamStart = [start!.x, start!.y, start!.z];
       }
-      if (isValidPosition(end)) entity.beamEnd = [end!.x, end!.y, end!.z];
+      if (targeting) {
+        // Older checkpoints saved the muzzle as the ghost position and have
+        // no visual. Recover the effect when the next swing supplies its end.
+        entity.beamStart ??= entity.position;
+        entity.position = undefined;
+        if (entity.dataBlockId != null) {
+          entity.visual ??= resolveTargetBeamVisual(
+            entity.className,
+            this.getDataBlockData(entity.dataBlockId),
+          );
+        }
+      }
+      if (isValidPosition(end)) {
+        const previous = entity.beamEnd;
+        entity.beamEnd = [end!.x, end!.y, end!.z];
+        if (targeting) {
+          // An unscoped packet replaces the muzzle and clears the shooter.
+          if (typeof data.sourceObject !== "number" || data.sourceObject < 0) {
+            entity.sourceGhostIndex = undefined;
+            entity.sourceSlot = undefined;
+          }
+          const source = this.bindBeamEndpoint(entity, "source");
+          const clientOwned = data.clientOwned === true;
+          const priorWarp = entity.targetBeam?.warp;
+          const startedAtSec = this.getTimeSec();
+          let from = previous;
+          if (!clientOwned && previous && priorWarp) {
+            const t = targetBeamWarpProgress(
+              priorWarp.startedAtSec,
+              startedAtSec,
+              priorWarp.durationSec,
+            );
+            const old = priorWarp.from;
+            from = [
+              old[0] + (previous[0] - old[0]) * t,
+              old[1] + (previous[1] - old[1]) * t,
+              old[2] + (previous[2] - old[2]) * t,
+            ];
+          }
+          entity.targetBeam = {
+            clientOwned,
+            warp:
+              !clientOwned && from
+                ? {
+                    from,
+                    startedAtSec,
+                    durationSec:
+                      source?.type === "Player"
+                        ? TARGET_BEAM_PLAYER_WARP_SEC
+                        : targetBeamWarpDuration(
+                            from,
+                            entity.beamEnd,
+                            entity.beamStart,
+                          ),
+                  }
+                : undefined,
+          };
+        }
+      }
     }
 
     // Rotation
@@ -2703,24 +3050,18 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
 
     // Projectile simulation velocity
-    if (entity.projectilePhysics) {
-      if (entity.projectilePhysics === "linear") {
+    const hiddenLinearGhost =
+      entity.projectilePhysics === "linear" && data.hidden === true;
+    if (entity.projectilePhysics && !hiddenLinearGhost) {
+      if (
+        entity.projectilePhysics === "linear" &&
+        entity.position &&
+        entity.linearSegment == null
+      ) {
         const blockData =
           entity.dataBlockId != null
             ? this.getDataBlockData(entity.dataBlockId)
             : undefined;
-        // LinearProjectile::createSegments picks the muzzle speed from
-        // whether the FIRE POINT was underwater — dryVelocity or
-        // wetVelocity. The gap is large (disc 95 vs 55, chaingun 750 vs
-        // 280), so using dry unconditionally sends underwater shots
-        // flying at nearly double speed.
-        const wetStart =
-          entity.position != null &&
-          isPointSubmergedSimple(
-            entity.position[0],
-            entity.position[1],
-            entity.position[2],
-          );
         const dryVelocity =
           getNumberField(blockData, [
             "dryVelocity",
@@ -2728,11 +3069,6 @@ export abstract class StreamEngine implements StreamingPlayback {
             "bulletVelocity",
           ]) ?? 80;
         const wetVelocity = getNumberField(blockData, ["wetVelocity"]);
-        // The engine treats wetVelocity -1 as "unset".
-        const muzzle =
-          wetStart && wetVelocity != null && wetVelocity > 0
-            ? wetVelocity
-            : dryVelocity;
         const dir = entity.direction ?? [0, 1, 0];
         const excessVel = data.excessVel as number | undefined;
         const excessDir = data.excessDir as Vec3 | undefined;
@@ -2756,41 +3092,25 @@ export abstract class StreamEngine implements StreamingPlayback {
           }
           return v;
         };
-        entity.simulatedVelocity = compose(muzzle);
-        // The engine orients the shape along the segment velocity every
-        // frame (LinearProjectile::interpolateTick), so the inherited
-        // shooter velocity turns the shape with the path, not the aim.
-        entity.rotation =
-          orientationAlongDirection(entity.simulatedVelocity) ??
-          entity.rotation;
-
-        // Precompute the flight segment against the static world, exactly
-        // like LinearProjectile::createSegments — one raycast covering the
-        // whole lifetime, cut short at the first hit. The demo carries only
-        // initial pos/dir; the impact must be predicted client-side.
-        if (entity.position && entity.linearSegment == null) {
-          // lifetimeMS/explodeOnDeath are binary-verified field names in
-          // t2-demo-parser's LinearProjectileData decode (milliseconds,
-          // tick-rounded by the engine's onAdd — disc 5024, chaingun 3008).
-          entity.linearSegment = buildLinearSegment({
-            start: [...entity.position] as [number, number, number],
-            vel: [...entity.simulatedVelocity] as [number, number, number],
-            lifetimeMS: getNumberField(blockData, ["lifetimeMS"]) ?? 1000,
-            explodeOnDeath: isTruthyField(blockData?.explodeOnDeath),
-            explodeOnWaterImpact: isTruthyField(
-              blockData?.explodeOnWaterImpact,
-            ),
-            wetStart,
-            wetVel:
-              wetVelocity != null && wetVelocity > 0
-                ? compose(wetVelocity)
-                : undefined,
-            reflectOnWaterImpactAngle: getNumberField(blockData, [
-              "reflectOnWaterImpactAngle",
-            ]),
-          });
-        }
-      } else if (isVec3Like(data.velocity)) {
+        entity.linearLaunch = {
+          start: entity.position,
+          vel: compose(dryVelocity),
+          lifetimeMS: getNumberField(blockData, ["lifetimeMS"]) ?? 1000,
+          explodeOnDeath: isTruthyField(blockData?.explodeOnDeath),
+          explodeOnWaterImpact: isTruthyField(blockData?.explodeOnWaterImpact),
+          wetVel:
+            wetVelocity != null && wetVelocity > 0
+              ? compose(wetVelocity)
+              : undefined,
+          reflectOnWaterImpactAngle: getNumberField(blockData, [
+            "reflectOnWaterImpactAngle",
+          ]),
+        };
+        this.pendingLinearLaunches.push(entity);
+      } else if (
+        entity.projectilePhysics !== "linear" &&
+        isVec3Like(data.velocity)
+      ) {
         entity.simulatedVelocity = [
           data.velocity.x,
           data.velocity.y,
@@ -2810,13 +3130,6 @@ export abstract class StreamEngine implements StreamingPlayback {
         entity.projAgeTicks = currTick;
       }
       if (entity.projAgeTicks == null) entity.projAgeTicks = 0;
-      if (entity.linearSegment && entity.position) {
-        linearSegmentPosition(
-          entity.linearSegment,
-          entity.projAgeTicks * TICK_DURATION_MS,
-          entity.position,
-        );
-      }
     }
 
     if (entity.type === "Projectile" && !entity.hasExploded) {
@@ -2840,6 +3153,7 @@ export abstract class StreamEngine implements StreamingPlayback {
           entity,
           [explodePos.x, explodePos.y, explodePos.z],
           isValidPosition(normal) ? [normal.x, normal.y, normal.z] : undefined,
+          hiddenLinearGhost,
         );
       }
     }
@@ -2920,6 +3234,18 @@ export abstract class StreamEngine implements StreamingPlayback {
         // Mounting on a vehicle/object; a mounted player's
         // pickActionAnimation keeps a non-table action.
         entity.mountObjectGhostIndex = data.mountObject;
+        const parentIndex = data.mountObject;
+        entity.mountParentId = this.projectileSource(parentIndex)?.id ?? null;
+        if (entity.mountParentId === null && this.projectileGhostBatch) {
+          this.completeProjectileEvent(() => {
+            if (
+              entity.mountObjectGhostIndex === parentIndex &&
+              entity.mountParentId === null
+            )
+              entity.mountParentId =
+                this.projectileSource(parentIndex)?.id ?? null;
+          });
+        }
         entity.mountNode =
           typeof data.mountNode === "number" ? data.mountNode : 0;
         entity.actionSlot = parkActionSlot(
@@ -2931,6 +3257,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         // Player::onUnmount (0x5d6450) sets RootAnim, a table action the
         // server never sends: the client's movement pick owns the slot.
         entity.mountObjectGhostIndex = undefined;
+        entity.mountParentId = undefined;
         entity.mountNode = undefined;
         entity.actionSlot = undefined;
       }
@@ -3116,15 +3443,35 @@ export abstract class StreamEngine implements StreamingPlayback {
     projectile: MutableEntity,
     position: [number, number, number],
     normal: [number, number, number] = [0, 0, 1],
+    hiddenLinearGhost = false,
   ): void {
     projectile.hasExploded = true;
-    if (projectile.explosionDataBlockId != null) {
-      this.addExplosion(
-        projectile.explosionDataBlockId,
-        position,
-        this.tickCount,
-        normal,
-      );
+    let explosionId = projectile.explosionDataBlockId;
+    // An already-exploded initial ghost uses the regular effect via
+    // LinearProjectile::onAdd (Tribes2.exe 0x62d630).
+    if (
+      !hiddenLinearGhost &&
+      projectile.projectilePhysics === "linear" &&
+      projectile.dataBlockId != null
+    ) {
+      const block = this.getDataBlockData(projectile.dataBlockId);
+      const underwater = getNumberField(block, ["underwaterExplosion"]);
+      if (underwater != null && underwater > 0) {
+        // LinearProjectile::explode (Tribes2.exe 0x62dc30) only uses the
+        // underwater explosion below depthTolerance, measured in still water.
+        const water = stillWaterAt(...position);
+        const depthTolerance = getNumberField(block, ["depthTolerance"]) ?? 5;
+        if (
+          water &&
+          liquidLabel(water.liquidType) !== "lava" &&
+          water.surfaceZ - position[2] >= depthTolerance
+        ) {
+          explosionId = underwater;
+        }
+      }
+    }
+    if (explosionId != null) {
+      this.addExplosion(explosionId, position, this.tickCount, normal);
     }
 
     this.endProjectileFlight(projectile, position);
@@ -3136,6 +3483,9 @@ export abstract class StreamEngine implements StreamingPlayback {
   ) {
     projectile.position = undefined;
     projectile.simulatedVelocity = undefined;
+    projectile.linearTickStart = undefined;
+    projectile.linearLaunch = undefined;
+    projectile.linearMuzzle = undefined;
     if (!this.projectileListeners.size || this.projectileGhostBatch?.hydrating)
       return;
     const event: ProjectileLifecycleEvent = {
@@ -3330,15 +3680,192 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   // ── Per-tick physics simulation ──
 
+  private updateProjectileVelocity(
+    entity: MutableEntity,
+    velocity: [number, number, number],
+  ) {
+    if (!worldAlignedProjectileClassNames.has(entity.className)) {
+      entity.rotation = orientationAlongDirection(velocity) ?? entity.rotation;
+    }
+    entity.velocity = [...velocity];
+    // TracerProjectile draws its ribbon along mInitialDirection (0x6406c0).
+    if (entity.direction && entity.className !== "TracerProjectile")
+      entity.direction = entity.velocity;
+  }
+
+  private finishLinearFlight(entity: MutableEntity, end: LinearSegment): void {
+    if (end.explodeAtEnd && !entity.hasExploded) {
+      this.spawnExplosion(entity, [...end.endPoint], [...end.endNormal]);
+    } else {
+      this.endProjectileFlight(entity, end.endPoint);
+    }
+  }
+
+  protected resolveMountParent(entity: MutableEntity) {
+    return this.projectileSource(
+      entity.mountObjectGhostIndex,
+      entity.mountParentId,
+    );
+  }
+
+  private *projectileMountParents(entity: MutableEntity) {
+    const seen = new Set([entity.id]);
+    for (
+      let parent = this.resolveMountParent(entity);
+      parent && !seen.has(parent.id);
+      parent = this.resolveMountParent(parent)
+    ) {
+      seen.add(parent.id);
+      yield parent;
+    }
+  }
+
+  private usesDynamicProjectileHits(entity: MutableEntity): boolean {
+    return (entity.linearDynamicHits ??=
+      entity.dataBlockId != null &&
+      this.getDataBlockData(entity.dataBlockId)?.doDynamicClientHits === true);
+  }
+
+  private canTakeProjectileHit(
+    entity: MutableEntity,
+    data = entity.dataBlockId == null
+      ? undefined
+      : this.getDataBlockData(entity.dataBlockId),
+  ): boolean {
+    return (
+      !entity.destroyedHidden &&
+      isProjectileCollisionTarget(
+        entity.className,
+        getNumberField(data, ["dynamicTypeField"]),
+        entity.damageState,
+      )
+    );
+  }
+
+  private *projectileCollisionTargets(
+    poses: ProjectileShapePoses,
+  ): Iterable<ProjectileCollisionTarget> {
+    for (const entity of this.entities.values()) {
+      const data =
+        entity.dataBlockId == null
+          ? undefined
+          : this.getDataBlockData(entity.dataBlockId);
+      if (!this.canTakeProjectileHit(entity, data)) continue;
+      const boxSize = data?.boxSize as Vec3 | undefined;
+      const shape =
+        entity.type === "Player"
+          ? undefined
+          : getProjectileShapeAsset(entity.shapeHint ?? entity.dataBlock);
+      const volume = shape
+        ? { kind: "shape" as const, shape }
+        : entity.type === "Player" &&
+          isValidPosition(boxSize) && { kind: "player" as const, boxSize };
+      if (!volume) continue;
+      const matrixWorld = poses.get(entity);
+      if (matrixWorld)
+        yield {
+          ...volume,
+          id: entity.id,
+          matrixWorld,
+          mountedVehicleIds: getMountedVehicleIds(entity, (mounted) =>
+            this.resolveMountParent(mounted),
+          ),
+        };
+    }
+  }
+
+  protected resolveProjectileMuzzle(
+    source: MutableEntity,
+    slot: number,
+    poses: ProjectileShapePoses,
+    launch?: ProjectileMuzzleFrame,
+  ): Point3 | undefined {
+    const block =
+      source.dataBlockId == null
+        ? undefined
+        : this.getDataBlockData(source.dataBlockId);
+    const shapeName = source.shapeHint ?? source.dataBlock;
+    return projectileMuzzlePosition(
+      source,
+      slot,
+      poses,
+      (this.tickCount * TICK_DURATION_MS) / 1000,
+      getNumberField(block, ["maxLookAngle"]),
+      source.type === "Player" && shapeName
+        ? this.getShapeConstructorSequences(shapeName)
+        : undefined,
+      launch,
+    );
+  }
+
+  private sampleProjectileLaunches(): void {
+    let poses: ProjectileShapePoses | undefined;
+    for (const flight of this.pendingLinearLaunches) {
+      if (!flight.position || this.entities.get(flight.id) !== flight) continue;
+      this.initializeLinearFlight(flight);
+      const firingMuzzle = flight.linearMuzzle;
+      flight.linearMuzzle = undefined;
+      const sourceId = flight.linearExclusions?.sourceId;
+      const source = sourceId ? this.entities.get(sourceId) : undefined;
+      if (!source || !flight.linearLaunchWarp || flight.sourceSlot == null)
+        continue;
+      poses ??= new ProjectileShapePoses((index, id) =>
+        this.projectileSource(index, id),
+      );
+      const muzzle = this.resolveProjectileMuzzle(
+        source,
+        flight.sourceSlot,
+        poses,
+        firingMuzzle,
+      );
+      if (muzzle) flight.linearLaunchWarp.start = muzzle;
+    }
+    this.pendingLinearLaunches.length = 0;
+  }
+
+  private initializeLinearFlight(flight: MutableEntity): void {
+    const launch = flight.linearLaunch;
+    if (!launch || !flight.position) return;
+    flight.linearLaunch = undefined;
+    // Resolve the whole flight against the prepared world. Before this tick
+    // a newly scoped terrain, interior or water plane may still be loading.
+    const wetStart = isPointSubmergedSimple(...launch.start);
+    const segment = (flight.linearSegment = buildLinearSegment({
+      ...launch,
+      wetStart,
+      vel: wetStart ? (launch.wetVel ?? launch.vel) : launch.vel,
+    }));
+    const age = flight.projAgeTicks ?? 0;
+    flight.simulatedVelocity = sampleLinearSegment(
+      segment,
+      age * TICK_DURATION_MS,
+      flight.position,
+    );
+    this.updateProjectileVelocity(flight, flight.simulatedVelocity);
+    if (
+      flight.linearExclusions?.sourceId &&
+      flight.sourceSlot != null &&
+      flight.sourceSlot >= 0
+    ) {
+      flight.linearLaunchWarp = createLinearLaunchWarp(
+        segment,
+        age,
+        segment.start,
+      );
+      flight.position = [...segment.start];
+    }
+  }
+
   /**
    * Advance projectile positions by one tick, mirroring the original
    * client's prediction: linear projectiles follow their precomputed
-   * segment and explode at its (already collision-cut) end; the grenade
+   * segments and explode at the final (already collision-cut) end; the grenade
    * family integrates with a swept ray, bouncing while unarmed; seekers
    * explode on the first static contact.
    */
   protected advanceProjectiles(): void {
     const dt = TICK_DURATION_MS / 1000;
+    let dynamicCollision: ProjectileDynamicCollision | undefined;
     for (const entity of this.entities.values()) {
       if (!entity.simulatedVelocity || !entity.position) continue;
       const v = entity.simulatedVelocity;
@@ -3347,28 +3874,64 @@ export abstract class StreamEngine implements StreamingPlayback {
 
       if (entity.linearSegment) {
         const seg = entity.linearSegment;
+        const end = seg.next ?? seg;
         const ms = entity.projAgeTicks * TICK_DURATION_MS;
-        if (ms >= seg.msEnd) {
+        // Retail processTick (0x62e010) waits for the start of the next
+        // interval to finish, so interpolation can reach the terminal point.
+        if (ms - TICK_DURATION_MS >= end.msEnd) {
+          this.finishLinearFlight(entity, end);
+        } else {
+          const scopeTick = this.tickCount - entity.spawnTick;
+          const warp = entity.linearLaunchWarp;
+          const exclusions = entity.linearExclusions;
+          const velocity = sampleLinearTick(
+            seg,
+            entity.projAgeTicks,
+            scopeTick,
+            warp,
+            linearTickStart,
+            linearTickEnd,
+          );
+          if (warp && scopeTick >= LINEAR_LAUNCH_WARP_TICKS)
+            entity.linearLaunchWarp = undefined;
+          // Retail tests the tick's actual path, including the initial warp.
+          const ignoreSource = scopeTick <= LINEAR_SOURCE_GRACE_TICKS;
+          // Old checkpoints and merged catch-up state have no trustworthy
+          // birth-time references. Wait out the grace period in that case.
           if (
-            seg.explodeAtEnd &&
-            !entity.hasExploded &&
-            entity.explosionDataBlockId != null
+            (!ignoreSource || exclusions) &&
+            this.usesDynamicProjectileHits(entity)
           ) {
-            this.spawnExplosion(entity, [...seg.endPoint], [...seg.endNormal]);
-          } else {
-            // Lifetime expired without an explosion (fizzle) — hide.
-            this.endProjectileFlight(entity, seg.endPoint);
+            dynamicCollision ??= new ProjectileDynamicCollision(
+              this.projectileCollisionTargets(
+                new ProjectileShapePoses((index, id) =>
+                  this.projectileSource(index, id),
+                ),
+              ),
+            );
+            const hit = dynamicCollision.cast(
+              linearTickStart,
+              linearTickEnd,
+              ignoreSource ? exclusions?.sourceId : undefined,
+              ignoreSource ? exclusions?.vehicleId : undefined,
+            );
+            if (hit) {
+              this.spawnExplosion(entity, hit.point, hit.normal);
+              continue;
+            }
           }
-          continue;
+          // Keep both endpoints of this tick for native interpolateTick
+          // (0x62eb20). The render history may lack the prior projectile.
+          entity.linearTickStart = [...linearTickStart];
+          [p[0], p[1], p[2]] = linearTickEnd;
+          if (velocity !== v) {
+            entity.simulatedVelocity = velocity;
+            this.updateProjectileVelocity(entity, velocity);
+          }
         }
-        linearSegmentPosition(seg, ms, p);
-        // The water leg has its own velocity; the engine re-orients the
-        // shape along whichever leg it is on (interpolateTick).
-        if (seg.next && ms > seg.msEnd) {
-          entity.rotation =
-            orientationAlongDirection(seg.next.vel) ?? entity.rotation;
-        }
-      } else if (
+        continue;
+      }
+      if (
         entity.projectilePhysics === "ballistic" ||
         entity.projectilePhysics === "seeker"
       ) {
@@ -3404,15 +3967,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         p[2] += v[2] * dt;
       }
 
-      if (!worldAlignedProjectileClassNames.has(entity.className)) {
-        entity.rotation = orientationAlongDirection(v) ?? entity.rotation;
-      }
-      // The rendered orientation follows the LIVE velocity — the engine's
-      // bolt render calls getVelocity() each frame (FUN_00696ed0), so a
-      // blaster bolt that mirror-bounces must re-aim its quad along the
-      // reflected direction, not the muzzle direction it was ghosted with.
-      entity.velocity = [v[0], v[1], v[2]];
-      if (entity.direction) entity.direction = entity.velocity;
+      this.updateProjectileVelocity(entity, v);
     }
   }
 
@@ -3535,11 +4090,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     turret: MutableEntity | undefined,
   ): Vec3 | undefined {
     if (!turret) return undefined;
-    const mountId =
-      turret.mountObjectGhostIndex != null
-        ? this.entityIdByGhostIndex.get(turret.mountObjectGhostIndex)
-        : undefined;
-    const mount = mountId ? this.entities.get(mountId) : undefined;
+    const mount = this.resolveMountParent(turret);
     const position = mount?.position ?? turret.position;
     if (!position) return undefined;
     const [x, y, z] = position;
@@ -4371,15 +4922,16 @@ export abstract class StreamEngine implements StreamingPlayback {
         sourceSlot: entity.sourceSlot,
         beamStart: entity.beamStart,
         beamEnd: entity.beamEnd,
+        targetBeam: entity.targetBeam,
         beamHit: entity.beamHit,
-        linkSourceId:
-          entity.sourceGhostIndex != null
-            ? this.entityIdByGhostIndex.get(entity.sourceGhostIndex)
-            : undefined,
-        linkTargetId:
-          entity.linkTargetGhostIndex != null
-            ? this.entityIdByGhostIndex.get(entity.linkTargetGhostIndex)
-            : undefined,
+        linkSourceId: this.visibleBeamEndpoint(
+          entity.beamSourceId,
+          entity.sourceGhostIndex,
+        ),
+        linkTargetId: this.visibleBeamEndpoint(
+          entity.beamTargetId,
+          entity.linkTargetGhostIndex,
+        ),
         className: entity.className,
         dataBlockId: entity.dataBlockId,
         shapeHint: entity.shapeHint,
@@ -4393,10 +4945,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         lightOnlyStatic: entity.lightOnlyStatic,
         lightAnchor: entity.lightAnchor,
         isStaticItem: entity.isStaticItem,
-        mountObjectId:
-          entity.mountObjectGhostIndex != null
-            ? this.entityIdByGhostIndex.get(entity.mountObjectGhostIndex)
-            : undefined,
+        mountObjectId: this.resolveMountParent(entity)?.id,
         mountNode: entity.mountNode,
         falling: entity.falling,
         jetting: entity.jetting,
@@ -4423,6 +4972,7 @@ export abstract class StreamEngine implements StreamingPlayback {
             : entity.position,
         rotation: entity.rotation,
         playerDelta: entity.playerDelta,
+        linearTickStart: entity.linearTickStart,
         scale: entity.scale,
         velocity: entity.velocity,
         particleEmitter: entity.particleEmitter,

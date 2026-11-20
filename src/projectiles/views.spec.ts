@@ -7,14 +7,20 @@ import {
   NormalBlending,
   PerspectiveCamera,
   Texture,
+  Vector3,
 } from "three";
 import { createTracerView, createSpriteView } from "./tracer";
 import { createBeamView } from "./beam";
+import { createShockLanceView } from "./shockLance";
 import { ProjectilePool } from "./ProjectilePool";
 import { effectLights } from "../engine/effectLights";
 import { streamClock } from "../state/streamPlaybackStore";
 import { applyStreamEntityPose } from "../stream/interpolateEntity";
-import type { TracerEntity, BeamEntity } from "../state/gameEntityTypes";
+import type {
+  TracerEntity,
+  BeamEntity,
+  ShockLanceEntity,
+} from "../state/gameEntityTypes";
 import type { StreamEntity } from "../stream/types";
 
 const camera = new PerspectiveCamera();
@@ -44,6 +50,37 @@ const tracer: TracerEntity = {
 };
 
 describe("projectile views", () => {
+  it.each([
+    { className: "TracerProjectile", start: 0, end: 2 },
+    { className: "EnergyProjectile", start: -1, end: 1 },
+  ])(
+    "draws $className around its interpolated render position",
+    ({ className, start, end }) => {
+      const visual = { ...tracer.visual, blur: undefined };
+      const view = createTracerView(visual, [new Texture(), new Texture()]);
+      const cameraParent = new Group();
+      const viewCamera = new PerspectiveCamera();
+      cameraParent.position.x = 10;
+      cameraParent.add(viewCamera);
+      viewCamera.position.set(0, 2, -10);
+      // The posed render root has moved away from the position in the last snapshot.
+      view.root.position.x = 10;
+      const [body, cross] = view.root.children as [Mesh, Mesh];
+      try {
+        view.update({ ...tracer, className, visual }, viewCamera, 0.016);
+        const vertices = body.geometry.getAttribute("position");
+        expect(vertices.getX(0)).toBeCloseTo(-visual.tracerWidth);
+        expect(vertices.getY(0)).toBe(0);
+        expect(vertices.getZ(0)).toBe(start);
+        expect(vertices.getZ(2)).toBe(end);
+        expect(cross.visible).toBe(true);
+        expect(cross.position.z).toBe((start + end) / 2);
+      } finally {
+        view.dispose();
+      }
+    },
+  );
+
   it.each([
     ["fizzle", { position: undefined }],
     ["explosion", { position: undefined, hasExploded: true }],
@@ -148,12 +185,15 @@ describe("projectile views", () => {
     view.dispose();
     expect(effectLights().size).toBe(before);
   });
-  it("keeps sniper alpha blending, fades the endpoint light and rewinds its texture/opacity", () => {
+  it("renders the pooled sniper beam and its light along the recorded shot, then fades them", async () => {
     const e: BeamEntity = {
       id: "laser",
       renderType: "Beam",
       className: "SniperProjectile",
       spawnTime: 0,
+      position: [5, 6, 7],
+      rotation: [Math.SQRT1_2, 0, 0, Math.SQRT1_2],
+      scale: [2, 2, 2],
       beamStart: [0, 0, 0],
       beamEnd: [10, 0, 0],
       visual: {
@@ -172,26 +212,99 @@ describe("projectile views", () => {
       e.visual,
       Array.from({ length: 11 }, () => new Texture()),
     );
-    view.reset(e);
+    const pool = new ProjectilePool(new Group(), async () => () => view);
+    const snapshot: StreamEntity = {
+      id: e.id,
+      type: "Projectile",
+      position: [7, 5, 6],
+      rotation: e.rotation,
+    };
+    pool.sync(new Map([[e.id, e]]));
+    await Promise.resolve();
     streamClock.time = 0.5;
-    view.update(e, camera, 0);
-    const mat = (view.root.children[0] as Mesh).material as MeshBasicMaterial;
-    expect(mat.blending).toBe(NormalBlending);
-    expect(mat.opacity).toBe(0.5);
-    const light = [...effectLights()].find((l) => l.anchor === view.root)!;
-    expect(light.intensity).toBe(0.5);
-    expect(light.offset.toArray()).toEqual([0, 0, 10]);
-    streamClock.time = 1;
-    view.update(e, camera, 0);
-    expect(view.root.visible).toBe(false);
-    expect(light.intensity).toBe(0);
-    view.release();
-    view.reset(e);
-    streamClock.time = 0.1;
-    view.update(e, camera, 0);
-    expect(view.root.visible).toBe(true);
-    expect(mat.opacity).toBe(0.9);
-    view.dispose();
+    try {
+      pool.prepare(0, (root, entity) =>
+        applyStreamEntityPose(root, entity, snapshot, snapshot, 1, camera),
+      );
+      pool.update(camera, 0);
+      const core = view.root.children[0] as Mesh;
+      const mat = core.material as MeshBasicMaterial;
+      expect(mat.blending).toBe(NormalBlending);
+      expect(mat.opacity).toBe(0.5);
+      const light = [...effectLights()].find((l) => l.anchor === view.root)!;
+      expect(light.intensity).toBe(0.5);
+      const vertices = core.geometry.getAttribute("position");
+      const end = new Vector3()
+        .fromBufferAttribute(vertices, 2)
+        .lerp(new Vector3().fromBufferAttribute(vertices, 3), 0.5);
+      expect(core.localToWorld(end).toArray()).toEqual([0, 0, 10]);
+      expect(light.anchor.localToWorld(light.offset.clone()).toArray()).toEqual(
+        [0, 0, 10],
+      );
+      streamClock.time = 1;
+      pool.update(camera, 0);
+      expect(view.root.visible).toBe(false);
+      expect(light.intensity).toBe(0);
+      streamClock.time = 0.1;
+      pool.update(camera, 0);
+      expect(view.root.visible).toBe(true);
+      expect(mat.opacity).toBe(0.9);
+    } finally {
+      pool.dispose();
+    }
+  });
+  it("faces shocklance lightning toward the camera in the bolt's frame", () => {
+    const entity: ShockLanceEntity = {
+      id: "shock",
+      className: "ShockLanceProjectile",
+      renderType: "ShockLance",
+      beamStart: [14, 8, 3],
+      beamEnd: [19, -2, 11],
+      beamHit: true,
+      visual: {
+        kind: "shockLance",
+        numParts: 25,
+        zapDuration: 1,
+        boltLength: 14,
+        lightningFreq: 25,
+        lightningDensity: 3,
+        lightningAmp: 0.25,
+        lightningWidth: 0.05,
+        startWidth: [0.3, 0.3],
+        endWidth: [0.6, 0.6],
+        boltSpeed: [2, -0.5],
+        texWrap: [1.5, 1.5],
+        textures: [],
+      },
+    };
+    const view = createShockLanceView(
+      entity.visual,
+      [new Texture()],
+      true,
+      () => undefined,
+    );
+    try {
+      streamClock.time = 0.1;
+      view.update(entity, camera, 0);
+      const bolts = view.root.children.find((child) => child instanceof Group)!;
+      const ribbon = bolts.children[0] as Mesh;
+      const vertices = ribbon.geometry.getAttribute("position");
+      const edgeA = ribbon.localToWorld(
+        new Vector3().fromBufferAttribute(vertices, 0),
+      );
+      const edgeB = ribbon.localToWorld(
+        new Vector3().fromBufferAttribute(vertices, 1),
+      );
+      const muzzle = edgeA.clone().lerp(edgeB, 0.5);
+      expect(muzzle.distanceTo(new Vector3(8, 3, 14))).toBeLessThan(1e-6);
+      const side = edgeB.sub(edgeA);
+      expect(side.length()).toBeCloseTo(entity.visual.lightningWidth);
+      expect(
+        side.normalize().dot(camera.position.clone().sub(muzzle).normalize()),
+      ).toBeCloseTo(0, 5);
+    } finally {
+      view.dispose();
+    }
   });
   it("uses the same interpolated Torque-to-Three pose for a newly acquired view", () => {
     const group = new Group();

@@ -229,6 +229,9 @@ export class LiveStreamAdapter extends StreamEngine {
     const targetTick = Number.isFinite(targetTimeSec)
       ? streamTimeToTick(Math.max(0, targetTimeSec))
       : this.tickCount;
+    // Live simulation cannot wait for a missing asset. Start its shared
+    // load and let any shot in this tick use the packet fallback.
+    if (this.tickCount < targetTick) this.prepareProjectileAssets();
     for (
       let ticks = 0;
       this.tickCount < targetTick && ticks < maxMoveTicks;

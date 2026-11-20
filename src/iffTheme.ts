@@ -35,11 +35,11 @@ export interface IffDisplayColor {
 /** All team tints, in sRGB (0–255). Blue keeps a brighter map variant;
  * classic Match HUD team names have their own intentional text colors. */
 export const IFF_PALETTE = {
-  green: { r: 0, g: 212, b: 71 },
-  red: { r: 255, g: 60, b: 10 },
+  green: { r: 20, g: 230, b: 30 },
+  red: { r: 250, g: 40, b: 32 },
   blue: { r: 40, g: 152, b: 255 },
   blueMap: { r: 45, g: 162, b: 255 },
-  orange: { r: 255, g: 100, b: 15 },
+  orange: { r: 255, g: 118, b: 6 },
   neutral: { r: 200, g: 200, b: 200 },
   classicFriendlyName: { r: 45, g: 228, b: 106 },
   classicTeamName: { r: 121, g: 203, b: 212 },

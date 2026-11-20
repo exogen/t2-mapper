@@ -6,6 +6,7 @@ import {
   resolveShapeName,
   stripTaggedStringMarkup,
 } from "../../relay/shared";
+import { clamp } from "../mathUtils";
 import type {
   ProjectileLight,
   StreamVisual,
@@ -281,15 +282,17 @@ export function isQuatLike(value: unknown): value is {
 
 export { resolveShapeName };
 
-/** Datablock classes whose shapes are certain to render in any session
- *  (players, everything they carry, and static scenery) — the
- *  shape-prefetch scope. Vehicles/turrets/deployables load on demand at
- *  first sight. */
+/** Common rendered shapes and the vehicle/turret targets whose native hulls
+ * are also used by projectile prediction. */
 const PRELOAD_DATA_BLOCK_CLASSES: ReadonlySet<string> = new Set([
   "PlayerData",
   "ShapeBaseImageData",
   "ItemData",
   "StaticShapeData",
+  "FlyingVehicleData",
+  "HoverVehicleData",
+  "WheeledVehicleData",
+  "TurretData",
 ]);
 
 /**
@@ -434,12 +437,10 @@ export function resolveTracerVisual(
 }
 
 /**
- * Blaster bolt (EnergyProjectileData): rendered exactly like a tracer —
- * an additive oriented quad plus an edge-on cross — with a motion-blur
- * tail. Binary-verified in Tribes2.exe (bolt FUN_00696ed0, cross
- * FUN_006973b0, blur FUN_00698100): quad half-width = scale.x, total
- * length = scale.y, cross half-extent = crossSize/2 — the same
- * conventions the tracer renderer already uses.
+ * Blaster bolt (EnergyProjectileData): an additive quad centered on the
+ * render position, an edge-on cross, and a motion-blur tail. Binary-verified
+ * in Tribes2.exe (bolt 0x696ed0, cross 0x6973b0, blur 0x698100): quad
+ * half-width = scale.x, total length = scale.y, cross extent = crossSize.
  */
 export function resolveBoltVisual(
   className: string,
@@ -592,6 +593,65 @@ export function resolveBeamVisual(
   };
 }
 
+export function resolveTargetBeamVisual(
+  className: string,
+  data: ParsedData | undefined,
+): StreamVisual | undefined {
+  if (!data || className !== "TargetProjectile") return undefined;
+  const textures = data.textures as string[] | undefined;
+  if (!textures?.[0] || !textures[1] || !textures[2] || !textures[3])
+    return undefined;
+  const color = data.beamColor as
+    { r: number; g: number; b: number } | undefined;
+  return {
+    kind: "targetBeam",
+    color: color
+      ? { r: color.r, g: color.g, b: color.b }
+      : { r: 0.1, g: 1, b: 0.1 },
+    range: getNumberField(data, ["maxRifleRange"]) ?? 1000,
+    width: getNumberField(data, ["startBeamWidth"]) ?? 1,
+    pulseWidth: getNumberField(data, ["pulseBeamWidth"]) ?? 0.5,
+    pulseSpeed: getNumberField(data, ["pulseSpeed"]) ?? 6,
+    pulseLength: getNumberField(data, ["pulseLength"]) ?? 0.15,
+    flareAngle: getNumberField(data, ["beamFlareAngle"]) ?? 3,
+    minFlareSize: getNumberField(data, ["minFlareSize"]) ?? 0,
+    maxFlareSize: getNumberField(data, ["maxFlareSize"]) ?? 400,
+    textures: [textures[0], textures[1], textures[2], textures[3]],
+  };
+}
+
+const TARGET_BEAM_MAX_WARP_SEC = 0.3;
+export const TARGET_BEAM_PLAYER_WARP_SEC = 0.15;
+const targetBeamFromRay = new Vector3();
+const targetBeamToRay = new Vector3();
+
+/** TargetProjectile::setClientWarp (Tribes2.exe 0x649800). The fade from
+ * the current endpoint to the new endpoint gets shorter on sharp turns. */
+export function targetBeamWarpDuration(
+  from: readonly [number, number, number],
+  to: readonly [number, number, number],
+  muzzle: readonly [number, number, number] | undefined,
+): number {
+  if (!muzzle) return TARGET_BEAM_MAX_WARP_SEC;
+  const [x, y, z] = muzzle;
+  targetBeamFromRay.set(from[0] - x, from[1] - y, from[2] - z).normalize();
+  targetBeamToRay.set(to[0] - x, to[1] - y, to[2] - z).normalize();
+  return Math.max(
+    0.001,
+    ((1 + targetBeamFromRay.dot(targetBeamToRay)) / 2) *
+      TARGET_BEAM_MAX_WARP_SEC,
+  );
+}
+
+/** TargetProjectile::advanceTime interpolates by elapsed frame time. */
+export function targetBeamWarpProgress(
+  startedAtSec: number,
+  timeSec: number,
+  durationSec = TARGET_BEAM_MAX_WARP_SEC,
+): number {
+  return clamp((timeSec - startedAtSec) / durationSec, 0, 1);
+}
+
 export function resolveSpriteVisual(
   className: string,
   data: ParsedData | undefined,
@@ -674,6 +734,8 @@ export function parseWeaponImageStates(
       timeoutValue: s.timeoutValue as number | undefined,
       waitForTimeout: (s.waitForTimeout as boolean) ?? true,
       fire: (s.fire as boolean) ?? false,
+      ejectShell: s.ejectShell === true,
+      shockwave: s.shockwave === true,
       sequence: s.sequence as number | undefined,
       flashSequence: (s.flashSequence as boolean) ?? false,
       sequenceVis: s.sequenceVis as number | undefined,

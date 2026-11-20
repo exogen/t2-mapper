@@ -41,9 +41,7 @@ import type { Keyframe } from "./types";
 /** Fallback eye height when the player model isn't loaded or has no Cam node. */
 export const DEFAULT_EYE_HEIGHT = 2.1;
 
-/** Torque's animation crossfade duration (seconds). */
-export const ANIM_TRANSITION_TIME = 0.25;
-
+export { ANIM_TRANSITION_TIME } from "./playerAnimation";
 export { STREAM_TICK_SEC } from "./streamHelpers";
 
 // ── Temp vectors / quaternions (module-level to avoid per-frame alloc) ──

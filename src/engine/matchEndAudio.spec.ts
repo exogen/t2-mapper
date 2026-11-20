@@ -162,7 +162,7 @@ function startEntitySoundSlots(
 function endMatch() {
   streamClock.matchEndedAtSec = streamClock.time;
 }
-function WeaponSounds(onSlot?: (slot: ImageSlot) => void) {
+function mountWeaponSounds() {
   const root = new Group();
   const slot: ImageSlot = {
     shapeName: "weapon",
@@ -187,12 +187,12 @@ function WeaponSounds(onSlot?: (slot: ImageSlot) => void) {
         transitioned: false,
         entered: true,
         soundDataBlockIds: [7],
+        shellEjections: 0,
       },
     },
     // Only the sound profile is read when restoring a latched firing state.
     imageStates: [{ soundDataBlockId: 7 }] as ImageSlot["imageStates"],
   };
-  onSlot?.(slot);
   const animation = createImageStateAnimation(() => slot, {
     actions: new Map<string, AnimationAction>(),
     imageRoot: root,
@@ -200,7 +200,7 @@ function WeaponSounds(onSlot?: (slot: ImageSlot) => void) {
     cyclicSequences: new Set(),
   });
   start(animation, () => animation.update());
-  return root;
+  return { root, slot, dispose: animation.dispose };
 }
 function mountProjectile() {
   const snapshot = {
@@ -253,7 +253,7 @@ afterEach(() => {
 });
 
 it("stops a latched firing loop at match end and restores it when seeking back", () => {
-  const root = WeaponSounds();
+  const { root } = mountWeaponSounds();
   frame();
   const sound = root.children[0] as Audio;
   expect(sound.isPlaying).toBe(true);
@@ -268,7 +268,7 @@ it("stops a latched firing loop at match end and restores it when seeking back",
   expect((root.children[0] as Audio).isPlaying).toBe(true);
 });
 
-it.each([WeaponSounds, () => mountProjectile().root])(
+it.each([() => mountWeaponSounds().root, () => mountProjectile().root])(
   "does not start a pending action loop after match end (%#)",
   (mount) => {
     test.defer = true;
@@ -282,6 +282,28 @@ it.each([WeaponSounds, () => mountProjectile().root])(
     expect(test.pending).toHaveLength(0);
   },
 );
+
+it("does not start a pending weapon loop after its image is disposed", () => {
+  test.defer = true;
+  const { root, dispose } = mountWeaponSounds();
+  frame();
+  expect(test.pending).toHaveLength(1);
+  dispose();
+  for (const load of test.pending.splice(0)) load();
+  expect(root.children).toHaveLength(0);
+  expect(trackSound).not.toHaveBeenCalled();
+});
+
+it("does not start a pending weapon loop on a new mount in the same state", () => {
+  test.defer = true;
+  const { root, slot } = mountWeaponSounds();
+  frame();
+  expect(test.pending).toHaveLength(1);
+  slot.mountedAtSec = 11;
+  for (const load of test.pending.splice(0)) load();
+  expect(root.children).toHaveLength(0);
+  expect(trackSound).not.toHaveBeenCalled();
+});
 
 it("stops jets despite a held jet flag, then allows jets in the next match", () => {
   const root = new Group();
@@ -1140,10 +1162,7 @@ it.each(["seek", "completed seek", "pause", "stale"])(
 
 it("does not consume seek invalidation before the destination weapon state arrives", () => {
   test.looping = false;
-  let slot!: ImageSlot;
-  WeaponSounds((value) => {
-    slot = value;
-  });
+  const { slot } = mountWeaponSounds();
   frame();
   expect(playOneShotSound).toHaveBeenCalledOnce();
   vi.mocked(playOneShotSound).mockClear();

@@ -58,7 +58,7 @@ import { staticShapeColliderMeshes } from "../world/colliderPolicy";
 import { renderShapeRaycast } from "../collision/renderShapeRaycast";
 import { SHAPE_MODEL_ROTATION_Y } from "../world/placement";
 import { driveTurretAim, type TurretAnimActions } from "./turretAim";
-import { registerImageMuzzle } from "./linkBeamSource";
+import { registerImageMuzzle } from "./weaponMuzzle";
 import { createFadeAndCloak } from "./shapeFadeCloak";
 import { createShadowCaster } from "./shadowCasters";
 import { createDeferredPose } from "./deferredPose";
@@ -67,6 +67,7 @@ import { createEffectLight } from "./effectLights";
 import { createImageLight, type ImageLightConfig } from "./imageLight";
 import { createEntitySoundSlots } from "./entitySoundSlots";
 import { createImageStateAnimation } from "./imageStateAnimation";
+import { queueImageWeaponEffects } from "./imageWeaponEffects";
 import { createVehicleJets } from "./vehicleJets";
 import { createDebugBounds, showWhileDebugTourTarget } from "./debugVisuals";
 import { combineCleanups, reaction, type Cleanup } from "./storeReaction";
@@ -584,7 +585,6 @@ export function createShapeModel(
       {
         actions: imageActions,
         imageRoot: clonedScene,
-        ownerId: entityId,
         seqIndexToName,
         cyclicSequences: sequences.cyclic,
       },
@@ -862,8 +862,23 @@ export function createShapeModel(
 
   cleanups.push(
     engine.scheduler.add(FramePriority.ShapeAnimation, ({ delta }) => {
-      imageState?.update();
+      const effects = imageState?.update();
       animate(delta);
+      if (effects && entityId) {
+        const owner = engine.entities.get(entityId);
+        const snapshot = engine.streamSnapshot.current;
+        const stream =
+          engineStore.getState().playback.recording?.streamingPlayback;
+        if (owner && snapshot && stream)
+          queueImageWeaponEffects(
+            engine.scheduler,
+            stream,
+            effects,
+            clonedScene,
+            owner.root,
+            snapshot,
+          );
+      }
       updateItemLight();
     }),
     engine.scheduler.add(FramePriority.PostCamera, (frame) => {

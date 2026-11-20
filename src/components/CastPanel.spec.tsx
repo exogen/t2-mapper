@@ -22,6 +22,13 @@ import { setStreamSnapshot } from "../state/streamSnapshotStore";
 import { streamClock, streamPlaybackStore } from "../state/streamPlaybackStore";
 import { settingsStore } from "../state/settingsStore";
 import { commentaryTracksStore } from "../state/commentaryTracksStore";
+import { IFF_PALETTE, rgbString } from "../iffTheme";
+
+const green = rgbString(IFF_PALETTE.green);
+const red = rgbString(IFF_PALETTE.red);
+const orange = rgbString(IFF_PALETTE.orange);
+const blue = rgbString(IFF_PALETTE.blue);
+const neutral = rgbString(IFF_PALETTE.neutral);
 
 const fixture = vi.hoisted(() => ({
   liveReady: true,
@@ -355,7 +362,7 @@ it.each(["live", "demo"] as const)(
     const hud = renderToStaticMarkup(<QuickCamHUD />);
     for (const html of [panel, hud]) {
       expect(html).toContain("Rabbit Flag");
-      expect(html).toContain("color:rgb(200, 200, 200)");
+      expect(html).toContain(`color:${neutral}`);
       expect(html).not.toMatch(/Storm Flag|Inferno Flag|Knights Flag/);
     }
     expect(panel).toContain('title="Recall camera 1: Rabbit Flag"');
@@ -429,7 +436,7 @@ it.each(["live", "demo"] as const)(
         renderToStaticMarkup(<QuickCamPanel watching={source === "live"} />),
       ]) {
         expect(html).toContain(`>${label}</span>`);
-        expect(html).toContain("color:rgb(200, 200, 200)");
+        expect(html).toContain(`color:${neutral}`);
         expect(html).not.toMatch(/Storm Flag|Inferno Flag|_ClientConnection/);
       }
       expect(renderToStaticMarkup(<QuickCamKey />)).toContain("Follow flag");
@@ -483,9 +490,9 @@ it("labels saved flags outside the default number slots using their actual team"
 });
 
 it.each([
-  ["blueOrange", "rgb(40, 152, 255)", "rgb(255, 100, 15)"],
-  ["greenRed", "rgb(0, 212, 71)", "rgb(255, 60, 10)"],
-  ["redGreen", "rgb(255, 60, 10)", "rgb(0, 212, 71)"],
+  ["blueOrange", blue, orange],
+  ["greenRed", green, red],
+  ["redGreen", red, green],
 ] as const)(
   "colors quick cam flags using the %s observer palette in both surfaces",
   (scheme, first, second) => {
@@ -515,8 +522,8 @@ it.each([1, 2])(
         Icon={LuUser}
       />,
     );
-    expect(friendly).toContain("color:rgb(0, 212, 71)");
-    expect(enemy).toContain("color:rgb(255, 60, 10)");
+    expect(friendly).toContain(`color:${green}`);
+    expect(enemy).toContain(`color:${red}`);
   },
 );
 
@@ -540,8 +547,8 @@ it("colors quick cam flags from the followed player's team in both surfaces", ()
     renderToStaticMarkup(<QuickCamPanel watching />),
   ]) {
     expect(html.match(/color:rgb\([^)]+\)/g)).toEqual([
-      "color:rgb(255, 60, 10)",
-      "color:rgb(0, 212, 71)",
+      `color:${red}`,
+      `color:${green}`,
     ]);
   }
 });
@@ -627,14 +634,14 @@ it("updates player icon affiliation in place and honors the engine's viewer-rela
     renderToStaticMarkup(
       <TestQuickCamIcon camera={playerCamera} Icon={LuUser} />,
     );
-  expect(render()).toContain("color:rgb(40, 152, 255)");
+  expect(render()).toContain(`color:${blue}`);
   if (entity.renderType !== "Player") throw Error("Expected player");
   entity.teamId = 2;
-  expect(render()).toContain("color:rgb(255, 100, 15)");
+  expect(render()).toContain(`color:${orange}`);
   fixture.playerSensorGroup = 2;
-  expect(render()).toContain("color:rgb(255, 60, 10)");
+  expect(render()).toContain(`color:${red}`);
   entity.iffColor = { r: 0, g: 255, b: 0 };
-  expect(render()).toContain("color:rgb(0, 212, 71)");
+  expect(render()).toContain(`color:${green}`);
 });
 
 it("keeps a waiting player's team color using their current roster entry", () => {
@@ -653,11 +660,11 @@ it("keeps a waiting player's team color using their current roster entry", () =>
     renderToStaticMarkup(
       <TestQuickCamIcon camera={playerCamera} Icon={LuUser} />,
     );
-  expect(render()).toContain("color:rgb(255, 100, 15)");
+  expect(render()).toContain(`color:${orange}`);
   fixture.playerSensorGroup = 2;
-  expect(render()).toContain("color:rgb(0, 212, 71)");
+  expect(render()).toContain(`color:${green}`);
   fixture.playerRoster = [];
-  expect(render()).toContain("color:rgb(200, 200, 200)");
+  expect(render()).toContain(`color:${neutral}`);
 });
 
 it("does not tint free-fly or unset icons", () => {

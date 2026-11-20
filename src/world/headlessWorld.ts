@@ -65,7 +65,8 @@ import {
   OCCLUDER_SHAPE_TYPES,
   staticShapeColliderMeshes,
 } from "./colliderPolicy";
-import { loadDtsScene } from "../dts/nodeDts";
+import { loadDtsData, loadDtsScene } from "../dts/nodeDts";
+import { shapeSequenceSources } from "../dts/shapeSequenceSources";
 import { getDTSCollisionMeshes } from "../dts/dtsCollision";
 import { createDIFModel, type DIFModel } from "../dif/difLoader";
 
@@ -196,6 +197,16 @@ export class HeadlessWorld {
    */
   shapeFile(shapeName: string): string {
     return this.localPath(shapeResourcePath(shapeName));
+  }
+
+  loadProjectileShapeData(name: string) {
+    return loadDtsData(
+      this.shapeFile(name),
+      shapeSequenceSources(name).map(({ path, name }) => ({
+        url: this.localPath(path),
+        name,
+      })),
+    );
   }
 
   /**

@@ -14,6 +14,10 @@ export class MountPoints {
   private scene: Object3D | null = null;
   private readonly attached = new Map<Object3D, number>();
 
+  get model(): Object3D | null {
+    return this.scene;
+  }
+
   /** The model whose mount nodes hold the attachments, or none. */
   setScene(scene: Object3D | null): void {
     this.scene = scene;

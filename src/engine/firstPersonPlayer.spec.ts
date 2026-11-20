@@ -1,3 +1,4 @@
+import { Quaternion, Vector3 } from "three";
 import { expect, it } from "vitest";
 import type { StreamCamera, StreamEntity } from "../stream/types";
 import { yawPitchToQuaternion } from "../stream/streamHelpers";
@@ -24,6 +25,17 @@ it("recovers aim for a mounted weapon from the clip camera's orientation", () =>
   expect(aim.yaw).toBeCloseTo(-2.7);
   expect(aim.pitch).toBeCloseTo(1.1);
   expect(aim.headYaw).toBe(0.4);
+});
+
+it("recovers a passenger's aim relative to their seat in a clip", () => {
+  const seat = new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), 0.7);
+  const camera = new Quaternion()
+    .fromArray(yawPitchToQuaternion(-2.7, 1.1))
+    .premultiply(seat);
+  const aim = { yaw: 0, pitch: 0 };
+  readClipViewAngles(camera.toArray(), aim, seat);
+  expect(aim.yaw).toBeCloseTo(-2.7);
+  expect(aim.pitch).toBeCloseTo(1.1);
 });
 
 it("masks the control player in the recorded first-person view", () => {
@@ -66,6 +78,6 @@ it("leaves the player's pose alone when the follow camera uses their vehicle", (
     mountObjectId: vehicle.id,
   });
   expect(
-    firstPersonPlayerId(mounted, camera, "firstPersonOverride", followed.id),
+    firstPersonPlayerId(mounted, camera, "firstPersonOverride", vehicle.id),
   ).toBeNull();
 });

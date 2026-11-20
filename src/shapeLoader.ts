@@ -1,10 +1,10 @@
 import { registerGroundEffectShape } from "./particles/groundEffectAssets";
 import type { FileLoader, LoadingManager } from "three";
 import { DTSLoader } from "./dts/dtsLoader";
-import { getResourceMap } from "./manifest";
+import { shapeSequenceSources } from "./dts/shapeSequenceSources";
 import { getUrlForPath, textureToUrl } from "./loaders";
 import { loadTextureInstance } from "./textureUtils";
-import { DTSMaterialFlags } from "./dts/dtsTypes";
+import { DTSMaterialFlags, type DTSShapeData } from "./dts/dtsTypes";
 import { registerShapeSequences } from "./stream/shapeSequences";
 import { registerShapeBounds } from "./stream/shapeBounds";
 import type { DTSModel } from "./dts/dtsModel";
@@ -12,37 +12,32 @@ import { batchDTSRigidMeshes } from "./dts/dtsRigidBatch";
 import { loadShapeImageLists } from "./iflAtlas";
 
 // Shape views and imperative effect pools request the same source model.
-const models = new WeakMap<LoadingManager, Map<string, Promise<DTSModel>>>();
-const sequencePaths = new WeakMap<
-  ReturnType<typeof getResourceMap>,
-  readonly string[]
->();
+interface ShapeSource {
+  parsed?: DTSShapeData;
+  data?: Promise<DTSShapeData>;
+  resolvedModel?: DTSModel;
+  model?: Promise<DTSModel>;
+}
+const sources = new WeakMap<LoadingManager, Map<string, ShapeSource>>();
+
+function getSource(manager: LoadingManager, url: string): ShapeSource {
+  let cache = sources.get(manager);
+  if (!cache) sources.set(manager, (cache = new Map()));
+  let source = cache.get(url);
+  if (!source) cache.set(url, (source = {}));
+  return source;
+}
 
 /** App resource resolution shared by React, prefetch, and ordinary loaders. */
 export class ShapeLoader extends DTSLoader {
   constructor(manager?: LoadingManager) {
     super(manager);
     this.imageListResolver = () => null; // Atlases load progressively below.
-    this.setSequenceResolver((url) => {
-      const stem = decodeURIComponent(url.split("/").pop()!)
-        .replace(/\.dts$/i, "")
-        .toLowerCase();
-      const prefix = `shapes/${stem}_`;
-      const resources = getResourceMap();
-      let paths = sequencePaths.get(resources);
-      if (!paths) {
-        paths = Object.keys(resources)
-          .filter((path) => path.startsWith("shapes/") && path.endsWith(".dsq"))
-          .sort();
-        sequencePaths.set(resources, paths);
-      }
-      return paths
-        .filter((path) => path.startsWith(prefix))
-        .map((path) => ({
-          url: getUrlForPath(path),
-          name: path.slice(prefix.length, -4),
-        }));
-    });
+    this.setSequenceResolver((url) =>
+      shapeSequenceSources(decodeURIComponent(url.split("/").pop()!)).map(
+        ({ path, name }) => ({ url: getUrlForPath(path), name }),
+      ),
+    );
     this.setTextureResolver((name, flags) => {
       return flags & DTSMaterialFlags.IflMaterial
         ? null
@@ -55,20 +50,51 @@ export class ShapeLoader extends DTSLoader {
     onProgress?: Parameters<FileLoader["load"]>[2],
     onError?: (error: unknown) => void,
   ): void {
-    let cache = models.get(this.manager);
-    if (!cache) models.set(this.manager, (cache = new Map()));
-    let pending = cache.get(url);
-    if (!pending) {
-      pending = new Promise<DTSModel>((resolve, reject) => {
-        this.loadModel(url, resolve, onProgress, reject);
+    const source = getSource(this.manager, url);
+    if (!source.model) {
+      source.model = new Promise<DTSModel>((resolve, reject) => {
+        this.loadModel(
+          url,
+          (model) => {
+            source.resolvedModel = model;
+            resolve(model);
+          },
+          onProgress,
+          reject,
+        );
       });
-      cache.set(url, pending);
-      void pending.catch(() => {
-        if (cache.get(url) === pending) cache.delete(url);
+      void source.model.catch(() => {
+        source.model = undefined;
       });
     }
-    void pending.then(onLoad, onError ?? console.error);
+    void source.model.then(onLoad, onError ?? console.error);
   }
+
+  override loadShapeData(
+    url: string,
+    onProgress?: Parameters<FileLoader["load"]>[2],
+  ): Promise<DTSShapeData> {
+    const source = getSource(this.manager, url);
+    if (!source.data) {
+      source.data = super.loadShapeData(url, onProgress).then((data) => {
+        source.parsed = data;
+        return data;
+      });
+      void source.data.catch(() => {
+        source.data = undefined;
+      });
+    }
+    return source.data;
+  }
+
+  peekShapeData(url: string): DTSShapeData | undefined {
+    return sources.get(this.manager)?.get(url)?.parsed;
+  }
+
+  peekModel(url: string): DTSModel | undefined {
+    return sources.get(this.manager)?.get(url)?.resolvedModel;
+  }
+
   private loadModel(
     url: string,
     onLoad: (model: DTSModel) => void,

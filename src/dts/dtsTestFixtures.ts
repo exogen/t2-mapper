@@ -218,6 +218,22 @@ export function createDTSCollisionTestShape() {
   );
   return shape;
 }
+/** Minimal external animation with a named, one-keyframe sequence. */
+export function createDSQTestBuffer(name = "Aim"): ArrayBuffer {
+  const out = new Writer();
+  out.ints(24, 0, 0, 0); // Version, nodes and obsolete object counts.
+  out.ints(0, 0, 0, 0, 0, 0, 0); // Sample and object state channels.
+  out.ints(1, new TextEncoder().encode(name).length);
+  out.string(name);
+  out.ints(0, 1); // Flags and keyframe count.
+  out.f32(1);
+  out.ints(0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  out.f32(0); // Tool begin.
+  for (let i = 0; i < 8; i++) out.ints(0, 0);
+  out.ints(0); // Trigger count.
+  return out.buffer();
+}
+
 export function createDTSSequence(
   overrides: Partial<DTSSequence> = {},
 ): DTSSequence {

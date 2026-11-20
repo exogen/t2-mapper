@@ -89,6 +89,36 @@ it("contacts LOS hulls, not the larger visual mesh, and follows parent motion", 
   expect(rays.repairHit(start, end, "target", out)).toBe(false);
 });
 
+it.each([
+  ["Player", 29.5],
+  ["StaticShape", 28],
+])(
+  "casts against a moving %s through a frozen mount before rendering",
+  (type, contact) => {
+    const rays = new RenderShapeRaycast();
+    const parent = new Group();
+    const mount = new Group();
+    mount.matrixAutoUpdate = false;
+    parent.add(mount);
+    const target = shape();
+    mount.add(target);
+    parent.updateMatrixWorld(true);
+    rays.register("target", target, type);
+
+    parent.position.x = 30;
+    const out = new Vector3();
+    expect(
+      rays.repairHit(
+        new Vector3(20, 0.25, 0),
+        new Vector3(40, 0.25, 0),
+        "target",
+        out,
+      ),
+    ).toBe(true);
+    expect(out.x).toBeCloseTo(contact);
+  },
+);
+
 it("requires the closest eligible object to be the target, preserving the old contact on miss", () => {
   const rays = new RenderShapeRaycast(),
     target = shape(),

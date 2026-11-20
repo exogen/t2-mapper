@@ -8,6 +8,7 @@ import type {
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { combineCleanups, reaction } from "./storeReaction";
 import { markTransformChanged } from "../transformChanges";
+import { objectMountSlot } from "../world/placement";
 import type { MountPoints } from "./shapeMounts";
 import type { GameEngine } from "./gameEngine";
 
@@ -184,9 +185,7 @@ export class EntityViewRegistry {
         this.views.set(entity.id, entry);
       }
       if (mounts) {
-        const point = entity.mountNode ?? 0;
-        // ShapeBase::mountObject clamps invalid slots to zero.
-        const mountPoint = point >= 0 && point < 32 ? point : 0;
+        const mountPoint = objectMountSlot(entity.mountNode);
         // The stream can mutate the old entity before publishing a new one.
         if (entry.mountPoint !== mountPoint) {
           entry.detach?.();

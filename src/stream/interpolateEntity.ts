@@ -2,6 +2,7 @@ import { Quaternion } from "three";
 import { markTransformChanged } from "../transformChanges";
 import type { Camera, Object3D, Vector3 } from "three";
 import type { GameEntity } from "../state/gameEntityTypes";
+import { usesWorldSpaceBeamGeometry } from "../state/projectileEntities";
 import type { StreamCamera, StreamEntity } from "./types";
 import { playerBodyYawCorrection, type PlayerRenderAim } from "./playerView";
 import { torqueVecToThree } from "../scene/coordinates";
@@ -14,6 +15,7 @@ export const streamRenderFrame: {
   current: ReadonlyMap<string, StreamEntity> | null;
   previous: ReadonlyMap<string, StreamEntity> | null;
   interpT: number;
+  reconstructing: boolean;
   /**
    * Read packed player views at the middle of their step (playerView.ts).
    */
@@ -29,6 +31,7 @@ export const streamRenderFrame: {
   current: null,
   previous: null,
   interpT: 0,
+  reconstructing: false,
   aimCorrection: false,
   camera: null,
   firstPersonPlayerId: null,
@@ -83,14 +86,7 @@ export function applyStreamEntityPose(
     child.visible = false;
     return;
   }
-  // Link beams (ELF/repair) have no ghost position at all — they
-  // draw themselves in world space between two live objects, and
-  // manage their own visibility. The no-position hide below would
-  // blank them permanently.
-  if (
-    renderEntity?.renderType === "LinkBeam" ||
-    renderEntity?.renderType === "ShockLance"
-  ) {
+  if (usesWorldSpaceBeamGeometry(renderEntity)) {
     child.visible = true;
     return;
   }
@@ -148,6 +144,7 @@ export function interpolateStreamPosition(
 ): void {
   const { position } = entity;
   if (!position) return;
+  const previousPosition = entity.linearTickStart ?? previousEntity?.position;
   if (entity.playerDelta) {
     const delta = entity.playerDelta.posVec;
     const dt = 1 - interpT;
@@ -156,10 +153,8 @@ export function interpolateStreamPosition(
       position[2] + delta[2] * dt,
       position[0] + delta[0] * dt,
     );
-  } else if (previousEntity?.position) {
-    const px = previousEntity.position[0];
-    const py = previousEntity.position[1];
-    const pz = previousEntity.position[2];
+  } else if (previousPosition) {
+    const [px, py, pz] = previousPosition;
     const cx = position[0];
     const cy = position[1];
     const cz = position[2];

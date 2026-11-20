@@ -55,6 +55,11 @@ export function installProjectiles(engine: GameEngine): () => void {
           const assets = new ProjectileAssets(
             renderer.capabilities.getMaxAnisotropy(),
             () => settingsStore.getState().animationEnabled,
+            () => renderer.domElement.height,
+            (id) => {
+              const view = id ? engine.entities.get(id) : undefined;
+              return view?.root.parent ? view : undefined;
+            },
           );
           const pool = new ProjectilePool(
             root,

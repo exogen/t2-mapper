@@ -21,7 +21,7 @@ import {
   type PlayerHeadAngles,
 } from "../stream/playerView";
 import { MAX_LOOK_ANGLE } from "../stream/quantizedPlayerAim";
-import { MAX_PITCH } from "../stream/streamHelpers";
+import { MAX_PITCH, playerYawToQuaternion } from "../stream/streamHelpers";
 import { clamp } from "../mathUtils";
 import {
   ANIM_TRANSITION_TIME,
@@ -296,6 +296,8 @@ export function createPlayerModel(
     // Resolve velocity at current playback time.
     const kf = getKeyframeAtTime(entity.keyframes ?? [], time);
     const isDead = kf?.damageState != null && kf.damageState >= 1;
+    const isFirstPerson = streamRenderFrame.firstPersonPlayerId === entityId;
+    const aim = isFirstPerson ? streamRenderFrame.firstPersonAim : null;
     // Player::setPosition (FUN_005d97c0): a mounted player's transform is
     // the vehicle's mount node transform × RotZ(its own yaw) — the seat
     // places the body and the ghost's yaw turns it (passengers look
@@ -306,7 +308,9 @@ export function createPlayerModel(
       qy = yaw.y,
       qz = yaw.z,
       qw = yaw.w;
-    if (entity.mountObjectId != null && pose)
+    if (entity.mountObjectId != null && aim)
+      yaw.fromArray(playerYawToQuaternion(aim.yaw - aim.headYaw));
+    else if (entity.mountObjectId != null && pose)
       applyStreamEntityRotation(
         yaw,
         pose,
@@ -356,7 +360,6 @@ export function createPlayerModel(
     // Player::updateAnimationTree (Tribes2.exe 0x5d6590): for the viewed
     // player, use bind position/rotation on the spine before additive
     // aim and recoil. Scripted first-person actions use their full pose.
-    const isFirstPerson = streamRenderFrame.firstPersonPlayerId === entityId;
     const maskSpine =
       isFirstPerson &&
       streamRenderFrame.maskFirstPersonPose &&
@@ -388,7 +391,6 @@ export function createPlayerModel(
     const pitchScale =
       current?.playerDelta?.maxLookAngle ??
       (current?.viewQuantized === false ? MAX_PITCH : maxLookAngle);
-    const aim = isFirstPerson ? streamRenderFrame.firstPersonAim : null;
     const pitchPos = playerLookPitchPosition(
       aim?.pitch ?? look.pitch * pitchScale,
     );

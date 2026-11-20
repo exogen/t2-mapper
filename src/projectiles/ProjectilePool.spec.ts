@@ -1,9 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
-import { Group, PerspectiveCamera } from "three";
+import { Group, PerspectiveCamera, Texture } from "three";
 import { ProjectilePool } from "./ProjectilePool";
+import { ProjectileAssets } from "./assets";
 import type { ProjectileView, ProjectileFactory } from "./types";
-import type { SpriteEntity, GameEntity } from "../state/gameEntityTypes";
+import type {
+  SpriteEntity,
+  GameEntity,
+  TracerEntity,
+} from "../state/gameEntityTypes";
 import { gameEntityStore, selectSceneEntities } from "../state/gameEntityStore";
+import * as textureUtils from "../textureUtils";
 
 const projectile = (id: string): SpriteEntity => ({
   id,
@@ -43,6 +49,48 @@ const tick = async (pool: ProjectilePool, entities: GameEntity[]) => {
 };
 
 describe("pooled projectile lifecycle", () => {
+  it("creates a texture-only tracer in the same frame as a new bucket", () => {
+    const loadTexture = vi
+      .spyOn(textureUtils, "loadTextureInstance")
+      .mockImplementation(() => new Texture());
+    const root = new Group();
+    const assets = new ProjectileAssets(1, () => true);
+    const onError = vi.fn();
+    const pool = new ProjectilePool(
+      root,
+      (entity) => assets.factory(entity),
+      onError,
+    );
+    const tracer: TracerEntity = {
+      id: "new-tracer",
+      className: "TracerProjectile",
+      renderType: "Tracer",
+      direction: [1, 0, 0],
+      keyframes: [{ time: 0, position: [0, 0, 0], rotation: [0, 0, 0, 1] }],
+      visual: {
+        kind: "tracer",
+        texture: "special/tracer00",
+        tracerLength: 2,
+        tracerWidth: 0.1,
+        crossViewAng: 0.9,
+        crossSize: 0.2,
+        renderCross: true,
+      },
+    };
+    try {
+      pool.sync(new Map([[tracer.id, tracer]]));
+      pool.prepare(0.016);
+      pool.update(new PerspectiveCamera(), 0.016);
+      expect(onError).not.toHaveBeenCalled();
+      expect(root.children.map((child) => child.name)).toEqual([tracer.id]);
+      expect(root.children[0].children[0].visible).toBe(true);
+    } finally {
+      pool.dispose();
+      assets.dispose();
+      loadTexture.mockRestore();
+    }
+  });
+
   it("recycles detached visuals, resets their state and updates the current entity", async () => {
     const { pool, root, views, factory } = fixture();
     const first = projectile("first"),

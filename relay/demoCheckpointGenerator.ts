@@ -172,6 +172,9 @@ export async function generateDemoCheckpoints(
         // Every viewer resumes from the same stock player poses.
         stream.setPlayerInterpolation(RETAIL_PLAYER_INTERPOLATION);
         stream.setPlayerPredictionEnabled(true);
+        stream.setProjectileShapeLoader((name) =>
+          world.loadProjectileShapeData(name),
+        );
         stream.reset();
         const loadedShapes = new Set<string>();
         const collisionClasses = new Set([

@@ -12,7 +12,7 @@ import {
   DoubleSide,
   BufferGeometry,
 } from "three";
-import type { Camera, Texture } from "three";
+import type { Texture } from "three";
 import type { SpriteEntity, TracerEntity } from "../state/gameEntityTypes";
 import { setQuaternionFromDir } from "../stream/playbackUtils";
 import { streamClock } from "../state/streamPlaybackStore";
@@ -33,7 +33,6 @@ const _tracerStart = new Vector3();
 const _tracerEnd = new Vector3();
 const _tracerWorldPos = new Vector3();
 const _upY = new Vector3(0, 1, 0);
-const _blurOrigin = new Vector3();
 const _blurA = new Vector3();
 const _blurB = new Vector3();
 const _blurSeg = new Vector3();
@@ -122,22 +121,21 @@ function createBlurTail(
       mesh.visible = false;
       geometry.setDrawRange(0, 0);
     },
-    update(camera: Camera) {
+    update(origin: Vector3, cameraPosition: Vector3) {
       const now = streamClock.worldTime;
       if (count && now < points[at(count - 1) + 3]) {
         head = 0;
         count = 0;
       }
-      root.getWorldPosition(_blurOrigin);
       if (!count || now > points[at(count - 1) + 3]) {
         if (count === capacity) {
           head = (head + 1) % capacity;
           count--;
         }
         const o = at(count++);
-        points[o] = _blurOrigin.x;
-        points[o + 1] = _blurOrigin.y;
-        points[o + 2] = _blurOrigin.z;
+        points[o] = origin.x;
+        points[o + 1] = origin.y;
+        points[o + 2] = origin.z;
         points[o + 3] = now;
       }
       while (count && now - points[at(0) + 3] > blur.lifetime) {
@@ -148,11 +146,11 @@ function createBlurTail(
       for (let i = 0; i + 1 < count; i++) {
         const a = at(i),
           b = at(i + 1);
-        _blurA.fromArray(points, a).sub(_blurOrigin);
-        _blurB.fromArray(points, b).sub(_blurOrigin);
+        _blurA.fromArray(points, a).sub(origin);
+        _blurB.fromArray(points, b).sub(origin);
         _blurSeg.subVectors(_blurB, _blurA);
         if (_blurSeg.lengthSq() < 1e-6) continue;
-        _blurToCam.copy(_blurA).add(_blurOrigin).sub(camera.position);
+        _blurToCam.copy(_blurA).add(origin).sub(cameraPosition);
         _blurCross.crossVectors(_blurToCam, _blurSeg);
         if (_blurCross.lengthSq() < 1e-8) continue;
         _blurCross.normalize().multiplyScalar(blur.width * 0.5);
@@ -211,31 +209,27 @@ export function createTracerView(
       disposeGeometry(root);
     },
     update(entity, camera) {
-      blurTail?.update(camera);
-      const tracerMesh = tracer;
-      const posAttr = tracerPos;
-      if (!tracerMesh || !posAttr) return;
-
+      root.getWorldPosition(_tracerWorldPos);
+      camera.getWorldPosition(_tracerDirFromCam);
+      blurTail?.update(_tracerWorldPos, _tracerDirFromCam);
       const kf = entity.keyframes?.[0];
-      const pos = kf?.position;
       const direction = entity.direction ?? kf?.velocity;
-      if (!pos || !direction) {
-        tracerMesh.visible = false;
+      if (!kf?.position || !direction) {
+        tracer.visible = false;
         if (cross) cross.visible = false;
         return;
       }
 
       torqueVecToThree(direction, _tracerDir);
       if (_tracerDir.lengthSq() < 1e-8) {
-        tracerMesh.visible = false;
+        tracer.visible = false;
         if (cross) cross.visible = false;
         return;
       }
       _tracerDir.normalize();
 
-      tracerMesh.visible = true;
-      torqueVecToThree(pos, _tracerWorldPos);
-      _tracerDirFromCam.copy(_tracerWorldPos).sub(camera.position);
+      tracer.visible = true;
+      _tracerDirFromCam.subVectors(_tracerWorldPos, _tracerDirFromCam);
       _tracerCross.crossVectors(_tracerDirFromCam, _tracerDir);
       if (_tracerCross.lengthSq() < 1e-8) {
         _tracerCross.crossVectors(_upY, _tracerDir);
@@ -246,28 +240,28 @@ export function createTracerView(
       _tracerCross.normalize().multiplyScalar(visual.tracerWidth);
 
       const halfLength = visual.tracerLength * 0.5;
-      _tracerStart.copy(_tracerDir).multiplyScalar(-halfLength);
-      _tracerEnd.copy(_tracerDir).multiplyScalar(halfLength);
-      writeRibbonQuad(posAttr, _tracerStart, _tracerEnd, _tracerCross);
+      // TracerProjectile draws forward from its render position (0x6406c0).
+      // EnergyProjectile centers the blaster bolt there (0x696ed0).
+      const centerOffset =
+        entity.className === "TracerProjectile" ? halfLength : 0;
+      _tracerStart.copy(_tracerDir).multiplyScalar(centerOffset - halfLength);
+      _tracerEnd.copy(_tracerDir).multiplyScalar(centerOffset + halfLength);
+      writeRibbonQuad(tracerPos, _tracerStart, _tracerEnd, _tracerCross);
 
-      const crossMesh = cross;
-      if (!crossMesh) return;
-      if (!visual.renderCross) {
-        crossMesh.visible = false;
-        return;
-      }
+      if (!cross) return;
 
       _tracerDirFromCam.normalize();
       const angle = _tracerDir.dot(_tracerDirFromCam);
       if (angle > -visual.crossViewAng && angle < visual.crossViewAng) {
-        crossMesh.visible = false;
+        cross.visible = false;
         return;
       }
 
-      crossMesh.visible = true;
+      cross.visible = true;
+      cross.position.copy(_tracerDir).multiplyScalar(centerOffset);
       setQuaternionFromDir(_tracerDir, orientQuat);
-      crossMesh.quaternion.copy(orientQuat);
-      crossMesh.scale.setScalar(visual.crossSize);
+      cross.quaternion.copy(orientQuat);
+      cross.scale.setScalar(visual.crossSize);
     },
   };
 }

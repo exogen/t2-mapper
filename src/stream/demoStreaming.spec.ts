@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { Group, Object3D, PerspectiveCamera, Scene, Vector3 } from "three";
 import { BlockTypeInfo, type ParsedData } from "t2-demo-parser";
+import type { ProjectileShapeLoader } from "../collision/projectileShapeAssets";
 import { DTSShape } from "../dts/dtsModel";
 import { createDTSTestShape } from "../dts/dtsTestFixtures";
 import { registerEyeNode } from "../engine/eyePositions";
@@ -11,7 +12,14 @@ import { engineStore } from "../state/engineStore";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { settingsStore } from "../state/settingsStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
+import {
+  createCollisionState,
+  runInCollisionWorld,
+} from "../world/nodeCollisionContext";
+import { SHAPE_MODEL_ROTATION_Y } from "../world/placement";
 import { DemoStreamAdapter, extractMissionInfo } from "./demoStreaming";
+import { streamRenderFrame } from "./interpolateEntity";
+import { PlaybackClock } from "./PlaybackClock";
 import {
   MAX_LOOK_ANGLE,
   PACKED_BODY_YAW_STEP,
@@ -23,7 +31,12 @@ import {
   yawPitchToQuaternion,
 } from "./streamHelpers";
 import { fakeDemoParser, moveBlock, packetBlock } from "./streamTestFixtures";
-import type { StreamEntity, StreamRecording, StreamSnapshot } from "./types";
+import type {
+  ProjectileLifecycleEvent,
+  StreamEntity,
+  StreamRecording,
+  StreamSnapshot,
+} from "./types";
 
 const dataBlocks: [number, string, ParsedData][] = [
   [10, "LinearFlareProjectileData", { explosion: 11 }],
@@ -100,6 +113,195 @@ describe("DemoStreamAdapter.getEffectShapes", () => {
       "effect_plasma_explosion.dts",
       "debris_generic.dts",
     ]);
+  });
+});
+
+it("commits a projectile tick once and agrees across warm replay, cold seeks, and checkpoint generation", async () => {
+  const body = createDTSTestShape();
+  body.names[body.nodes[0].nameIndex] = "Mount0";
+  body.defaultTranslations.fill(0);
+  const weapon = createDTSTestShape();
+  weapon.names[weapon.nodes[0].nameIndex] = "Muzzlepoint";
+  // The authored muzzle is off the initial packet path, so only its warp
+  // passes through the player.
+  weapon.defaultTranslations.set([0, 5, 0]);
+  const names = { body: "prep-turret.dts", weapon: "prep-weapon.dts" };
+  const launch = packetBlock({
+    ghosts: [
+      {
+        index: 4,
+        type: "create",
+        classId: 1,
+        parsedData: {
+          dataBlockId: 1,
+          sourceObject: 3,
+          sourceSlot: 2,
+          position: { x: 0, y: 0, z: 100 },
+          direction: { x: 1, y: 0, z: 0 },
+          currTick: 0,
+        },
+      },
+      {
+        index: 3,
+        type: "create",
+        classId: 2,
+        parsedData: {
+          dataBlockId: 2,
+          position: { x: 0, y: 0, z: 100 },
+          images: [{ index: 2, dataBlockId: 4 }],
+        },
+      },
+      {
+        index: 5,
+        type: "create",
+        classId: 3,
+        parsedData: { dataBlockId: 3, position: { x: 2.8, y: 4.4, z: 99 } },
+      },
+    ],
+  });
+  const recording = (load: ProjectileShapeLoader, readPacket?: () => void) => {
+    const blocks = [moveBlock(), launch, moveBlock()];
+    const parser = fakeDemoParser({
+      blocks,
+      decompressedByteLength: blocks.length + 1,
+      ghostClasses: (id) => ["LinearProjectile", "Turret", "Player"][id - 1],
+      initialBlock: {
+        dataBlocks: new Map([
+          [
+            1,
+            {
+              className: "LinearProjectileData",
+              data: {
+                dryVelocity: 100,
+                doDynamicClientHits: true,
+                explosion: 5,
+              },
+            },
+          ],
+          [2, { className: "TurretData", data: { shapeName: names.body } }],
+          [
+            3,
+            {
+              className: "PlayerData",
+              data: { boxSize: { x: 1, y: 1, z: 2 } },
+            },
+          ],
+          [
+            4,
+            {
+              className: "ShapeBaseImageData",
+              data: { shapeName: names.weapon, mountPoint: 0 },
+            },
+          ],
+          [5, { className: "ExplosionData", data: { lifetimeMS: 1000 } }],
+        ]),
+      },
+      onBlock: (block) => {
+        if (block === launch) readPacket?.();
+      },
+    });
+    const stream = new DemoStreamAdapter(parser, {
+      checkpoints: false,
+      playerViews: false,
+    });
+    stream.setProjectileShapeLoader(load);
+    return stream;
+  };
+  const effects = (snapshot: StreamSnapshot) => ({
+    shot: snapshot.entities.find((entity) => entity.ghostIndex === 4)
+      ?.hasExploded,
+    impacts: snapshot.entities
+      .filter((entity) => entity.type === "Explosion")
+      .map((entity) => entity.position),
+  });
+  const ready = (stream: DemoStreamAdapter) =>
+    vi.waitFor(() => {
+      const snapshot = stream.stepToTime(2 * STREAM_TICK_SEC);
+      expect(snapshot.timeSec).toBe(2 * STREAM_TICK_SEC);
+      return effects(snapshot);
+    });
+  const load: ProjectileShapeLoader = (name) =>
+    name === names.body ? body : weapon;
+
+  const result = await runInCollisionWorld(createCollisionState(), async () => {
+    let finish!: (value: typeof weapon) => void;
+    const download = new Promise<typeof weapon>(
+      (resolve) => (finish = resolve),
+    );
+    const loadDelayed = vi.fn((name: string) =>
+      name === names.weapon ? download : load(name),
+    );
+    const readPacket = vi.fn();
+    const stream = recording(loadDelayed, readPacket);
+    const events = vi.fn<(event: ProjectileLifecycleEvent) => void>();
+    stream.subscribeProjectileLifecycle(events);
+
+    const previous = stream.stepToTime(STREAM_TICK_SEC);
+    expect(stream.stepToTime(2 * STREAM_TICK_SEC)).toBe(previous);
+    expect(stream.getSnapshot()).toBe(previous);
+    expect(stream.stepToTime(2 * STREAM_TICK_SEC)).toBe(previous);
+    expect(events).not.toHaveBeenCalled();
+    expect(readPacket).toHaveBeenCalledTimes(1);
+    expect(loadDelayed).toHaveBeenCalledTimes(2);
+    expect(loadDelayed).toHaveBeenCalledWith(names.weapon);
+
+    finish(weapon);
+    const result = await ready(stream);
+    expect(result.shot).toBe(true);
+    expect(result.impacts).toHaveLength(1);
+    expect(result.impacts[0]?.[0]).toBeCloseTo(2.3);
+    expect(result.impacts[0]?.[1]).toBeCloseTo(4.28125);
+    expect(events.mock.calls.map(([event]) => event.type)).toEqual([
+      "spawn",
+      "end",
+    ]);
+    expect(readPacket).toHaveBeenCalledTimes(1);
+
+    stream.stepToTime(STREAM_TICK_SEC);
+    expect(effects(stream.stepToTime(2 * STREAM_TICK_SEC))).toEqual(result);
+    expect(loadDelayed).toHaveBeenCalledTimes(2);
+    return result;
+  });
+
+  await runInCollisionWorld(createCollisionState(), async () => {
+    const stream = recording(async (name) => load(name));
+    const clock = new PlaybackClock();
+    const first = {
+      status: "seeking",
+      rate: 1,
+      seekTime: 2 * STREAM_TICK_SEC,
+      seekNonce: 1,
+    } as const;
+    expect(clock.step(stream, first, 0)).toBeNull();
+    const waiting = stream.getSnapshot();
+    expect(waiting.timeSec).toBe(0);
+    expect(stream.projectileAssetBoundarySec).toBe(STREAM_TICK_SEC);
+    expect(effects(waiting)).toEqual({ shot: undefined, impacts: [] });
+
+    const replacement = {
+      ...first,
+      seekTime: 1.25 * STREAM_TICK_SEC,
+      seekNonce: 2,
+    };
+    expect(clock.step(stream, replacement, 0)).toBeNull();
+    expect(stream.getSnapshot().timeSec).toBe(STREAM_TICK_SEC);
+    const frame = await vi.waitFor(() => {
+      const frame = clock.step(stream, replacement, 0);
+      expect(frame).not.toBeNull();
+      return frame!;
+    });
+    expect(frame.previousSnapshot.timeSec).toBe(STREAM_TICK_SEC);
+    expect(clock.time).toBe(replacement.seekTime);
+    expect(effects(frame.snapshot)).toEqual(result);
+  });
+  await runInCollisionWorld(createCollisionState(), async () => {
+    const stream = recording(async (name) => load(name));
+    const checkpoint = await stream.captureCheckpointAt(2, async () => {});
+    expect(effects(stream.getSnapshot())).toEqual(result);
+    const restored = recording(load);
+    restored.setPlayerPredictionEnabled(true);
+    restored.importCheckpoints([checkpoint]);
+    expect(effects(restored.stepToTime(2 * STREAM_TICK_SEC))).toEqual(result);
   });
 });
 
@@ -207,13 +409,13 @@ it.each([true, false])(
 );
 
 it.each([
-  { seat: 1, turretScoped: true, seesTurret: true },
-  { seat: 0, turretScoped: true, seesTurret: false },
-  { seat: 2, turretScoped: true, seesTurret: false },
-  { seat: 1, turretScoped: false, seesTurret: false },
+  { seat: 1, turretScoped: true, eye: "turret" },
+  { seat: 0, turretScoped: true, eye: "cockpit" },
+  { seat: 2, turretScoped: true, eye: "rider" },
+  { seat: 1, turretScoped: false, eye: "rider" },
 ])(
   "chooses the first-person eye for seat $seat (turret scoped: $turretScoped) and orbits without a recorded camera",
-  ({ seat, turretScoped, seesTurret }) => {
+  ({ seat, turretScoped, eye }) => {
     const stream = demo(new Map(), new Map([[1, { useEyePoint: true }]]));
     const turret: StreamEntity = {
       id: "belly-turret",
@@ -251,8 +453,13 @@ it.each([
       streamingPlayback: stream,
     };
     const scheduler = new FrameScheduler();
+    const rider = new Group();
+    rider.name = "rider";
+    rider.position.set(1, 3, -5);
+    rider.rotation.y = -SHAPE_MODEL_ROTATION_Y;
     const engine = {
       scheduler,
+      entities: new Map([["rider", { root: rider }]]),
       streamSnapshot: { current: null },
       assetsLoading: () => false,
       invalidate: vi.fn(),
@@ -265,20 +472,28 @@ it.each([
     const bomber = new Group();
     bomber.name = "bomber";
     root.add(bomber);
-    const register = (id: string, position: Vector3, pitch = 0) => {
+    bomber.add(rider);
+    const register = (
+      id: string,
+      position: Vector3,
+      pitch = 0,
+      parent = bomber,
+    ) => {
       const shape = new DTSShape();
       shape.data = createDTSTestShape();
-      const eye = new Object3D();
-      eye.position.copy(position);
-      eye.rotation.x = pitch;
-      shape.add(eye);
-      bomber.add(shape);
-      return registerEyeNode(id, eye, shape);
+      if (id === "rider") shape.rotation.y = SHAPE_MODEL_ROTATION_Y;
+      const eyeNode = new Object3D();
+      eyeNode.position.copy(position);
+      eyeNode.rotation.x = pitch;
+      shape.add(eyeNode);
+      parent.add(shape);
+      return registerEyeNode(id, eyeNode, shape);
     };
     const unregister = [
       register("bomber", new Vector3(0, 2, 4)),
       register("belly-turret", new Vector3(0, -2, 0), Math.PI / 2),
       register("other-turret", new Vector3(9, 9, 9)),
+      register("rider", new Vector3(0, 0.5, 0.25), 0, rider),
     ];
     try {
       streamPlaybackStore.setState({
@@ -298,12 +513,20 @@ it.each([
           renderer: {} as FrameContext["renderer"],
         });
       render(1);
-      expect(camera.position.toArray()).toEqual(
-        seesTurret ? [0, -2, 0] : [4, 2, 0],
+      const expectedPosition = {
+        turret: new Vector3(0, -2, 0),
+        cockpit: new Vector3(4, 2, 0),
+        rider: new Vector3(1, 3.5, -4.75),
+      }[eye]!;
+      const expectedDirection = {
+        turret: new Vector3(0, -1, 0),
+        cockpit: new Vector3(1, 0, 0),
+        rider: new Vector3(0, 0, 1),
+      }[eye]!;
+      expect(camera.position.distanceTo(expectedPosition)).toBeLessThan(1e-8);
+      expect(streamRenderFrame.firstPersonPlayerId).toBe(
+        eye === "rider" ? rider.name : null,
       );
-      const expectedDirection = seesTurret
-        ? new Vector3(0, -1, 0)
-        : new Vector3(1, 0, 0);
       expect(
         camera.getWorldDirection(new Vector3()).distanceTo(expectedDirection),
       ).toBeLessThan(1e-8);

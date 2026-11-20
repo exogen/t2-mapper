@@ -5,13 +5,15 @@ export interface DebrisEvent {
   id: number;
   time: number;
   expires: number;
-  kind: "shape" | "explosion";
+  kind: "shape" | "explosion" | "shell";
   dataBlockId: number;
   shape?: string;
   position: Vec3;
   /** Three-world orientation, as on stream entities. */
   rotation: [number, number, number, number];
   normal: Vec3;
+  /** Explicit launch velocity for a mounted-image casing, in Torque axes. */
+  velocity?: Vec3;
   gravity: number;
 }
 

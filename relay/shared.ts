@@ -173,6 +173,7 @@ export const projectileClassNames = new Set([
   "LinearProjectile",
   "Projectile",
   "SeekerProjectile",
+  "TargetProjectile",
   "TracerProjectile",
 ]);
 

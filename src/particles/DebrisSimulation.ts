@@ -184,8 +184,7 @@ export class DebrisSimulation {
     gravity: number,
     random: () => number,
     depth: number,
-    shape?: string,
-    part?: DebrisPart,
+    options?: { shape?: string; part?: DebrisPart; explicitVelocity?: boolean },
   ): void {
     const data = this.get(db) ?? {};
     const variance = n(data, "bounceVariance", 0);
@@ -203,10 +202,10 @@ export class DebrisSimulation {
       (n(data, "minSpinSpeed", 0) +
         random() * (n(data, "maxSpinSpeed", 0) - n(data, "minSpinSpeed", 0))) *
       (0.1 + random() * 0.4);
-    let radius = part?.radius ?? 0.2;
+    let radius = options?.part?.radius ?? 0.2;
     let elasticity = n(data, "elasticity", 0.3),
       friction = n(data, "friction", 0.2);
-    if (n(data, "velocity", 0) !== 0) {
+    if (!options?.explicitVelocity && n(data, "velocity", 0) !== 0) {
       const speed =
         n(data, "velocity", 0) +
         (random() * 2 - 1) * n(data, "velocityVariance", 0);
@@ -233,9 +232,9 @@ export class DebrisSimulation {
       id,
       data,
       shape:
-        shape ??
+        options?.shape ??
         (typeof data.shapeName === "string" ? data.shapeName : undefined),
-      part,
+      part: options?.part,
       position: [...pos],
       previous: [...pos],
       velocity: vel,
@@ -278,9 +277,20 @@ export class DebrisSimulation {
           event.gravity,
           random,
           0,
-          event.shape,
-          part,
+          { shape: event.shape, part },
         );
+    } else if (event.kind === "shell") {
+      this.body(
+        `debris_${event.id}`,
+        event.dataBlockId,
+        event.position,
+        [...event.velocity!],
+        new Quaternion().fromArray(event.rotation),
+        event.gravity,
+        random,
+        0,
+        { explicitVelocity: true },
+      );
     } else
       this.launchExplosion(
         event.dataBlockId,

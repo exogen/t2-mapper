@@ -14,14 +14,19 @@ const FIRST_PERSON_SPINE = [
   "bip01 head",
 ] as const;
 const clipRotation = new Quaternion();
+const worldToMount = new Quaternion();
 const clipForward = new Vector3();
 
 /** Recover the recorded view angles without a second fit of the demo. */
 export function readClipViewAngles(
   quaternion: readonly [number, number, number, number],
   out: PlayerViewAngles,
+  mountRotation?: Quaternion,
 ): void {
-  clipForward.set(0, 0, -1).applyQuaternion(clipRotation.fromArray(quaternion));
+  clipRotation.fromArray(quaternion);
+  if (mountRotation)
+    clipRotation.premultiply(worldToMount.copy(mountRotation).invert());
+  clipForward.set(0, 0, -1).applyQuaternion(clipRotation);
   out.yaw = Math.atan2(clipForward.z, clipForward.x);
   out.pitch = Math.atan2(
     -clipForward.y,
@@ -38,29 +43,22 @@ export function firstPersonSpineNodes(shape: DTSShapeData): number[] {
   });
 }
 
-/** A recorded control view uses the control object. Free spectator follow
- * resolves a mounted player's view to the carrier instead. */
+/** Identify the player whose eye owns the view, if the camera uses one. */
 export function firstPersonPlayerId(
   entities: ReadonlyMap<string, StreamEntity>,
   camera: StreamCamera | null,
   mode: DemoCameraMode,
-  firstPersonFollowId: string | undefined,
+  followEyeId: string | undefined,
   controlAtEye = camera?.mode === "first-person",
   controlEntityId = camera?.controlEntityId,
 ): string | null {
   const id =
     mode === "firstPersonOverride"
-      ? firstPersonFollowId
+      ? followEyeId
       : mode === "original" && controlAtEye
         ? controlEntityId
         : undefined;
   const player = id === undefined ? undefined : entities.get(id);
   if (player?.type !== "Player" || player.damageState) return null;
-  if (
-    mode === "firstPersonOverride" &&
-    player.mountObjectId &&
-    entities.has(player.mountObjectId)
-  )
-    return null;
   return player.id;
 }

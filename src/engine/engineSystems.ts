@@ -8,6 +8,7 @@ import { installChatSounds } from "./chatSounds";
 import { installProjectiles } from "./projectiles";
 import { installProjectileFollow } from "./projectileFollow";
 import { installStreamEffects } from "./streamEffects";
+import { installImageWeaponEffects } from "./imageWeaponEffects";
 import { installDebugElements } from "./debugElements";
 import { installCommandCircuit } from "./commandCircuit";
 import { installCommandCircuitTourCallout } from "./commandCircuitTourCallout";
@@ -107,6 +108,7 @@ export function startEngineSystems(engine: GameEngine): () => void {
         recording ? startPlaybackSession(engine, recording) : undefined,
     ),
     installStreamEffects(engine),
+    installImageWeaponEffects(engine.scheduler),
     installDebugElements(engine),
     reaction(
       engineStore,

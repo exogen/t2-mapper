@@ -11,11 +11,11 @@
  * 0. queued shadow atlases consume the previous frame's complete pose,
  *    before interpolation or bone queries start changing world transforms;
  * 1. playback advances the demo clock and interpolates entity transforms;
- *    debris and projectiles are posed from the same frame;
+ *    projectiles are posed from the same frame;
  * 2. camera selection settles who is followed and which player needs
  *    the first-person pose;
- * 3. shapes animate their skeletons on those transforms (eye nodes are
- *    read from that pose);
+ * 3. shapes animate their skeletons on those transforms. Weapon effects
+ *    read the finished mounts before debris consumes their casing ejections;
  * 4. the director picks the shot and writes its orbit parameters;
  * 5. the stream applies the resulting pose (recorded, orbit, first person);
  * 6. tour, input and the command circuit override it in turn. Input runs
@@ -39,8 +39,6 @@ export const FramePriority = {
   ClipTransport: -65,
   /** Demo clock, tick processing, entity interpolation, snapshot publish. */
   StreamPlayback: -60,
-  /** Cosmetic debris: its simulation steps and its bodies are posed. */
-  Debris: -52,
   /** The projectile pool syncs with the store and poses its visuals. */
   ProjectilePose: -51,
   /** Follow target and camera mode resolution. */
@@ -49,6 +47,10 @@ export const FramePriority = {
   PlayerView: -45,
   /** Shape mixers: body, mounted images, turret aim, vehicle jets. */
   ShapeAnimation: -40,
+  /** Muzzle flashes and casings sample the mounts after all shape mixers. */
+  WeaponEffects: -39,
+  /** Cosmetic debris, after animated weapon mounts have ejected casings. */
+  Debris: -38,
   /** The auto-director's shot: orbit parameters and its own poses. */
   CameraDirector: -35,
   /** The stream's pose: recorded view, orbit follow, first person. */

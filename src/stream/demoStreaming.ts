@@ -713,9 +713,10 @@ export class DemoStreamAdapter extends StreamEngine {
       throw new Error("Checkpoint targets must be ascending simulation ticks");
     await prepareWorld(this.entities.values());
     while (this.moveTicks < tick) {
-      if (!this.readMoveTick())
+      if (!this.readSimulationTick())
         throw new Error("Checkpoint is past the end of the demo");
       await prepareWorld(this.entities.values());
+      await this.prepareProjectileAssets();
       this.finishMoveTick();
     }
     if (this.skippedPlayerPrediction)
@@ -728,6 +729,8 @@ export class DemoStreamAdapter extends StreamEngine {
   private restoreCheckpoint(
     checkpoint: ReturnType<DemoStreamAdapter["captureCheckpoint"]>,
   ): void {
+    this.snapshotBeforePendingTick = null;
+    this.pendingProjectileEvents = undefined;
     this.previousPlayerViews = this.pendingPlayerViews = undefined;
     this.resetAimHistory();
     this.parser.restoreCheckpoint(checkpoint.parser);
@@ -964,7 +967,7 @@ export class DemoStreamAdapter extends StreamEngine {
       playerId === undefined ? undefined : this.entities.get(playerId);
     if (
       player?.mountNode !== 0 ||
-      player.mountObjectGhostIndex !== this.lastPilotGhostIndex
+      this.resolveMountParent(player)?.ghostIndex !== this.lastPilotGhostIndex
     )
       return;
     if (player.damageState) return [data.headZ, data.headX];
@@ -1050,6 +1053,8 @@ export class DemoStreamAdapter extends StreamEngine {
   }
 
   private resetToStart(): void {
+    this.snapshotBeforePendingTick = null;
+    this.pendingProjectileEvents = undefined;
     this.previousPlayerViews = this.pendingPlayerViews = undefined;
     this.resetAimHistory();
     this.skippedPlayerPrediction = false;
@@ -1360,7 +1365,15 @@ export class DemoStreamAdapter extends StreamEngine {
   }
 
   getSnapshot(): StreamSnapshot {
-    return this.currentSnapshot() ?? this.rebuildSnapshot();
+    return (
+      this.snapshotBeforePendingTick ??
+      this.currentSnapshot() ??
+      this.rebuildSnapshot()
+    );
+  }
+
+  get projectileAssetBoundarySec(): number | undefined {
+    return this.snapshotBeforePendingTick ? this.getTimeSec() : undefined;
   }
 
   getPlayerAim(entityId: string): DemoPlayerAim | undefined {
@@ -1519,6 +1532,14 @@ export class DemoStreamAdapter extends StreamEngine {
       didReset = true;
     }
 
+    // A replacement seek can land immediately before a staged tick, after
+    // the previous seek already passed that boundary without publishing it.
+    // Reconstruct that single endpoint through the normal seek path.
+    const missingSeekBoundary =
+      allowForwardCheckpoint &&
+      targetTicks === this.moveTicks &&
+      this.snapshotBeforePendingTick !== null &&
+      streamTimeToTick(this.snapshotBeforePendingTick.timeSec) < this.moveTicks;
     if (targetTicks < this.moveTicks || allowForwardCheckpoint) {
       let checkpointTick: number | undefined;
       for (const tick of this.checkpoints.keys()) {
@@ -1530,6 +1551,7 @@ export class DemoStreamAdapter extends StreamEngine {
       }
       if (
         targetTicks < this.moveTicks ||
+        missingSeekBoundary ||
         (checkpointTick !== undefined && checkpointTick > this.moveTicks)
       ) {
         const checkpoint =
@@ -1579,6 +1601,7 @@ export class DemoStreamAdapter extends StreamEngine {
       movesProcessed += 1;
     }
 
+    if (this.snapshotBeforePendingTick) return this.snapshotBeforePendingTick;
     if (movesProcessed === 0 && !didReset && wasExhausted === this.exhausted) {
       const cached = this.currentSnapshot();
       if (cached) return cached;
@@ -1654,13 +1677,30 @@ export class DemoStreamAdapter extends StreamEngine {
 
   // ── Demo block processing ──
 
+  /** The published frame held while the next tick's packets are staged. */
+  private snapshotBeforePendingTick: StreamSnapshot | null = null;
+
+  private readSimulationTick(): boolean {
+    if (this.snapshotBeforePendingTick) return true;
+    const previous = this._cachedSnapshot ?? this.rebuildSnapshot();
+    this.pendingProjectileEvents = [];
+    if (!this.readMoveTick()) {
+      this.flushProjectileEvents();
+      return false;
+    }
+    this.snapshotBeforePendingTick = previous;
+    return true;
+  }
+
   private stepOneMoveTick(): boolean {
-    if (!this.readMoveTick()) return false;
+    if (!this.readSimulationTick() || this.prepareProjectileAssets())
+      return false;
     this.finishMoveTick();
     return true;
   }
 
   private finishMoveTick(): void {
+    this.snapshotBeforePendingTick = null;
     this.moveTicks += 1;
     this.processTick();
     if (this.playerViewsEnabled) {
@@ -1676,6 +1716,7 @@ export class DemoStreamAdapter extends StreamEngine {
     }
     this.previousPlayerViews = this.pendingPlayerViews;
     this.pendingPlayerViews = undefined;
+    this.flushProjectileEvents();
     if (
       this.checkpointsEnabled &&
       this.moveTicks % DEMO_CHECKPOINT_TICKS === 0 &&
@@ -1699,10 +1740,7 @@ export class DemoStreamAdapter extends StreamEngine {
           damageState: entity.damageState,
           viewQuantized: entity.viewQuantized,
           reconstructedAim: entity.reconstructedAim,
-          mountObjectId:
-            entity.mountObjectGhostIndex != null
-              ? this.entityIdByGhostIndex.get(entity.mountObjectGhostIndex)
-              : undefined,
+          mountObjectId: this.resolveMountParent(entity)?.id,
           mountNode: entity.mountNode,
         });
       }

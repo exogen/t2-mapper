@@ -1,13 +1,15 @@
-import { Box3, Matrix4, Ray, Vector3 } from "three";
+import { Box3, Matrix4, Vector3, type Object3D } from "three";
 import { DTSShape } from "../dts/dtsModel";
 import {
   castDTSHullRay,
   getDTSCollisionMeshes,
   getDTSHullPlanes,
+  updateCollisionWorldMatrix,
   type DTSCollisionMesh,
 } from "../dts/dtsCollision";
-import { castWorldRay, type Vec3 } from "./worldCollision";
-import { castWaterRay } from "./waterLevel";
+import { castWorldRay, type Vec3, type WorldRayHit } from "./worldCollision";
+import { castWaterRay, type WaterRayHit } from "./waterLevel";
+import { segmentBoxEntry } from "./segmentBoxEntry";
 
 interface ShapeEntry {
   shape: DTSShape;
@@ -16,6 +18,11 @@ interface ShapeEntry {
   box: Box3;
   hulls?: DTSCollisionMesh[];
 }
+
+export type BeamRayHit =
+  | { t: number; shapeId: string }
+  | { t: number; world: WorldRayHit }
+  | { t: number; water: WaterRayHit };
 
 function isStatic(type: string): boolean {
   return type === "StaticShape" || type === "Turret" || type === "TSStatic";
@@ -30,15 +37,15 @@ export class RenderShapeRaycast {
   private readonly shapes = new Map<string, ShapeEntry>();
   private readonly start = new Vector3();
   private readonly end = new Vector3();
-  private readonly point = new Vector3();
   private readonly normal = new Vector3();
   private readonly inverse = new Matrix4();
-  private readonly ray = new Ray();
   private readonly worldStart: Vec3 = [0, 0, 0];
   private readonly worldEnd: Vec3 = [0, 0, 0];
   private hitId: string | undefined;
   private readonly flareStart = new Vector3();
   private readonly flareDirection = new Vector3();
+  private readonly beamFlareEnd = new Vector3();
+  private readonly updatedTransforms = new Set<Object3D>();
 
   register(
     id: string,
@@ -68,11 +75,6 @@ export class RenderShapeRaycast {
     return () => {
       if (this.shapes.get(id) === entry) this.shapes.delete(id);
     };
-  }
-
-  getShape(id: string): DTSShape | undefined {
-    const entry = this.shapes.get(id);
-    return entry?.active() ? entry.shape : undefined;
   }
 
   /** Lightning::strikeRandomPoint (0x628590) casts against every container
@@ -137,6 +139,63 @@ export class RenderShapeRaycast {
     );
   }
 
+  /** TargetProjectile casts against the scene, water and ShapeBase LOS hulls. */
+  targetBeamHit(
+    start: Vector3,
+    end: Vector3,
+    sourceId: string | undefined,
+    exclude?: BeamRayHit,
+  ): BeamRayHit | undefined {
+    const shapeT = this.castShapes(
+      start,
+      end,
+      "TSStatic",
+      sourceId,
+      exclude && "shapeId" in exclude ? exclude.shapeId : undefined,
+    );
+    this.setRayEndpoints(start, end);
+    const world = castWorldRay(
+      this.worldStart,
+      this.worldEnd,
+      exclude && "world" in exclude ? { excludeHit: exclude.world } : undefined,
+    );
+    const water = castWaterRay(
+      this.worldStart,
+      this.worldEnd,
+      exclude && "water" in exclude ? exclude.water.info : undefined,
+    );
+    const worldT = world?.t ?? Infinity;
+    const waterT = water?.t ?? Infinity;
+    if (this.hitId !== undefined && shapeT <= Math.min(worldT, waterT))
+      return { t: shapeT, shapeId: this.hitId };
+    if (water && waterT < worldT) return { t: waterT, water };
+    if (world) return { t: worldT, world };
+  }
+
+  /** TargetProjectile::canRenderEndFlare excludes the struck object from
+   * the camera ray so the flare remains visible on the impact surface. */
+  targetBeamFlareVisible(
+    camera: Vector3,
+    start: Vector3,
+    end: Vector3,
+    direction: Vector3,
+    sourceId: string | undefined,
+    impact?: BeamRayHit,
+  ): boolean {
+    this.beamFlareEnd.copy(end).addScaledVector(direction, 0.2);
+    const hit =
+      impact ?? this.targetBeamHit(start, this.beamFlareEnd, sourceId);
+    if (!hit) return true;
+    this.flareDirection.subVectors(this.beamFlareEnd, camera).normalize();
+    this.flareStart.copy(camera).addScaledVector(this.flareDirection, 0.5);
+    return !this.targetBeamHit(
+      this.flareStart,
+      this.beamFlareEnd,
+      sourceId,
+      hit,
+    );
+  }
+
   private castShapes(
     start: Vector3,
     end: Vector3,
@@ -152,23 +211,26 @@ export class RenderShapeRaycast {
       // StaticObject bit with static targets. Terrain/interiors work likewise.
       if (entry.type === "TSStatic" && !isStatic(type)) continue;
       if (!entry.active()) continue;
-      entry.shape.updateWorldMatrix(true, false);
+      // A frozen mount can still move with its parent. Use the same current
+      // ancestry for the broad-phase box and each animated LOS hull.
+      updateCollisionWorldMatrix(entry.shape, this.updatedTransforms);
       this.inverse.copy(entry.shape.matrixWorld).invert();
       this.start.copy(start).applyMatrix4(this.inverse);
       this.end.copy(end).applyMatrix4(this.inverse);
-      const tBox = this.boxEntry(entry.box);
+      const tBox = segmentBoxEntry(this.start, this.end, entry.box);
       if (tBox === null || tBox > best) continue;
       if (entry.type === "Player") {
         best = tBox;
         this.hitId = id;
         continue;
       }
+      entry.shape.catchUpPose?.();
       entry.hulls ??= getDTSCollisionMeshes(
         entry.shape,
         entry.type === "TSStatic" ? "TSStatic" : "ShapeBase",
       );
       for (const hull of entry.hulls) {
-        if (!hull.updateForCollision()) continue;
+        if (!hull.updateForCollision(this.updatedTransforms)) continue;
         this.inverse.copy(hull.matrixWorld).invert();
         this.start.copy(start).applyMatrix4(this.inverse);
         this.end.copy(end).applyMatrix4(this.inverse);
@@ -183,6 +245,7 @@ export class RenderShapeRaycast {
         this.hitId = id;
       }
     }
+    this.updatedTransforms.clear();
     return best;
   }
 
@@ -194,12 +257,7 @@ export class RenderShapeRaycast {
   ): boolean {
     // ForceFieldBare shares GameBase with every repair target. Terrain and
     // interiors share StaticObject only with static targets (including turrets).
-    this.worldStart[0] = start.z;
-    this.worldStart[1] = start.x;
-    this.worldStart[2] = start.y;
-    this.worldEnd[0] = end.z;
-    this.worldEnd[1] = end.x;
-    this.worldEnd[2] = end.y;
+    this.setRayEndpoints(start, end);
     const obstruction = castWorldRay(this.worldStart, this.worldEnd, {
       includeTerrain: isStatic(type),
       includeInteriors: isStatic(type),
@@ -207,18 +265,13 @@ export class RenderShapeRaycast {
     return obstruction != null && obstruction.t < limit;
   }
 
-  private boxEntry(box: Box3): number | null {
-    // Ray.intersectBox returns the exit for an inside start. Player::castRay
-    // reports t=0 instead; the DTS narrow phase has its own inside-ray rule.
-    if (box.containsPoint(this.start)) return 0;
-    this.ray.origin.copy(this.start);
-    this.ray.direction.subVectors(this.end, this.start);
-    const length = this.ray.direction.length();
-    if (!length) return null;
-    this.ray.direction.multiplyScalar(1 / length);
-    if (!this.ray.intersectBox(box, this.point)) return null;
-    const t = this.point.distanceTo(this.start) / length;
-    return t <= 1 ? t : null;
+  private setRayEndpoints(start: Vector3, end: Vector3): void {
+    this.worldStart[0] = start.z;
+    this.worldStart[1] = start.x;
+    this.worldStart[2] = start.y;
+    this.worldEnd[0] = end.z;
+    this.worldEnd[1] = end.x;
+    this.worldEnd[2] = end.y;
   }
 }
 

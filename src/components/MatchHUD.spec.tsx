@@ -10,6 +10,12 @@ import type {
 } from "../stream/types";
 import { settingsStore } from "../state/settingsStore";
 import type { ScoreStyle } from "./SettingsProvider";
+import { IFF_PALETTE, rgbString } from "../iffTheme";
+
+const green = rgbString(IFF_PALETTE.green);
+const red = rgbString(IFF_PALETTE.red);
+const orange = rgbString(IFF_PALETTE.orange);
+const blue = rgbString(IFF_PALETTE.blue);
 
 const state = vi.hoisted(() => ({
   snapshot: {
@@ -278,9 +284,9 @@ it.each(["classic", "broadcast"] as const)(
       );
     if (variant === "broadcast") {
       for (const [scheme, expected] of [
-        ["blueOrange", ["rgb(40, 152, 255)", "rgb(255, 100, 15)"]],
-        ["greenRed", ["rgb(0, 212, 71)", "rgb(255, 60, 10)"]],
-        ["redGreen", ["rgb(255, 60, 10)", "rgb(0, 212, 71)"]],
+        ["blueOrange", [blue, orange]],
+        ["greenRed", [green, red]],
+        ["redGreen", [red, green]],
       ] as const) {
         settingsStore.setState({ observerTeamColors: scheme });
         expect(colors(render())).toEqual(expected);
@@ -292,11 +298,15 @@ it.each(["classic", "broadcast"] as const)(
       html.indexOf("Rename team 1"),
     );
     if (variant === "classic") {
-      expect(html).toContain("--team-name-friendly:rgb(45, 228, 106)");
-      expect(html).toContain("--team-name-default:rgb(121, 203, 212)");
+      expect(html).toContain(
+        `--team-name-friendly:${rgbString(IFF_PALETTE.classicFriendlyName)}`,
+      );
+      expect(html).toContain(
+        `--team-name-default:${rgbString(IFF_PALETTE.classicTeamName)}`,
+      );
       expect(colors(html)).toEqual([]);
     } else {
-      expect(colors(html)).toEqual(["rgb(0, 212, 71)", "rgb(255, 60, 10)"]);
+      expect(colors(html)).toEqual([green, red]);
     }
   },
 );
@@ -322,8 +332,8 @@ it.each(["classic", "broadcast"] as const)(
         ? /style="color:(rgb\([^)]+\))"/g
         : /--team-color:(rgb\([^)]+\))/g;
     expect([...html.matchAll(pattern)].map((match) => match[1])).toEqual([
-      "rgb(255, 60, 10)",
-      "rgb(0, 212, 71)",
+      red,
+      green,
     ]);
   },
 );

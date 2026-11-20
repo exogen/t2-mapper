@@ -9,11 +9,34 @@ import {
   parseColorSegments,
   playerYawToQuaternion,
   streamTimeToTick,
+  TARGET_BEAM_PLAYER_WARP_SEC,
+  targetBeamWarpDuration,
+  targetBeamWarpProgress,
   formatRemoteArgs,
   formatRemoteArgsColored,
   formatServerMessageText,
   parseWeaponImageStates,
 } from "./streamHelpers";
+
+describe("targeting beam endpoint warps", () => {
+  it("scales duration by the rays' angle around the current muzzle", () => {
+    const muzzle = [3, 2, 1] as const;
+    const from = [4, 2, 1] as const;
+    expect(targetBeamWarpDuration(from, [8, 2, 1], muzzle)).toBeCloseTo(0.3);
+    expect(targetBeamWarpDuration(from, [3, 8, 1], muzzle)).toBeCloseTo(0.15);
+    expect(targetBeamWarpDuration(from, [1, 2, 1], muzzle)).toBeCloseTo(0.001);
+  });
+
+  it("samples fractional ticks and clamps either side of a warp", () => {
+    expect(
+      targetBeamWarpProgress(1, 1.015, TARGET_BEAM_PLAYER_WARP_SEC),
+    ).toBeCloseTo(0.1);
+    expect(targetBeamWarpProgress(1, 0.9, TARGET_BEAM_PLAYER_WARP_SEC)).toBe(0);
+    expect(targetBeamWarpProgress(1, 1.2, TARGET_BEAM_PLAYER_WARP_SEC)).toBe(1);
+    // Older checkpoints have no explicit duration.
+    expect(targetBeamWarpProgress(1, 1.15)).toBeCloseTo(0.5);
+  });
+});
 
 describe("weapon image state slots", () => {
   it("retains native indices when the parser omits unnamed states", () => {

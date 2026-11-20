@@ -26,6 +26,30 @@ export interface DSQData {
   triggers: DTSTrigger[];
 }
 
+/** A DSQ's location and optional override for its sequence name. */
+export interface DTSSequenceSource {
+  url: string;
+  name?: string;
+}
+
+/** Import the native external sequences without needing a render model. */
+export async function mergeDTSSequenceSources(
+  shape: DTSShapeData,
+  sources: readonly DTSSequenceSource[],
+  load: (url: string) => Promise<ArrayBuffer>,
+): Promise<DTSShapeData> {
+  if (!sources.length) return shape;
+  const sequences = await Promise.all(
+    sources.map(async ({ url, name }) => {
+      const bytes = await load(url);
+      // One stock medium_male DSQ is empty and imports no sequences.
+      return bytes.byteLength ? { data: parseDSQ(bytes), name } : null;
+    }),
+  );
+  const imported = sequences.filter((sequence) => sequence !== null);
+  return imported.length ? mergeDSQ(shape, imported) : shape;
+}
+
 export function parseDSQ(buffer: ArrayBuffer): DSQData {
   const r = new DTSStream(buffer),
     version = r.u32() & 255;

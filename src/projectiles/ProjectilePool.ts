@@ -2,16 +2,19 @@ import { Group, type Camera } from "three";
 import type { GameEntity } from "../state/gameEntityTypes";
 import {
   isProjectileEntity,
+  usesWorldSpaceBeamGeometry,
   type ProjectileEntity,
 } from "../state/projectileEntities";
 import type { ProjectileFactory, ProjectileView } from "./types";
 
 type Bucket = {
   ready?: ProjectileFactory;
-  pending: Promise<void>;
   idle: ProjectileView[];
   failed?: boolean;
 };
+type LoadFactory = (
+  entity: ProjectileEntity,
+) => ProjectileFactory | Promise<ProjectileFactory>;
 type Entry = {
   entity: ProjectileEntity;
   key: string;
@@ -30,11 +33,11 @@ export class ProjectilePool {
   private disposed = false;
   private idleCount = 0;
   private maxIdle: number;
-  private load: (entity: ProjectileEntity) => Promise<ProjectileFactory>;
+  private load: LoadFactory;
   private onError: (error: unknown) => void;
   constructor(
     root: Group,
-    load: (entity: ProjectileEntity) => Promise<ProjectileFactory>,
+    load: LoadFactory,
     onError: (error: unknown) => void = console.error,
     maxIdle = 128,
   ) {
@@ -75,20 +78,23 @@ export class ProjectilePool {
     return key;
   }
   private bucket(key: string, entity: ProjectileEntity): Bucket {
-    let bucket = this.buckets.get(key);
-    if (!bucket) {
-      bucket = { idle: [], pending: Promise.resolve() };
-      this.buckets.set(key, bucket);
-      const target = bucket;
-      target.pending = this.load(entity).then(
-        (factory) => {
-          if (!this.disposed) target.ready = factory;
-        },
-        (error) => {
-          target.failed = true;
-          if (!this.disposed) this.onError(error);
-        },
-      );
+    const cached = this.buckets.get(key);
+    if (cached) return cached;
+    const bucket: Bucket = { idle: [] };
+    this.buckets.set(key, bucket);
+    const failed = (error: unknown) => {
+      bucket.failed = true;
+      if (!this.disposed) this.onError(error);
+    };
+    try {
+      const factory = this.load(entity);
+      if (typeof factory === "function") bucket.ready = factory;
+      else
+        void factory.then((ready) => {
+          if (!this.disposed) bucket.ready = ready;
+        }, failed);
+    } catch (error) {
+      failed(error);
     }
     return bucket;
   }
@@ -138,9 +144,15 @@ export class ProjectilePool {
           const entity = entry.entity,
             root = view.root;
           root.name = entity.id;
-          root.position.fromArray(entity.position ?? [0, 0, 0]);
-          root.quaternion.fromArray(entity.rotation ?? [0, 0, 0, 1]);
-          root.scale.fromArray(entity.scale ?? [1, 1, 1]);
+          if (usesWorldSpaceBeamGeometry(entity)) {
+            root.position.set(0, 0, 0);
+            root.quaternion.identity();
+            root.scale.setScalar(1);
+          } else {
+            root.position.fromArray(entity.position ?? [0, 0, 0]);
+            root.quaternion.fromArray(entity.rotation ?? [0, 0, 0, 1]);
+            root.scale.fromArray(entity.scale ?? [1, 1, 1]);
+          }
           root.visible = true;
           view.reset(entity);
           this.root.add(root);

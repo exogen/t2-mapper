@@ -1,13 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LoadingManager } from "three";
+import { FileLoader, LoadingManager } from "three";
 import { ShapeLoader } from "./shapeLoader";
 import { DTSLoader } from "./dts/dtsLoader";
 import { buildDTS } from "./dts/dtsBuilder";
-import { createDTSTestShape } from "./dts/dtsTestFixtures";
+import {
+  createDSQTestBuffer,
+  createDTSTestBuffer,
+  createDTSTestShape,
+} from "./dts/dtsTestFixtures";
 import * as manifest from "./manifest";
 import * as loaders from "./loaders";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe("shared shape sources", () => {
   it("scans each manifest once while preserving DSQ prefix matching and ordering", () => {
@@ -55,12 +62,42 @@ describe("shared shape sources", () => {
     const manager = new LoadingManager();
     const a = new ShapeLoader(manager).loadAsync("pooled.dts");
     const b = new ShapeLoader(manager).loadAsync("pooled.dts");
+    const lookup = new ShapeLoader(manager);
     expect(load).toHaveBeenCalledTimes(1);
+    expect(lookup.peekModel("pooled.dts")).toBeUndefined();
     complete(model);
+    expect(lookup.peekModel("pooled.dts")).toBe(model);
     expect(await a).toBe(model);
     expect(await b).toBe(model);
     expect(await new ShapeLoader(manager).loadAsync("pooled.dts")).toBe(model);
     expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it("shares the native shape and external sequence with simulation", async () => {
+    const fetch = vi
+      .spyOn(FileLoader.prototype, "loadAsync")
+      .mockImplementation(async (url) => {
+        if (url === "test-look.dsq") return createDSQTestBuffer();
+        if (url === "test-empty.dsq") return new ArrayBuffer(0);
+        return createDTSTestBuffer();
+      });
+    const manager = new LoadingManager();
+    const makeLoader = () =>
+      new ShapeLoader(manager)
+        .setSequenceResolver(() => [
+          { url: "test-look.dsq", name: "look" },
+          { url: "test-empty.dsq" },
+        ])
+        .setTextureResolver(() => null);
+    const visual = makeLoader();
+    const source = makeLoader().loadShapeData("shared-raw.dts");
+    const model = await visual.loadAsync("shared-raw.dts");
+    expect(model.data).toBe(await source);
+    expect(makeLoader().peekShapeData("shared-raw.dts")).toBe(model.data);
+    expect(
+      model.data.sequences.map((s) => model.data.names[s.nameIndex]),
+    ).toEqual(["look"]);
+    expect(fetch).toHaveBeenCalledTimes(3);
   });
 
   it("evicts failed requests so a later request can retry", async () => {
@@ -75,5 +112,32 @@ describe("shared shape sources", () => {
     await expect(loader.loadAsync("retry.dts")).rejects.toThrow("offline");
     expect(await loader.loadAsync("retry.dts")).toBe(model);
     expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("aborts a stalled native download so the same URL can retry", async () => {
+    vi.useFakeTimers();
+    const url = "https://assets.test/stalled.dts";
+    const response = new Response(null);
+    Object.defineProperty(response, "body", { value: undefined });
+    response.arrayBuffer = async () => createDTSTestBuffer();
+    const fetchAsset = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementationOnce((input) => {
+        const request = input as Request;
+        return new Promise((_resolve, reject) => {
+          request.signal.addEventListener("abort", () =>
+            reject(request.signal.reason),
+          );
+        });
+      })
+      .mockResolvedValueOnce(response);
+    const loader = new ShapeLoader(new LoadingManager()).setSequenceResolver(
+      () => [],
+    );
+    const failed = expect(loader.loadShapeData(url)).rejects.toThrow();
+    await vi.runAllTimersAsync();
+    await failed;
+    expect(await loader.loadShapeData(url)).toBe(loader.peekShapeData(url));
+    expect(fetchAsset).toHaveBeenCalledTimes(2);
   });
 });

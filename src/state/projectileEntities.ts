@@ -10,12 +10,28 @@ export type ProjectileEntity =
           | "Tracer"
           | "Flare"
           | "Beam"
+          | "TargetBeam"
           | "LinkBeam"
           | "ShockLance"
           | "Explosion";
       }
     >
   | ShapeEntity;
+
+/** These ribbons place their endpoints directly in world coordinates. */
+export function usesWorldSpaceBeamGeometry(
+  entity: GameEntity | undefined,
+): boolean {
+  switch (entity?.renderType) {
+    case "Beam":
+    case "TargetBeam":
+    case "LinkBeam":
+    case "ShockLance":
+      return true;
+    default:
+      return false;
+  }
+}
 
 /** Projectile classification is independent of its visual representation. */
 export function isProjectileEntity(
@@ -26,6 +42,7 @@ export function isProjectileEntity(
     case "Tracer":
     case "Flare":
     case "Beam":
+    case "TargetBeam":
     case "LinkBeam":
     case "ShockLance":
     case "Explosion":

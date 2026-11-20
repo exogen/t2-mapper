@@ -1,4 +1,4 @@
-import type { Camera, Group } from "three";
+import type { Camera, Group, Object3D } from "three";
 import type { ProjectileEntity } from "../state/projectileEntities";
 
 /** A reusable visual. The stream owns entity lifetime and motion. */
@@ -11,3 +11,7 @@ export interface ProjectileView<E extends ProjectileEntity = ProjectileEntity> {
   dispose(): void;
 }
 export type ProjectileFactory = () => ProjectileView;
+
+export type ProjectileEntityLookup = (
+  id: string | undefined,
+) => { root: Object3D; mounts?: { model: Object3D | null } } | undefined;

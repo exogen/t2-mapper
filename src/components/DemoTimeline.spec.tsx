@@ -10,7 +10,13 @@ import {
   TIMELINE_RECORDER,
   timelinePlayerValue,
 } from "./demoTimelineFilters";
-import type { TeamColorScheme } from "../iffTheme";
+import { IFF_PALETTE, rgbString, type TeamColorScheme } from "../iffTheme";
+
+const green = rgbString(IFF_PALETTE.green);
+const red = rgbString(IFF_PALETTE.red);
+const orange = rgbString(IFF_PALETTE.orange);
+const blueMap = rgbString(IFF_PALETTE.blueMap);
+const neutral = rgbString(IFF_PALETTE.neutral);
 
 const state = vi.hoisted(() => ({
   events: [] as TimelineEvent[],
@@ -730,9 +736,9 @@ function flagColor(event: TimelineEvent) {
 }
 
 it.each([
-  ["blueOrange", "rgb(45, 162, 255)", "rgb(255, 100, 15)"],
-  ["greenRed", "rgb(0, 212, 71)", "rgb(255, 60, 10)"],
-  ["redGreen", "rgb(255, 60, 10)", "rgb(0, 212, 71)"],
+  ["blueOrange", blueMap, orange],
+  ["greenRed", green, red],
+  ["redGreen", red, green],
 ] as const)(
   "colors every observer flag action by its owner's team using %s",
   (scheme, team1, team2) => {
@@ -762,8 +768,8 @@ it.each(flagTypes)(
   (type) => {
     state.observerTeamColors = "redGreen";
     for (const [teamAffinity, color] of [
-      ["friendly", "rgb(0, 212, 71)"],
-      ["enemy", "rgb(255, 60, 10)"],
+      ["friendly", green],
+      ["enemy", red],
     ] as const) {
       expect(
         flagColor({
@@ -787,9 +793,9 @@ it("updates observer flag colors when the configured palette changes", () => {
     actorTeamId: 1,
     flagTeamId: 2,
   };
-  expect(flagColor(event)).toBe("rgb(45, 162, 255)");
+  expect(flagColor(event)).toBe(blueMap);
   state.observerTeamColors = "redGreen";
-  expect(flagColor(event)).toBe("rgb(255, 60, 10)");
+  expect(flagColor(event)).toBe(red);
 });
 
 it("keeps every cap and its event-time color when captures share a timestamp", () => {
@@ -822,7 +828,7 @@ it("keeps every cap and its event-time color when captures share a timestamp", (
     [...markup.matchAll(/data-type="flag-cap" style="color:([^"]+)"/g)].map(
       (match) => match[1],
     ),
-  ).toEqual(["rgb(0, 212, 71)", "rgb(45, 162, 255)", "rgb(255, 100, 15)"]);
+  ).toEqual([green, blueMap, orange]);
 });
 
 it.each([undefined, 0, 3])(
@@ -836,6 +842,6 @@ it.each([undefined, 0, 3])(
         actorTeamId,
         flagTeamId: 1,
       }),
-    ).toBe("rgb(200, 200, 200)");
+    ).toBe(neutral);
   },
 );

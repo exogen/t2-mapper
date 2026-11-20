@@ -41,6 +41,9 @@ export interface WeaponAnimState {
    *  In the engine, every state entry triggers its stateSound; a single tick
    *  can chain through multiple states, so multiple sounds may fire. */
   soundDataBlockIds: number[];
+  /** Casing ejections requested by the states visited this tick. */
+  shellEjections: number;
+  shockwave?: boolean;
   /** Index of the current state in the state machine. */
   stateIndex: number;
 }
@@ -110,20 +113,27 @@ export class WeaponImageStateMachine {
   }
 
   /**
-   * The current state's outputs as if just entered. With `withSound`
-   * the state's entry sound is included — setImageState(0) on a fresh
-   * image plays it (a weapon's activate sound); a fast-forwarded machine
-   * is long past it.
+   * The current state's outputs as if just entered. A newly mounted image
+   * plays its initial state's sound and other entry effects.
    */
-  snapshot(withSound = false): WeaponAnimState {
-    const sound = this.states[this.currentStateIndex]?.soundDataBlockId ?? -1;
-    return this.output(false, true, withSound && sound >= 0 ? [sound] : []);
+  snapshot(onMount = false): WeaponAnimState {
+    const state = this.states[this.currentStateIndex];
+    const sound = state?.soundDataBlockId ?? -1;
+    return this.output(
+      false,
+      true,
+      onMount && sound >= 0 ? [sound] : [],
+      onMount && state?.ejectShell ? 1 : 0,
+      onMount && state?.shockwave === true,
+    );
   }
 
   private output(
     transitioned: boolean,
     entered: boolean,
     soundDataBlockIds: number[],
+    shellEjections: number,
+    shockwave: boolean,
   ): WeaponAnimState {
     const state = this.states[this.currentStateIndex];
     return {
@@ -138,6 +148,8 @@ export class WeaponImageStateMachine {
       transitioned,
       entered,
       soundDataBlockIds,
+      shellEjections,
+      shockwave,
       stateIndex: this.currentStateIndex,
     };
   }
@@ -164,6 +176,7 @@ export class WeaponImageStateMachine {
         transitioned: false,
         entered: false,
         soundDataBlockIds: [],
+        shellEjections: 0,
         stateIndex: -1,
       };
     }
@@ -183,6 +196,8 @@ export class WeaponImageStateMachine {
 
     let transitioned = false;
     let entered = false;
+    let shellEjections = 0;
+    let shockwave = false;
     let forced = (forceFire || fireCountChanged) && this.fireStateIndex >= 0;
 
     // Per-tick transition evaluation (C++ updateImageState): check conditions
@@ -198,23 +213,23 @@ export class WeaponImageStateMachine {
     while (nextState >= 0 && transitionsThisTick < MAX_TRANSITIONS_PER_TICK) {
       transitionsThisTick++;
 
-      if (!forced) {
-        if (
-          nextState === this.fireStateIndex &&
-          nextState !== this.currentStateIndex
-        ) {
-          // Ghosts wait for the server's fire notification.
-          break;
-        }
-        if (nextState === this.currentStateIndex) {
-          // Self-transition (C++ setImageState self-transition path):
-          // reset delayTime only; skip entry transitions and spin handling.
-          transitioned = true;
-          this.delayTime = this.states[nextState].timeoutValue ?? 0;
-          break;
-        }
+      if (
+        !forced &&
+        nextState === this.fireStateIndex &&
+        nextState !== this.currentStateIndex
+      ) {
+        // Ghosts wait for the server's fire notification.
+        break;
       }
+      const next = this.states[nextState];
+      // setImageState ejects shells before its self-transition early return.
+      if (next.ejectShell) shellEjections++;
+      shockwave ||= next.shockwave === true;
       transitioned = true;
+      if (!forced && nextState === this.currentStateIndex) {
+        this.delayTime = next.timeoutValue ?? 0;
+        break;
+      }
       entered = true;
       forced = false;
 
@@ -222,15 +237,15 @@ export class WeaponImageStateMachine {
       const lastSpin = this.states[this.currentStateIndex].spin;
       const lastDelay = this.delayTime;
       this.currentStateIndex = nextState;
-      const newTimeout = this.states[nextState].timeoutValue ?? 0;
+      const newTimeout = next.timeoutValue ?? 0;
       this.delayTime = newTimeout;
 
       // Every state entry plays its sound (C++ setImageState).
-      const entrySound = this.states[nextState].soundDataBlockId;
+      const entrySound = next.soundDataBlockId;
       if (entrySound >= 0) soundDataBlockIds.push(entrySound);
 
       // Spin handling on state entry (C++ setImageState spin switch).
-      const newSpin = this.states[nextState].spin;
+      const newSpin = next.spin;
       switch (newSpin) {
         case SPIN_STOP:
           this.spinTimeScale = 0;
@@ -283,7 +298,13 @@ export class WeaponImageStateMachine {
       // SPIN_IGNORE (0): leave spinTimeScale unchanged.
     }
 
-    return this.output(transitioned, entered, soundDataBlockIds);
+    return this.output(
+      transitioned,
+      entered,
+      soundDataBlockIds,
+      shellEjections,
+      shockwave,
+    );
   }
 
   /**

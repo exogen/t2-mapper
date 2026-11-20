@@ -166,6 +166,7 @@ export function resetStreamPlayback(): void {
   streamRenderFrame.current = null;
   streamRenderFrame.previous = null;
   streamRenderFrame.interpT = 0;
+  streamRenderFrame.reconstructing = false;
   streamRenderFrame.camera = null;
   streamRenderFrame.firstPersonPlayerId = null;
   streamRenderFrame.maskFirstPersonPose = false;

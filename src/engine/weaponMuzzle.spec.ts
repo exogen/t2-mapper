@@ -1,21 +1,23 @@
 import fs from "node:fs/promises";
 import { expect, it } from "vitest";
-import { Group, Object3D, Vector3 } from "three";
+import { Group, Object3D, PerspectiveCamera, Vector3 } from "three";
 import { DTSLoader } from "../dts/dtsLoader";
+import { DTSAnimationTransform, DTSNode } from "../dts/dtsModel";
 import {
+  imageMuzzleWorldDirection,
   muzzleWorldPosition,
   registerImageMuzzle,
   sourceAimDirection,
-} from "./linkBeamSource";
-import { gameEntityStore } from "../state/gameEntityStore";
-import type { PlayerEntity } from "../state/gameEntityTypes";
+} from "./weaponMuzzle";
 import { streamRenderFrame } from "../stream/interpolateEntity";
+import type { StreamEntity } from "../stream/types";
 
 it.each([
   "weapon_repair",
   "weapon_elf",
   "turret_elf_large",
   "weapon_shocklance",
+  "weapon_targeting",
 ])(
   "resolves %s's lazy muzzle and follows the mounted hierarchy",
   async (name) => {
@@ -42,7 +44,7 @@ it.each([
         expected = new Vector3();
       for (const yaw of [0, 1, -1]) {
         player.rotation.y = yaw;
-        muzzleWorldPosition("repairer", player, 0, actual);
+        expect(muzzleWorldPosition("repairer", player, 0, actual)).toBe(actual);
         muzzle.getWorldPosition(expected);
         expect(actual.distanceTo(expected)).toBeLessThan(1e-8);
         expect(actual.distanceTo(player.position)).toBeGreaterThan(0.5);
@@ -77,6 +79,9 @@ it("selects the source image slot and invalidates replacements and unmounts imme
   expect(muzzleWorldPosition("owner", player, 0, out).toArray()).toEqual([
     13, 3, 4,
   ]);
+  expect(muzzleWorldPosition("owner", player, 1, out).toArray()).toEqual([
+    12, 3, 4,
+  ]);
   expect(muzzleWorldPosition("owner", player, 2, out).toArray()).toEqual([
     17, 3, 4,
   ]);
@@ -85,11 +90,50 @@ it("selects the source image slot and invalidates replacements and unmounts imme
   expect(muzzleWorldPosition("owner", player, 0, out).toArray()).toEqual([
     14, 3, 4,
   ]);
+  replacement.removeFromParent();
+  expect(muzzleWorldPosition("owner", player, 0, out).toArray()).toEqual([
+    12, 3, 4,
+  ]);
+  expect(imageMuzzleWorldDirection("owner", player, 0, out).toArray()).toEqual([
+    1, 0, 0,
+  ]);
   stopReplacement();
   expect(muzzleWorldPosition("owner", player, 0, out).toArray()).toEqual([
     12, 3, 4,
   ]);
   stopPack();
+});
+
+it("reads the current arm pose through frozen image mounts before rendering", () => {
+  const arm = new DTSAnimationTransform();
+  const mount = new Group();
+  mount.matrixAutoUpdate = false;
+  const muzzle = new DTSNode();
+  muzzle.name = "muzzlePoint";
+  muzzle.position.z = 1;
+  arm.add(mount);
+  mount.add(muzzle);
+  arm.updateMatrixWorld(true);
+  const unregister = registerImageMuzzle("posed", 0, mount);
+  try {
+    // A new interpolated arm pose turns and moves the weapon before draw.
+    arm.position.x = 2;
+    arm.rotation.y = Math.PI / 2;
+    arm.matrixWorldNeedsUpdate = true;
+    const out = new Vector3();
+    expect(
+      muzzleWorldPosition("posed", arm, 0, out).distanceTo(
+        new Vector3(3, 0, 0),
+      ),
+    ).toBeLessThan(1e-8);
+    expect(
+      imageMuzzleWorldDirection("posed", arm, 0, out).distanceTo(
+        new Vector3(1, 0, 0),
+      ),
+    ).toBeLessThan(1e-8);
+  } finally {
+    unregister();
+  }
 });
 
 it("uses the image transform when its own muzzle is absent, excluding mounted children", () => {
@@ -112,6 +156,9 @@ it("uses the image transform when its own muzzle is absent, excluding mounted ch
 });
 
 it("aims non-player beams along the selected mounted muzzle, including parent pitch and roll", () => {
+  const camera = new PerspectiveCamera(),
+    start = new Vector3(),
+    out = new Vector3();
   const vehicle = new Group(),
     turret = new Group(),
     barrel = new Group(),
@@ -131,7 +178,7 @@ it("aims non-player beams along the selected mounted muzzle, including parent pi
       .applyEuler(turret.rotation)
       .applyEuler(vehicle.rotation);
     expect(
-      sourceAimDirection("turret", turret, 1, new Vector3()).distanceTo(
+      sourceAimDirection("turret", turret, 1, start, camera, out).distanceTo(
         expected,
       ),
     ).toBeLessThan(1e-8);
@@ -141,7 +188,7 @@ it("aims non-player beams along the selected mounted muzzle, including parent pi
       .applyEuler(turret.rotation)
       .applyEuler(vehicle.rotation);
     expect(
-      sourceAimDirection("turret", turret, 0, new Vector3()).distanceTo(
+      sourceAimDirection("turret", turret, 0, start, camera, out).distanceTo(
         expected,
       ),
     ).toBeLessThan(1e-8);
@@ -150,18 +197,20 @@ it("aims non-player beams along the selected mounted muzzle, including parent pi
   }
 });
 
-it("preserves the player's look-direction override instead of following the gun's animated tilt", () => {
-  const previous = gameEntityStore.getState().streamEntities;
-  const { firstPersonPlayerId, firstPersonAim } = streamRenderFrame;
-  const player: PlayerEntity = {
+it("uses body orientation and head pitch for the normal player pose", () => {
+  const { current } = streamRenderFrame;
+  const player: StreamEntity = {
     id: "player",
     className: "Player",
-    renderType: "Player",
+    type: "Player",
     headPitch: 0.4,
-    headYaw: 0,
+    headYaw: 0.2,
   };
-  gameEntityStore.setState({ streamEntities: new Map([[player.id, player]]) });
-  const root = new Group(),
+  streamRenderFrame.current = new Map([[player.id, player]]);
+  const camera = new PerspectiveCamera(),
+    start = new Vector3(),
+    out = new Vector3(),
+    root = new Group(),
     gun = new Group();
   root.rotation.y = 0.7;
   root.add(gun);
@@ -172,21 +221,61 @@ it("preserves the player's look-direction override instead of following the gun'
       root.rotation,
     );
     expect(
-      sourceAimDirection(player.id, root, 0, new Vector3()).distanceTo(
+      sourceAimDirection(player.id, root, 0, start, camera, out).distanceTo(
+        expected,
+      ),
+    ).toBeLessThan(1e-8);
+  } finally {
+    unregister();
+    streamRenderFrame.current = current;
+  }
+});
+
+it("uses the settled camera aim for a mounted player, then the animated image outside that view", () => {
+  const { current, firstPersonPlayerId, maskFirstPersonPose } =
+    streamRenderFrame;
+  const player: StreamEntity = {
+    id: "mounted",
+    className: "Player",
+    type: "Player",
+    mountObjectId: "vehicle",
+    actionSlot: { action: 9, calls: [{ timeSec: 0 }] },
+  };
+  streamRenderFrame.current = new Map([[player.id, player]]);
+  streamRenderFrame.firstPersonPlayerId = player.id;
+  streamRenderFrame.maskFirstPersonPose = true;
+  const camera = new PerspectiveCamera(),
+    source = new Group(),
+    gun = new Group(),
+    vehicle = new Group(),
+    muzzle = new Vector3(0, 1, 0),
+    out = new Vector3();
+  camera.position.set(0, 2, 0);
+  camera.lookAt(0, 2, 1);
+  vehicle.rotation.y = Math.PI / 2;
+  vehicle.add(source);
+  source.add(gun);
+  const unregister = registerImageMuzzle(player.id, 0, gun);
+  try {
+    const expected = new Vector3(0, 1, 500).normalize();
+    expect(
+      sourceAimDirection(player.id, source, 0, muzzle, camera, out).distanceTo(
         expected,
       ),
     ).toBeLessThan(1e-8);
 
-    streamRenderFrame.firstPersonPlayerId = player.id;
-    streamRenderFrame.firstPersonAim = { yaw: 0, pitch: 0, headYaw: 0.2 };
+    streamRenderFrame.maskFirstPersonPose = false;
     expect(
-      sourceAimDirection(player.id, root, 0, new Vector3()).distanceTo(
+      sourceAimDirection(player.id, source, 0, muzzle, camera, out).distanceTo(
         new Vector3(1, 0, 0),
       ),
     ).toBeLessThan(1e-8);
   } finally {
     unregister();
-    gameEntityStore.setState({ streamEntities: previous });
-    Object.assign(streamRenderFrame, { firstPersonPlayerId, firstPersonAim });
+    Object.assign(streamRenderFrame, {
+      current,
+      firstPersonPlayerId,
+      maskFirstPersonPose,
+    });
   }
 });

@@ -39,6 +39,11 @@ export const MOUNTED_OBJECT_ROTATION: [number, number, number] = [
   0,
 ];
 
+/** ShapeBase::mountObject uses slot zero for out-of-range mount points. */
+export function objectMountSlot(slot = 0): number {
+  return slot >= 0 && slot < 32 ? slot : 0;
+}
+
 /**
  * Where a streamed ghost sits, matching what `StreamPlaybackSession`
  * applies imperatively each frame.

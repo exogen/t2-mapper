@@ -60,6 +60,8 @@ export interface WorldRayHit {
   /** Unit surface normal in Torque space, oriented against the ray. */
   normal: Vec3;
   source: "terrain" | "interior" | "forcefield" | "static";
+  /** Container object hit, when applicable. Terrain has one object. */
+  colliderId?: string;
 }
 
 // The registry's state lives in collisionContext so more than one world
@@ -1041,10 +1043,14 @@ export function castWorldRay(
     includeTerrain?: boolean;
     includeInteriors?: boolean;
     includeForceFields?: boolean;
+    excludeHit?: WorldRayHit;
   },
 ): WorldRayHit | null {
   const terrainHit =
-    options?.includeTerrain === false ? null : castTerrainRay(start, end);
+    options?.includeTerrain === false ||
+    options?.excludeHit?.source === "terrain"
+      ? null
+      : castTerrainRay(start, end);
   let best: WorldRayHit | null = terrainHit
     ? { ...terrainHit, source: "terrain" }
     : null;
@@ -1062,7 +1068,12 @@ export function castWorldRay(
   const excluded = staticColliderExclusions(options?.excludeStaticColliders);
   for (const [group, source] of meshGroups) {
     if (source === "interior" && options?.includeInteriors === false) continue;
-    for (const entry of group.values()) {
+    for (const [id, entry] of group) {
+      if (
+        options?.excludeHit?.source === source &&
+        options.excludeHit.colliderId === id
+      )
+        continue;
       if (excluded?.includes(entry) || !entryReaches(entry, _segBox)) continue;
       for (const collider of entry.colliders) {
         if (!syncMeshCollider(collider)) continue;
@@ -1099,13 +1110,19 @@ export function castWorldRay(
           point: threeToTorque(_point),
           normal: threeToTorque(_normal),
           source,
+          colliderId: id,
         };
       }
     }
   }
 
-  for (const entry of forceFields().values()) {
+  for (const [id, entry] of forceFields()) {
     if (segLength === 0 || options?.includeForceFields === false) break;
+    if (
+      options?.excludeHit?.source === "forcefield" &&
+      options.excludeHit.colliderId === id
+    )
+      continue;
     if (!entry.enabled) continue;
     if (!entry.worldBox.intersectsBox(_segBox)) continue;
     _localRay.copy(_ray).applyMatrix4(entry.inverse);
@@ -1126,6 +1143,7 @@ export function castWorldRay(
       point: threeToTorque(_point),
       normal: threeToTorque(_normal),
       source: "forcefield",
+      colliderId: id,
     };
   }
 

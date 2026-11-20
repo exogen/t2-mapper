@@ -11,6 +11,9 @@ import { TICK_DURATION_MS } from "../stream/streamHelpers";
 /** Torque clamps projectile lifetime to at most 511 living ticks. */
 const MAX_LIVING_TICKS = 511;
 
+/** LinearProjectile::onAdd (0x62d630) uses five local ticks to join the flight. */
+export const LINEAR_LAUNCH_WARP_TICKS = 5;
+
 /** Round milliseconds up to a whole tick, as ProjectileData::onAdd does. */
 function roundUpToTick(ms: number): number {
   return (ms + TICK_DURATION_MS - 1) & ~(TICK_DURATION_MS - 1);
@@ -64,12 +67,8 @@ export function buildLinearSegment(options: {
    *  than this skip off the surface instead of detonating. The disc
    *  ships with 15. */
   reflectOnWaterImpactAngle?: number;
-  // Not modelled, deliberately: `fizzleUnderwaterMS` kills a round that
-  // has been submerged that long, but the engine clamps it to -1 when it
-  // exceeds the lifetime and every datablock we see sets it EQUAL to the
-  // lifetime (disc 5024/5024, chaingun 3008/3008) or leaves it unset, so
-  // it never truncates a flight. `deflectionOnWaterImpact` is parsed,
-  // clamped and networked by the engine but never actually read.
+  // Retail clamps and transmits fizzleUnderwaterMS and
+  // deflectionOnWaterImpact, but flight simulation does not read them.
 }): LinearSegment {
   const { start, vel } = options;
   const lifeMs = roundUpToTick(
@@ -101,7 +100,7 @@ export function buildLinearSegment(options: {
         vel: [...vel],
         msEnd: lifeMs,
         endPoint: end,
-        endNormal: [0, 0, 1],
+        endNormal: reverseFlightNormal(vel),
         explodeAtEnd: options.explodeOnDeath,
       };
 
@@ -115,7 +114,6 @@ export function buildLinearSegment(options: {
   if (!water) return dry;
 
   const waterMsEnd = Math.floor(dry.msEnd * water.t);
-  const speed = Math.hypot(vel[0], vel[1], vel[2]);
 
   if (!options.explodeOnWaterImpact) {
     // Passes through and keeps going, but SLOWER: the engine rebuilds
@@ -152,6 +150,7 @@ export function buildLinearSegment(options: {
   const reflectAngle = options.reflectOnWaterImpactAngle ?? 0;
   const cosLimit = Math.cos(((90 - reflectAngle) * Math.PI) / 180);
   const n0 = water.normal;
+  const speed = Math.hypot(vel[0], vel[1], vel[2]);
   const dot =
     speed > 0 ? (vel[0] * n0[0] + vel[1] * n0[1] + vel[2] * n0[2]) / speed : -1;
 
@@ -214,43 +213,80 @@ function legFrom(
     vel: [...vel],
     msEnd: hit ? msStart + Math.floor((lifeMs - msStart) * hit.t) : lifeMs,
     endPoint: hit ? hit.point : end,
-    endNormal: hit ? hit.normal : [0, 0, 1],
+    endNormal: hit ? hit.normal : reverseFlightNormal(vel),
     explodeAtEnd: hit ? true : explodeOnDeath,
   };
 }
 
-/** Closed-form segment position at a flight time, clamped to the end. */
-export function linearSegmentPosition(
+/** Lifetime expiry uses the opposite of the flight direction as its normal. */
+function reverseFlightNormal(velocity: Vec3): Vec3 {
+  const speed = Math.hypot(...velocity);
+  return speed > 0
+    ? [-velocity[0] / speed, -velocity[1] / speed, -velocity[2] / speed]
+    : [0, 0, 1];
+}
+
+/** Sample the flight at a given age and return its current velocity. */
+export function sampleLinearSegment(
   seg: LinearSegment,
   ms: number,
   out: Vec3,
 ): Vec3 {
-  // Past the first leg's end, the round is on its water leg (a skip or
-  // a slowed pass-through) — follow it rather than freezing at the
-  // surface.
-  if (seg.next && ms > seg.msEnd) {
-    const legMs = Math.min(ms, seg.next.msEnd) - seg.msEnd;
-    const legSec = Math.max(0, legMs) / 1000;
-    out[0] = seg.next.start[0] + seg.next.vel[0] * legSec;
-    out[1] = seg.next.start[1] + seg.next.vel[1] * legSec;
-    out[2] = seg.next.start[2] + seg.next.vel[2] * legSec;
-    if (ms >= seg.next.msEnd) {
-      out[0] = seg.next.endPoint[0];
-      out[1] = seg.next.endPoint[1];
-      out[2] = seg.next.endPoint[2];
+  const leg = ms >= seg.msEnd && seg.next ? seg.next : seg;
+  if (ms >= leg.msEnd) {
+    [out[0], out[1], out[2]] = leg.endPoint;
+  } else {
+    const t = (ms - (leg === seg ? 0 : seg.msEnd)) / 1000;
+    out[0] = leg.start[0] + leg.vel[0] * t;
+    out[1] = leg.start[1] + leg.vel[1] * t;
+    out[2] = leg.start[2] + leg.vel[2] * t;
+  }
+  return leg.vel;
+}
+
+export interface LinearLaunchWarp {
+  start: Vec3;
+  end: Vec3;
+}
+
+export function createLinearLaunchWarp(
+  segment: LinearSegment,
+  ageTicks: number,
+  start: Vec3,
+): LinearLaunchWarp {
+  const end: Vec3 = [0, 0, 0];
+  sampleLinearSegment(
+    segment,
+    (ageTicks + LINEAR_LAUNCH_WARP_TICKS) * TICK_DURATION_MS,
+    end,
+  );
+  return { start, end };
+}
+
+/** The same interval drives the fixed-tick collision sweep and render pose. */
+export function sampleLinearTick(
+  segment: LinearSegment,
+  ageTicks: number,
+  scopeTick: number,
+  warp: LinearLaunchWarp | undefined,
+  start: Vec3,
+  end: Vec3,
+): Vec3 {
+  const ageMs = ageTicks * TICK_DURATION_MS;
+  const velocity = sampleLinearSegment(segment, ageMs, end);
+  if (warp) {
+    const phase = scopeTick / LINEAR_LAUNCH_WARP_TICKS;
+    for (let axis = 0; axis < 3; axis++) {
+      const delta =
+        (warp.end[axis] - warp.start[axis]) / LINEAR_LAUNCH_WARP_TICKS;
+      start[axis] = warp.start[axis] + delta * (scopeTick - 1);
+      end[axis] =
+        phase === 1 ? warp.end[axis] : warp.start[axis] + delta * scopeTick;
     }
-    return out;
+  } else {
+    sampleLinearSegment(segment, ageMs - TICK_DURATION_MS, start);
   }
-  const t = Math.min(ms, seg.msEnd) / 1000;
-  out[0] = seg.start[0] + seg.vel[0] * t;
-  out[1] = seg.start[1] + seg.vel[1] * t;
-  out[2] = seg.start[2] + seg.vel[2] * t;
-  if (ms >= seg.msEnd) {
-    out[0] = seg.endPoint[0];
-    out[1] = seg.endPoint[1];
-    out[2] = seg.endPoint[2];
-  }
-  return out;
+  return velocity;
 }
 
 /**
