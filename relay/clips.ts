@@ -25,6 +25,7 @@ import {
   clipDurationMs,
   MAX_CLIP_BODY_BYTES,
   CLIPS_PAGE_SIZE,
+  MAX_PUBLIC_CLIPS,
   type ClipPage,
   type ClipTake,
   type ClipView,
@@ -210,7 +211,8 @@ export class Clips {
   private listPage(
     owner: string | null,
     pageNumber: number,
-    manage = false,
+    manage: boolean,
+    pageSize: number,
   ): ClipPage {
     const visible = manage ? "state!='deleting'" : "state='ready'";
     return this.db.transaction(() => {
@@ -233,31 +235,35 @@ export class Clips {
               .get(owner) as { total: number; pending: number });
       const page = Math.min(
         pageNumber,
-        Math.max(1, Math.ceil(counts.total / CLIPS_PAGE_SIZE)),
+        Math.max(1, Math.ceil(counts.total / pageSize)),
       );
       const where =
         owner === null ? visible : `ownerDiscordId=? AND ${visible}`;
-      const creator =
+      const creatorJoin =
         owner === null
-          ? `, (SELECT CASE WHEN count(*)=1 THEN min(u.name) END
+          ? `LEFT JOIN (
+                SELECT a.accountId, CASE WHEN count(*)=1 THEN min(u.name) END AS creatorName
                 FROM account a JOIN user u ON a.userId=u.id
-                WHERE a.providerId='discord' AND a.accountId=clip.ownerDiscordId) AS creatorName`
+                WHERE a.providerId='discord'
+                GROUP BY a.accountId
+              ) creators ON creators.accountId=clip.ownerDiscordId`
           : "";
       const rows = this.db
         .prepare(
-          `SELECT clip.*${creator} FROM clip WHERE ${where}
-           ORDER BY createdAt DESC,id DESC LIMIT ? OFFSET ?`,
+          `SELECT clip.*${creatorJoin && ", creators.creatorName"}
+           FROM clip ${creatorJoin} WHERE ${where}
+           ORDER BY clip.createdAt DESC,clip.id DESC LIMIT ? OFFSET ?`,
         )
         .all(
           ...(owner === null ? [] : [owner]),
-          CLIPS_PAGE_SIZE,
-          (page - 1) * CLIPS_PAGE_SIZE,
+          pageSize,
+          (page - 1) * pageSize,
         ) as ClipRow[];
       return {
         clips: rows.map((row) => this.view(row)),
         ...counts,
         page,
-        pageSize: CLIPS_PAGE_SIZE,
+        pageSize,
       };
     })();
   }
@@ -336,6 +342,7 @@ export class Clips {
       if (req.method === "GET" && url.pathname === "/api/clips") {
         const owner = url.searchParams.get("owner");
         const requestedPage = url.searchParams.get("page") ?? "1";
+        const requestedLimit = url.searchParams.get("limit");
         const manage = url.searchParams.get("manage") === "1";
         if ((owner !== null || manage) && !isDiscordId(owner))
           throw new ClipError(400, "A valid clip creator is required");
@@ -344,12 +351,21 @@ export class Clips {
         const pageNumber = Number(requestedPage);
         if (!Number.isSafeInteger(pageNumber) || pageNumber > 1_000_000)
           throw new ClipError(400, "Invalid clip page");
+        const pageSize =
+          requestedLimit === null ? CLIPS_PAGE_SIZE : Number(requestedLimit);
+        if (
+          requestedLimit !== null &&
+          (owner !== null ||
+            !/^[1-9]\d*$/.test(requestedLimit) ||
+            pageSize > MAX_PUBLIC_CLIPS)
+        )
+          throw new ClipError(400, "Invalid public clip limit");
         if (manage) {
           const user = await this.options.getAccount(req.headers);
           if (user?.discordId !== owner)
             throw new ClipError(403, "Sign in to manage your own clips");
         }
-        json(res, 200, this.listPage(owner, pageNumber, manage));
+        json(res, 200, this.listPage(owner, pageNumber, manage, pageSize));
       } else if (req.method === "GET" && match) {
         if (!UUID.test(match[1])) throw new ClipError(404, "Clip not found");
         let row = this.visibleRow(match[1]);

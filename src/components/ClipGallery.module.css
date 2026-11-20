@@ -45,10 +45,6 @@
   padding-bottom: 40px;
 }
 
-.Header {
-  composes: Header from "./UserDemos.module.css";
-}
-
 .Title {
   composes: Title from "./UserDemos.module.css";
 }

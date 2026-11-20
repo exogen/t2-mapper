@@ -245,27 +245,13 @@ async function save(f: Awaited<ReturnType<typeof fixture>>, body = payload()) {
   return clip;
 }
 
-it("paginates ready clips globally and by creator, limiting management to the owner", async () => {
-  const f = await fixture();
-  f.database.exec(`
-    INSERT INTO user (id, name) VALUES
-      ('owner', 'Clip Creator'), ('other', 'Another Creator'), ('unrelated', 'Unrelated');
-    INSERT INTO account (userId, providerId, accountId) VALUES
-      ('owner', 'discord', '${OWNER}'), ('other', 'discord', '${OTHER}'),
-      ('unrelated', 'other', '${OTHER}');
-  `);
-  const insert = f.database.prepare(
+function clipRowSeeder(database: Database.Database) {
+  const insert = database.prepare(
     `INSERT INTO clip (id,ownerDiscordId,requestId,payloadHash,sourceDemo,sourceETag,
       sourceSha256,title,createdAt,startSec,endSec,durationMs,state,checkpointVersion)
      VALUES (@id,@owner,@id,'private payload','match.rec',@etag,@sha,@id,@time,0,1,1000,@state,@version)`,
   );
-  const ids: string[] = [];
-  const seed = (
-    index: number,
-    owner = OWNER,
-    state = "ready",
-    time = index,
-  ) => {
+  return (index: number, owner = OWNER, state = "ready", time = index) => {
     const id = `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
     insert.run({
       id,
@@ -278,6 +264,19 @@ it("paginates ready clips globally and by creator, limiting management to the ow
     });
     return id;
   };
+}
+
+it("paginates ready clips globally and by creator, limiting management to the owner", async () => {
+  const f = await fixture();
+  f.database.exec(`
+    INSERT INTO user (id, name) VALUES
+      ('owner', 'Clip Creator'), ('other', 'Another Creator'), ('unrelated', 'Unrelated');
+    INSERT INTO account (userId, providerId, accountId) VALUES
+      ('owner', 'discord', '${OWNER}'), ('other', 'discord', '${OTHER}'),
+      ('unrelated', 'other', '${OTHER}');
+  `);
+  const seed = clipRowSeeder(f.database);
+  const ids: string[] = [];
   for (let index = 1; index <= 8; index++)
     ids.push(seed(index, OWNER, "ready", Math.min(index, 7)));
   const otherClip = seed(9, OTHER);
@@ -373,15 +372,47 @@ it("paginates ready clips globally and by creator, limiting management to the ow
   expect(((await (await manage()).json()) as ClipPage).total).toBe(10);
 });
 
+it("returns the latest 1,000 ready clips in a single public request", async () => {
+  const f = await fixture();
+  const seed = clipRowSeeder(f.database);
+  const ids = Array.from({ length: 1002 }, (_, i) =>
+    seed(i + 1, i % 2 ? OTHER : OWNER, "ready", Math.min(i + 1, 1001)),
+  );
+  seed(1003, OWNER, "processing");
+  seed(1004, OTHER, "failed");
+  seed(1005, OWNER, "deleting");
+  f.getAccount.mockResolvedValue(null);
+
+  const response = await f.request("GET", "/api/clips?limit=1000");
+  expect(response.status).toBe(200);
+  const feed = (await response.json()) as ClipPage;
+  expect(feed).toMatchObject({
+    total: 1002,
+    pending: 0,
+    page: 1,
+    pageSize: 1000,
+  });
+  expect(feed.clips.map((clip) => clip.id)).toEqual(
+    ids.toReversed().slice(0, 1000),
+  );
+  expect(feed.clips.every((clip) => clip.state === "ready")).toBe(true);
+  expect(f.getAccount).not.toHaveBeenCalled();
+  expect(f.send).not.toHaveBeenCalled();
+});
+
 it.each([
   "?manage=1",
   "?owner=bad",
   "?page=0",
+  "?limit=0",
+  "?limit=2.5",
+  "?limit=1001",
   `?owner=${OWNER}&page=0`,
   `?owner=${OWNER}&page=-1`,
   `?owner=${OWNER}&page=1.5`,
   `?owner=${OWNER}&page=nope`,
   `?owner=${OWNER}&page=1000001`,
+  `?owner=${OWNER}&limit=1000`,
 ])("rejects invalid clip pagination or ownership %s", async (query) => {
   const f = await fixture();
   expect((await f.request("GET", `/api/clips${query}`)).status).toBe(400);

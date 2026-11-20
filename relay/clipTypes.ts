@@ -16,6 +16,7 @@ export const MAX_CLIP_DURATION_MS = 60_000;
 export const MAX_CLIP_SAMPLES = 7_202;
 export const MAX_CLIP_BODY_BYTES = 2 * 1024 * 1024;
 export const CLIPS_PAGE_SIZE = 6;
+export const MAX_PUBLIC_CLIPS = 1_000;
 
 export interface ClipHudSettings {
   showChat: boolean;

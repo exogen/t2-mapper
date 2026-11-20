@@ -1,26 +1,23 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { parseAsInteger, useQueryState } from "nuqs";
+import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { LuChevronLeft } from "react-icons/lu";
 import { readPublicClips } from "../stream/clipApi";
 import { ClipCard } from "./ClipCard";
-import { DemoPagination } from "./DemoPagination";
 import { useDemoIndex } from "./useDemoIndex";
 import styles from "./ClipGallery.module.css";
 
 export function ClipGallery() {
-  const [pageParam, setPage] = useQueryState(
-    "page",
-    parseAsInteger.withDefault(1).withOptions({ history: "push" }),
-  );
-  const requestedPage = Math.max(1, pageParam);
   const { data: demos } = useDemoIndex();
+  const demosByFilename = useMemo(
+    () => new Map(demos?.map((demo) => [demo.filename, demo])),
+    [demos],
+  );
   const clips = useQuery({
-    queryKey: ["publicClips", requestedPage],
-    queryFn: ({ signal }) => readPublicClips(requestedPage, signal),
-    placeholderData: keepPreviousData,
+    queryKey: ["publicClips"],
+    queryFn: ({ signal }) => readPublicClips(signal),
     retry: false,
   });
-  const page = clips.data;
+  const items = clips.data?.clips;
 
   return (
     <div className={styles.Frame}>
@@ -38,29 +35,16 @@ export function ClipGallery() {
           aria-labelledby="clips-title"
           aria-busy={clips.isFetching}
         >
-          <div className={styles.Header}>
-            <h1 className={styles.Title} id="clips-title">
-              Recent clips
-            </h1>
-            {page && (
-              <DemoPagination
-                label="Clip pages"
-                page={page.page - 1}
-                pageCount={Math.ceil(page.total / page.pageSize)}
-                disabled={clips.isPlaceholderData}
-                onPageChange={(next) => void setPage(next + 1)}
-              />
-            )}
-          </div>
-          {page?.clips.length ? (
+          <h1 className={styles.Title} id="clips-title">
+            Recent clips
+          </h1>
+          {items?.length ? (
             <div className={styles.Grid}>
-              {page.clips.map((clip) => (
+              {items.map((clip) => (
                 <ClipCard
                   key={clip.id}
                   clip={clip}
-                  demo={demos?.find(
-                    (demo) => demo.filename === clip.sourceDemo,
-                  )}
+                  demo={demosByFilename.get(clip.sourceDemo)}
                 />
               ))}
             </div>
@@ -68,7 +52,7 @@ export function ClipGallery() {
             <p className={styles.Message} role="status">
               Loading clips…
             </p>
-          ) : page ? (
+          ) : items ? (
             <p className={styles.Message}>No clips yet.</p>
           ) : null}
           {clips.isError && (

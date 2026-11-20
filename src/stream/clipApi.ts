@@ -1,7 +1,8 @@
-import type {
-  ClipCreateRequest,
-  ClipPage,
-  ClipView,
+import {
+  MAX_PUBLIC_CLIPS,
+  type ClipCreateRequest,
+  type ClipPage,
+  type ClipView,
 } from "../../relay/clipTypes";
 import { appApiBaseUrl } from "../account/authClient";
 
@@ -68,12 +69,9 @@ export function readUserClips(
   return readClipJson(url, signal, manage ? "include" : "omit");
 }
 
-export function readPublicClips(
-  page: number,
-  signal: AbortSignal,
-): Promise<ClipPage> {
+export function readPublicClips(signal: AbortSignal): Promise<ClipPage> {
   const url = new URL("/api/clips", appApiBaseUrl);
-  url.searchParams.set("page", String(page));
+  url.searchParams.set("limit", String(MAX_PUBLIC_CLIPS));
   return readClipJson(url, signal);
 }
 

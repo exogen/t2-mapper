@@ -8,6 +8,7 @@ import {
   readClip,
   readClipCheckpoint,
   readClipStatus,
+  readPublicClips,
   readUserClips,
   clipRefetchInterval,
   deleteClip,
@@ -103,6 +104,24 @@ it("fetches a creator's requested page publicly and propagates cancellation", as
   expect(options).toMatchObject({ credentials: "omit", cache: "no-store" });
   controller.abort();
   expect(options.signal.aborted).toBe(true);
+});
+
+it("requests the latest public clips together without a page number", async () => {
+  const page = {
+    clips: [],
+    total: 1_005,
+    pending: 0,
+    page: 1,
+    pageSize: 1_000,
+  };
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(page)));
+  vi.stubGlobal("fetch", fetch);
+  await expect(readPublicClips(new AbortController().signal)).resolves.toEqual(
+    page,
+  );
+  const [url, options] = fetch.mock.calls[0];
+  expect(String(url)).toBe("https://api.example.com/api/clips?limit=1000");
+  expect(options).toMatchObject({ credentials: "omit", cache: "no-store" });
 });
 
 it("polls saved clip metadata without requesting its camera timeline", async () => {
