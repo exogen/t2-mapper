@@ -986,10 +986,24 @@ export function unregisterPlayerShapeCollider(id: string): void {
   collisionState().playerShapes.delete(id);
 }
 
+export type ForceFieldBox = Pick<
+  ForceFieldEntry,
+  "matrixWorld" | "box" | "worldBox"
+>;
+
+export interface PlayerForceFields {
+  boxes: ReadonlyMap<string, ForceFieldBox>;
+  blocks(id: string): boolean;
+}
+
+function worldFieldEnabled(id: string): boolean {
+  return forceFields().get(id)?.enabled === true;
+}
+
 export function playerTrianglesInBox(
   box: Box3,
   out: number[],
-  collideWithField?: (id: string) => boolean,
+  playerFields?: PlayerForceFields,
   interiorHullType?: DIFHullType,
 ): void {
   appendMeshTriangles(
@@ -1000,12 +1014,9 @@ export function playerTrianglesInBox(
     interiorHullType,
   );
   appendMeshTriangles(collisionState().playerShapes.values(), box, out);
-  for (const [id, field] of forceFields()) {
-    if (
-      !field.worldBox.intersectsBox(box) ||
-      !(collideWithField ? collideWithField(id) : field.enabled)
-    )
-      continue;
+  const blocks = playerFields?.blocks ?? worldFieldEnabled;
+  for (const [id, field] of playerFields?.boxes ?? forceFields()) {
+    if (!field.worldBox.intersectsBox(box) || !blocks(id)) continue;
     for (const [a, b, c] of BOX_TRIANGLES) {
       for (const i of [a, b, c]) {
         _corner.set(

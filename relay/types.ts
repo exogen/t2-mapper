@@ -10,6 +10,7 @@ import type { SkyWeather } from "../src/scene/skyWeather.js";
 import type { PrecipitationState } from "../src/weather/types.js";
 import type {
   ConnectionProtocolState,
+  GameState,
   GhostUpdate,
   NetEventInfo,
   ParsedData,
@@ -166,6 +167,18 @@ export interface WatchTargetEntry {
   targetData?: number;
 }
 
+/** The latest GameConnection lock fields. Object references use wire ghost indices. */
+export type WatchMissileLock = Pick<
+  GameState,
+  | "selfLocked"
+  | "selfHomed"
+  | "seekerTracking"
+  | "seekerTrackingPos"
+  | "seekerMode"
+  | "seekerObjectGhostIndex"
+  | "targetPos"
+>;
+
 /**
  * Catch-up payload for a late-joining watcher. Mirrors the parsed
  * InitialBlockData a `.rec` recorded mid-match starts with, so the
@@ -195,6 +208,7 @@ export interface WatchCatchupPayload {
   skyWeatherStates?: Array<[ghostIndex: number, state: SkyWeather]>;
   controlObjectGhostIndex: number;
   controlObjectData?: ParsedData;
+  missileLock?: WatchMissileLock;
   missionName: string | null;
   /** Mission handshake sequence; absent on older relays. */
   missionSequence?: string | null;

@@ -36,12 +36,12 @@ export function ClipRecordingHelpDialog({
       <DialogHeading className={styles.Title}>Record a clip</DialogHeading>
       <p>
         Record up to 60 seconds of a demo to share. Camera moves, view changes,
-        and speed changes are captured. Pauses are included by default, and you
-        can skip them in the clip recorder.
+        and speed changes are captured. Tip: using Quick Cam can assist in
+        preparing your shot selection.
       </p>
       <p>
-        Press <strong>Record clip</strong> again to stop, then trim the clip,
-        smooth the camera, and choose which HUDs viewers see.
+        After recording, you can adjust camera smoothing, transition styles, and
+        other settings.
       </p>
       <div className={styles.Buttons}>
         <button

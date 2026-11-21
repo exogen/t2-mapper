@@ -1165,7 +1165,7 @@ it("rebuilds obsolete or missing checkpoint artifacts", async () => {
   const setVersion = f.database.prepare(
     "UPDATE clip SET checkpointVersion=? WHERE id=?",
   );
-  setVersion.run(22, clip.id);
+  setVersion.run(DEMO_CHECKPOINT_VERSION, clip.id);
   expect(
     (
       (await (
@@ -1174,7 +1174,7 @@ it("rebuilds obsolete or missing checkpoint artifacts", async () => {
     ).state,
   ).toBe("ready");
   expect(f.prepare).toHaveBeenCalledOnce();
-  setVersion.run(21, clip.id);
+  setVersion.run(23, clip.id);
   const rebuilding = await f.request("GET", `/api/clips/${clip.id}`);
   expect(((await rebuilding.json()) as ClipView).state).toBe("processing");
   await f.service.idle();

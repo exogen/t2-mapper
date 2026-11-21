@@ -152,9 +152,8 @@ export function createForceFieldView(
       );
   }
 
-  // Register the field's box for projectile collision. Torque collides
-  // with any field that isn't fully open; open/close and the dimension
-  // change that comes with it rebuild the entity (and so this view).
+  // The view and collider share the same Three.js placement. Changes to a
+  // field's transform, dimensions or open state replace the view.
   const collider = forceFieldCollider(entity);
   if (collider)
     registerForceFieldCollider(

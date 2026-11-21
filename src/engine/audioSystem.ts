@@ -7,6 +7,7 @@ import {
 } from "../state/streamPlaybackStore";
 import { connectAudioPlayback } from "./audioPlayback";
 import { getAudioGraph, getPlaybackFade } from "./audioGraph";
+import { installMissileLockAudio } from "./missileLockAudio";
 import { preloadMatchSounds } from "./preloadMatchSounds";
 import { FramePriority } from "./framePriority";
 import { combineCleanups, reaction } from "./storeReaction";
@@ -41,7 +42,8 @@ function liveSessionDead(): boolean {
  * under commentary, silent once a live session dies).
  */
 export function installAudio(engine: GameEngine): () => void {
-  const { audioLoader, audioListener } = getAudioGraph();
+  const audio = getAudioGraph();
+  const { audioLoader, audioListener } = audio;
 
   // Suspend all sounds at their current positions while a stream is
   // stopped, paused or seeking. At natural EOF only chat stays audible
@@ -77,6 +79,7 @@ export function installAudio(engine: GameEngine): () => void {
       (state) => state.audioEnabled,
       (enabled) => (enabled ? preloadMatchSounds(audioLoader) : undefined),
     ),
+    installMissileLockAudio(engine, audio),
     // The listener follows whichever camera this frame renders through
     // (the command circuit's rig while it's open).
     engine.scheduler.add(FramePriority.ShadowAtlas, ({ camera }) => {

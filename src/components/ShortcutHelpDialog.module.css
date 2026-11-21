@@ -11,6 +11,10 @@
   z-index: 21;
 }
 
+.Dialog[data-mode="map"] {
+  width: 620px;
+}
+
 .Dialog.Dialog {
   position: fixed;
   top: 50%;

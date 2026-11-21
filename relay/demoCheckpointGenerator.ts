@@ -25,7 +25,6 @@ import { HeadlessWorld, type WorldEntity } from "../src/world/headlessWorld";
 import { loadDtsScene } from "../src/dts/nodeDts";
 import { registerShapeSequences } from "../src/stream/shapeSequences";
 import { OCCLUDER_SHAPE_TYPES } from "../src/world/colliderPolicy";
-import { ForceFieldState } from "../src/stream/forceFieldState";
 import { TICK_DURATION_MS } from "../src/stream/streamHelpers";
 import {
   checkDemoCheckpointPlan,
@@ -184,10 +183,7 @@ export async function generateDemoCheckpoints(
           "ForceFieldBare",
           "WaterBlock",
         ]);
-        let preparedWorld = new Map<
-          string,
-          { sceneData: unknown; fieldOpen?: boolean }
-        >();
+        let preparedWorld = new Map<string, WorldEntity>();
         let preparedTicks = 0;
         let lastProgress = performance.now();
         for (const target of targets) {
@@ -198,20 +194,17 @@ export async function generateDemoCheckpoints(
               let worldChanged = false;
               for (const entity of entities) {
                 if (!collisionClasses.has(entity.className)) continue;
-                const fieldOpen =
-                  entity.className === "ForceFieldBare"
-                    ? entity.forceFieldState === ForceFieldState.Open
-                    : undefined;
-                collisionEntities.push(
-                  entity.className === "ForceFieldBare"
-                    ? { ...entity, fieldOpen }
-                    : entity,
-                );
+                collisionEntities.push(entity);
                 const previous = preparedWorld.get(entity.id);
                 if (
                   !previous ||
                   previous.sceneData !== entity.sceneData ||
-                  previous.fieldOpen !== fieldOpen
+                  (entity.className === "ForceFieldBare" &&
+                    (previous.forceFieldState !== entity.forceFieldState ||
+                      previous.position !== entity.position ||
+                      previous.rotation !== entity.rotation ||
+                      previous.forceFieldData?.dimensions !==
+                        entity.forceFieldData?.dimensions))
                 )
                   worldChanged = true;
               }
@@ -225,8 +218,14 @@ export async function generateDemoCheckpoints(
                   collisionEntities.map((entity) => [
                     entity.id,
                     {
+                      id: entity.id,
                       sceneData: entity.sceneData,
-                      fieldOpen: entity.fieldOpen,
+                      forceFieldState: entity.forceFieldState,
+                      position: entity.position,
+                      rotation: entity.rotation,
+                      forceFieldData: entity.forceFieldData && {
+                        dimensions: entity.forceFieldData.dimensions,
+                      },
                     },
                   ]),
                 );

@@ -212,4 +212,27 @@ describe("streamed render entity updates", () => {
     expect(updateGameEntityFromStream(renderedField, field)).toBe(true);
     expect(renderedField.fieldOpen).toBeUndefined();
   });
+
+  it("updates a streamed force field's Three.js collider pose", () => {
+    const field = shape({
+      className: "ForceFieldBare",
+      position: [10, 20, 30],
+      rotation: [0, 0, 0, 1],
+    });
+    const rendered = streamEntityToGameEntity(field) as ForceFieldBareEntity;
+    expect(rendered.position).toEqual([20, 30, 10]);
+
+    const moved = { ...field, position: [40, 50, 60] } satisfies StreamEntity;
+    expect(updateGameEntityFromStream(rendered, moved)).toBe(true);
+    expect(rendered.position).toEqual([50, 60, 40]);
+    expect(updateGameEntityFromStream(rendered, moved)).toBe(false);
+
+    const rotation = [0, Math.SQRT1_2, 0, Math.SQRT1_2] satisfies NonNullable<
+      StreamEntity["rotation"]
+    >;
+    expect(updateGameEntityFromStream(rendered, { ...moved, rotation })).toBe(
+      true,
+    );
+    expect(rendered.rotation).toBe(rotation);
+  });
 });

@@ -44,7 +44,6 @@ export interface ClipState {
   playing: boolean;
   smoothingLevel: ClipSmoothingLevel;
   jumpTransitions: ReadonlySet<number>;
-  error: string | null;
   start(): boolean;
   stop(): void;
   discard(): void;
@@ -121,7 +120,6 @@ export const clipStore = createStore<ClipState>((set, get) => ({
   playing: false,
   smoothingLevel: 0,
   jumpTransitions: NO_JUMP_TRANSITIONS,
-  error: null,
   start() {
     if (get().recording) return false;
     const account = appAccountStore.getState();
@@ -149,37 +147,36 @@ export const clipStore = createStore<ClipState>((set, get) => ({
       elapsedMs: 0,
       smoothingLevel: 0,
       jumpTransitions: NO_JUMP_TRANSITIONS,
-      error: null,
     });
     return true;
   },
   stop() {
     if (!get().recording) return;
-    const draft =
-      sourceDemo && samples.length > 1 && samples.at(-1)!.timeMs > 0
-        ? {
-            version: 1 as const,
-            sourceDemo,
-            playerInterpolation: captureInterpolation,
-            samples: [...samples],
-          }
-        : null;
+    const durationMs = samples.at(-1)?.timeMs ?? 0;
+    if (!sourceDemo || samples.length < 2 || durationMs < 1000) {
+      get().discard();
+      return;
+    }
+    const draft: ClipTake = {
+      version: 1,
+      sourceDemo,
+      playerInterpolation: captureInterpolation,
+      samples: [...samples],
+    };
     samples = [];
     sourceDemo = null;
     recordingOwner = null;
-    if (!draft) releaseCapture();
     set({
       recording: false,
       draft,
       active: draft,
       trimStartMs: 0,
-      trimEndMs: draft ? clipDurationMs(draft) : 0,
-      playheadMs: draft ? clipDurationMs(draft) : 0,
+      trimEndMs: durationMs,
+      playheadMs: durationMs,
       playing: false,
       smoothingLevel: 0,
-      error: draft ? null : "Record a little longer before stopping.",
     });
-    if (draft) engineStore.getState().setPlaybackStatus("paused");
+    engineStore.getState().setPlaybackStatus("paused");
   },
   discard() {
     releaseCapture();
@@ -198,7 +195,6 @@ export const clipStore = createStore<ClipState>((set, get) => ({
       playing: false,
       smoothingLevel: 0,
       jumpTransitions: NO_JUMP_TRANSITIONS,
-      error: null,
     });
   },
   play(take) {
@@ -216,7 +212,6 @@ export const clipStore = createStore<ClipState>((set, get) => ({
       playheadMs: 0,
       playing: true,
       smoothingLevel: 0,
-      error: null,
     });
   },
   pause() {

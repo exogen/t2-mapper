@@ -50,6 +50,7 @@ export function buildCatchupPayload(options: {
     ...watchState.getWeatherStates(sourceTime),
     controlObjectGhostIndex: watchState.controlObjectGhostIndex,
     controlObjectData: watchState.controlObjectData,
+    missileLock: structuredClone(watchState.missileLock),
     missionName: watchState.missionName,
     missionSequence: watchState.missionSequence,
     displayedMission: watchState.displayedMission,

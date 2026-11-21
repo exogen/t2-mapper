@@ -199,7 +199,7 @@ export class ProjectileShapePoses {
     index: number,
     parentId?: string | null,
   ) => ShapeEntity | undefined;
-  private readonly poses = new Map<string, Matrix4 | undefined>();
+  private readonly poses = new WeakMap<ShapeEntity, Matrix4 | undefined>();
   private readonly position = new Vector3();
   private readonly rotation = new Quaternion();
   private readonly scale = new Vector3();
@@ -210,11 +210,13 @@ export class ProjectileShapePoses {
   }
 
   get(entity: ShapeEntity): Matrix4 | undefined {
-    if (this.poses.has(entity.id)) return this.poses.get(entity.id);
+    // A muzzle sample can use a packet pose for an entity whose predicted pose
+    // is already cached for collision.
+    if (this.poses.has(entity)) return this.poses.get(entity);
     // Mark before walking parents so a cyclic mount chain has no usable pose.
-    this.poses.set(entity.id, undefined);
+    this.poses.set(entity, undefined);
     const pose = this.getPose(entity);
-    this.poses.set(entity.id, pose);
+    this.poses.set(entity, pose);
     return pose;
   }
 

@@ -18,6 +18,8 @@ import { decodeVehicleSteering, wheelRotationAt } from "./vehicleWheels";
 import { updateClientAnimation } from "./clientAnimation";
 import { PlayerPrediction, type PlayerMove } from "./playerPrediction";
 import type {
+  PacketData,
+  PhysicalZoneGhostData,
   PlayerGhostData,
   PlayerPacketData,
   PlayerDataBlock,
@@ -28,8 +30,17 @@ import type {
 import {
   castWorldRay,
   withCollisionQueryBatch,
+  type ForceFieldBox,
   type Vec3 as Point3,
 } from "../collision/worldCollision";
+import {
+  forceFieldCollider,
+  streamForceFieldPlacement,
+} from "../world/placement";
+import {
+  PhysicalZoneSweep,
+  type PhysicalZone,
+} from "../collision/physicalZoneSweep";
 import {
   DEFAULT_PLAYER_INTERPOLATION,
   RETAIL_PLAYER_INTERPOLATION,
@@ -64,6 +75,7 @@ import {
 } from "../collision/projectileDynamicCollision";
 import {
   getProjectileShapeAsset,
+  getProjectileShapeData,
   prepareProjectileShapes,
   ProjectileShapePoses,
   type ProjectileShapeLoader,
@@ -72,6 +84,17 @@ import {
   projectileMuzzlePosition,
   type ProjectileMuzzleFrame,
 } from "./projectileMuzzle";
+import {
+  advanceMissileTargetHeat,
+  observeMissileTargetHeat,
+  readMissileHeatRates,
+  type MissileHeatObservation,
+} from "./missileLockHeat";
+import {
+  isInMissileLockCone,
+  readMissileSeekerTuning,
+} from "./missileLockGeometry";
+import { PACKED_BODY_YAW_STEP, PACKED_HEAD_STEP } from "./quantizedPlayerAim";
 import {
   castWaterRay,
   isPointSubmergedSimple,
@@ -141,6 +164,7 @@ import {
 } from "./streamHelpers";
 import { matrixFToQuaternion, torqueToThree } from "../scene/coordinates";
 import type { MatrixF } from "../scene/types";
+import type { WatchMissileLock } from "../../relay/types";
 import type { Vec3 } from "./streamHelpers";
 import {
   ForceFieldState,
@@ -165,6 +189,8 @@ import type {
   PreloadAsset,
   InventoryHudSlot,
   PendingAudioEvent,
+  MissileLockState,
+  InferredMissileLock,
   PlayerRosterEntry,
   TeamScore,
   FlagTargetInfo,
@@ -213,6 +239,10 @@ const log = createLogger("StreamEngine");
  * packets replayed at once, or a full-roster join sweep.
  */
 const MAX_SERVER_EVENTS = 2000;
+const NO_MISSILE_LOCK: MissileLockState = {
+  selfLocked: false,
+  selfHomed: false,
+};
 
 /** Scratch segment end for advanceItems' swept casts (not retained). */
 const _itemCastEnd: [number, number, number] = [0, 0, 0];
@@ -291,6 +321,7 @@ export interface MutableEntity extends Omit<
   /** pickActionAnimation is held off until then (a ski jump's +0x98c). */
   pickHeldUntilSec?: number;
   playerPrediction?: PlayerPrediction;
+  physicalZone?: PhysicalZone;
   /** Demo tick of reconstructedAim's last packet observation. */
   aimObservationTick?: number;
   projectilePhysics?: "linear" | "ballistic" | "seeker";
@@ -375,6 +406,25 @@ type RuntimeControlObject = {
   data?: ParsedData;
   position?: Vec3;
 };
+
+interface MissilePlayerObservation {
+  tick: number;
+  armorId?: number;
+  position: Point3;
+  yaw: number;
+  headPitch: number;
+  headYaw: number;
+  heat?: MissileHeatObservation;
+}
+
+interface MissileLockDwell {
+  targetId: string;
+  imageId: number;
+  mountedAt?: number;
+  ticks: number;
+}
+
+const MISSILE_POSE_MAX_AGE_TICKS = 3;
 
 /** Minimal interface for the parser registry (ghost/event class lookup). */
 interface ParserRegistry {
@@ -633,6 +683,9 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   // ── Entities ──
   protected entities = new Map<string, MutableEntity>();
+  private readonly playerForceFieldBoxes = new Map<string, ForceFieldBox>();
+  private readonly physicalZones = new Map<string, PhysicalZone>();
+  private readonly physicalZoneSweep = new PhysicalZoneSweep();
   private imageAnimations = new Map<string, (ImageAnimation | undefined)[]>();
   protected entityIdByGhostIndex = new Map<number, string>();
   /** Incremented on structural entity changes (add/remove/create). */
@@ -714,6 +767,15 @@ export abstract class StreamEngine implements StreamingPlayback {
   private lastEnergyCorrectionData: unknown = null;
   protected latestControl: RuntimeControlObject = { ghostIndex: -1 };
   protected controlPlayerGhostId?: string;
+  private missileLock?: MissileLockState;
+  private missileLockInferenceEnabled = false;
+  private missilePlayerObservations = new WeakMap<
+    MutableEntity,
+    MissilePlayerObservation
+  >();
+  private missileVehiclePoseTicks = new WeakMap<MutableEntity, number>();
+  private missileLockDwell = new Map<string, MissileLockDwell>();
+  private inferredMissileLocks?: InferredMissileLock[];
   protected lastControlType: "camera" | "player" = "camera";
   protected isPiloting = false;
   protected lastPilotGhostIndex?: number;
@@ -996,6 +1058,22 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.projectileShapeWait = undefined;
   }
 
+  setMissileLockInferenceEnabled(enabled: boolean): void {
+    this.missileLockInferenceEnabled = enabled;
+    if (!enabled) this.resetMissileLockInference();
+  }
+
+  private resetMissileLockInference(): void {
+    this.missilePlayerObservations = new WeakMap();
+    this.missileVehiclePoseTicks = new WeakMap();
+    this.missileLockDwell.clear();
+    this.inferredMissileLocks = undefined;
+  }
+
+  protected get missileLockWorldReady(): boolean {
+    return this.ghostAlwaysDoneSec !== null;
+  }
+
   get projectileAssetWait(): Promise<void> | undefined {
     return this.projectileShapeWait;
   }
@@ -1123,7 +1201,10 @@ export abstract class StreamEngine implements StreamingPlayback {
         predictedHeat: this.predictedHeat,
         controlRechargeRate: this.controlRechargeRate,
         lastEnergyCorrectionData: this.lastEnergyCorrectionData,
-        latestControl: this.latestControl,
+        latestControl: {
+          ...this.latestControl,
+          ...(this.missileLock && { missileLock: this.missileLock }),
+        },
         controlPlayerGhostId: this.controlPlayerGhostId,
         lastControlType: this.lastControlType,
         isPiloting: this.isPiloting,
@@ -1166,7 +1247,12 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected restoreSimulationState(
     checkpoint: ReturnType<StreamEngine["captureSimulationState"]>,
   ): void {
-    const { conn, ...state } = cloneData(checkpoint.state);
+    this.resetMissileLockInference();
+    const {
+      conn,
+      latestControl: { missileLock, ...latestControl },
+      ...state
+    } = cloneData(checkpoint.state);
     this.groundEffectHistory.restore(checkpoint.groundEffects);
     this.debrisHistory.restore(checkpoint.debris);
     // Every restore creates new render lifetimes. Reusing checkpoint IDs would
@@ -1191,7 +1277,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       checkpoint.lightning,
       (id) => ids.get(id) ?? id,
     );
-    Object.assign(this, state);
+    Object.assign(this, state, { latestControl });
     this._worldGeneration++;
     this.ambientEmitterData.clear();
     this.conn.restore(conn);
@@ -1210,6 +1296,8 @@ export abstract class StreamEngine implements StreamingPlayback {
           : undefined,
       })) ?? null;
     this.entities = new Map();
+    this.playerForceFieldBoxes.clear();
+    this.physicalZones.clear();
     this.pendingProjectileLaunches.length = 0;
     this.projectileShapeWait = undefined;
     this.imageAnimations = new Map();
@@ -1308,6 +1396,10 @@ export abstract class StreamEngine implements StreamingPlayback {
         );
       }
       this.entities.set(entity.id, entity);
+      if (entity.className === "ForceFieldBare")
+        this.updatePlayerForceFieldBox(entity);
+      if (entity.physicalZone)
+        this.physicalZones.set(entity.id, entity.physicalZone);
       const player = checkpoint.players.get(oldId);
       if (player)
         this.ensurePlayerPrediction(entity)?.restoreState(
@@ -1354,6 +1446,14 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.controlPlayerGhostId = state.controlPlayerGhostId
       ? ids.get(state.controlPlayerGhostId)
       : undefined;
+    const outgoing = missileLock?.outgoing;
+    this.missileLock =
+      missileLock && outgoing?.kind === "object" && outgoing.targetId
+        ? {
+            ...missileLock,
+            outgoing: { kind: "object", targetId: ids.get(outgoing.targetId) },
+          }
+        : missileLock;
     if (this.camera?.controlEntityId)
       this.camera.controlEntityId = ids.get(this.camera.controlEntityId);
     if (this.camera?.orbitTargetId)
@@ -1387,6 +1487,8 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (this.projectileGhostBatch) this.projectileGhostBatch.finish = undefined;
     this.conn.flagDroppedAtSec = {};
     this.endedEntities = null;
+    this.missileLock = undefined;
+    this.resetMissileLockInference();
     // A reset invalidates every ghost, so the world is incomplete again
     // until the server says otherwise.
     this.ghostAlwaysDoneSec = null;
@@ -1397,6 +1499,8 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.groundLifetimeData.clear();
     this.ambientEmitterData.clear();
     this.entities.clear();
+    this.playerForceFieldBoxes.clear();
+    this.physicalZones.clear();
     this.pendingProjectileLaunches.length = 0;
     this.projectileShapeWait = undefined;
     this.imageAnimations.clear();
@@ -1470,6 +1574,347 @@ export abstract class StreamEngine implements StreamingPlayback {
   }
 
   // ── Control object processing ──
+
+  protected processMissileLock(packet: PacketData): void {
+    // A dispatched packet with no seeker fields clears the state. Keepalives
+    // and suppressed packets have no game payload.
+    if (packet.ghostSectionStart === undefined || packet.parseFault) return;
+    this.applyMissileLock(packet.gameState);
+  }
+
+  protected applyMissileLock(gameState: WatchMissileLock): void {
+    const selfLocked = gameState.selfLocked === true;
+    const selfHomed = gameState.selfHomed === true;
+    let outgoing: MissileLockState["outgoing"];
+    if (gameState.seekerMode === 1) {
+      // Retail resolves this reference before reading the packet's ghosts.
+      // Bind to the same lifetime so a reused ghost slot can't acquire a lock.
+      const index = gameState.seekerObjectGhostIndex;
+      const targetId =
+        index === undefined ? undefined : this.entityIdByGhostIndex.get(index);
+      outgoing = { kind: "object", targetId };
+    } else {
+      const lockedPosition = gameState.seekerMode === 2;
+      const point = lockedPosition
+        ? gameState.targetPos
+        : gameState.seekerTracking
+          ? gameState.seekerTrackingPos
+          : undefined;
+      if (isValidPosition(point))
+        outgoing = {
+          kind: lockedPosition ? "position" : "tracking",
+          position: [point.x, point.y, point.z],
+        };
+    }
+    this.missileLock =
+      selfLocked || selfHomed || outgoing
+        ? { selfLocked, selfHomed, outgoing }
+        : NO_MISSILE_LOCK;
+  }
+
+  private snapshotMissileLock(): MissileLockState | undefined {
+    if (this.matchEnded) return;
+    const state = this.missileLock;
+    const target = state?.outgoing;
+    return state &&
+      target?.kind === "object" &&
+      target.targetId &&
+      !this.entities.has(target.targetId)
+      ? { ...state, outgoing: { kind: "object" } }
+      : state;
+  }
+
+  private snapshotInferredMissileLocks():
+    readonly InferredMissileLock[] | undefined {
+    if (this.matchEnded || !this.inferredMissileLocks) return;
+    // Live packets can remove a target or interrupt a lock between ticks.
+    const current = this.inferredMissileLocks.filter(
+      ({ shooterId, targetId }) => {
+        const shooter = this.entities.get(shooterId);
+        const target = this.entities.get(targetId);
+        return (
+          this.missileLockDwell.has(shooterId) &&
+          shooter &&
+          shooter.sensorGroup &&
+          !shooter.damageState &&
+          shooter.mountObjectGhostIndex == null &&
+          target &&
+          target.sensorGroup &&
+          target.sensorGroup !== shooter.sensorGroup &&
+          target.mountObjectGhostIndex == null &&
+          !target.destroyedHidden &&
+          target.damageState !== 2 &&
+          (target.type !== "Player" || !target.damageState)
+        );
+      },
+    );
+    if (current.length) return current;
+  }
+
+  private observeMissilePlayer(entity: MutableEntity, data: ParsedData): void {
+    let previous = this.missilePlayerObservations.get(entity);
+    const unavailable =
+      entity.damageState || entity.mountObjectGhostIndex != null;
+    const changedArmor = previous && previous.armorId !== entity.dataBlockId;
+    if (unavailable || changedArmor) {
+      this.missilePlayerObservations.delete(entity);
+      previous = undefined;
+    }
+    if (unavailable || changedArmor || data.allowWarp === false) {
+      this.missileLockDwell.delete(entity.id);
+      for (const [id, dwell] of this.missileLockDwell)
+        if (dwell.targetId === entity.id) this.missileLockDwell.delete(id);
+    }
+    if (unavailable) return;
+
+    const position = data.position as Vec3 | undefined;
+    if (
+      !isValidPosition(position) ||
+      typeof data.moveFlag1 !== "boolean" ||
+      typeof data.rotationZ !== "number" ||
+      typeof data.headX !== "number" ||
+      typeof data.headZ !== "number"
+    )
+      return;
+
+    const block = this.getDataBlockData(entity.dataBlockId ?? -1);
+    const rates = readMissileHeatRates(block);
+    this.missilePlayerObservations.set(entity, {
+      tick: this.tickCount,
+      armorId: entity.dataBlockId,
+      position: [position.x, position.y, position.z],
+      yaw: Math.min(2 * Math.PI, data.rotationZ + PACKED_BODY_YAW_STEP / 2),
+      headPitch:
+        Math.abs(data.headX) < 1
+          ? Math.min(1, data.headX + PACKED_HEAD_STEP / 2)
+          : data.headX,
+      headYaw: data.headZ + PACKED_HEAD_STEP / 2,
+      heat:
+        rates &&
+        observeMissileTargetHeat(
+          previous?.heat,
+          this.tickCount,
+          data.moveFlag1,
+          rates,
+        ),
+    });
+  }
+
+  private inferMissileLocks(): void {
+    const previousDwell = this.missileLockDwell;
+    const nextDwell = new Map<string, MissileLockDwell>();
+    this.missileLockDwell = nextDwell;
+    this.inferredMissileLocks = undefined;
+    const load = this.projectileShapeLoader;
+    if (!load || !this.missileLockWorldReady) return;
+
+    let poses: ProjectileShapePoses | undefined;
+    let blockers: ProjectileDynamicCollision | undefined;
+    let dryWorld: boolean | undefined;
+    for (const shooter of this.entities.values()) {
+      const image = shooter.imageSlots?.[0];
+      if (
+        shooter.type !== "Player" ||
+        shooter.id === this.controlPlayerGhostId ||
+        shooter.ghostIndex === this.latestControl.ghostIndex ||
+        !shooter.sensorGroup ||
+        shooter.damageState ||
+        shooter.mountObjectGhostIndex != null ||
+        !image?.imageState?.target ||
+        image.imageState.wet
+      )
+        continue;
+      const view = this.missilePlayerObservations.get(shooter);
+      if (
+        !view ||
+        this.tickCount - view.tick > MISSILE_POSE_MAX_AGE_TICKS ||
+        Math.abs(view.headYaw) > PACKED_HEAD_STEP ||
+        isPointSubmergedSimple(...view.position)
+      )
+        continue;
+      const tuning = readMissileSeekerTuning(
+        this.getDataBlockData(image.dataBlockId),
+        (id) => this.getDataBlockData(id),
+      );
+      if (!tuning) continue;
+      if (!poses) {
+        if (!this.playerCollisionReady()) return;
+        const vehicleShapes = new Set<string>();
+        // Water is always scoped. A dry world avoids guessing a vehicle or
+        // turret's liquid coverage from a delayed position.
+        dryWorld = collisionState().water.size === 0;
+        for (const entity of this.entities.values()) {
+          if (entity.className === "WaterBlock") dryWorld = false;
+          if (entity.type !== "Vehicle" || !entity.position) continue;
+          const shape = entity.shapeHint ?? entity.dataBlock;
+          if (!shape) return;
+          if (!getProjectileShapeData(shape)) vehicleShapes.add(shape);
+        }
+        if (vehicleShapes.size) {
+          void prepareProjectileShapes(vehicleShapes, load);
+          return;
+        }
+        poses = new ProjectileShapePoses((index, id) =>
+          this.projectileSource(index, id),
+        );
+      }
+      const body = shooter.shapeHint ?? shooter.dataBlock;
+      if (!body) continue;
+      if (
+        !getProjectileShapeData(body) ||
+        !getProjectileShapeData(image.shapeName)
+      ) {
+        // Inference can wait for ordinary asset loading without delaying a tick.
+        void prepareProjectileShapes([body, image.shapeName], load);
+        continue;
+      }
+      const direction: Point3 = [0, 0, 0];
+      const muzzle = this.resolveProjectileMuzzle(
+        {
+          ...shooter,
+          position: view.position,
+          rotation: playerYawToQuaternion(view.yaw),
+          headPitch: view.headPitch,
+          headYaw: view.headYaw,
+          playerDelta: undefined,
+        },
+        0,
+        poses,
+        undefined,
+        direction,
+      );
+      if (!muzzle) continue;
+
+      let candidate: { id: string; heat: number } | undefined;
+      let ambiguous = false;
+      for (const target of this.entities.values()) {
+        if (
+          target.id === shooter.id ||
+          target.sensorGroup === shooter.sensorGroup ||
+          target.sensorGroup === 0 ||
+          target.damageState === 2 ||
+          target.destroyedHidden ||
+          (target.type !== "Player" &&
+            target.type !== "Vehicle" &&
+            target.className !== "Turret" &&
+            !(target.className === "StaticShape" && target.targetId != null))
+        )
+          continue;
+
+        const observation = this.missilePlayerObservations.get(target);
+        const block = this.getDataBlockData(target.dataBlockId ?? -1);
+        const rates = observation && readMissileHeatRates(block);
+        const playerHeat =
+          observation?.heat && rates
+            ? advanceMissileTargetHeat(
+                observation.heat.bounds,
+                this.tickCount,
+                undefined,
+                rates,
+              )
+            : undefined;
+        const vehicleTick = this.missileVehiclePoseTicks.get(target);
+        const dryShape =
+          dryWorld &&
+          target.mountObjectGhostIndex == null &&
+          ((target.className === "Turret" &&
+            block?.neverUpdateControl !== true) ||
+            (target.type === "Vehicle" &&
+              vehicleTick !== undefined &&
+              this.tickCount - vehicleTick <= MISSILE_POSE_MAX_AGE_TICKS));
+        // ShapeBaseData defaults to 1 when the packet omits heat. Turrets
+        // apply their datablock's heat every dry tick and vehicles start at it.
+        const shapeHeat =
+          dryShape && block
+            ? clamp(getNumberField(block, ["heat"]) ?? 1, 0, 1)
+            : undefined;
+        const heat =
+          playerHeat ??
+          (shapeHeat === undefined
+            ? undefined
+            : { min: shapeHeat, max: shapeHeat });
+        if (heat && heat.max < tuning.minHeat) continue;
+
+        const box = block?.boxSize as Vec3 | undefined;
+        const height =
+          target.type === "Player" && isValidPosition(box) ? box.z : undefined;
+        const center =
+          observation && height !== undefined
+            ? ([
+                observation.position[0],
+                observation.position[1],
+                observation.position[2] + height / 2,
+              ] satisfies Point3)
+            : poses.getCenter(target, height);
+        if (
+          !center ||
+          !isInMissileLockCone(muzzle, direction, center, tuning, -Math.PI / 90)
+        )
+          continue;
+
+        if (dryShape) {
+          const shape = target.shapeHint ?? target.dataBlock;
+          if (!shape) {
+            ambiguous = true;
+            break;
+          }
+          if (!getProjectileShapeData(shape)) {
+            void prepareProjectileShapes([shape], load);
+            ambiguous = true;
+            break;
+          }
+        }
+
+        if (castWorldRay(muzzle, center, { includeForceFields: false }))
+          continue;
+        blockers ??= new ProjectileDynamicCollision(
+          this.projectileCollisionTargets(poses, true),
+        );
+        if (blockers.cast(muzzle, center, shooter.id, target.id)) continue;
+
+        const freshPlayer =
+          observation &&
+          height !== undefined &&
+          this.tickCount - observation.tick <= MISSILE_POSE_MAX_AGE_TICKS;
+        if (
+          candidate ||
+          !target.sensorGroup ||
+          (!freshPlayer && !dryShape) ||
+          (target.type === "Player" &&
+            (target.damageState || tuning.minHeat >= 1)) ||
+          !heat ||
+          heat.min < tuning.minHeat ||
+          !isInMissileLockCone(muzzle, direction, center, tuning)
+        ) {
+          ambiguous = true;
+          break;
+        }
+        candidate = { id: target.id, heat: heat.min };
+      }
+      if (ambiguous || !candidate) continue;
+
+      const previous = previousDwell.get(shooter.id);
+      const ticks =
+        previous?.targetId === candidate.id &&
+        previous.imageId === image.dataBlockId &&
+        previous.mountedAt === image.mountedAtSec
+          ? previous.ticks + 1
+          : 1;
+      nextDwell.set(shooter.id, {
+        targetId: candidate.id,
+        imageId: image.dataBlockId,
+        mountedAt: image.mountedAtSec,
+        ticks,
+      });
+      // The retail heat-dependent dwell uses 1/32 second per server tick.
+      if (ticks / 32 >= (2 - candidate.heat) * tuning.seekTime)
+        (this.inferredMissileLocks ??= []).push({
+          shooterId: shooter.id,
+          targetId: candidate.id,
+          warnTarget: tuning.warnTarget,
+        });
+    }
+  }
 
   protected processControlObject(gameState: {
     controlObjectGhostIndex?: number;
@@ -2076,6 +2521,9 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (prevEntityId) {
         this.imageAnimations.delete(prevEntityId);
         this.entities.delete(prevEntityId);
+        if (prevEntity?.className === "ForceFieldBare")
+          this.playerForceFieldBoxes.delete(prevEntityId);
+        if (prevEntity?.physicalZone) this.physicalZones.delete(prevEntityId);
         this.entityIdByGhostIndex.delete(ghostIndex);
         this.entityGeneration++;
       }
@@ -2101,6 +2549,9 @@ export abstract class StreamEngine implements StreamingPlayback {
         : (prevEntityId ?? allocateEntityId());
     if (prevEntityId && prevEntityId !== entityId) {
       this.entities.delete(prevEntityId);
+      if (prevEntity?.className === "ForceFieldBare")
+        this.playerForceFieldBoxes.delete(prevEntityId);
+      if (prevEntity?.physicalZone) this.physicalZones.delete(prevEntityId);
       this.imageAnimations.delete(prevEntityId);
     }
 
@@ -2131,6 +2582,13 @@ export abstract class StreamEngine implements StreamingPlayback {
       weatherSeed?.precipitation,
       !existingEntity,
     );
+    if (
+      className === "ForceFieldBare" &&
+      (ghost.parsedData?.transform ||
+        ghost.parsedData?.scale ||
+        ghost.parsedData?.dataBlockId != null)
+    )
+      this.updatePlayerForceFieldBox(entity);
     if (!existingEntity && entity.type === "Projectile")
       this.noteProjectileSpawn(entity, ghost.parsedData);
     if (ghost.type === "create" || ghost.parsedData?.targetId != null) {
@@ -2188,6 +2646,21 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   // ── Apply ghost data ──
 
+  private updatePlayerForceFieldBox(entity: MutableEntity): void {
+    // Ack replay can use this geometry as soon as the field's packet arrives.
+    const collider =
+      entity.position && forceFieldCollider(streamForceFieldPlacement(entity));
+    if (!collider) {
+      this.playerForceFieldBoxes.delete(entity.id);
+      return;
+    }
+    this.playerForceFieldBoxes.set(entity.id, {
+      matrixWorld: collider.matrix,
+      box: collider.box,
+      worldBox: collider.box.clone().applyMatrix4(collider.matrix),
+    });
+  }
+
   protected ensurePlayerPrediction(
     entity: MutableEntity,
   ): PlayerPrediction | undefined {
@@ -2198,21 +2671,34 @@ export abstract class StreamEngine implements StreamingPlayback {
         if (!entity.playerPrediction)
           entity.playerPrediction = new PlayerPrediction(
             data,
-            (id) => {
-              const field = this.entities.get(id);
-              if (!field || field.forceFieldState === ForceFieldState.Open)
-                return false;
-              const fieldData =
-                field.dataBlockId != null
-                  ? this.getDataBlockData(field.dataBlockId)
-                  : undefined;
-              const sameGroup =
-                (field.sensorGroup ?? 0) === (entity.sensorGroup ?? 0);
-              return !(sameGroup
-                ? fieldData?.teamPermiable
-                : fieldData?.otherPermiable);
+            {
+              boxes: this.playerForceFieldBoxes,
+              blocks: (id) => {
+                const field = this.entities.get(id);
+                if (!field || field.forceFieldState === ForceFieldState.Open)
+                  return false;
+                const fieldData =
+                  field.dataBlockId != null
+                    ? this.getDataBlockData(field.dataBlockId)
+                    : undefined;
+                const sameGroup =
+                  (field.sensorGroup ?? 0) === (entity.sensorGroup ?? 0);
+                return !(sameGroup
+                  ? fieldData?.teamPermiable
+                  : fieldData?.otherPermiable);
+              },
             },
             this.playerInterpolation,
+            (position, size, travel, touchesSolidAtDestination) =>
+              this.physicalZones.size
+                ? this.physicalZoneSweep.getVelocityScale(
+                    this.physicalZones.values(),
+                    position,
+                    size,
+                    travel,
+                    touchesSolidAtDestination,
+                  )
+                : 1,
           );
         else if (entity.playerPrediction.data !== data)
           entity.playerPrediction.setDataBlock(data);
@@ -2286,7 +2772,10 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   /** ProcessList::advanceObjects: one 32 ms tick, regardless of packet source. */
   protected processTick(): void {
-    if (!this.matchEnded) this.sampleProjectileLaunches();
+    if (!this.matchEnded) {
+      this.sampleProjectileLaunches();
+      if (this.missileLockInferenceEnabled) this.inferMissileLocks();
+    }
     this.tickCount++;
     // The viewer holds the final scene at MissionEnd while transport keeps
     // consuming the debrief and next mission. This is a viewer pause policy.
@@ -2470,6 +2959,23 @@ export abstract class StreamEngine implements StreamingPlayback {
     initial = false,
   ): void {
     if (!rawData) return;
+    if (entity.className === "PhysicalZone") {
+      const { transform, scale, points, velocityMod, active } =
+        rawData as PhysicalZoneGhostData;
+      if (
+        transform &&
+        scale &&
+        points &&
+        velocityMod != null &&
+        active != null
+      ) {
+        const zone = { transform, scale, points, velocityMod, active };
+        entity.physicalZone = zone;
+        this.physicalZones.set(entity.id, zone);
+      } else if (entity.physicalZone && active != null) {
+        entity.physicalZone.active = active;
+      }
+    }
     // Retail leaves an exploded linear ghost hidden until it leaves scope,
     // including when its final server update arrives after a predicted hit.
     if (
@@ -2759,6 +3265,15 @@ export abstract class StreamEngine implements StreamingPlayback {
         for (const img of images) {
           if (img.index == null || img.index < 0 || img.index >= 8) continue;
           const prevSlot = entity.imageSlots?.[img.index];
+          if (
+            this.missileLockInferenceEnabled &&
+            img.index === 0 &&
+            this.missileLockDwell.has(entity.id) &&
+            (img.target === false ||
+              img.wet === true ||
+              prevSlot?.dataBlockId !== img.dataBlockId)
+          )
+            this.missileLockDwell.delete(entity.id);
           const prev = prevSlot?.imageState;
           const previousFireCount =
             entity.imageFireCounts?.[img.index] ?? prev?.fireCount ?? 0;
@@ -3568,6 +4083,11 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (typeof data.maxLoopGap === "number")
         entity.audioMaxLoopGap = data.maxLoopGap;
     }
+    if (this.missileLockInferenceEnabled) {
+      if (entity.type === "Player") this.observeMissilePlayer(entity, data);
+      if (entity.type === "Vehicle" && isValidPosition(data.position as Vec3))
+        this.missileVehiclePoseTicks.set(entity, this.tickCount);
+    }
     if (entity.type === "Player" && this.playerPredictionEnabled) {
       const prediction = this.ensurePlayerPrediction(entity);
       if (prediction) {
@@ -4236,8 +4756,15 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   private *projectileCollisionTargets(
     poses: ProjectileShapePoses,
+    playersAndVehiclesOnly = false,
   ): Iterable<ProjectileCollisionTarget> {
     for (const entity of this.entities.values()) {
+      if (
+        playersAndVehiclesOnly &&
+        entity.type !== "Player" &&
+        entity.type !== "Vehicle"
+      )
+        continue;
       const data =
         entity.dataBlockId == null
           ? undefined
@@ -5539,7 +6066,8 @@ export abstract class StreamEngine implements StreamingPlayback {
    * `exhausted` is true once a demo has played to the end of its data.
    */
   protected buildSnapshot(exhausted: boolean): StreamSnapshot {
-    const entities = this.buildEntityList();
+    const inboundMissileTargetIds = new Set<string>();
+    const entities = this.buildEntityList(inboundMissileTargetIds);
     const timeSec = this.getTimeSec();
 
     const { chatMessages, serverEvents, audioEvents } =
@@ -5568,6 +6096,11 @@ export abstract class StreamEngine implements StreamingPlayback {
       playerIdentityScope: this.conn.playerIdentity.scope,
       flags: Array.from(this.conn.flags.values()),
       controlPlayerGhostId: this.controlPlayerGhostId,
+      missileLock: this.snapshotMissileLock(),
+      inferredMissileLocks: this.snapshotInferredMissileLocks(),
+      ...(inboundMissileTargetIds.size > 0 && {
+        inboundMissileTargetIds: [...inboundMissileTargetIds],
+      }),
       flagDroppedAtSec: this.conn.flagDroppedAtSec,
       flagReturnDelaySec: flagReturnDelaySec(
         this.gameClassName,
@@ -5593,10 +6126,20 @@ export abstract class StreamEngine implements StreamingPlayback {
   }
 
   /** Build entity list, holding the final world throughout the debrief. */
-  protected buildEntityList(): StreamEntity[] {
+  protected buildEntityList(
+    inboundMissileTargetIds?: Set<string>,
+  ): StreamEntity[] {
     if (this.endedEntities) return this.endedEntities;
     const entities: StreamEntity[] = [];
     for (const entity of this.entities.values()) {
+      const missileTargetId = entity.seekerFlight?.target?.id;
+      if (
+        inboundMissileTargetIds &&
+        missileTargetId &&
+        !entity.hasExploded &&
+        this.entities.has(missileTargetId)
+      )
+        inboundMissileTargetIds.add(missileTargetId);
       this.refreshWeather(entity);
       const renderFlags = entity.targetRenderFlags;
       const snapshot: EveryField<StreamEntity> = {

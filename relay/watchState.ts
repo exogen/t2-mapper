@@ -21,6 +21,7 @@ import { stripTaggedStringMarkup } from "./shared.js";
 import type {
   WatchCatchupPayload,
   WatchHudStatePayload,
+  WatchMissileLock,
   WatchTargetEntry,
 } from "./types.js";
 
@@ -47,6 +48,7 @@ type WatchStateSeed = Pick<
   | "playerSensorGroup"
   | "controlObjectGhostIndex"
   | "controlObjectData"
+  | "missileLock"
   | "missionName"
   | "missionSequence"
   | "displayedMission"
@@ -83,6 +85,7 @@ export class WatchStateAccumulator {
   ghostingComplete = false;
   controlObjectGhostIndex = -1;
   controlObjectData: ParsedData | undefined;
+  missileLock?: WatchMissileLock;
   /**
    * Our server-side client ID, supplied by the live connection handshake
    * or a demo header. Old demos without an ID can infer it from the welcome.
@@ -133,6 +136,7 @@ export class WatchStateAccumulator {
     this.playerSensorGroup = seed.playerSensorGroup;
     this.controlObjectGhostIndex = seed.controlObjectGhostIndex;
     this.controlObjectData = structuredClone(seed.controlObjectData);
+    this.missileLock = structuredClone(seed.missileLock);
     this.missionName = seed.missionName;
     this.missionSequence = seed.missionSequence ?? null;
     this.displayedMission =
@@ -162,6 +166,7 @@ export class WatchStateAccumulator {
       weatherTime: this.weatherTime,
       controlObjectGhostIndex: this.controlObjectGhostIndex,
       controlObjectData: this.controlObjectData,
+      missileLock: this.missileLock,
       selfClientId: this.selfClientId,
       tournamentMode: this.tournamentMode,
       sawMissionDropReady: this.sawMissionDropReady,
@@ -232,6 +237,12 @@ export class WatchStateAccumulator {
   private clearControlObject(): void {
     this.controlObjectGhostIndex = -1;
     this.controlObjectData = undefined;
+    this.missileLock = undefined;
+  }
+
+  private retireMissileLockTarget(index: number): void {
+    if (this.missileLock?.seekerObjectGhostIndex === index)
+      delete this.missileLock.seekerObjectGhostIndex;
   }
 
   /** Mission-phase metadata is shared by live and delayed catch-up state. */
@@ -279,6 +290,27 @@ export class WatchStateAccumulator {
     if (parsed.gameState.controlObjectData !== undefined) {
       this.controlObjectData = parsed.gameState.controlObjectData;
     }
+    if (parsed.ghostSectionStart !== undefined && !parsed.parseFault) {
+      const {
+        selfLocked,
+        selfHomed,
+        seekerTracking,
+        seekerTrackingPos,
+        seekerMode,
+        seekerObjectGhostIndex,
+        targetPos,
+      } = parsed.gameState;
+      // A valid packet without any of these flags means no active lock.
+      this.missileLock = {
+        selfLocked,
+        selfHomed,
+        seekerTracking,
+        seekerTrackingPos,
+        seekerMode,
+        seekerObjectGhostIndex,
+        targetPos,
+      };
+    }
 
     for (const event of parsed.events) {
       const data = event.parsedData;
@@ -300,13 +332,15 @@ export class WatchStateAccumulator {
       } else if (data.type === "GhostAlwaysObjectEvent") {
         const { ghostIndex, classId, objectData } =
           data as GhostAlwaysObjectEventData;
-        if (classId != null && objectData)
+        if (classId != null && objectData) {
+          this.retireMissileLockTarget(ghostIndex);
           this.applyWeatherGhost({
             index: ghostIndex,
             type: "create",
             classId,
             parsedData: objectData,
           });
+        }
       } else if (data.type === "SimDataBlockEvent") {
         const objectId = data.objectId as number | undefined;
         const className = data.dataBlockClassName as string | undefined;
@@ -335,7 +369,11 @@ export class WatchStateAccumulator {
         );
       }
     }
-    for (const ghost of parsed.ghosts) this.applyWeatherGhost(ghost);
+    for (const ghost of parsed.ghosts) {
+      // GameConnection resolves the target before events and ghost updates.
+      if (ghost.type !== "update") this.retireMissileLockTarget(ghost.index);
+      this.applyWeatherGhost(ghost);
+    }
   }
 
   private applyWeatherGhost({

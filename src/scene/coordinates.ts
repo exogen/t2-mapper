@@ -29,6 +29,11 @@ export function threeToTorque(v: VectorLike): [number, number, number] {
   return isTuple(v) ? [v[2], v[0], v[1]] : [v.z, v.x, v.y];
 }
 
+/** Load a MatrixF for Three.js math while keeping its Torque coordinate axes. */
+export function loadTorqueMatrix(m: MatrixF, out: Matrix4): Matrix4 {
+  return out.fromArray(m.elements).transpose();
+}
+
 /**
  * Convert a Torque MatrixF to a Three.js Quaternion.
  *

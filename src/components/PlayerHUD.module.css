@@ -163,6 +163,39 @@
   opacity: 0.6;
 }
 
+.WeaponHUD .PackInvItem {
+  position: relative;
+}
+
+.WeaponNote {
+  position: absolute;
+  right: 100%;
+  margin: 0 1px 0 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: max-content;
+  max-width: min(200px, 46vw);
+  padding: 6px 6px;
+  background: rgba(0, 0, 0, 0.2);
+  color: rgba(211, 173, 108, 0.9);
+  text-align: center;
+}
+
+.WeaponNoteLabel {
+  display: block;
+  font-size: 9px;
+  font-weight: 400;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+.WeaponNoteDetail {
+  display: block;
+  font-size: 10px;
+  line-height: 1.25;
+  font-weight: 500;
+}
+
 @media (max-height: 699px) {
   .WeaponHUD .PackInvItem[data-active="false"] {
     display: none;
@@ -249,14 +282,84 @@
 
 /* ── Reticle (center) ── */
 
-.Reticle {
+.Reticle,
+.MissileLockMarker {
   position: absolute;
-  top: 50%;
-  left: 50%;
+  top: var(--reticle-y, 50%);
+  left: var(--reticle-x, 50%);
   transform: translate(-50%, -50%);
 }
 
+.MissileLockLayer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.MissileLockMarker {
+  width: 32px;
+  height: 32px;
+}
+
+.MissileLockMarker img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: calc(120 / 255);
+}
+
+.MissileLockMarker:not([data-kind="locked"]) img:not(.TrackingMarker),
+.MissileLockMarker[data-kind="locked"] .TrackingMarker {
+  display: none;
+}
+
+.MissileLockMarker .HorizontalFlash {
+  --flash-opacity: calc(180 / 255);
+  animation: missileLockFlash 100ms linear infinite alternate;
+}
+
+.MissileLockMarker .VerticalFlash {
+  --flash-opacity: calc(120 / 255);
+  animation: missileLockFlash 100ms linear infinite alternate-reverse;
+}
+
+.MissileLockMarker[data-kind="targeting"] .TrackingMarker {
+  /* Align the two stock bitmaps' aim pixels, which sit on opposite sides
+   * of their respective image centers. */
+  translate: -1px -1px;
+  image-rendering: pixelated;
+  animation: missileTargetingPulse 260ms ease-in-out infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .MissileLockMarker[data-kind="targeting"] .TrackingMarker,
+  .MissileLockMarker .HorizontalFlash,
+  .MissileLockMarker .VerticalFlash {
+    animation: none;
+  }
+}
+
+@keyframes missileTargetingPulse {
+  from {
+    opacity: calc(100 / 255);
+  }
+  to {
+    opacity: calc(180 / 255);
+  }
+}
+
+@keyframes missileLockFlash {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: var(--flash-opacity);
+  }
+}
+
 .ReticleImage {
+  display: block;
   opacity: 0.6;
   image-rendering: pixelated;
 }

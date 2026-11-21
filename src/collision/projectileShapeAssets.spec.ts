@@ -83,6 +83,28 @@ describe("projectile shape assets", () => {
     ).toBeUndefined();
   });
 
+  it("keeps a packet muzzle pose independent of the same player's collision pose", () => {
+    const poses = new ProjectileShapePoses(() => undefined);
+    const predicted = {
+      id: "shooter",
+      type: "Player" as const,
+      position: [1, 2, 3] as [number, number, number],
+    };
+    const packet = {
+      ...predicted,
+      position: [4, 5, 6] as [number, number, number],
+    };
+
+    const collisionPose = poses.get(predicted)!;
+    expect(
+      new Vector3().setFromMatrixPosition(poses.get(packet)!).toArray(),
+    ).toEqual([5, 6, 4]);
+    expect(poses.get(predicted)).toBe(collisionPose);
+    expect(
+      new Vector3().setFromMatrixPosition(collisionPose).toArray(),
+    ).toEqual([2, 3, 1]);
+  });
+
   it("shares loading across aliases and resolves missing data without delaying later ticks", async () => {
     const data = createDTSCollisionTestShape();
     let finish!: (value: typeof data) => void;

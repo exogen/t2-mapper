@@ -8,7 +8,10 @@ import type {
 import { PlayerCollision } from "../collision/playerCollision";
 import { waterLevelAt } from "../collision/waterLevel";
 import { cloneData } from "../cloneData";
-import { withCollisionQueryBatch } from "../collision/worldCollision";
+import {
+  withCollisionQueryBatch,
+  type PlayerForceFields,
+} from "../collision/worldCollision";
 import {
   DEFAULT_PLAYER_INTERPOLATION,
   type PlayerInterpolationSettings,
@@ -135,6 +138,14 @@ export class PlayerPrediction {
   // to one and an unwarped packet (initial position or teleport) clears it.
   private hasMovementDelta = false;
   private readonly interpolation: Readonly<PlayerInterpolationSettings>;
+  private readonly zoneVelocityScale?: (
+    position: Vector3,
+    size: Vector3,
+    travel: Vector3,
+    touchesSolidAtDestination: () => boolean,
+  ) => number;
+  private readonly touchesSolidAtDestination = () =>
+    this.collision.touchesDestination(this.position, this.size, this.travel);
 
   data: PlayerDataBlock;
 
@@ -144,13 +155,15 @@ export class PlayerPrediction {
 
   constructor(
     data: PlayerDataBlock,
-    collideWithField?: (id: string) => boolean,
+    fields?: PlayerForceFields,
     interpolation = DEFAULT_PLAYER_INTERPOLATION,
+    zoneVelocityScale?: PlayerPrediction["zoneVelocityScale"],
   ) {
     this.data = data;
     this.interpolation = interpolation;
+    this.zoneVelocityScale = zoneVelocityScale;
     this.predictionCount = interpolation.maxPredictionTicks;
-    this.collision = new PlayerCollision(collideWithField);
+    this.collision = new PlayerCollision(fields);
     const box = data.boxSize;
     this.size = new Vector3(box?.x ?? 1, box?.y ?? 1, box?.z ?? 2);
     this.energy = data.maxEnergy ?? 0;
@@ -621,17 +634,31 @@ export class PlayerPrediction {
     let time = PLAYER_TICK_SEC,
       maxStep = this.data.maxStepHeight ?? 0;
     for (let retry = 0; retry < 5; retry++) {
-      const speed = this.velocity.length();
-      if (speed === 0) return;
+      if (this.velocity.lengthSq() === 0) return;
       this.travel.copy(this.velocity).multiplyScalar(time);
-      if (!this.collision.sweep(this.position, this.size, this.travel)) {
+      const hitSolid = this.collision.sweep(
+        this.position,
+        this.size,
+        this.travel,
+      );
+      const zoneScale =
+        this.zoneVelocityScale?.(
+          this.position,
+          this.size,
+          this.travel,
+          this.touchesSolidAtDestination,
+        ) ?? 1;
+      if (zoneScale !== 1) this.velocity.multiplyScalar(zoneScale);
+      if (!hitSolid) {
+        // Retail keeps the endpoint computed before the zone changed velocity.
         this.position.add(this.travel);
         return;
       }
       const dt = time * this.collision.hitTime;
+      const speed = this.velocity.length();
       this.position.addScaledVector(
         this.velocity,
-        dt - Math.min(0.01 / speed, dt),
+        speed > 0 ? dt - Math.min(0.01 / speed, dt) : dt,
       );
       time -= dt;
       this.falling = false;

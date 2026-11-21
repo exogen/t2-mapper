@@ -207,6 +207,36 @@ describe("seeker missile prediction", () => {
     expect(stream.entityAt(1)!.velocity![1]).toBeGreaterThan(0);
   });
 
+  it("publishes only the scoped targets of airborne missiles", () => {
+    const stream = createStream();
+    stream.createGhost(2, 2, { position: { x: 100, y: 100, z: 100 } });
+    stream.createGhost(1, 1, { ...launch, targetMode: 0, targetGhost: 2 });
+    stream.createGhost(3, 1, {
+      ...launch,
+      targetMode: 1,
+      targetDirection: { x: 100, y: 100, z: 100 },
+    });
+    stream.createGhost(4, 1, { ...launch, targetMode: 0, targetGhost: 42 });
+    expect(stream.getSnapshot().inboundMissileTargetIds).toEqual([
+      stream.entityAt(2)?.id,
+    ]);
+
+    stream.feedDecoded({
+      ghosts: [
+        {
+          type: "update",
+          index: 1,
+          parsedData: {
+            explodePosition: launch.position,
+            explodeNormal: { x: 0, y: 0, z: 1 },
+          },
+        },
+      ],
+    });
+    expect(stream.entityAt(1)?.hasExploded).toBe(true);
+    expect(stream.getSnapshot().inboundMissileTargetIds).toBeUndefined();
+  });
+
   it("does not replay launch effects for a mature missile at late scope-in", () => {
     const stream = createStream({ ...missile, exhaustTimeMs: 1000 });
     stream.createGhost(1, 1, { ...launch, timeoutReset: false });

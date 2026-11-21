@@ -1,4 +1,3 @@
-import { Dialog, DialogHeading } from "@ariakit/react";
 import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { TbMovie } from "react-icons/tb";
 import { FaStop } from "react-icons/fa";
@@ -566,32 +565,6 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
             }
           }}
         />
-      )}
-      {!showSaved && (clip.error || (draft && error)) && (
-        <Dialog
-          open
-          className={styles.Panel}
-          onClose={() => {
-            clipStore.setState({ error: null });
-            setError(null);
-          }}
-          aria-label="Clip error"
-        >
-          <DialogHeading className={styles.Title}>Clip error</DialogHeading>
-          <p role="alert" className={styles.Error}>
-            {clip.error ?? error}
-          </p>
-          <button
-            type="button"
-            className={styles.UtilityButton}
-            onClick={() => {
-              clipStore.setState({ error: null });
-              setError(null);
-            }}
-          >
-            Close
-          </button>
-        </Dialog>
       )}
       {showSaved && (
         <ClipSavedDialog

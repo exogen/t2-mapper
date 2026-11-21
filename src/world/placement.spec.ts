@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { IDENTITY_MATRIX } from "../scene/types";
 import type { SceneInteriorInstance, SceneTerrainBlock } from "../scene/types";
+import { ForceFieldState } from "../stream/forceFieldState";
 import {
   DEFAULT_TERRAIN_SQUARE_SIZE,
   SHAPE_MODEL_ROTATION_Y,
   forceFieldCollider,
   interiorPlacement,
   streamEntityPlacement,
+  streamForceFieldPlacement,
   terrainCollisionInput,
 } from "./placement";
 
@@ -138,10 +140,22 @@ describe("forceFieldCollider", () => {
     expect(collider.matrix.elements.slice(12, 15)).toEqual([1, 2, 3]);
   });
 
-  it("collides only when closed, matching Torque", () => {
+  it("collides until fully open, matching Torque", () => {
     expect(forceFieldCollider(base)!.enabled).toBe(true);
     expect(forceFieldCollider({ ...base, fieldOpen: true })!.enabled).toBe(
       false,
     );
+  });
+
+  it("uses the streamed position in Torque axes and the existing Three.js dimensions", () => {
+    const collider = forceFieldCollider(
+      streamForceFieldPlacement({
+        ...base,
+        forceFieldState: ForceFieldState.Open,
+      }),
+    )!;
+    expect(collider.matrix.elements.slice(12, 15)).toEqual([2, 3, 1]);
+    expect(collider.box.max.toArray()).toEqual([4, 5, 6]);
+    expect(collider.enabled).toBe(false);
   });
 });

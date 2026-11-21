@@ -4,22 +4,31 @@ import { PlayerHUD } from "./PlayerHUD";
 import { casterStore } from "../state/casterStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import type { HudPosition, HudStyle, MatchHudStyle } from "./SettingsProvider";
-import type { StreamEntity } from "../stream/types";
+import type { StreamEntity, StreamSnapshot } from "../stream/types";
 import { clipStore } from "../state/clipStore";
 import type { ClipHudSettings, ClipTake } from "../../relay/clipTypes";
+import type { GameEngine } from "../engine/gameEngine";
 
 const fixture = vi.hoisted(() => ({
   replay: false,
+  demo: false,
   watcher: false,
   entities: [] as StreamEntity[],
   cameraYaw: 0,
+  missileLock: undefined as StreamSnapshot["missileLock"],
+  inferredMissileLocks: undefined as StreamSnapshot["inferredMissileLocks"],
+  weaponsHud: { slots: [{ index: 0, ammo: 5 }], activeIndex: 0 },
 }));
 
 vi.mock("./usePlayback", () => ({
   useRecording: () =>
-    fixture.replay
-      ? { source: "live", streamingPlayback: { localSpectator: true } }
-      : null,
+    fixture.demo
+      ? { source: "demo" }
+      : fixture.replay
+        ? { source: "live", streamingPlayback: { localSpectator: true } }
+        : fixture.watcher
+          ? { source: "live", streamingPlayback: { localSpectator: false } }
+          : null,
 }));
 vi.mock("../state/liveConnectionStore", async (original) => ({
   ...(await original<typeof import("../state/liveConnectionStore")>()),
@@ -86,14 +95,18 @@ vi.mock("../state/streamSnapshotStore", async (original) => ({
       ],
       playerSensorGroup: 0,
       camera: { yaw: fixture.cameraYaw },
-      weaponsHud: { slots: [{ index: 0, ammo: 5 }], activeIndex: 0 },
+      weaponsHud: fixture.weaponsHud,
+      missileLock: fixture.missileLock,
+      inferredMissileLocks: fixture.inferredMissileLocks,
     }),
 }));
 
 beforeEach(() => {
-  fixture.replay = fixture.watcher = false;
+  fixture.replay = fixture.demo = fixture.watcher = false;
   fixture.entities = [];
   fixture.cameraYaw = 0;
+  fixture.missileLock = fixture.inferredMissileLocks = undefined;
+  fixture.weaponsHud = { slots: [{ index: 0, ammo: 5 }], activeIndex: 0 };
   settings.showScoreHud = settings.showQuickCamHud = false;
   settings.scoreHudPosition = settings.quickCamHudPosition = "left";
   settings.matchHudStyle = "classic";
@@ -123,6 +136,24 @@ function activateClip(hud?: ClipHudSettings) {
   };
   clipStore.setState({ active, playing: false });
 }
+
+it("includes the stock missile lock sprites with the reticle HUD", () => {
+  const engine = {} as GameEngine;
+  const render = () =>
+    renderToStaticMarkup(
+      <PlayerHUD engine={engine} onOpenScoreScreen={() => {}} />,
+    ).toLowerCase();
+  expect(render()).not.toContain("ret_missile_marker.png");
+  settings.showReticle = true;
+  const markup = render();
+  for (const sprite of [
+    "marker",
+    "marker_red",
+    "horizflash_red",
+    "vertflash_red",
+  ])
+    expect(markup).toContain(`ret_missile_${sprite}.png`);
+});
 
 it.each<[boolean, HudPosition, boolean, HudPosition, boolean]>([
   [false, "left", false, "left", true],
@@ -311,6 +342,86 @@ it("shows the followed replay player's health and equipment rather than the reco
   expect(html).not.toContain('alt="Blaster"');
   expect(html).not.toContain("width:90%");
 });
+
+function followDemoWeapon(weapon: string, mountObjectId?: string) {
+  fixture.demo = true;
+  fixture.entities = [
+    {
+      id: "followed",
+      type: "Player",
+      className: "Player",
+      mountObjectId,
+      imageSlots: [{ shapeName: weapon, mountPoint: 0, dataBlockId: 1 }],
+    } as StreamEntity,
+  ];
+  streamPlaybackStore.setState({
+    cameraMode: "firstPersonOverride",
+    followEntityId: "followed",
+  });
+  return () => renderToStaticMarkup(<PlayerHUD onOpenScoreScreen={() => {}} />);
+}
+
+it.each([
+  ["weapon_sniper.dts", "Laser Rifle", "Zoom data unavailable."],
+  ["weapon_missile.dts", "Missile", "Missile lock estimated."],
+])(
+  "attaches the observer demo note to the equipped %s slot only in demo playback",
+  (weapon, label, note) => {
+    const render = followDemoWeapon(weapon);
+    const markup = render();
+    expect(markup).toMatch(
+      new RegExp(`data-active="true"><img[^>]+alt="${label}"`),
+    );
+    expect(markup).toContain(">Observer demo</span>");
+    expect(markup).toContain(`>${note}</span>`);
+    fixture.demo = false;
+    fixture.replay = true;
+    expect(render()).toContain(`>${note}</span>`);
+    fixture.replay = false;
+    fixture.watcher = true;
+    expect(render()).not.toContain("Observer demo");
+  },
+);
+
+it("omits weapon notes for the recorder's own equipped weapon", () => {
+  const render = followDemoWeapon("weapon_missile.dts");
+  fixture.weaponsHud = {
+    slots: [
+      { index: 5, ammo: -1 },
+      { index: 8, ammo: 5 },
+    ],
+    activeIndex: 8,
+  };
+  fixture.missileLock = { selfLocked: false, selfHomed: false };
+  // A previously followed player may still be selected in Original view.
+  streamPlaybackStore.setState({ cameraMode: "original" });
+  expect(render()).toContain('alt="Missile"');
+  expect(render()).not.toContain("Observer demo");
+  fixture.weaponsHud.activeIndex = 5;
+  streamPlaybackStore.setState({
+    cameraMode: "firstPersonOverride",
+    followEntityId: "player",
+  });
+  expect(render()).toContain('alt="Laser Rifle"');
+  expect(render()).not.toContain("Observer demo");
+});
+
+it.each(["followed", "vehicle"])(
+  "omits the missile note for a recorded lock on %s",
+  (targetId) => {
+    const render = followDemoWeapon("weapon_missile.dts", "vehicle");
+    fixture.inferredMissileLocks = [
+      { shooterId: "other", targetId, warnTarget: true },
+    ];
+    expect(render()).toContain(">Missile lock estimated.</span>");
+    fixture.missileLock = {
+      selfLocked: false,
+      selfHomed: false,
+      outgoing: { kind: "object", targetId },
+    };
+    expect(render()).not.toContain("Observer demo");
+  },
+);
 
 it("hides the reticle while following a corpse that still has a weapon", () => {
   settings.showReticle = true;

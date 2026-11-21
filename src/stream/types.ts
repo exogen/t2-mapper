@@ -717,6 +717,22 @@ export interface PendingAudioEvent {
   timeSec: number;
 }
 
+/** Missile state sent to the recording or live connection's own controller. */
+export interface MissileLockState {
+  selfLocked: boolean;
+  selfHomed: boolean;
+  outgoing?:
+    | { kind: "tracking" | "position"; position: [number, number, number] }
+    | { kind: "object"; targetId?: string };
+}
+
+/** An estimate for a remote shooter, derived from observed heat and aim. */
+export interface InferredMissileLock {
+  shooterId: string;
+  targetId: string;
+  warnTarget: boolean;
+}
+
 export interface StreamSnapshot {
   timeSec: number;
   /** World gravity in m/s² (negative is down) — see worldGravity.ts. */
@@ -756,6 +772,10 @@ export interface StreamSnapshot {
   /** Assumed game-type timeout, or null for unsupported game types. */
   flagReturnDelaySec: number | null;
   controlPlayerGhostId?: string;
+  missileLock?: MissileLockState;
+  inferredMissileLocks?: readonly InferredMissileLock[];
+  /** Current scoped object targets of active seeker projectiles. */
+  inboundMissileTargetIds?: readonly string[];
   /** Recording player's sensor group (team number). */
   playerSensorGroup: number;
   status: { health: number; energy: number; heat: number };
@@ -875,6 +895,7 @@ export interface StreamingPlayback {
     listener: (event: ProjectileLifecycleEvent) => void,
   ): () => void;
   setProjectileShapeLoader?(loader: ProjectileShapeLoader | undefined): void;
+  setMissileLockInferenceEnabled?(enabled: boolean): void;
   /** Aim lookahead for the observed player at the current demo tick. */
   getPlayerAim?(entityId: string): DemoPlayerAim | undefined;
   /** Demo work can be bounded in ticks or wall time; a partial snapshot resumes

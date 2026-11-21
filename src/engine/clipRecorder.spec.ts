@@ -85,6 +85,7 @@ const pointerLockDocument = {
   exitPointerLock: vi.fn(),
 };
 beforeEach(() => {
+  settingsStore.setState({ pauseClipRecordingWhenDemoPaused: false });
   input.actions = {};
   input.subscribers.clear();
   pointerLockDocument.pointerLockElement = null;
@@ -120,7 +121,8 @@ afterEach(() => {
   engineStore.getState().setRecording(null);
   commandCircuitStore.setState({ active: false });
   gameEntityStore.getState().endStreaming();
-  settingsStore.setState({ pauseClipRecordingWhenDemoPaused: false });
+  const { pauseClipRecordingWhenDemoPaused } = settingsStore.getInitialState();
+  settingsStore.setState({ pauseClipRecordingWhenDemoPaused });
   vi.unstubAllGlobals();
 });
 function fixture() {
@@ -140,7 +142,14 @@ function fixture() {
       camera: engine.cameras.active,
       scene: new Scene(),
     }) as unknown as FrameContext;
-  return { engine, frame };
+  const stopWithFinalHold = () => {
+    // Give short camera events enough surrounding footage to keep the take.
+    if (engineStore.getState().playback.status === "playing")
+      streamClock.time += 1;
+    engine.scheduler.run(FramePriority.ClipCamera, frame(1));
+    clipStore.getState().stop();
+  };
+  return { engine, frame, stopWithFinalHold };
 }
 
 it("replays recorded source rates and camera movement through deliberate pauses", () => {
@@ -180,7 +189,7 @@ it("replays recorded source rates and camera movement through deliberate pauses"
 
 it("captures command-circuit toggles, real pan/zoom input, and restores them through scrubbing", () => {
   vi.stubGlobal("window", { location: { hash: "" } });
-  const { engine, frame } = fixture();
+  const { engine, frame, stopWithFinalHold } = fixture();
   gameEntityStore.getState().beginStreaming("demo");
   cleanups.push(installCommandCircuit(engine));
   engine.cameras.perspective.position.set(1, 2, 3);
@@ -200,9 +209,11 @@ it("captures command-circuit toggles, real pan/zoom input, and restores them thr
   expect(engine.cameras.ortho.zoom).toBeGreaterThan(initialZoom);
   commandCircuitStore.getState().deactivate();
   engine.scheduler.runAll(frame(0.01));
-  clipStore.getState().stop();
+  stopWithFinalHold();
   const recorded = clipStore.getState().draft!;
-  expect(recorded.samples.map((sample) => sample.projection)).toEqual([
+  expect(
+    recorded.samples.slice(0, -1).map((sample) => sample.projection),
+  ).toEqual([
     "perspective",
     "orthographic",
     "orthographic",
@@ -215,7 +226,7 @@ it("captures command-circuit toggles, real pan/zoom input, and restores them thr
     timeMs: 10,
     cameraMode: "commandCircuit",
   });
-  expect(recorded.samples.at(-1)).toMatchObject({
+  expect(recorded.samples[4]).toMatchObject({
     cut: true,
     jump: "cameraChange",
     timeMs: 100,
@@ -266,14 +277,14 @@ it("records the final camera pose and movement while source playback is paused",
   engine.cameras.perspective.position.set(1, 2, 3);
   engine.scheduler.run(FramePriority.ClipCamera, frame());
   engine.cameras.perspective.position.set(4, 5, 6);
-  engine.scheduler.run(FramePriority.ClipCamera, frame());
+  engine.scheduler.run(FramePriority.ClipCamera, frame(1));
   clipStore.getState().stop();
   expect(pointerLockDocument.exitPointerLock).toHaveBeenCalledTimes(1);
   const draft = clipStore.getState().draft!;
   expect(draft.samples).toHaveLength(2);
   expect(draft.samples.map((sample) => sample.demoTimeSec)).toEqual([10, 10]);
   expect(draft.samples[1]).toMatchObject({
-    timeMs: 40,
+    timeMs: 1000,
     position: [4, 5, 6],
     playing: false,
   });
@@ -281,7 +292,7 @@ it("records the final camera pose and movement while source playback is paused",
 });
 
 it("skips paused time and cuts to the first resumed camera pose", () => {
-  const { engine, frame } = fixture();
+  const { engine, frame, stopWithFinalHold } = fixture();
   const camera = engine.cameras.perspective;
   streamPlaybackStore.setState({ cameraMode: "freeFly" });
   settingsStore.setState({ pauseClipRecordingWhenDemoPaused: true });
@@ -308,7 +319,7 @@ it("skips paused time and cuts to the first resumed camera pose", () => {
   camera.position.x = 14;
   streamClock.time = 10.096;
   engine.scheduler.run(FramePriority.ClipCamera, frame());
-  clipStore.getState().stop();
+  stopWithFinalHold();
   clipStore.getState().setSmoothingLevel(2);
   const recorded = clipStore.getState().active!;
   expect(
@@ -318,6 +329,7 @@ it("skips paused time and cuts to the first resumed camera pose", () => {
     [40, undefined, true],
     [56, true, true],
     [96, undefined, true],
+    [1096, undefined, true],
   ]);
   expect(sampleClipTake(recorded, 55).position[0]).toBe(2);
   expect(sampleClipTake(recorded, 56).position[0]).toBe(10);
@@ -331,7 +343,7 @@ it.each([
 ])(
   "marks a skipped pause only if framing changes ($change)",
   ({ width, fov, jump }) => {
-    const { engine, frame } = fixture();
+    const { engine, frame, stopWithFinalHold } = fixture();
     streamPlaybackStore.setState({ cameraMode: "freeFly" });
     settingsStore.setState({ pauseClipRecordingWhenDemoPaused: true });
     engineStore.getState().setPlaybackStatus("playing");
@@ -345,18 +357,19 @@ it.each([
     engineStore.getState().setPlaybackStatus("playing");
     streamClock.time = 10.04;
     engine.scheduler.run(FramePriority.ClipCamera, frame());
-    clipStore.getState().stop();
+    stopWithFinalHold();
     expect(
       clipStore.getState().draft?.samples.map(({ jump, cut }) => [jump, cut]),
     ).toEqual([
       [undefined, undefined],
       [jump, jump ? true : undefined],
+      [undefined, undefined],
     ]);
   },
 );
 
 it("ignores normal camera motion before and after a skipped pause", () => {
-  const { engine, frame } = fixture();
+  const { engine, frame, stopWithFinalHold } = fixture();
   const camera = engine.cameras.perspective;
   settingsStore.setState({ pauseClipRecordingWhenDemoPaused: true });
   engineStore.getState().setPlaybackStatus("playing");
@@ -374,7 +387,7 @@ it("ignores normal camera motion before and after a skipped pause", () => {
   streamClock.time = 10.026;
   engine.scheduler.run(FramePriority.ClipCamera, frame(0.016));
 
-  clipStore.getState().stop();
+  stopWithFinalHold();
   expect(
     clipStore
       .getState()
@@ -387,6 +400,7 @@ it("ignores normal camera motion before and after a skipped pause", () => {
   ).toEqual([
     [0, 0, undefined, undefined],
     [26, 2, undefined, undefined],
+    [1026, 2, undefined, undefined],
   ]);
 });
 
@@ -406,22 +420,22 @@ it.each(["paused", "stopped"] as const)(
     camera.position.set(3, 0, 0);
     engine.scheduler.run(FramePriority.ClipCamera, frame());
     camera.position.x = 4;
-    streamClock.time = 10.04;
-    engine.scheduler.run(FramePriority.ClipCamera, frame());
+    streamClock.time = 11;
+    engine.scheduler.run(FramePriority.ClipCamera, frame(1));
     engineStore.getState().setPlaybackStatus("paused");
     camera.position.x = 100;
     engine.scheduler.run(FramePriority.ClipCamera, frame(10));
     clipStore.getState().stop();
     expect(clipStore.getState().draft?.samples).toMatchObject([
       { timeMs: 0, position: [3, 0, 0] },
-      { timeMs: 40, position: [4, 0, 0] },
+      { timeMs: 1000, position: [4, 0, 0] },
     ]);
     expect(clipStore.getState().draft?.samples[0].cut).toBeUndefined();
   },
 );
 
 it("keeps both poses when a pause and resume happen between zero-delta frames", () => {
-  const { engine, frame } = fixture();
+  const { engine, frame, stopWithFinalHold } = fixture();
   const camera = engine.cameras.perspective;
   settingsStore.setState({ pauseClipRecordingWhenDemoPaused: true });
   engineStore.getState().setPlaybackStatus("playing");
@@ -432,7 +446,7 @@ it("keeps both poses when a pause and resume happen between zero-delta frames", 
   camera.position.x = 2;
   engineStore.getState().setPlaybackStatus("playing");
   engine.scheduler.run(FramePriority.ClipCamera, frame(0));
-  clipStore.getState().stop();
+  stopWithFinalHold();
   const recorded = clipStore.getState().draft!;
   expect(
     recorded.samples.map(({ timeMs, cut, position }) => [
@@ -443,11 +457,12 @@ it("keeps both poses when a pause and resume happen between zero-delta frames", 
   ).toEqual([
     [0, undefined, 1],
     [0.001, true, 2],
+    [1000.001, undefined, 2],
   ]);
 });
 
 it("marks only successful quick cam recalls, even in the same free-fly mode and between sampled frames", () => {
-  const { engine, frame } = fixture();
+  const { engine, frame, stopWithFinalHold } = fixture();
   gameEntityStore.getState().beginStreaming("demo");
   casterStore.getState().activate("test:28000", "1", "Katabatic");
   const previousCamera = cameraRegistry.perspective;
@@ -466,7 +481,7 @@ it("marks only successful quick cam recalls, even in the same free-fly mode and 
     engine.scheduler.run(FramePriority.ClipCamera, frame(0.02));
     expect(restoreQuickCam(3)?.kind).toBe("fly");
     engine.scheduler.run(FramePriority.ClipCamera, frame(0));
-    clipStore.getState().stop();
+    stopWithFinalHold();
     const recorded = clipStore.getState().draft!;
     expect(
       recorded.samples.map(({ timeMs, jump, cut, position }) => [
@@ -479,6 +494,7 @@ it("marks only successful quick cam recalls, even in the same free-fly mode and 
       [0, undefined, undefined, 1],
       [40, undefined, undefined, 11],
       [40.001, "quickCam", true, 1],
+      [1040.001, undefined, undefined, 1],
     ]);
   } finally {
     cameraRegistry.perspective = previousCamera;
@@ -487,7 +503,7 @@ it("marks only successful quick cam recalls, even in the same free-fly mode and 
 });
 
 it("captures the projectile orbit and cuts when a different flight takes over", () => {
-  const { engine, frame } = fixture();
+  const { engine, frame, stopWithFinalHold } = fixture();
   const previousEntities = streamRenderFrame.current;
   const flight = (id: string, spawnTimeSec: number): StreamEntity => ({
     id,
@@ -511,8 +527,8 @@ it("captures the projectile orbit and cuts when a different flight takes over", 
     expect(clipStore.getState().start()).toBe(true);
     capture(flight("first", 9.6), 6);
     capture(flight("second", 9.888), 8);
-    clipStore.getState().stop();
-    expect(clipStore.getState().draft?.samples).toMatchObject([
+    stopWithFinalHold();
+    expect(clipStore.getState().draft?.samples.slice(0, -1)).toMatchObject([
       {
         timeMs: 0,
         orbitDistance: 6,
@@ -534,7 +550,7 @@ it("captures the projectile orbit and cuts when a different flight takes over", 
 it.each(["firstPersonOverride", "orbitOverride"] as const)(
   "cuts recorded %s at death and at a new body for the same player",
   (cameraMode) => {
-    const { engine, frame } = fixture();
+    const { engine, frame, stopWithFinalHold } = fixture();
     const player = {
       id: "player-body",
       renderType: "Player" as const,
@@ -571,16 +587,17 @@ it.each(["firstPersonOverride", "orbitOverride"] as const)(
     streamPlaybackStore.setState({ followEntityId: nextBody.id });
     camera.position.set(200, 2, 3);
     engine.scheduler.run(FramePriority.ClipCamera, frame(0.01));
-    clipStore.getState().stop();
+    stopWithFinalHold();
 
     const recorded = clipStore.getState().draft!;
-    expect(recorded.samples).toMatchObject([
+    expect(recorded.samples.slice(0, -1)).toMatchObject([
       { timeMs: 0, targetId: 7 },
       { timeMs: 10, targetId: 7, cut: true },
       { timeMs: 20, targetId: 7, cut: true },
       { timeMs: 30, targetId: 7, cut: true },
     ]);
     expect(recorded.samples.map(({ jump }) => jump)).toEqual([
+      undefined,
       undefined,
       undefined,
       undefined,
@@ -602,7 +619,7 @@ it.each(["firstPersonOverride", "orbitOverride"] as const)(
 );
 
 it("preserves interpolation during a recorded flag hand-off", () => {
-  const { engine, frame } = fixture();
+  const { engine, frame, stopWithFinalHold } = fixture();
   const carrier = {
     id: "carrier",
     renderType: "Player" as const,
@@ -621,7 +638,7 @@ it("preserves interpolation during a recorded flag hand-off", () => {
   streamPlaybackStore.setState({ followEntityId: "flag" });
   engine.cameras.perspective.position.set(3, 2, 3);
   engine.scheduler.run(FramePriority.ClipCamera, frame());
-  clipStore.getState().stop();
+  stopWithFinalHold();
 
   const recorded = clipStore.getState().draft!;
   expect(recorded.samples[1].cut).toBeUndefined();
@@ -632,7 +649,7 @@ it("preserves interpolation during a recorded flag hand-off", () => {
 it.each([false, true])(
   "preserves the same player's perspective transition (quick cam: %s)",
   (quickCam) => {
-    const { engine, frame } = fixture();
+    const { engine, frame, stopWithFinalHold } = fixture();
     const body = {
       id: "player",
       renderType: "Player" as const,
@@ -654,7 +671,7 @@ it.each([false, true])(
     }));
     engine.cameras.perspective.position.x = 3;
     engine.scheduler.run(FramePriority.ClipCamera, frame(0.01));
-    clipStore.getState().stop();
+    stopWithFinalHold();
 
     const recorded = clipStore.getState().draft!;
     expect(recorded.samples[1].cut).toBeUndefined();
@@ -665,7 +682,7 @@ it.each([false, true])(
 );
 
 it("marks a new follow target and leaves an in-place free-fly detach continuous", () => {
-  const { engine, frame } = fixture();
+  const { engine, frame, stopWithFinalHold } = fixture();
   const player = {
     id: "player",
     className: "Player",
@@ -694,19 +711,20 @@ it("marks a new follow target and leaves an in-place free-fly detach continuous"
     followTargetId: null,
   });
   engine.scheduler.run(FramePriority.ClipCamera, frame(0.01));
-  clipStore.getState().stop();
+  stopWithFinalHold();
 
   const { samples } = clipStore.getState().draft!;
   expect(samples.map(({ jump }) => jump)).toEqual([
     undefined,
     "cameraChange",
     undefined,
+    undefined,
   ]);
-  expect(samples.at(-1)).not.toHaveProperty("cut");
+  expect(samples[2]).not.toHaveProperty("cut");
 });
 
 it("records the end of a pullback separately from steady orbit even between regular samples", () => {
-  const { engine, frame } = fixture();
+  const { engine, frame, stopWithFinalHold } = fixture();
   const body = {
     id: "player",
     renderType: "Player" as const,
@@ -730,7 +748,7 @@ it("records the end of a pullback separately from steady orbit even between regu
     engine.scheduler.run(FramePriority.ClipCamera, frame(0.01));
     streamRenderFrame.firstPersonPlayerId = null;
     engine.scheduler.run(FramePriority.ClipCamera, frame(0.01));
-    clipStore.getState().stop();
+    stopWithFinalHold();
     const recorded = clipStore.getState().draft!;
     expect(
       recorded.samples.map(({ timeMs, firstPersonPose, cut }) => ({
@@ -742,6 +760,7 @@ it("records the end of a pullback separately from steady orbit even between regu
       { timeMs: 0, firstPersonPose: true, cut: undefined },
       { timeMs: 10, firstPersonPose: false, cut: undefined },
       { timeMs: 20, firstPersonPose: undefined, cut: undefined },
+      { timeMs: 1020, firstPersonPose: undefined, cut: undefined },
     ]);
   } finally {
     Object.assign(streamRenderFrame, {
@@ -754,7 +773,7 @@ it("records the end of a pullback separately from steady orbit even between regu
 it.each(["firstPersonOverride", "orbitOverride"] as const)(
   "keeps a camera cut when toggling away from %s on an already dead body",
   (cameraMode) => {
-    const { engine, frame } = fixture();
+    const { engine, frame, stopWithFinalHold } = fixture();
     const body = {
       id: "corpse",
       renderType: "Player" as const,
@@ -779,7 +798,7 @@ it.each(["firstPersonOverride", "orbitOverride"] as const)(
     });
     engine.cameras.perspective.position.x = 3;
     engine.scheduler.run(FramePriority.ClipCamera, frame(0.01));
-    clipStore.getState().stop();
+    stopWithFinalHold();
 
     const recorded = clipStore.getState().draft!;
     expect(recorded.samples[1].cut).toBe(true);
@@ -792,17 +811,17 @@ it("starts a fresh time origin after discarding a take between rendered frames",
   const { engine, frame } = fixture();
   clipStore.getState().start();
   engine.scheduler.run(FramePriority.ClipCamera, frame());
-  engine.scheduler.run(FramePriority.ClipCamera, frame());
+  engine.scheduler.run(FramePriority.ClipCamera, frame(1));
   clipStore.getState().stop();
   expect(clipStore.getState().start()).toBe(false);
   clipStore.getState().discard();
   clipStore.getState().start();
   engine.scheduler.run(FramePriority.ClipCamera, frame());
-  engine.scheduler.run(FramePriority.ClipCamera, frame());
+  engine.scheduler.run(FramePriority.ClipCamera, frame(1));
   clipStore.getState().stop();
   expect(
     clipStore.getState().draft!.samples.map((sample) => sample.timeMs),
-  ).toEqual([0, 40]);
+  ).toEqual([0, 1000]);
   expect(pointerLockDocument.exitPointerLock).not.toHaveBeenCalled();
 });
 

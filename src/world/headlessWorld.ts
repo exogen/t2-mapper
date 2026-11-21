@@ -56,6 +56,7 @@ import {
   forceFieldCollider,
   interiorPlacement,
   streamEntityPlacement,
+  streamForceFieldPlacement,
   terrainCollisionInput,
   waterInfoFor,
 } from "./placement";
@@ -105,9 +106,7 @@ const log = createLogger("headlessWorld");
  *  of the stream's MutableEntity, so both live and demo sources fit. */
 export interface WorldEntity {
   id: string;
-  /** The game's own identity for this object. Used as the collider key
-   *  because `id` is a per-session counter that differs between the
-   *  browser and a headless build, making dumps incomparable. */
+  /** Stable collider key for terrain-adjacent geometry and collider dumps. */
   ghostIndex?: number;
   className?: string;
   type?: string;
@@ -116,7 +115,7 @@ export interface WorldEntity {
   position?: [number, number, number];
   rotation?: [number, number, number, number];
   scale?: [number, number, number];
-  fieldOpen?: boolean;
+  forceFieldState?: number;
   forceFieldData?: { dimensions: [number, number, number] };
   sceneData?: unknown;
 }
@@ -138,9 +137,8 @@ export class HeadlessWorld {
    *  and everything run through `run()`, sees THIS state and not any
    *  other world's — so several matches can be cast in one process. */
   readonly state: CollisionState = createCollisionState();
-  /** Ghost slot → what is registered there, and WHICH object put it
-   *  there. Slots are reused, so the occupant is what distinguishes
-   *  "already done" from "a different object moved in". */
+  /** Collider key and its owning entity. Slot-keyed colliders track their
+   *  occupant so a new ghost can replace the old geometry. */
   private readonly registered = new Map<
     string,
     { kind: ColliderKind; occupant: string }
@@ -151,8 +149,6 @@ export class HeadlessWorld {
    *  have already started. Measured at exactly 3x for three overlapping
    *  syncs before this existed. */
   private readonly inFlight = new Map<string, Promise<void>>();
-  /** Force-field open state, so we only re-register on a real change. */
-  private readonly fieldEnabled = new Map<string, boolean>();
   /** Per-id geometry totals. Kept per id rather than as running
    *  counters so that dropping a collider actually subtracts it —
    *  running totals drifted upward as ghosts came and went. */
@@ -265,6 +261,13 @@ export class HeadlessWorld {
     };
 
     for (const rawEntity of entities) {
+      const className = rawEntity.className ?? rawEntity.type ?? "";
+      if (className === "ForceFieldBare") {
+        // Force fields use lifetime IDs in the browser too.
+        seen.add(rawEntity.id);
+        this.syncForceField(rawEntity);
+        continue;
+      }
       // Key colliders on the ghost SLOT, matching what the React
       // components register — but remember which object is in it.
       const occupant = rawEntity.id;
@@ -272,7 +275,6 @@ export class HeadlessWorld {
         rawEntity.ghostIndex != null
           ? { ...rawEntity, id: `ghost:${rawEntity.ghostIndex}` }
           : rawEntity;
-      const className = entity.className ?? entity.type ?? "";
 
       if (className === "TerrainBlock" && entity.sceneData) {
         pending.push(this.syncTerrain(entity.sceneData as SceneTerrainBlock));
@@ -288,12 +290,6 @@ export class HeadlessWorld {
             entity.sceneData as SceneInteriorInstance,
           ),
         );
-        continue;
-      }
-
-      if (className === "ForceFieldBare") {
-        seen.add(entity.id);
-        this.syncForceField(entity, occupant);
         continue;
       }
 
@@ -383,10 +379,7 @@ export class HeadlessWorld {
     else if (kind === "static") {
       unregisterStaticShapeCollider(id);
       unregisterPlayerShapeCollider(id);
-    } else {
-      unregisterForceFieldCollider(id);
-      this.fieldEnabled.delete(id);
-    }
+    } else unregisterForceFieldCollider(id);
     this.registered.delete(id);
     this.geometryById.delete(id);
   }
@@ -483,30 +476,28 @@ export class HeadlessWorld {
     this.countGeometry(entity.id, meshes ?? playerMeshes);
   }
 
-  private syncForceField(entity: WorldEntity, occupant: string): void {
-    const collider = forceFieldCollider(entity);
+  private syncForceField(entity: WorldEntity): void {
+    const collider = forceFieldCollider(streamForceFieldPlacement(entity));
     if (!collider) return;
-    const current = this.registered.get(entity.id);
-    // A recycled slot re-registers from scratch rather than being
-    // mistaken for the field that used to be there.
-    const wasEnabled =
-      current?.occupant === occupant
-        ? this.fieldEnabled.get(entity.id)
-        : undefined;
-    if (current?.occupant !== occupant) {
+    const current = this.state.forceFields.get(entity.id);
+    if (
+      !current ||
+      !current.box.equals(collider.box) ||
+      !current.matrixWorld.equals(collider.matrix)
+    ) {
       registerForceFieldCollider(
         entity.id,
         collider.matrix,
         collider.box,
         collider.enabled,
       );
-      this.registered.set(entity.id, { kind: "forceField", occupant });
-    } else if (wasEnabled !== collider.enabled) {
-      // The one collider that changes during a match: a field that
-      // opens stops blocking rays.
+      this.registered.set(entity.id, {
+        kind: "forceField",
+        occupant: entity.id,
+      });
+    } else if (current.enabled !== collider.enabled) {
       setForceFieldEnabled(entity.id, collider.enabled);
     }
-    this.fieldEnabled.set(entity.id, collider.enabled);
   }
 
   private async loadOrWarn(
@@ -585,7 +576,6 @@ export class HeadlessWorld {
     this.inFlight.clear();
     this.terrainLoading = null;
     this.registered.clear();
-    this.fieldEnabled.clear();
     this.terrainFile = null;
   }
 }

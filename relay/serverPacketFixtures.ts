@@ -141,6 +141,11 @@ export function serverPacket(
     player?: PlayerState;
     compressionPoint?: boolean | readonly number[];
     events?: ServerEvent[];
+    missileLock?: {
+      selfLocked?: boolean;
+      selfHomed?: boolean;
+      objectTarget?: number;
+    };
   } = {},
 ): Uint8Array {
   const bs = new BitStreamWriter(1500);
@@ -156,7 +161,23 @@ export function serverPacket(
   bs.writeFlag(false); // rate info
   bs.writeFlag(false);
   bs.writeU32(opts.lastMoveAck ?? 0);
-  for (let i = 0; i < 5; i++) bs.writeFlag(false); // damage flash … jammed
+  bs.writeFlag(false); // damage flash
+  const lock = opts.missileLock;
+  const warn = !!(lock?.selfLocked || lock?.selfHomed);
+  bs.writeFlag(warn);
+  if (warn) {
+    bs.writeFlag(lock?.selfLocked === true);
+    bs.writeFlag(lock?.selfHomed === true);
+  }
+  bs.writeFlag(lock?.objectTarget !== undefined);
+  if (lock?.objectTarget !== undefined) {
+    bs.writeFlag(false); // tracking
+    bs.writeInt(1, 2); // lock on an object
+    bs.writeFlag(true); // target is scoped
+    bs.writeInt(lock.objectTarget, 10);
+  }
+  bs.writeFlag(false); // pinged
+  bs.writeFlag(false); // jammed
   bs.writeFlag(!!(opts.camera || opts.player || opts.compressionPoint));
   if (opts.camera) {
     bs.writeFlag(true); // the control object's packet data

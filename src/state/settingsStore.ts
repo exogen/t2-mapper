@@ -182,7 +182,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   invertJoystick: false,
   sidebarOpen: false,
   hasSeenClipRecordingHelp: false,
-  pauseClipRecordingWhenDemoPaused: false,
+  pauseClipRecordingWhenDemoPaused: true,
   fpsLimit: null,
   renderScale: 1,
   showInputOverlay: true,

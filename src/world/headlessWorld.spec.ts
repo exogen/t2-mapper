@@ -66,7 +66,7 @@ describe("HeadlessWorld slot reuse", () => {
     await world.sync([field("200", 5, [50, 50, 50])]);
     const second = await world.run(() => getColliderDump());
     expect(second).toHaveLength(1);
-    expect(second[0].id).toBe("ghost:5");
+    expect(second[0].id).toBe("200");
     expect(second[0].worldBoxMax).toEqual([50, 50, 50]);
   });
 
@@ -77,6 +77,23 @@ describe("HeadlessWorld slot reuse", () => {
     const dump = await world.run(() => getColliderDump());
     expect(dump).toHaveLength(1);
     expect(dump[0].worldBoxMax).toEqual([10, 10, 10]);
+  });
+
+  it("repositions a streamed force field within the same lifetime", async () => {
+    const world = new HeadlessWorld();
+    const initial = {
+      ...field("100", 5, [4, 5, 6]),
+      position: [10, 20, 30],
+    } satisfies WorldEntity;
+    await world.sync([initial]);
+    expect((await world.run(() => getColliderDump()))[0].worldBoxMin).toEqual([
+      20, 30, 10,
+    ]);
+
+    await world.sync([{ ...initial, position: [40, 50, 60] }]);
+    const dump = await world.run(() => getColliderDump());
+    expect(dump[0].worldBoxMin).toEqual([50, 60, 40]);
+    expect(dump[0].worldBoxMax).toEqual([54, 65, 46]);
   });
 
   it("drops a collider whose slot empties", async () => {
@@ -98,9 +115,10 @@ describe("HeadlessWorld slot reuse", () => {
       field("101", 6, [20, 20, 20]),
     ]);
     const dump = await world.run(() => getColliderDump());
-    const bySlot = new Map(dump.map((d) => [d.id, d.worldBoxMax]));
-    expect(bySlot.get("ghost:5")).toEqual([30, 30, 30]);
-    expect(bySlot.get("ghost:6")).toEqual([20, 20, 20]);
+    const byEntity = new Map(dump.map((d) => [d.id, d.worldBoxMax]));
+    expect(byEntity.has("100")).toBe(false);
+    expect(byEntity.get("200")).toEqual([30, 30, 30]);
+    expect(byEntity.get("101")).toEqual([20, 20, 20]);
   });
 
   it("replaces a water body when its slot is recycled", async () => {

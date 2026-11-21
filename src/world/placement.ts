@@ -21,6 +21,7 @@ import type {
   SceneWaterBlock,
 } from "../scene/types";
 import type { WaterInfo } from "../collision/waterLevel";
+import { fieldOpenFromState } from "../stream/forceFieldState";
 import type { TerrainFile } from "../terrain";
 
 /**
@@ -169,21 +170,37 @@ export function waterInfoFor(scene: SceneWaterBlock): WaterInfo {
   };
 }
 
-/**
- * A force field's collider box. Torque collides with any field that is
- * not fully OPEN (castRay FUN_00676900), so `enabled` tracks `fieldOpen`
- * — the one collider in the world that changes during a match.
- *
- * The box is corner-origin (0,0,0)→dimensions, matching
- * `useCornerBoxGeometry`; the matrix carries the placement, so scale
- * stays 1 and the dimensions live in the box.
- */
-export function forceFieldCollider(entity: {
+interface ForceFieldPlacement {
   position?: [number, number, number];
   rotation?: [number, number, number, number];
   forceFieldData?: { dimensions: [number, number, number] };
   fieldOpen?: boolean;
-}): { matrix: Matrix4; box: Box3; enabled: boolean } | null {
+}
+
+/** Streamed fields carry Torque positions and already converted rotations and dimensions. */
+export function streamForceFieldPlacement({
+  position,
+  rotation,
+  forceFieldData,
+  forceFieldState,
+}: Omit<ForceFieldPlacement, "fieldOpen"> & {
+  forceFieldState?: number;
+}): ForceFieldPlacement {
+  return {
+    position: position && torqueToThree(position),
+    rotation,
+    forceFieldData,
+    fieldOpen: fieldOpenFromState(forceFieldState),
+  };
+}
+
+/**
+ * Build a corner-origin collider from a field's Three.js placement.
+ * Torque's castRay (FUN_00676900) collides until the field is fully open.
+ */
+export function forceFieldCollider(
+  entity: ForceFieldPlacement,
+): { matrix: Matrix4; box: Box3; enabled: boolean } | null {
   const dims = entity.forceFieldData?.dimensions;
   if (!dims) return null;
   const matrix = new Matrix4().compose(

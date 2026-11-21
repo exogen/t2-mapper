@@ -1,7 +1,6 @@
 import type { StreamEntity } from "./types";
 import type {
   GameEntity,
-  ForceFieldData,
   ShapeEntity,
   PlayerEntity,
   ForceFieldBareEntity,
@@ -22,7 +21,7 @@ import type {
   NoneEntity,
 } from "../state/gameEntityTypes";
 import type { SceneTSStatic } from "../scene/types";
-import { fieldOpenFromState } from "./forceFieldState";
+import { streamForceFieldPlacement } from "../world/placement";
 
 /** Update an existing render entity without allocating. Animation state is
  * read imperatively; return true only for changes React must commit (skins,
@@ -144,18 +143,27 @@ export function updateGameEntityFromStream(
       e.linkTargetId = stream.linkTargetId;
       break;
     case "ForceFieldBare": {
-      e.fieldAlpha = stream.forceFieldAlpha;
-      const fieldOpen = fieldOpenFromState(stream.forceFieldState);
-      if (e.fieldOpen !== fieldOpen) {
-        e.fieldOpen = fieldOpen;
+      renderEntity.fieldAlpha = stream.forceFieldAlpha;
+      const { position, rotation, fieldOpen } =
+        streamForceFieldPlacement(stream);
+      if (
+        renderEntity.fieldOpen !== fieldOpen ||
+        renderEntity.rotation !== rotation ||
+        renderEntity.position?.[0] !== position?.[0] ||
+        renderEntity.position?.[1] !== position?.[1] ||
+        renderEntity.position?.[2] !== position?.[2]
+      ) {
+        renderEntity.fieldOpen = fieldOpen;
+        renderEntity.position = position;
+        renderEntity.rotation = rotation;
         structural = true;
       }
       // Servers retract an open field by zeroing its scale, so the box
       // dimensions change under the same identity.
       const dims = stream.forceFieldData?.dimensions;
-      const data = e.forceFieldData as ForceFieldData | undefined;
+      const data = renderEntity.forceFieldData;
       if (dims && data && data.dimensions !== dims) {
-        e.forceFieldData = { ...data, dimensions: dims };
+        renderEntity.forceFieldData = { ...data, dimensions: dims };
         structural = true;
       }
       break;
@@ -376,8 +384,8 @@ export function streamEntityToGameEntity(
     case "ForceFieldBare":
       return {
         ...positionedBase(entity, spawnTime),
+        ...streamForceFieldPlacement(entity),
         renderType: "ForceFieldBare",
-        fieldOpen: fieldOpenFromState(entity.forceFieldState),
         fieldAlpha: entity.forceFieldAlpha,
         forceFieldData: entity.forceFieldData
           ? {

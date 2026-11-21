@@ -54,6 +54,7 @@ export function ShortcutHelpDialog({
       open
       aria-describedby={`${modeId} ${descriptionId}`}
       className={styles.Dialog}
+      data-mode={mode}
       backdrop={<div className={styles.Overlay} />}
       onClose={onClose}
       onKeyDown={(event) => event.stopPropagation()}

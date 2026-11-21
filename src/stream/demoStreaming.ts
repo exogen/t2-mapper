@@ -7,6 +7,7 @@ import {
   BlockTypeSendPacket,
   type DemoBlock,
   type DemoParser,
+  type PacketData,
 } from "t2-demo-parser";
 import type { ParsedData } from "t2-demo-parser";
 import { clamp } from "../mathUtils";
@@ -1626,6 +1627,13 @@ export class DemoStreamAdapter extends StreamEngine {
     return this.parser.isComplete;
   }
 
+  protected override get missileLockWorldReady(): boolean {
+    // A mid-mission recording starts with its scoped ghosts already present.
+    return (
+      super.missileLockWorldReady || this.initialBlock.initialGhosts.length > 0
+    );
+  }
+
   /**
    * Demo time buffered so far, in seconds — exact, from the count of
    * fixed-32ms move-tick blocks in the decompressed stream (compressed
@@ -1870,6 +1878,7 @@ export class DemoStreamAdapter extends StreamEngine {
         this.cutAimForGhost(controlIndex);
       }
       this.processControlObject(packet.gameState);
+      this.processMissileLock(packet);
 
       // Apply ghost rotation to absolute tracking. This must happen before
       // the next move delta so that our tracking stays calibrated to V12.
@@ -1960,25 +1969,7 @@ export class DemoStreamAdapter extends StreamEngine {
 
   // ── Type guards ──
 
-  private isPacketData(parsed: unknown): parsed is {
-    gameState: {
-      lastMoveAck: number;
-      controlObjectGhostIndex?: number;
-      controlObjectData?: ParsedData;
-      compressionPoint?: Vec3;
-      cameraFov?: number;
-    };
-    events: Array<{
-      classId: number;
-      parsedData?: ParsedData;
-    }>;
-    ghosts: Array<{
-      index: number;
-      type: "create" | "update" | "delete";
-      classId?: number;
-      parsedData?: ParsedData;
-    }>;
-  } {
+  private isPacketData(parsed: unknown): parsed is PacketData {
     return (
       !!parsed &&
       typeof parsed === "object" &&

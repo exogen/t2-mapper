@@ -27,12 +27,17 @@ import {
   command,
   CONNECT_SEQUENCE,
   netString,
+  playerGhost,
   serverMessagePacket,
   serverPacket,
   writeF32,
   type ServerEvent,
 } from "./serverPacketFixtures.js";
 import { WatchStateAccumulator } from "./watchState.js";
+import {
+  deserializeCatchupPayload,
+  serializeCatchupPayload,
+} from "./watchSerialize.js";
 import type { RelayClient } from "../src/stream/relayClient.js";
 import { ReplayStreamAdapter } from "../src/stream/replayStreaming.js";
 import { precipitationPercentage } from "../src/weather/data.js";
@@ -245,6 +250,77 @@ describe("DemoReplaySource", () => {
       controlObjectGhostIndex: 0,
       controlObjectData: { rotX: 0.25 },
     });
+  });
+
+  it("hydrates a paused replay with the last exact missile lock and retires reused targets", async () => {
+    const target = 7;
+    const source = await DemoReplaySource.load(
+      demo([
+        block(
+          BlockTypePacket,
+          serverPacket(1, { events: [playerGhost(0), playerGhost(1, target)] }),
+        ),
+        block(BlockTypeMove, ZERO_MOVE),
+        block(
+          BlockTypePacket,
+          serverPacket(2, {
+            player: { position: [0, 0, 10] },
+            missileLock: { selfLocked: true, objectTarget: target },
+          }),
+        ),
+        ...Array.from({ length: 2001 }, () => block(BlockTypeMove, ZERO_MOVE)),
+        block(
+          BlockTypePacket,
+          serverPacket(3, {
+            missileLock: { selfHomed: true, objectTarget: target },
+            events: [playerGhost(2, target)],
+          }),
+        ),
+        block(BlockTypeMove, ZERO_MOVE),
+        block(BlockTypePacket, serverPacket(4)),
+        block(BlockTypeMove, ZERO_MOVE),
+      ]),
+    );
+    const browser = new ReplayStreamAdapter({} as RelayClient);
+    const hydrate = () => {
+      browser.hydrate(
+        deserializeCatchupPayload(serializeCatchupPayload(payload(source))),
+      );
+      return browser.getSnapshot();
+    };
+
+    await source.seek(2002);
+    const locked = hydrate();
+    expect(locked.missileLock).toEqual({
+      selfLocked: true,
+      selfHomed: false,
+      outgoing: {
+        kind: "object",
+        targetId: locked.entities.find(
+          ({ ghostIndex }) => ghostIndex === target,
+        )?.id,
+      },
+    });
+    expect(locked.missileLock?.outgoing).toHaveProperty(
+      "targetId",
+      expect.any(String),
+    );
+
+    await source.seek(2003);
+    expect(hydrate().missileLock).toEqual({
+      selfLocked: false,
+      selfHomed: true,
+      outgoing: { kind: "object" },
+    });
+    await source.seek(2004);
+    expect(hydrate().missileLock).toEqual({
+      selfLocked: false,
+      selfHomed: false,
+    });
+    await source.seek(2002);
+    expect(hydrate().missileLock?.selfLocked).toBe(true);
+    await source.seek(0);
+    expect(hydrate().missileLock).toBeUndefined();
   });
 
   it("retains a partially elapsed precipitation fade through replay checkpoints and browser seek hydration", async () => {

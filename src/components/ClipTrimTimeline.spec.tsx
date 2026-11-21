@@ -39,7 +39,7 @@ it("clamps an out-of-range playhead to the selected span", () => {
   expect(markup).toMatch(/aria-label="Seek clip"[^>]*aria-valuetext="4.000s"/);
 });
 
-it("shows jump and transition choices at their original positions, with trimmed markers disabled", () => {
+it("shows hard cut and transition choices at their original positions, with trimmed markers disabled", () => {
   const markup = render({
     jumps: [
       { timeMs: 1000, jump: "quickCam", transitionEndMs: 1200 },
@@ -54,7 +54,7 @@ it("shows jump and transition choices at their original positions, with trimmed 
   expect(markers).toHaveLength(4);
   expect(markers[0]).not.toContain('disabled=""');
   expect(markers[1]).toContain('aria-pressed="false"');
-  expect(markers[1]).toContain('title="Jump cut – click to toggle"');
+  expect(markers[1]).toContain('title="Hard cut – click to toggle"');
   expect(markers[1]).toContain('style="left:40%"');
   expect(markers[1]).toContain('d="M12 4.3v15.4"');
   expect(markers[2]).toContain('aria-pressed="true"');

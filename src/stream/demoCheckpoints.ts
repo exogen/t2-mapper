@@ -1,5 +1,4 @@
 import type { TimelineEvent } from "../state/demoTimelineStore";
-import { normalizePlayerInterpolation } from "./playerInterpolation";
 import type { DemoSeekCheckpoint } from "./demoStreaming";
 import { decodeCompressedCheckpoint } from "./checkpointCodec";
 import { TICK_DURATION_MS } from "./streamHelpers";
@@ -17,9 +16,10 @@ import { TICK_DURATION_MS } from "./streamHelpers";
 // 20 retains the displayed mission's identity through debrief and map loading;
 // 21 preserves all native weapon-image state slots instead of compacting named
 // states; 22 seeds prediction for initial players and retains their tick deltas;
-// 23 can also retain packet timing for latency compensation after a seek.
-export const DEMO_CHECKPOINT_VERSION = 23;
-const MIN_SUPPORTED_CHECKPOINT_VERSION = 22;
+// 23 can also retain packet timing for latency compensation after a seek;
+// 24 retains PhysicalZone state and predicts with packet-time field geometry.
+export const DEMO_CHECKPOINT_VERSION = 24;
+const MIN_SUPPORTED_CHECKPOINT_VERSION = 24;
 export const DEMO_CHECKPOINT_SUFFIX = ".checkpoints.json";
 /**
  * The generator's default spacing, and the spacing of sidecars written
@@ -150,10 +150,7 @@ async function visitDemoCheckpoints(
   signal?: AbortSignal,
   visit?: (checkpoint: DemoSeekCheckpoint) => void,
 ): Promise<void> {
-  const sidecar = JSON.parse(text) as DemoCheckpointSidecar & {
-    // Early v23 clip checkpoints were generated with the creator's settings.
-    playerInterpolation?: { maxPredictionTicks: number };
-  };
+  const sidecar = JSON.parse(text) as DemoCheckpointSidecar;
   signal?.throwIfAborted();
   // Any checkpoint of this exact demo speeds seeking, wherever it falls:
   // the generator's plan (count, spacing) is its own business.
@@ -185,10 +182,6 @@ async function visitDemoCheckpoints(
       !(checkpoint.parser?.ghosts instanceof Map)
     )
       throw new Error("Invalid seek checkpoint state");
-    if (sidecar.playerInterpolation)
-      checkpoint.simulation.predictionLimit = normalizePlayerInterpolation(
-        sidecar.playerInterpolation,
-      ).maxPredictionTicks;
     visit?.(checkpoint);
   }
   signal?.throwIfAborted();

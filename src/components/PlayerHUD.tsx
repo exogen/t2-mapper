@@ -19,6 +19,10 @@ import { useSettings } from "./SettingsProvider";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import { MatchHUD } from "./MatchHUD";
 import { clipStore } from "../state/clipStore";
+import type { GameEngine } from "../engine/gameEngine";
+import { isRecordedMissileLockTarget } from "../engine/missileLockView";
+import { MissileLockMarker } from "./MissileLockMarker";
+import { useRecording } from "./usePlayback";
 
 function Compass({
   commandCircuitActive,
@@ -249,59 +253,60 @@ const TARGETING_LASER_INDICES = new Set([9, 14, 15]);
 const INFINITY_ICON_URL = textureToUrl("gui/hud_infinity");
 
 function WeaponSlotIcon({
-  slot,
+  index,
+  ammo,
   isSelected,
+  note,
 }: {
-  slot: WeaponsHudSlot;
+  index: number;
+  ammo?: number;
   isSelected: boolean;
+  note?: string;
 }) {
-  const info = WEAPON_HUD_SLOTS[slot.index];
+  const info = WEAPON_HUD_SLOTS[index];
   if (!info) return null;
-  const isInfinite = slot.ammo < 0;
   return (
     <div className={styles.PackInvItem} data-active={isSelected}>
       <img
-        src={WEAPON_HUD_ICON_URLS.get(slot.index)!}
+        src={WEAPON_HUD_ICON_URLS.get(index)!}
         alt={info.label}
         className={styles.PackInvIcon}
       />
-      {isInfinite ? (
+      {ammo !== undefined && ammo < 0 ? (
         <img
           src={INFINITY_ICON_URL}
           alt="\u221E"
           className={styles.PackInvInfinity}
         />
       ) : (
-        <span className={styles.PackInvCount}>{slot.ammo}</span>
-      )}
-    </div>
-  );
-}
-
-/** A followed player's HUD: the one weapon in their hands, count unknown. */
-function FollowedWeaponHUD({ weaponShape }: { weaponShape: string }) {
-  const index = WEAPON_SHAPE_HUD_INDEX[weaponShape];
-  const info = index != null ? WEAPON_HUD_SLOTS[index] : undefined;
-  if (index == null || !info) return null;
-  return (
-    <div className={styles.WeaponHUD}>
-      <div className={styles.PackInvItem} data-active="true">
-        <img
-          src={WEAPON_HUD_ICON_URLS.get(index)!}
-          alt={info.label}
-          className={styles.PackInvIcon}
-        />
-        <span className={styles.PackInvCount} data-unknown="true">
-          {UNKNOWN_COUNT}
+        <span
+          className={styles.PackInvCount}
+          data-unknown={ammo === undefined || undefined}
+        >
+          {ammo ?? UNKNOWN_COUNT}
         </span>
-      </div>
+      )}
+      {isSelected && note && (
+        <span className={styles.WeaponNote}>
+          <span className={styles.WeaponNoteLabel}>Observer demo</span>
+          <span className={styles.WeaponNoteDetail}>{note}</span>
+        </span>
+      )}
     </div>
   );
 }
 
 function WeaponHUD({ followed }: { followed: FollowedPlayer | null }) {
   const weaponsHud = useStreamSnapshot((snap) => snap?.weaponsHud);
-  if (followed) return <FollowedWeaponHUD weaponShape={followed.weaponShape} />;
+  if (followed) {
+    const index = WEAPON_SHAPE_HUD_INDEX[followed.weaponShape];
+    if (index == null) return null;
+    return (
+      <div className={styles.WeaponHUD}>
+        <WeaponSlotIcon index={index} isSelected note={followed.weaponNote} />
+      </div>
+    );
+  }
   if (!weaponsHud || !weaponsHud.slots.length) return null;
   const weapons: WeaponsHudSlot[] = [];
   const targeting: WeaponsHudSlot[] = [];
@@ -317,7 +322,8 @@ function WeaponHUD({ followed }: { followed: FollowedPlayer | null }) {
       {weapons.map((slot) => (
         <WeaponSlotIcon
           key={slot.index}
-          slot={slot}
+          index={slot.index}
+          ammo={slot.ammo}
           isSelected={slot.index === weaponsHud.activeIndex}
         />
       ))}
@@ -325,7 +331,8 @@ function WeaponHUD({ followed }: { followed: FollowedPlayer | null }) {
       {targeting.map((slot) => (
         <WeaponSlotIcon
           key={slot.index}
-          slot={slot}
+          index={slot.index}
+          ammo={slot.ammo}
           isSelected={slot.index === weaponsHud.activeIndex}
         />
       ))}
@@ -402,6 +409,7 @@ interface FollowedPlayer {
   energy: number | undefined;
   /** Normalized shape of the mounted weapon (imageSlots[0]), "" if none. */
   weaponShape: string;
+  weaponNote?: string;
   /** $BackpackHudData index of the mounted pack, or -1. */
   packIndex: number;
   /** The pack image's trigger is down: the ghost's own activation state,
@@ -419,6 +427,7 @@ function followedPlayerEquals(
     a.health === b.health &&
     a.energy === b.energy &&
     a.weaponShape === b.weaponShape &&
+    a.weaponNote === b.weaponNote &&
     a.packIndex === b.packIndex &&
     a.packActive === b.packActive
   );
@@ -431,23 +440,38 @@ function followedPlayerEquals(
  * health, energy, held weapon and pack (with its activation) are read
  * off their ghost instead, and everything else is shown as unknown.
  */
-function useFollowedPlayer(): FollowedPlayer | null {
-  const followEntityId = useStore(streamPlaybackStore, (s) => s.followEntityId);
+function useFollowedPlayer(
+  followEntityId: string | null,
+): FollowedPlayer | null {
+  const recording = useRecording();
+  const isDemo =
+    recording?.source === "demo" ||
+    recording?.streamingPlayback?.localSpectator === true;
   return useStreamSnapshot((snap) => {
-    if (
-      !snap ||
-      !followEntityId ||
-      followEntityId === snap.controlPlayerGhostId
-    )
-      return null;
+    const controlId =
+      snap?.controlPlayerGhostId ?? snap?.camera?.controlEntityId;
+    if (!snap || !followEntityId || followEntityId === controlId) return null;
     const entity = snap.entities.find((e) => e.id === followEntityId);
     if (!entity) return null;
     const packSlot = entity.imageSlots?.[BACKPACK_SLOT];
     const pack = packSlot?.shapeName;
+    const weaponShape = normalizeWeaponName(entity.imageSlots?.[0]?.shapeName);
+    let weaponNote: string | undefined;
+    if (isDemo && !entity.damageState) {
+      if (weaponShape === "weapon_sniper") {
+        weaponNote = "Zoom data unavailable.";
+      } else if (
+        weaponShape === "weapon_missile" &&
+        !isRecordedMissileLockTarget(snap.missileLock, entity)
+      ) {
+        weaponNote = "Missile lock estimated.";
+      }
+    }
     return {
       health: entity.health,
       energy: entity.energy,
-      weaponShape: normalizeWeaponName(entity.imageSlots?.[0]?.shapeName),
+      weaponShape,
+      weaponNote,
       packIndex: pack
         ? (PACK_SHAPE_HUD_INDEX[pack.toLowerCase().replace(/\.dts$/, "")] ?? -1)
         : -1,
@@ -542,8 +566,10 @@ function PackInventoryHUD({ followed }: { followed: FollowedPlayer | null }) {
 }
 
 export function PlayerHUD({
+  engine,
   onOpenScoreScreen,
 }: {
+  engine?: GameEngine | null;
   onOpenScoreScreen: () => void;
 }) {
   const hasControlPlayer = useStreamSnapshot(
@@ -561,7 +587,7 @@ export function PlayerHUD({
   const showPlayerElements = following
     ? !!followEntityId
     : hasControlPlayer && cameraMode !== "freeFly";
-  const followed = useFollowedPlayer();
+  const followed = useFollowedPlayer(following ? followEntityId : null);
   const {
     showChat: preferredShowChat,
     showScoreHud,
@@ -632,6 +658,9 @@ export function PlayerHUD({
       )}
       {showPlayerElements && showReticle && !commandCircuitActive && (
         <Reticle />
+      )}
+      {engine && showReticle && !commandCircuitActive && (
+        <MissileLockMarker engine={engine} />
       )}
     </div>
   );

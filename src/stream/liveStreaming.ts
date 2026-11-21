@@ -376,6 +376,7 @@ export class LiveStreamAdapter extends StreamEngine {
       controlObjectData: payload.controlObjectData,
       compressionPoint: payload.compressionPoint,
     });
+    if (payload.missileLock) this.applyMissileLock(payload.missileLock);
     this.updateCameraAndHud();
 
     this._serverUpdateId++;
@@ -680,6 +681,7 @@ export class LiveStreamAdapter extends StreamEngine {
 
       // Control object state
       this.processControlObject(parsed.gameState);
+      this.processMissileLock(parsed);
       this.onPacketApplied(parsed);
 
       // Events and ghosts are applied one at a time: a handler that

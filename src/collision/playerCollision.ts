@@ -1,7 +1,20 @@
 import { Box3, Triangle, Vector3 } from "three";
 import { terrainTrianglesInBox } from "./terrainCollision";
-import { playerTrianglesInBox } from "./worldCollision";
+import { playerTrianglesInBox, type PlayerForceFields } from "./worldCollision";
 import { torqueVecToThree } from "../scene/coordinates";
+
+export function setPlayerBox(
+  box: Box3,
+  position: Vector3,
+  size: Vector3,
+): void {
+  box.min.set(position.x - size.x / 2, position.y - size.y / 2, position.z);
+  box.max.set(
+    position.x + size.x / 2,
+    position.y + size.y / 2,
+    position.z + size.z,
+  );
+}
 
 /** Player::findContact / updatePos use an upright box, not the rendered DTS. */
 export class PlayerCollision {
@@ -20,10 +33,10 @@ export class PlayerCollision {
   hitTime = 1;
   hitHeight = -Infinity;
 
-  private readonly collideWithField?: (id: string) => boolean;
+  private readonly fields?: PlayerForceFields;
 
-  constructor(collideWithField?: (id: string) => boolean) {
-    this.collideWithField = collideWithField;
+  constructor(fields?: PlayerForceFields) {
+    this.fields = fields;
   }
 
   /** One working polygon set per tick, reused for contact, sweeps, and stepping. */
@@ -33,7 +46,7 @@ export class PlayerCollision {
     travel: Vector3,
     maxStep: number,
   ): void {
-    this.setBox(position, size);
+    setPlayerBox(this.box, position, size);
     this.queryBox.copy(this.box);
     // Player::updateWorkingCollisionSet includes acceleration headroom:
     // (|velocity| * TickSec + 10 * TickSec) * 1.1 + 0.1 on every axis.
@@ -48,7 +61,7 @@ export class PlayerCollision {
     // uses Torque axes. Convert the working set once, outside the retry loop.
     torqueVecToThree(min, this.box.min);
     torqueVecToThree(max, this.box.max);
-    playerTrianglesInBox(this.box, this.triangles, this.collideWithField);
+    playerTrianglesInBox(this.box, this.triangles, this.fields);
     for (let i = 0; i < this.triangles.length; i += 3) {
       const x = this.triangles[i],
         y = this.triangles[i + 1];
@@ -58,17 +71,18 @@ export class PlayerCollision {
     }
   }
 
-  private setBox(position: Vector3, size: Vector3): void {
-    this.box.min.set(
-      position.x - size.x / 2,
-      position.y - size.y / 2,
-      position.z,
-    );
-    this.box.max.set(
-      position.x + size.x / 2,
-      position.y + size.y / 2,
-      position.z + size.z,
-    );
+  touchesDestination(
+    position: Vector3,
+    size: Vector3,
+    travel: Vector3,
+  ): boolean {
+    setPlayerBox(this.box, position, size);
+    this.box.translate(travel);
+    for (let i = 0; i < this.triangles.length; i += 9) {
+      this.readTriangle(i);
+      if (this.box.intersectsTriangle(this.triangle)) return true;
+    }
+    return false;
   }
 
   private readTriangle(i: number): void {
@@ -83,7 +97,7 @@ export class PlayerCollision {
   }
 
   findContact(position: Vector3, size: Vector3, out: Vector3): boolean {
-    this.setBox(position, size);
+    setPlayerBox(this.box, position, size);
     this.box.min.z = position.z - 0.03;
     this.box.max.z = position.z + 0.03;
     let best = 0;
@@ -99,7 +113,7 @@ export class PlayerCollision {
 
   /** Continuous box/triangle SAT: no tunneling and no point-ray approximation. */
   sweep(position: Vector3, size: Vector3, travel: Vector3): boolean {
-    this.setBox(position, size);
+    setPlayerBox(this.box, position, size);
     this.box.getCenter(this.center);
     this.extent.copy(size).multiplyScalar(0.5);
     this.hitTime = 1;
@@ -189,7 +203,7 @@ export class PlayerCollision {
     maxStep: number,
   ): number {
     this.center.copy(position).add(travel);
-    this.setBox(this.center, size);
+    setPlayerBox(this.box, this.center, size);
     this.box.max.z += maxStep + 0.01;
     let height = position.z - 0.01;
     for (let i = 0; i < this.triangles.length; i += 9) {

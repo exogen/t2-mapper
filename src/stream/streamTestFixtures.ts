@@ -44,6 +44,7 @@ export interface DecodedPacketFields {
   events?: unknown[];
   ghosts?: unknown[];
   dnetHeader?: { packetType: number };
+  ghostSectionStart?: number;
 }
 
 type EntityFields = Omit<MutableEntity, "spawnTick" | "rotation"> &

@@ -92,7 +92,7 @@ it("captures and trims using the creator's effective interpolation without seeki
   expect(hold).toHaveBeenCalledWith(interpolation);
   expect(engineStore.getState().playback.seekNonce).toBe(seekNonce);
   clipStore.getState().appendSample(sample(0));
-  clipStore.getState().appendSample(sample(200));
+  clipStore.getState().appendSample(sample(1000));
   clipStore.getState().stop();
   expect(clipStore.getState().draft?.playerInterpolation).toEqual(
     interpolation,
@@ -117,7 +117,6 @@ it.each(["unattached", "opening-frame", "collision-assets", "reconstruction"])(
     expect(clipStore.getState().start()).toBe(false);
     expect(clipStore.getState()).toMatchObject({
       recording: false,
-      error: null,
     });
   },
 );
@@ -162,7 +161,6 @@ it("seeks and discards silently after confirmation", () => {
   expect(clipStore.getState()).toMatchObject({
     recording: false,
     draft: null,
-    error: null,
   });
 });
 
@@ -219,6 +217,30 @@ it.each([
   clipStore.getState().stop();
   expect(clipStore.getState().draft).toBeNull();
 });
+
+it.each([{ times: [] }, { times: [0] }, { times: [0, 999.999] }])(
+  "discards short recordings with sample times $times",
+  ({ times }) => {
+    const { recording } = engineStore.getState().playback;
+    const release = vi.fn();
+    recording!.streamingPlayback.holdPlayerInterpolation = () => release;
+    engineStore.getState().setPlaybackStatus("playing");
+    expect(clipStore.getState().start()).toBe(true);
+    for (const time of times) clipStore.getState().appendSample(sample(time));
+
+    clipStore.getState().stop();
+
+    expect(clipStore.getState()).toMatchObject({
+      recording: false,
+      draft: null,
+      active: null,
+      elapsedMs: 0,
+    });
+    expect(release).toHaveBeenCalledOnce();
+    expect(engineStore.getState().playback.status).toBe("playing");
+    expect(clipStore.getState().start()).toBe(true);
+  },
+);
 
 it("enters paused clip editing immediately and rejects raw demo seeks until discard", () => {
   clipStore.getState().start();

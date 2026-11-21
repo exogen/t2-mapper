@@ -182,7 +182,7 @@ export function ClipTrimTimeline({
               ) !== undefined;
             const transition = available && jumpTransitions.has(timeMs);
             const description = `${jumpLabels[jump]} at ${seconds(timeMs)}`;
-            const mode = transition ? "Transition" : "Jump cut";
+            const mode = transition ? "Transition" : "Hard cut";
             return (
               <TimelineMarkerButton
                 key={timeMs}

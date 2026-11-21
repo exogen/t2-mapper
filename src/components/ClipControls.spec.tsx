@@ -117,7 +117,6 @@ beforeEach(() => {
     playbackEffects: null,
     playheadMs: 0,
     playing: false,
-    error: null,
     start: vi.fn(),
     stop: vi.fn(),
     discard: vi.fn(),
@@ -161,11 +160,16 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  const { showChat, chatHudStyle, showMatchHud, matchHudStyle } =
-    settingsStore.getInitialState();
+  const {
+    pauseClipRecordingWhenDemoPaused,
+    showChat,
+    chatHudStyle,
+    showMatchHud,
+    matchHudStyle,
+  } = settingsStore.getInitialState();
   settingsStore.setState({
     hasSeenClipRecordingHelp: false,
-    pauseClipRecordingWhenDemoPaused: false,
+    pauseClipRecordingWhenDemoPaused,
     showChat,
     chatHudStyle,
     showMatchHud,
@@ -230,6 +234,7 @@ it.each(["recording", "draft"])(
 );
 
 it("keeps the visible label fixed while recording and exposes the stop action", () => {
+  fixture.playback.status = "playing";
   fixture.clip.recording = true;
   fixture.clip.elapsedMs = 1234;
   const markup = render();
@@ -251,17 +256,20 @@ it("offers pause-on-pause only while recording and shows when recording is pause
   expect(render()).not.toContain(checkboxId);
   fixture.clip.recording = true;
   fixture.clip.elapsedMs = 1234;
-  expect(render()).toContain("Pause recording when demo is paused");
-  expect(render()).not.toMatch(new RegExp(`${checkboxId}[^>]*checked=""`));
-
-  settingsStore.setState({ pauseClipRecordingWhenDemoPaused: true });
   const paused = render();
+  expect(paused).toContain("Pause recording when demo is paused");
   expect(paused).toMatch(new RegExp(`${checkboxId}[^>]*checked=""`));
   expect(paused).toContain("Recording paused 1.2s / 60s");
   fixture.playback.status = "stopped";
   expect(render()).toContain("Recording paused 1.2s / 60s");
   fixture.playback.status = "playing";
   expect(render()).toContain("Recording… 1.2s / 60s");
+
+  fixture.playback.status = "paused";
+  settingsStore.setState({ pauseClipRecordingWhenDemoPaused: false });
+  const recording = render();
+  expect(recording).not.toMatch(new RegExp(`${checkboxId}[^>]*checked=""`));
+  expect(recording).toContain("Recording… 1.2s / 60s");
 
   fixture.clip.recording = false;
   fixture.clip.draft = fixture.clip.active = take;
@@ -438,14 +446,4 @@ it("shows anonymous viewers the current recorded speed in a disabled shared sele
   expect(render()).toContain(">0.25×</span>");
   fixture.clip.playheadMs = 750;
   expect(render()).toContain(">2×</span>");
-});
-
-it("keeps clip errors out of the playback controls", () => {
-  fixture.clip.error = "Record a little longer before stopping.";
-  expect(renderToStaticMarkup(<ClipPlaybackControls />)).toBe("");
-  expect(render()).toContain('aria-label="Clip error"');
-  fixture.clip.active = take;
-  expect(renderToStaticMarkup(<ClipPlaybackControls />)).not.toContain(
-    fixture.clip.error,
-  );
 });

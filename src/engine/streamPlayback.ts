@@ -72,7 +72,7 @@ import {
 } from "../stream/entityBridge";
 import { sameImageMounts } from "../stream/imageMount";
 import { findFollowedProjectile } from "../stream/projectileFollowIdentity";
-import { getShapeCenter, getShapeLocalCenter } from "../stream/shapeBounds";
+import { readStreamEntityCenter } from "./streamEntityCenter";
 import {
   yawPitchToQuaternion,
   orbitPullbackDir,
@@ -672,6 +672,7 @@ export class StreamPlaybackSession {
     // the first frame that has something to render. Retail demos carry
     // the scene in their initial block, so this is ~0 (no skip).
     stream.setProjectileShapeLoader?.((name) => loadProjectileShapeData(name));
+    stream.setMissileLockInferenceEnabled?.(true);
     const snapshot =
       this.recording.source === "demo"
         ? stream.stepToTime(stream.findSceneReadyTime())
@@ -715,6 +716,7 @@ export class StreamPlaybackSession {
         stream.onMissionInfoChange = undefined;
       }
       stream.setProjectileShapeLoader?.(undefined);
+      stream.setMissileLockInferenceEnabled?.(false);
       this.projectileAssetWait = undefined;
       this.renderFrame = null;
       stopAllTrackedSounds();
@@ -1974,32 +1976,12 @@ export class StreamPlaybackSession {
     group: Object3D | undefined,
     playerHeightFraction = 0.5,
   ): boolean {
-    const shape = entity.shapeHint ?? entity.dataBlock;
-    const player = entity.type === "Player";
-    const height = player
-      ? this.playerBoxHeight(entity) * playerHeightFraction
-      : 0;
-    if (group) {
-      _orbitTarget.set(0, height, 0);
-      if (!player) getShapeLocalCenter(shape, _orbitTarget);
-      group.localToWorld(_orbitTarget);
-    } else if (entity.position) {
-      const center = player
-        ? entity.position
-        : (getShapeCenter(shape, {
-            position: entity.position,
-            rotation: entity.rotation,
-            scale: entity.scale,
-          }) ?? entity.position);
-      torqueVecToThree(center, _orbitTarget);
-      _orbitTarget.y += height * (entity.scale?.[1] ?? 1);
-    } else return false;
-    return true;
-  }
-
-  private playerBoxHeight(player: StreamEntity | undefined): number {
-    const box = this.entityDatablock(player)?.boxSize as
-      { z?: number } | undefined;
-    return box?.z ?? 2.3;
+    return readStreamEntityCenter(
+      _orbitTarget,
+      entity,
+      group,
+      this.stream,
+      playerHeightFraction,
+    );
   }
 }
