@@ -22,21 +22,36 @@ import {
   DIRECTOR_PITCH_CHASE,
   DIRECTOR_STATION_CAM_HEIGHT,
   DIRECTOR_STATION_CAM_RADIUS,
-  DIRECTOR_STATION_RANGE,
   DIRECTOR_VARIETY_FRESH_SEC,
   DIRECTOR_VARIETY_MIN_VALUE,
   DIRECTOR_VARIETY_WEIGHTS,
   DIRECTOR_LINEUP_HEIGHT,
+  DIRECTOR_BOMBARDMENT_CAM_HEIGHT,
+  DIRECTOR_BOMBARDMENT_CAM_RADIUS,
 } from "./tunables";
-import { busiestCluster, vehicleMoment } from "./analysis";
-import { orbitShot, type ShotVariety } from "./framing";
+import {
+  busiestCluster,
+  busiestInventory,
+  importantImpact,
+  playerMotion,
+  vehiclePadMoment,
+  vehicleMoment,
+} from "./analysis";
+import {
+  onBroadcastSide,
+  orbitShot,
+  radiusForSpread,
+  type ShotVariety,
+} from "./framing";
 import { playerName, targetIdForName } from "./dataset";
-import { dist, sweepTravel } from "./geometry";
+import { boundingSpread, centroid, dist, sweepTravel } from "./geometry";
 
 export type VarietyFamily = keyof typeof DIRECTOR_VARIETY_WEIGHTS;
 
 /** When each family last aired (demo seconds). */
-export type VarietyMemory = Map<VarietyFamily, number>;
+export type VarietyKey =
+  VarietyFamily | `offensiveWave:${number}` | "flagGrabPov";
+export type VarietyMemory = Map<VarietyKey, number>;
 
 /** Evidence a developing shot still needs while it owns the screen. */
 export interface VarietyContinuation {
@@ -47,11 +62,14 @@ export interface VarietyContinuation {
 
 export interface VarietyPick {
   family: VarietyFamily;
+  cooldownKey?: VarietyKey;
+  latestStartSec?: number;
   shot: Shot;
   continuation?: VarietyContinuation;
 }
 
-interface Candidate extends VarietyPick {
+interface Candidate extends Omit<VarietyPick, "shot"> {
+  buildShot: (variety: ShotVariety) => Shot;
   /** Detector confidence, 0..1. */
   confidence: number;
 }
@@ -85,34 +103,63 @@ export function pickVarietyShot(
    *  their DIRECTOR_VARIETY_INTERRUPT ceiling allows. */
   currentMax: number,
 ): VarietyPick | null {
-  const candidates: Candidate[] = [];
-  const add = (candidate: Candidate | null) => {
-    if (candidate) candidates.push(candidate);
+  let best: Candidate | undefined;
+  let bestValue = 0;
+  const consider = (family: VarietyFamily, detect: () => Candidate | null) => {
+    const weight = DIRECTOR_VARIETY_WEIGHTS[family];
+    if (weight <= 0 || currentMax >= DIRECTOR_VARIETY_INTERRUPT[family]) return;
+    const availableWeight = weight * freshness(memory, family, t);
+    if (
+      availableWeight < DIRECTOR_VARIETY_MIN_VALUE ||
+      availableWeight <= bestValue
+    )
+      return;
+    const candidate = detect();
+    if (!candidate) return;
+    const freshWeight = candidate.cooldownKey
+      ? weight * freshness(memory, candidate.cooldownKey, t)
+      : availableWeight;
+    const value = candidate.confidence * freshWeight;
+    if (value < DIRECTOR_VARIETY_MIN_VALUE || value <= bestValue) return;
+    best = candidate;
+    bestValue = value;
   };
-  add(detectKillCutIn(view, t));
-  add(detectDestruction(view, t, defaultHold, variety));
-  add(detectRepair(view, t, defaultHold, variety));
-  add(detectCapperSetup(view, t, defaultHold));
-  add(detectVehicle(view, t, defaultHold));
-  add(detectSuitUp(view, t, defaultHold, variety));
-  add(detectCluster(view, t, defaultHold, variety));
-  add(detectFlyThrough(view, t, defaultHold, memory));
-  let best: { candidate: Candidate; value: number } | null = null;
-  for (const candidate of candidates) {
-    const weight = DIRECTOR_VARIETY_WEIGHTS[candidate.family];
-    if (weight <= 0) continue;
-    if (currentMax >= DIRECTOR_VARIETY_INTERRUPT[candidate.family]) continue;
-    const since =
-      t - (memory.get(candidate.family) ?? Number.NEGATIVE_INFINITY);
-    const freshness = Math.min(1, since / DIRECTOR_VARIETY_FRESH_SEC);
-    const value = candidate.confidence * weight * freshness;
-    if (value < DIRECTOR_VARIETY_MIN_VALUE) continue;
-    if (!best || value > best.value) best = { candidate, value };
-  }
+  consider("killCutIn", () => detectKillCutIn(view, t));
+  consider("destruction", () => detectDestruction(view, t, defaultHold));
+  consider("repair", () => detectRepair(view, t, defaultHold));
+  consider("offensiveWave", () => {
+    const wave = offensiveWaveShot(view, t, memory);
+    return (
+      wave && {
+        family: "offensiveWave",
+        cooldownKey: wave.cooldownKey,
+        confidence: wave.confidence,
+        buildShot: () => wave.shot,
+      }
+    );
+  });
+  consider("ordnanceImpact", () => detectOrdnanceImpact(view, t));
+  consider("capperSetup", () => detectCapperSetup(view, t, defaultHold));
+  consider("vehicle", () => detectVehicle(view, t, defaultHold));
+  consider("vehiclePad", () => detectVehiclePad(view, t));
+  consider("suitUp", () => detectSuitUp(view, t, defaultHold));
+  consider("cluster", () => detectCluster(view, t, defaultHold));
+  consider("flyThrough", () => detectFlyThrough(view, t, defaultHold, memory));
   if (!best) return null;
-  memory.set(best.candidate.family, t);
-  const { confidence: _confidence, ...pick } = best.candidate;
-  return pick;
+  return {
+    family: best.family,
+    cooldownKey: best.cooldownKey,
+    latestStartSec: best.latestStartSec,
+    continuation: best.continuation,
+    shot: best.buildShot(variety),
+  };
+}
+
+function freshness(memory: VarietyMemory, key: VarietyKey, t: number): number {
+  return Math.min(
+    1,
+    (t - (memory.get(key) ?? -Infinity)) / DIRECTOR_VARIETY_FRESH_SEC,
+  );
 }
 
 /** Revalidate at picture time, without anticipating a death or interpreting
@@ -134,19 +181,14 @@ export function canContinueVarietyShot(
   const flag = view.flagAt(flagSlot);
   if (flag && flag.status !== "home") return false;
   const stand = view.standFor(flagSlot);
-  // Whole-second samples at or BEFORE the picture; nearest-bucket rounding
-  // would read a future player sample on half-second ticks in batch mode.
-  const sec = Math.floor(view.now);
-  const current = view.playersAt(sec).find((p) => p.targetId === targetId);
-  const before = view
-    .playersAt(sec - MOTION_WINDOW_SEC)
-    .find((p) => p.targetId === targetId);
-  if (!stand || !current || !before) return true;
-  if (current.teamId != null && current.teamId === stand.teamId) return false;
-  const speed = dist(before.pos, current.pos) / MOTION_WINDOW_SEC;
+  const motion = playerMotion(view, view.now, MOTION_WINDOW_SEC).find(
+    ({ player }) => player.targetId === targetId,
+  );
+  if (!stand || !motion) return true;
+  const { player, before, elapsed, speed } = motion;
+  if (player.teamId === stand.teamId || player.vehicleId) return false;
   const closing =
-    (dist(before.pos, stand.pos) - dist(current.pos, stand.pos)) /
-    MOTION_WINDOW_SEC;
+    (dist(before.pos, stand.pos) - dist(player.pos, stand.pos)) / elapsed;
   return speed >= CAPPER_CONTINUE_SPEED && closing >= -speed * 0.5;
 }
 
@@ -162,20 +204,20 @@ function detectKillCutIn(view: CausalView, t: number): Candidate | null {
   return {
     family: "killCutIn",
     confidence: 1,
-    shot: orbitShot({
-      center: kill.pos,
-      radius: DIRECTOR_CLUSTER_CAM_RADIUS,
-      still: true,
-      lookSubject:
-        victimId != null ? { type: "player", targetId: victimId } : undefined,
-      angle: undefined,
-      startSec: t,
-      endSec: kill.timeSec + 3.5,
-      reason: `${kill.weapon ? `${kill.weapon} kill` : "Kill"}${
-        kill.victim ? ` — ${kill.victim} down` : ""
-      }`,
-      topic: "kill",
-    }),
+    buildShot: () =>
+      orbitShot({
+        center: kill.pos!,
+        radius: DIRECTOR_CLUSTER_CAM_RADIUS,
+        still: true,
+        lookSubject:
+          victimId != null ? { type: "player", targetId: victimId } : undefined,
+        startSec: t,
+        endSec: kill.timeSec + 3.5,
+        reason: `${kill.weapon ? `${kill.weapon} kill` : "Kill"}${
+          kill.victim ? ` — ${kill.victim} down` : ""
+        }`,
+        topic: "kill",
+      }),
   };
 }
 
@@ -184,7 +226,6 @@ function detectDestruction(
   view: CausalView,
   t: number,
   hold: number,
-  variety: ShotVariety,
 ): Candidate | null {
   const hit = view.dataset.structures.find(
     (s) =>
@@ -196,16 +237,17 @@ function detectDestruction(
   return {
     family: "destruction",
     confidence: 1,
-    shot: orbitShot({
-      center: hit.pos,
-      radius: DIRECTOR_CLUSTER_CAM_RADIUS,
-      framing: { dataset: view.dataset, variety },
-      still: true,
-      startSec: t,
-      endSec: t + hold,
-      reason: `${hit.name} destroyed — raid in progress`,
-      topic: "raid",
-    }),
+    buildShot: (variety) =>
+      orbitShot({
+        center: hit.pos,
+        radius: DIRECTOR_CLUSTER_CAM_RADIUS,
+        framing: { dataset: view.dataset, variety },
+        still: true,
+        startSec: t,
+        endSec: t + hold,
+        reason: `${hit.name} destroyed — raid in progress`,
+        topic: "raid",
+      }),
   };
 }
 
@@ -214,7 +256,6 @@ function detectRepair(
   view: CausalView,
   t: number,
   hold: number,
-  variety: ShotVariety,
 ): Candidate | null {
   const fixed = view.dataset.structures.find(
     (s) =>
@@ -226,16 +267,17 @@ function detectRepair(
   return {
     family: "repair",
     confidence: 0.9,
-    shot: orbitShot({
-      center: fixed.pos,
-      radius: DIRECTOR_CLUSTER_CAM_RADIUS,
-      framing: { dataset: view.dataset, variety },
-      still: true,
-      startSec: t,
-      endSec: t + hold,
-      reason: `${fixed.name} back online — repairs going in`,
-      topic: "base",
-    }),
+    buildShot: (variety) =>
+      orbitShot({
+        center: fixed.pos,
+        radius: DIRECTOR_CLUSTER_CAM_RADIUS,
+        framing: { dataset: view.dataset, variety },
+        still: true,
+        startSec: t,
+        endSec: t + hold,
+        reason: `${fixed.name} back online — repairs going in`,
+        topic: "base",
+      }),
   };
 }
 
@@ -245,46 +287,39 @@ function detectCapperSetup(
   t: number,
   hold: number,
 ): Candidate | null {
-  const sec = Math.floor(t);
-  const before = new Map(
-    view.playersAt(sec - MOTION_WINDOW_SEC).map((p) => [p.targetId, p]),
-  );
-  const died = new Set(
-    view.deathsIn(sec - MOTION_WINDOW_SEC, t).map((d) => d.targetId),
-  );
   let best: { targetId: number; flagSlot: number; speed: number } | null = null;
-  for (const p of view.playersAt(sec)) {
-    if (p.teamId == null || p.teamId <= 0) continue;
-    if (died.has(p.targetId)) continue;
+  for (const { player: p, before, elapsed, speed } of playerMotion(
+    view,
+    t,
+    MOTION_WINDOW_SEC,
+  )) {
+    if (p.teamId == null || p.teamId <= 0 || p.vehicleId) continue;
     const enemyStand = view.stands.find((s) => s.teamId !== p.teamId);
     if (!enemyStand) continue;
     const flag = view.flagAt(enemyStand.slot);
     if (flag && flag.status !== "home") continue;
-    const prev = before.get(p.targetId);
-    if (!prev) continue;
-    const speed = dist(prev.pos, p.pos) / MOTION_WINDOW_SEC;
     if (speed < CAPPER_MIN_SPEED) continue;
     const range = dist(p.pos, enemyStand.pos);
     if (range < CAPPER_MIN_RANGE) continue;
-    const closing =
-      (dist(prev.pos, enemyStand.pos) - range) / MOTION_WINDOW_SEC;
+    const closing = (dist(before.pos, enemyStand.pos) - range) / elapsed;
     if (closing < speed * 0.5) continue;
     if (!best || speed > best.speed)
       best = { targetId: p.targetId, flagSlot: enemyStand.slot, speed };
   }
   if (!best) return null;
-  const name = playerName(best.targetId, view.dataset, t);
+  const { targetId, flagSlot, speed } = best;
+  const name = playerName(targetId, view.dataset, t);
   return {
     family: "capperSetup",
     continuation: {
       kind: "capperSetup",
-      targetId: best.targetId,
-      flagSlot: best.flagSlot,
+      targetId,
+      flagSlot,
     },
-    confidence: Math.min(1, best.speed / 70),
-    shot: {
+    confidence: Math.min(1, speed / 70),
+    buildShot: () => ({
       kind: "followPlayer",
-      targetId: best.targetId,
+      targetId,
       distance: DIRECTOR_DIST_CHASE,
       pitch: DIRECTOR_PITCH_CHASE,
       aim: { mode: "forward" },
@@ -293,33 +328,291 @@ function detectCapperSetup(
       transitionIn: "cut",
       reason: `${name ?? "A capper"} winding up the route`,
       topic: "flag-run",
-    },
+    }),
   };
 }
 
-/** A loaded transport under way (or a dogfight): ride along with a
- *  mounted player — riders' resolved positions sit ON the vehicle. */
+/** Follow a cohesive push toward a base before it becomes a flag fight. */
+export function offensiveWaveShot(
+  view: CausalView,
+  t: number,
+  memory: VarietyMemory,
+  flagSlot?: number,
+): { shot: Shot; confidence: number; cooldownKey: VarietyKey } | null {
+  const motion = playerMotion(view, t, MOTION_WINDOW_SEC);
+  let best:
+    | {
+        group: typeof motion;
+        destination: DirectorVec3;
+        cooldownKey: VarietyKey;
+        value: number;
+      }
+    | undefined;
+  for (const stand of view.stands) {
+    const cooldownKey = `offensiveWave:${stand.slot}` as const;
+    const fresh = freshness(memory, cooldownKey, t);
+    if (
+      fresh < 0.5 ||
+      stand.teamId == null ||
+      (flagSlot != null && stand.slot !== flagSlot) ||
+      view.flagAt(stand.slot)?.status !== "home"
+    )
+      continue;
+    // Leave room for the usual stand framing to show the touch itself.
+    if (
+      view
+        .peekFlagEvents(stand.slot, ["flag-grab"])
+        .some((grab) => grab.timeSec - t < 4)
+    )
+      continue;
+    const attackers = motion.filter(({ player, before, elapsed }) => {
+      if (
+        player.teamId == null ||
+        player.teamId <= 0 ||
+        player.teamId === stand.teamId ||
+        player.vehicleId ||
+        before.vehicleId
+      )
+        return false;
+      const range = dist(player.pos, stand.pos);
+      return (
+        range >= 60 &&
+        range <= 400 &&
+        (dist(before.pos, stand.pos) - range) / elapsed >= 9
+      );
+    });
+    for (const leader of attackers) {
+      const group = attackers.filter(
+        ({ player, before }) =>
+          dist(player.pos, leader.player.pos) <= 55 &&
+          dist(before.pos, leader.before.pos) <= 65,
+      );
+      // Two attackers are enough when they have stayed close and
+      // travelled together, rather than just crossing paths.
+      if (group.length === 2) {
+        const [a, b] = group;
+        if (
+          dist(a.player.pos, b.player.pos) > 45 ||
+          dist(a.before.pos, b.before.pos) > 45
+        )
+          continue;
+      }
+      const value = group.length * fresh;
+      if (group.length >= 2 && value > (best?.value ?? 0))
+        best = { group, destination: stand.pos, cooldownKey, value };
+    }
+  }
+  if (!best) return null;
+  const { group, destination } = best;
+  const { center, spread } = boundingSpread(
+    group.map(({ player }) => player.pos),
+  );
+  const velocity = centroid(
+    group.map(
+      ({ player, before, elapsed }) =>
+        player.pos.map(
+          (pos, axis) => (pos - before.pos[axis]) / elapsed,
+        ) as DirectorVec3,
+    ),
+  );
+  const bearing = onBroadcastSide(
+    Math.atan2(-velocity[1], velocity[0]),
+    view.dataset,
+  );
+  const distance = Math.max(34, radiusForSpread(spread, view.dataset));
+  const hold = 4;
+  const travelTime = Math.min(
+    hold,
+    Math.max(0, dist(center, destination) - 25) /
+      Math.max(1, Math.hypot(...velocity)),
+  );
+  return {
+    confidence: Math.min(1, 0.65 + group.length * 0.07),
+    cooldownKey: best.cooldownKey,
+    shot: movingWideShot({
+      t,
+      hold,
+      center,
+      bearing,
+      distance,
+      height: 15,
+      delta: velocity.map((speed) => speed * travelTime) as DirectorVec3,
+      reason: `${group.length} attackers pushing the enemy base`,
+      topic: "action",
+    }),
+  };
+}
+
+function movingWideShot({
+  t,
+  hold,
+  center,
+  bearing,
+  distance,
+  height,
+  delta,
+  reason,
+  topic,
+}: {
+  t: number;
+  hold: number;
+  center: DirectorVec3;
+  bearing: number;
+  distance: number;
+  height: number;
+  delta: DirectorVec3;
+  reason: string;
+  topic: Shot["topic"];
+}): Shot {
+  const aim: DirectorVec3 = [center[0], center[1], center[2] + 2];
+  const from: DirectorVec3 = [
+    center[0] + Math.sin(bearing) * distance,
+    center[1] + Math.cos(bearing) * distance,
+    center[2] + height,
+  ];
+  const advance = (point: DirectorVec3) =>
+    point.map((value, axis) => value + delta[axis]) as DirectorVec3;
+  return {
+    kind: "sweep",
+    from,
+    to: advance(from),
+    target: aim,
+    targetTo: advance(aim),
+    startSec: t,
+    endSec: t + hold,
+    moveSec: hold,
+    easing: "linear",
+    transitionIn: "cut",
+    reason,
+    topic,
+  };
+}
+
+function detectVehiclePad(view: CausalView, t: number): Candidate | null {
+  const moment = vehiclePadMoment(view, t);
+  if (!moment) return null;
+  const { pad, vehicle, rider } = moment;
+  const reason = `Boarding a ${vehicle.kind} at the vehicle pad`;
+  return {
+    family: "vehiclePad",
+    latestStartSec: vehicle.timeSec + 2,
+    confidence: 0.85,
+    buildShot: (variety) =>
+      rider
+        ? {
+            kind: "followPlayer",
+            targetId: rider.targetId,
+            distance: 25,
+            pitch: DIRECTOR_PITCH_CHASE,
+            aim: { mode: "forward" },
+            startSec: t,
+            endSec: t + 5,
+            transitionIn: "cut",
+            reason,
+            topic: "vehicle",
+          }
+        : orbitShot({
+            center: pad,
+            radius: 24,
+            heightFactor: 0.45,
+            framing: { dataset: view.dataset, variety },
+            still: true,
+            startSec: t,
+            endSec: Math.max(t + 4, vehicle.timeSec + 4),
+            reason,
+            topic: "vehicle",
+          }),
+  };
+}
+
+function detectOrdnanceImpact(view: CausalView, t: number): Candidate | null {
+  const moment = importantImpact(view, t);
+  if (!moment) return null;
+  const { impact, stand } = moment;
+  const weapon = impact.kind === "mortar" ? "Mortar" : "Missile";
+  return {
+    family: "ordnanceImpact",
+    latestStartSec: impact.timeSec + 0.5,
+    confidence: stand ? 0.9 : 0.82,
+    buildShot: (variety) =>
+      orbitShot({
+        center: stand ? centroid([impact.pos, stand.pos]) : impact.pos,
+        radius: DIRECTOR_BOMBARDMENT_CAM_RADIUS,
+        heightFactor: DIRECTOR_BOMBARDMENT_CAM_HEIGHT,
+        framing: { dataset: view.dataset, variety },
+        still: true,
+        startSec: t,
+        endSec: Math.max(t + 3.5, impact.timeSec + 2),
+        reason: stand
+          ? `${weapon} impact at the flag stand`
+          : `${weapon} impact near an opposing player`,
+        topic: "action",
+      }),
+  };
+}
+
+/** Follow a mounted rider on a transport, or show both sides of an engagement. */
 function detectVehicle(
   view: CausalView,
   t: number,
   hold: number,
+  dogfightOnly = false,
 ): Candidate | null {
   const moment = vehicleMoment(
     Math.max(0, t - 6),
-    t + 0.1,
+    Math.min(t, view.horizon),
     view.dataset,
     view.playersAtSec,
   );
-  if (!moment) return null;
-  const rider = view
-    .playersAt(t)
-    .find((p) => dist(p.pos, moment.center) <= Math.max(8, moment.spread));
+  if (!moment || (dogfightOnly && moment.kind !== "dogfight")) return null;
+  if (moment.kind === "dogfight" && Math.hypot(...moment.velocity) >= 5) {
+    const span = Math.min(hold, 4);
+    const [vx, vy] = moment.velocity;
+    return {
+      family: "vehicle",
+      confidence: Math.min(1, 0.5 + moment.observations / 16),
+      buildShot: () =>
+        movingWideShot({
+          t,
+          hold: span,
+          center: moment.center,
+          bearing: onBroadcastSide(Math.atan2(-vy, vx), view.dataset),
+          distance: Math.max(DIRECTOR_CLUSTER_CAM_RADIUS, moment.spread * 2),
+          height: 20,
+          delta: moment.velocity.map((speed) => speed * span) as DirectorVec3,
+          reason: "Dogfight — opposing aircraft",
+          topic: "vehicle",
+        }),
+    };
+  }
+  if (moment.kind !== "transport") {
+    const dogfight = moment.kind === "dogfight";
+    return {
+      family: "vehicle",
+      confidence: Math.min(1, 0.5 + moment.observations / 16),
+      buildShot: (variety) =>
+        orbitShot({
+          center: moment.center,
+          radius: Math.max(DIRECTOR_CLUSTER_CAM_RADIUS, moment.spread * 2),
+          heightFactor: DIRECTOR_CLUSTER_CAM_HEIGHT,
+          framing: { dataset: view.dataset, variety },
+          still: true,
+          startSec: t,
+          endSec: t + Math.min(hold, 5),
+          reason: dogfight
+            ? "Dogfight — opposing aircraft"
+            : "Aircraft over ground troops",
+          topic: "vehicle",
+        }),
+    };
+  }
+  const rider = view.playersAt(t).find((p) => p.vehicleId === moment.vehicleId);
   if (!rider) return null;
   const name = playerName(rider.targetId, view.dataset, t);
   return {
     family: "vehicle",
     confidence: Math.min(1, moment.crew / 4),
-    shot: {
+    buildShot: () => ({
       kind: "followPlayer",
       targetId: rider.targetId,
       distance: 28,
@@ -328,12 +621,27 @@ function detectVehicle(
       startSec: t,
       endSec: t + hold,
       transitionIn: "cut",
-      reason: `Ride-along — ${moment.vehicle} with ${moment.crew} aboard${
-        name ? ` (${name})` : ""
-      }`,
+      reason: `Ride-along — ${moment.vehicle} with ${moment.crew} aboard${name ? ` (${name})` : ""}`,
       topic: "vehicle",
-    },
+    }),
   };
+}
+
+/** A short air cutaway for a stalled flag story. */
+export function pickDogfightShot(
+  view: CausalView,
+  t: number,
+  memory: VarietyMemory,
+  variety: ShotVariety,
+): VarietyPick | null {
+  if (freshness(memory, "vehicle", t) < 0.5) return null;
+  const candidate = detectVehicle(view, t, 4, true);
+  return (
+    candidate && {
+      family: "vehicle",
+      shot: candidate.buildShot(variety),
+    }
+  );
 }
 
 /** An actively-used inventory with a queue (outside kickoff, where the
@@ -342,37 +650,27 @@ function detectSuitUp(
   view: CausalView,
   t: number,
   hold: number,
-  variety: ShotVariety,
 ): Candidate | null {
-  const players = view.playersAt(t);
-  let best: { pos: DirectorVec3; count: number } | null = null;
-  for (const station of view.dataset.stations) {
-    if (station.kind !== "inventory" || station.deployed) continue;
-    const active = (station.activations ?? []).some(
-      (a) => a >= t - 3 && a <= t + 2,
-    );
-    if (!active) continue;
-    const near = players.filter(
-      (p) => dist(p.pos, station.pos) <= DIRECTOR_STATION_RANGE,
-    ).length;
-    if (near < STATION_MIN_PLAYERS) continue;
-    if (!best || near > best.count) best = { pos: station.pos, count: near };
-  }
+  const best = busiestInventory(view, t, {
+    minimum: STATION_MIN_PLAYERS,
+    requireActive: true,
+  });
   if (!best) return null;
   return {
     family: "suitUp",
     confidence: Math.min(1, best.count / 6),
-    shot: orbitShot({
-      center: best.pos,
-      radius: DIRECTOR_STATION_CAM_RADIUS,
-      heightFactor: DIRECTOR_STATION_CAM_HEIGHT,
-      framing: { dataset: view.dataset, variety },
-      still: true,
-      startSec: t,
-      endSec: t + hold,
-      reason: `${best.count} players suiting up at the inventory`,
-      topic: "suit-up",
-    }),
+    buildShot: (variety) =>
+      orbitShot({
+        center: best.pos,
+        radius: DIRECTOR_STATION_CAM_RADIUS,
+        heightFactor: DIRECTOR_STATION_CAM_HEIGHT,
+        framing: { dataset: view.dataset, variety },
+        still: true,
+        startSec: t,
+        endSec: t + hold,
+        reason: `${best.count} players suiting up at the inventory`,
+        topic: "suit-up",
+      }),
   };
 }
 
@@ -381,23 +679,23 @@ function detectCluster(
   view: CausalView,
   t: number,
   hold: number,
-  variety: ShotVariety,
 ): Candidate | null {
   const cluster = busiestCluster(Math.max(0, t - 4), t, view.playersAtSec);
   if (!cluster || cluster.count < CLUSTER_MIN_PLAYERS) return null;
   return {
     family: "cluster",
     confidence: Math.min(1, cluster.count / 8),
-    shot: orbitShot({
-      center: cluster.center,
-      radius: DIRECTOR_CLUSTER_CAM_RADIUS,
-      heightFactor: DIRECTOR_CLUSTER_CAM_HEIGHT,
-      framing: { dataset: view.dataset, variety },
-      startSec: t,
-      endSec: t + hold,
-      reason: `Lull — watching ${cluster.count} players`,
-      topic: "lull",
-    }),
+    buildShot: (variety) =>
+      orbitShot({
+        center: cluster.center,
+        radius: DIRECTOR_CLUSTER_CAM_RADIUS,
+        heightFactor: DIRECTOR_CLUSTER_CAM_HEIGHT,
+        framing: { dataset: view.dataset, variety },
+        startSec: t,
+        endSec: t + hold,
+        reason: `Lull — watching ${cluster.count} players`,
+        topic: "lull",
+      }),
   };
 }
 
@@ -427,7 +725,7 @@ function detectFlyThrough(
   return {
     family: "flyThrough",
     confidence: 0.6,
-    shot: {
+    buildShot: () => ({
       kind: "sweep",
       from: start,
       to: [start[0] + dir[0] * travel, start[1] + dir[1] * travel, start[2]],
@@ -438,6 +736,6 @@ function detectFlyThrough(
       transitionIn: "cut",
       reason: `Map fly-through — toward the ${toStand.name ?? "far"} base`,
       topic: "base",
-    },
+    }),
   };
 }

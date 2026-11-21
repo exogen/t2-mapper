@@ -1,3 +1,4 @@
+import type { MatchPhase } from "../src/stream/matchEvents.js";
 import type { FlagState } from "./flagState.js";
 import type { PublishedGame } from "./gamePresentation.js";
 import type {
@@ -16,13 +17,23 @@ import type {
   ParsedData,
   SensorGroupColor,
 } from "t2-demo-parser";
+import type {
+  LiveCastMetricsMessage,
+  LiveCastServerMessage,
+} from "./liveCastTypes.js";
 
 /** Messages from browser client to relay server. */
 export type ClientMessage =
   | ReplayClientMessage
   | { type: "listServers" }
   | { type: "joinServer"; address: string; warriorName?: string }
-  | { type: "watchServer"; address: string; channelId?: string }
+  | {
+      type: "watchServer";
+      address: string;
+      channelId?: string;
+      liveCast?: boolean;
+    }
+  | { type: "setLiveCast"; enabled: boolean }
   | { type: "leaveServer" }
   | { type: "sendMoves"; moves: ClientMove[]; moveStartIndex: number }
   | { type: "sendCommand"; command: string; args: string[] }
@@ -39,6 +50,8 @@ export type ClientMessage =
 /** Messages from relay server to browser client. */
 export type ServerMessage =
   | ReplayServerMessage
+  | LiveCastServerMessage
+  | LiveCastMetricsMessage
   | { type: "serverList"; servers: ServerInfo[] }
   | {
       type: "status";
@@ -64,13 +77,16 @@ export type ServerMessage =
       channelId?: string;
       /** Whether demo retention is enabled for the mission being watched. */
       recording?: boolean;
-      /** Watcher-facing stream delay in ms (tournament anti-screen-peek);
+      /** Watcher-facing stream delay in ms;
        *  0 = live; absent leaves the client's previous value unchanged. */
       streamDelayMs?: number;
+      streamDelayReason?: WatchDelayReason;
       /** While a delayed session is still buffering its first `delayMs`
        *  (no delayed frames available yet), the rough ms until the
        *  delayed stream begins — for a client-side "live in ~Xs". */
       streamDelayReadyInMs?: number;
+      /** Null while support or worker admission is pending. False ends a subscription. */
+      liveCastAvailable?: boolean | null;
     }
   | { type: "watcherCount"; count: number }
   | { type: "gamePresentation"; address: string; game: PublishedGame }
@@ -93,6 +109,8 @@ export type ServerMessage =
   | { type: "error"; message: string; requestType?: "listServers" };
 
 /** Watch-session status, sent only to watcher sockets. */
+export type WatchDelayReason = "castGenius" | "tournament";
+
 export type WatchStatus =
   "connecting" | "authenticating" | "syncing" | "live" | "ended";
 
@@ -126,6 +144,8 @@ export interface WatchHudStatePayload {
   /** Match-over interval: MissionEnd/debrief seen, next MsgClientReady not. */
   matchEnded?: boolean;
   matchStarted?: boolean;
+  /** Start time relative to this snapshot (negative for an earlier kickoff). */
+  matchPhase?: MatchPhase;
   /**
    * The last completed loading-screen text (MsgLoadInfo … MsgLoadInfoDone).
    */

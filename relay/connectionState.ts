@@ -5,6 +5,16 @@ import {
   restoreFlagStates,
   type FlagState,
 } from "./flagState.js";
+import {
+  isRealMatchStart,
+  matchCountdownSeconds,
+  matchPhaseFromScoreboard,
+  shiftMatchPhase,
+  matchPhaseFromClock,
+  UNKNOWN_PHASE,
+  WARMUP,
+  type MatchPhase,
+} from "../src/stream/matchEvents.js";
 import { updateFlagDropTimes, type FlagDropTimes } from "./flagReturnState.js";
 import {
   PlayerResolver,
@@ -406,6 +416,8 @@ export class ConnectionState {
    * Never true while a server sits in pre-match warmup.
    */
   matchStarted = false;
+  phase: MatchPhase = UNKNOWN_PHASE;
+
   /**
    * Match-over interval: MissionEnd seen, next MsgClientReady not.
    */
@@ -519,6 +531,31 @@ export class ConnectionState {
     }
   }
 
+  get matchPhase(): MatchPhase {
+    // A cancelled start countdown can expire silently.
+    if (
+      this.phase.kind === "countdown" &&
+      this.options.now() > this.phase.startSec + 0.5
+    )
+      return WARMUP;
+    return this.phase;
+  }
+
+  observeBottomPrint(message: string): void {
+    // Stock clientMissionDropReady includes this prompt only during idle warmup.
+    if (/Server is Running in Tournament Mode[\s\S]*Pick a Team/i.test(message))
+      this.phase = WARMUP;
+  }
+
+  /** A score can prove play is underway before a clock sync establishes its age. */
+  private noteRunning(startSec: number | null): void {
+    if (
+      this.phase.kind !== "running" ||
+      (this.phase.startSec === null && startSec !== null)
+    )
+      this.phase = { kind: "running", startSec };
+  }
+
   /**
    * Apply a ServerMessage (args after the command name). Returns null for
    * messages this state doesn't own; the caller may handle those.
@@ -544,7 +581,10 @@ export class ConnectionState {
       resolvePlayers: () => this.resolvePlayers(),
     });
     if (changes) {
-      if (changes.matchStarted) this.matchStarted = true;
+      if (changes.matchStarted) {
+        this.matchStarted = true;
+        this.noteRunning(null);
+      }
       const renamed = changes.renamedPlayer;
       // Rename the client target now; its TargetInfoEvent can arrive a
       // packet later.
@@ -553,29 +593,65 @@ export class ConnectionState {
       return changes;
     }
 
-    if (msgType === "MsgSystemClock" && args.length >= 4) {
+    const tag = msgType.toLowerCase();
+    if (tag === "msgsystemclock" && args.length >= 4) {
       // Wire order: args[2]=timeLimitMinutes, args[3]=timeRemainingMS.
       // Binary-verified (HudClock 0x004fe7e0/0x004fe8a0): the client
       // calls clockHud.setTime(timeRemainingMS / 60000), which stores a
       // single deadline; each frame renders abs(now - deadline) — so
       // 0 counts up from 00:00 (untimed/joiner sync), N counts down and
       // passes through zero into count-up overtime. args[2] is dead
-      // data on the client ($Hud::TimeLimit, never read).
+      // data for HUD rendering but identifies the full match length in a periodic sync.
       const timeRemainingMS = parseFloat(resolve(args[3]));
       this.clock = {
         anchorSec: this.matchEndedAtSec ?? this.options.now(),
         durationMs: Number.isFinite(timeRemainingMS) ? timeRemainingMS : 0,
       };
-      // A running match clock (late-join case): warmup joiners get 0,0
-      // and pre-start countdown ticks stay under ~30s.
-      if (Number.isFinite(timeRemainingMS) && timeRemainingMS > 60_000)
+      const limitMs = parseFloat(resolve(args[2])) * 60_000;
+      this.phase = matchPhaseFromClock(
+        this.matchPhase,
+        limitMs,
+        timeRemainingMS,
+        this.clock.anchorSec,
+      );
+      if (
+        msgType === "MsgSystemClock" &&
+        Number.isFinite(timeRemainingMS) &&
+        timeRemainingMS > 60_000
+      )
         this.matchStarted = true;
       return NO_MESSAGE_EFFECTS;
     }
-    if (msgType === "MsgMissionStart") {
+    if (
+      tag === "msgholdingup" ||
+      (tag === "0" &&
+        /^%1 is (?:not )?ready\.$/i.test(
+          stripTaggedStringMarkup(resolve(args[1] ?? "")).trim(),
+        ))
+    ) {
+      this.phase = WARMUP;
+    }
+    if (
+      tag === "msgmissionend" &&
+      /match ends in /i.test(resolve(args[1] ?? ""))
+    ) {
+      this.noteRunning(null);
+      return NO_MESSAGE_EFFECTS;
+    }
+    if (tag === "msgmissionstart") {
+      const body = resolve(args[1] ?? "");
+      if (isRealMatchStart(body)) this.noteRunning(this.options.now());
+      else {
+        const seconds = matchCountdownSeconds(body, resolve(args[2] ?? ""));
+        if (seconds != null)
+          this.phase = {
+            kind: "countdown",
+            startSec: this.options.now() + seconds,
+          };
+      }
       // Sent by DefaultGame::startMatch ("Match started!") and by the
       // pre-start countdown ticks — never during idle warmup.
-      this.matchStarted = true;
+      if (msgType === "MsgMissionStart") this.matchStarted = true;
       return NO_MESSAGE_EFFECTS;
     }
     if (msgType === "MsgMissionDropInfo" && args.length >= 5) {
@@ -618,6 +694,7 @@ export class ConnectionState {
       this.matchEndedAtSec = null;
       // Mission-scoped: a same-map restart skips beginMissionChange.
       this.matchStarted = false;
+      this.phase = UNKNOWN_PHASE;
       return { missionDropReady: true, missionInfoChanged: true };
     }
     return null;
@@ -647,6 +724,7 @@ export class ConnectionState {
     this.gameClassName = null;
     this.serverDisplayName = null;
     this.matchStarted = false;
+    this.phase = UNKNOWN_PHASE;
   }
 
   /**
@@ -664,6 +742,7 @@ export class ConnectionState {
     this.flagDroppedAtSec = {};
     this.clock = null;
     this.matchStarted = false;
+    this.phase = UNKNOWN_PHASE;
     this.matchEnded = false;
     this.matchEndedAtSec = null;
     this.missionDisplayName = null;
@@ -752,6 +831,7 @@ export class ConnectionState {
       serverDisplayName: this.serverDisplayName ?? undefined,
       matchEnded: this.matchEnded,
       matchStarted: this.matchStarted,
+      matchPhase: shiftMatchPhase(this.matchPhase, -nowSec),
       loadInfo: loadInfo.complete ?? undefined,
       pendingLoadInfo: loadInfo.pending ?? undefined,
     };
@@ -837,6 +917,9 @@ export class ConnectionState {
     // payload proves the match is underway just as well.
     this.matchStarted =
       hud.matchStarted ?? (hud.clock != null && hud.clock.durationMs > 60_000);
+    this.phase = hud.matchPhase
+      ? shiftMatchPhase(hud.matchPhase, nowSec)
+      : matchPhaseFromScoreboard(hud.gameClassName, hud.teamScores);
   }
 
   /**
@@ -854,6 +937,7 @@ export class ConnectionState {
       playerIdentity: this.playerIdentity,
       flagDroppedAtSec: this.flagDroppedAtSec,
       clock: this.clock,
+      matchPhase: this.phase,
       matchStarted: this.matchStarted,
       matchEnded: this.matchEnded,
       matchEndedAtSec: this.matchEndedAtSec,
@@ -879,6 +963,9 @@ export class ConnectionState {
     this.playerIdentity = saved.playerIdentity;
     this.flagDroppedAtSec = saved.flagDroppedAtSec;
     this.clock = saved.clock;
+    this.phase =
+      saved.matchPhase ??
+      matchPhaseFromScoreboard(saved.gameClassName, saved.teamScores);
     this.matchStarted = saved.matchStarted;
     this.matchEnded = saved.matchEnded;
     this.matchEndedAtSec = saved.matchEndedAtSec;

@@ -1,3 +1,4 @@
+import type { MatchPhase } from "./matchEvents";
 import type { FlagState } from "../../relay/flagState";
 import type { PlayerInterpolationSettings } from "./playerInterpolation";
 import type { PlayerRecord } from "../../relay/playerReference";
@@ -735,6 +736,8 @@ export interface InferredMissileLock {
 
 export interface StreamSnapshot {
   timeSec: number;
+  /** Bounded history captured by director scans. */
+  ordnanceImpacts?: readonly StreamOrdnanceImpact[];
   /** World gravity in m/s² (negative is down) — see worldGravity.ts. */
   gravity: number;
   /**
@@ -812,6 +815,7 @@ export interface StreamSnapshot {
    *  Negative = counting down (remaining time), positive = counting up (elapsed).
    *  Null if no clock has been set. Pauses/seeks with playback. */
   matchClockMs: number | null;
+  matchPhase?: MatchPhase;
   /** Match-over interval: MissionEnd has arrived and the next
    *  mission's MsgClientReady hasn't. Drives the auto score screen. */
   matchEnded: boolean;
@@ -820,6 +824,61 @@ export interface StreamSnapshot {
   /** The match has been seen running (MsgMissionStart or a running clock
    *  > 60 s); cleared when the next mission drops us in. */
   matchStarted: boolean;
+}
+
+/** Simulation and match state consumed by the director and its collision world. */
+export type DirectorEntity = Pick<
+  StreamEntity,
+  | "id"
+  | "type"
+  | "className"
+  | "dataBlock"
+  | "shapeHint"
+  | "ghostIndex"
+  | "sourceGhostIndex"
+  | "mountObjectId"
+  | "position"
+  | "rotation"
+  | "scale"
+  | "targetId"
+  | "targetGeneration"
+  | "targetRenderFlags"
+  | "teamId"
+  | "playerName"
+  | "playerRawName"
+  | "skinName"
+  | "skinPrefName"
+  | "health"
+  | "damageState"
+  | "sceneData"
+  | "forceFieldState"
+> & {
+  forceFieldData?: { dimensions: [number, number, number] };
+  imageSlots?: (Pick<ImageSlot, "shapeName" | "skinName"> | undefined)[];
+  threads?: Pick<ThreadState, "index" | "state" | "atEnd">[];
+};
+
+export type DirectorSnapshot = Pick<
+  StreamSnapshot,
+  | "timeSec"
+  | "ordnanceImpacts"
+  | "ghostAlwaysDoneSec"
+  | "chatMessages"
+  | "serverEvents"
+  | "teamScores"
+  | "playerRoster"
+  | "matchClockMs"
+  | "matchPhase"
+  | "matchEnded"
+  | "matchStarted"
+> & { entities: DirectorEntity[] };
+
+export interface StreamOrdnanceImpact {
+  id: string;
+  timeSec: number;
+  pos: [number, number, number];
+  kind: "mortar" | "missile";
+  teamId?: number;
 }
 
 /** One prefetchable asset; `name` is the game-file name (resolution to a

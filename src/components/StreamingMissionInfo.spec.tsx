@@ -2,11 +2,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, it, vi } from "vitest";
 import { formatRecordedTime, recordedDayLabel } from "./demoFormat";
 import { StreamingMissionInfo } from "./StreamingMissionInfo";
+import { AccordionGroup } from "./Accordion";
+import { LiveCastControl } from "./LiveCastControl";
 
 vi.mock("./GameDetailsEditor", () => ({ GameDetailsButton: () => null }));
-import type { WatchEndReason } from "../../relay/types";
+import type { WatchEndReason, WatchStatus } from "../../relay/types";
 import type { ReplayState } from "../../relay/replayTypes";
 import type { PublishedGame } from "../../relay/gamePresentation";
+import {
+  liveDirectorStore,
+  prepareLiveDirector,
+  resetLiveDirector,
+} from "../state/liveDirectorStore";
 import { demoDownloadUrl, type DemoIndexEntry } from "../stream/demoIndex";
 
 const state = vi.hoisted(() => ({
@@ -25,8 +32,9 @@ const state = vi.hoisted(() => ({
     watcherCount: 0,
     recording: false,
     streamDelayMs: 0,
+    liveCastAvailable: false,
     gameStatus: "disconnected",
-    watchStatus: null,
+    watchStatus: null as WatchStatus | null,
     watchEndReason: undefined as WatchEndReason | undefined,
     ping: null as number | null,
   },
@@ -75,6 +83,7 @@ vi.mock("../stream/demoIndex", async (importOriginal) => ({
 }));
 
 beforeEach(() => {
+  resetLiveDirector();
   state.dataSource = "demo";
   state.recorderName = null;
   state.recordingDate = null;
@@ -89,12 +98,49 @@ beforeEach(() => {
   state.live.watcherCount = 0;
   state.live.gameStatus = "disconnected";
   state.live.watchEndReason = undefined;
+  state.live.watchStatus = null;
+  state.live.streamDelayMs = 0;
+  state.live.liveCastAvailable = false;
   state.live.ping = null;
 });
 
 function render() {
   return renderToStaticMarkup(<StreamingMissionInfo />);
 }
+
+it("offers CastGenius in the sidebar on a supported live watch channel", () => {
+  const renderCastPanel = () =>
+    renderToStaticMarkup(
+      <AccordionGroup type="multiple" defaultValue={["cast"]}>
+        <LiveCastControl />
+      </AccordionGroup>,
+    );
+  state.dataSource = "live";
+  state.live.role = "watcher";
+  state.live.watchStatus = "live";
+  state.live.streamDelayMs = 7_000;
+  state.serverName = "Match Server";
+  expect(render()).toContain("7s DELAY");
+  expect(renderCastPanel()).not.toContain("Start CastGenius");
+  state.live.liveCastAvailable = true;
+  expect(render()).not.toContain("CastGenius");
+  expect(renderCastPanel()).toContain(
+    "CastGenius is available for this stream. Sit back and watch while the camera is directed for you.",
+  );
+  expect(renderCastPanel()).toContain("Start CastGenius");
+  prepareLiveDirector();
+  state.live.watchStatus = "syncing";
+  state.live.liveCastAvailable = false;
+  const initialState = vi
+    .spyOn(liveDirectorStore, "getInitialState")
+    .mockImplementation(liveDirectorStore.getState);
+  try {
+    expect(render()).not.toContain("CastGenius");
+    expect(renderCastPanel()).toContain("Exit CastGenius</span>");
+  } finally {
+    initialState.mockRestore();
+  }
+});
 
 const game = {
   mission: "Surreal",

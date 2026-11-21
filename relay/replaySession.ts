@@ -4,9 +4,14 @@ import {
   randomUUID,
   timingSafeEqual,
 } from "node:crypto";
-import { gzipSync } from "node:zlib";
 import { DemoParser, DemoIdentString, type Move } from "t2-demo-parser";
 import type { WebSocket } from "ws";
+import {
+  canQueueViewerData,
+  compressCatchup,
+  sendViewerCatchup,
+  VIEWER_BUFFER_BYTES,
+} from "./viewerSocket.js";
 import { abortable } from "./abortable.js";
 import { DemoReplaySource } from "./demoReplaySource.js";
 import {
@@ -30,13 +35,8 @@ import {
 import { SOURCE_DEMO_PROTOCOL_VERSION } from "./demoSourceMetadata.js";
 import type { ServerMessage, WatchCatchupPayload } from "./types.js";
 import { serializeCatchupPayload } from "./watchSerialize.js";
-import {
-  MAX_CATCHUP_COMPRESSED_BYTES,
-  MAX_CATCHUP_DECOMPRESSED_BYTES,
-} from "./catchupLimits.js";
 
 const TICK_MS = 32;
-const CATCHUP_CHUNK_BYTES = 256 * 1024;
 
 export interface ReplaySource {
   readonly tick: number;
@@ -163,7 +163,7 @@ export class ReplaySessionManager {
       maxSessions: options.maxSessions ?? 4,
       maxParticipants: options.maxParticipants ?? 64,
       idleTtlMs: options.idleTtlMs ?? 10 * 60_000,
-      maxBufferedBytes: options.maxBufferedBytes ?? 8 * 1024 * 1024,
+      maxBufferedBytes: options.maxBufferedBytes ?? VIEWER_BUFFER_BYTES,
     };
   }
 
@@ -840,27 +840,17 @@ export class ReplaySessionManager {
       return;
     const bytes = compressed ?? this.catchupBytes(session);
     if (!bytes) return;
-    if (!this.canSend(session, ws, bytes.byteLength)) return;
-    this.send(ws, {
-      type: "catchupBegin",
-      address: `replay:${session.id}`,
-      epoch: session.epoch,
-      totalBytes: bytes.byteLength,
-      chunkCount: Math.max(
-        1,
-        Math.ceil(bytes.byteLength / CATCHUP_CHUNK_BYTES),
-      ),
-      encoding: "gzip",
-    });
-    for (
-      let offset = 0;
-      offset < bytes.byteLength;
-      offset += CATCHUP_CHUNK_BYTES
+    if (
+      session.participants.has(ws) &&
+      !sendViewerCatchup(
+        ws,
+        `replay:${session.id}`,
+        session.epoch,
+        bytes,
+        this.options.maxBufferedBytes,
+      )
     )
-      ws.send(bytes.subarray(offset, offset + CATCHUP_CHUNK_BYTES), {
-        binary: true,
-      });
-    this.send(ws, { type: "catchupEnd" });
+      this.detach(ws);
   }
 
   private catchupBytes(session: Session): Uint8Array | null {
@@ -884,11 +874,7 @@ export class ReplaySessionManager {
               : "paused",
         ),
       );
-      if (Buffer.byteLength(json, "utf8") > MAX_CATCHUP_DECOMPRESSED_BYTES)
-        throw new Error("Replay snapshot exceeds the decoded size limit");
-      const bytes = gzipSync(json, { level: 3 });
-      if (bytes.byteLength > MAX_CATCHUP_COMPRESSED_BYTES)
-        throw new Error("Replay snapshot exceeds the compressed size limit");
+      const bytes = compressCatchup(json);
       session.catchupCache = {
         tick: session.source!.tick,
         epoch: session.epoch,
@@ -955,12 +941,9 @@ export class ReplaySessionManager {
     additionalBytes = 0,
   ): boolean {
     if (
-      ws.readyState !== ws.OPEN ||
-      (ws.bufferedAmount ?? 0) + additionalBytes > this.options.maxBufferedBytes
+      !canQueueViewerData(ws, additionalBytes, this.options.maxBufferedBytes)
     ) {
       this.detach(ws);
-      if (ws.readyState === ws.OPEN)
-        ws.close(1013, "Replay viewer fell behind; reconnect to sync");
       return false;
     }
     return session.participants.has(ws);

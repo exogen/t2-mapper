@@ -124,9 +124,14 @@ vi.mock("../collision/worldCollision", () => ({
     p[2] < 0 || world.boxes.some((box) => inside(p, box, radius)),
 }));
 
-import { midAim, stagePlan, stageShots } from "./stage";
+import { auditAhead, midAim, stagePlan, stageShots } from "./stage";
 import type { FreeSpaceGrid } from "./freeSpace";
-import { cameraBuried, shotPoseAt, subjectVisible } from "./shotPath";
+import {
+  cameraBuried,
+  inspectShot,
+  shotPoseAt,
+  subjectVisible,
+} from "./shotPath";
 import { Vector3 } from "three";
 import { orbitPullbackDir } from "../stream/streamHelpers";
 import { directorDataset } from "./directorTestFixtures";
@@ -285,16 +290,25 @@ describe("staging with the director's free-space grid", () => {
     }
   });
 
-  it("rejects a follow offset that fits at the start but moves into a wall", () => {
+  it("holds a fixed room angle when the moving follow offset would hit a wall", () => {
     enclose();
     const shots: Shot[] = [indoorFollow()];
     const dataset = makeDataset((t) => [t / 5, 0, 1]);
     const report = stageShots(shots, [0], dataset, gridAt([3, 0, 3]));
     expect(report.gridFollow).toBe(0);
-    expect(report.followConverted).toBe(1);
+    expect(report.gridFixed).toBe(1);
+    expect(shots[0]).toMatchObject({
+      kind: "fixedOrbit",
+      lookSubject: { type: "flag", slot: 1 },
+      staged: { visibility: 1 },
+    });
+    const eye = shotPoseAt(shots[0], 0)!.eye;
+    for (const sample of dataset.flagSamples.filter((s) => s.timeSec <= 10)) {
+      expect(subjectVisible(eye, [sample.pos[0], sample.pos[1], 2])).toBe(true);
+    }
   });
 
-  it("respects an explicit follow distance floor in a small room", () => {
+  it("uses a room camera when the follow distance floor cannot fit", () => {
     enclose();
     const shot = { ...indoorFollow(), minDistance: 15 };
     const shots: Shot[] = [shot];
@@ -305,8 +319,51 @@ describe("staging with the director's free-space grid", () => {
       gridAt([3, 0, 3]),
     );
     expect(report.gridFollow).toBe(0);
-    expect(shots[0]).toBe(shot);
+    expect(report.gridFixed).toBe(1);
+    expect(shots[0].kind).toBe("fixedOrbit");
     expect(shot.distance).toBe(25);
+  });
+
+  it("stages a player dolly inside a base only if the room sees the known path", () => {
+    enclose();
+    const spot: DirectorVec3 = [3, 0, 3];
+    const dolly: Shot = {
+      kind: "dolly",
+      subject: { type: "player", targetId: 5 },
+      startSec: 0,
+      endSec: 5,
+      transitionIn: "cut",
+      reason: "watch a player",
+    };
+    const staysInside = makeDataset(
+      () => ANCHOR,
+      [0, 1, 2, 3, 4, 5].map((timeSec) => ({
+        timeSec,
+        targetId: 5,
+        teamId: 1,
+        pos: [0, timeSec / 2, 1],
+      })),
+    );
+    const insideShots = [dolly];
+    expect(
+      stageShots(insideShots, [0], staysInside, gridAt(spot)).gridFixed,
+    ).toBe(1);
+    expect(insideShots[0]).toMatchObject({
+      kind: "fixedOrbit",
+      lookSubject: dolly.subject,
+      staged: { visibility: 1 },
+    });
+    const leaves = {
+      ...staysInside,
+      playerSamples: staysInside.playerSamples.map((p) =>
+        p.timeSec < 4 ? p : { ...p, pos: [8, 0, 1] as DirectorVec3 },
+      ),
+    };
+    const movingShots = [dolly];
+    expect(stageShots(movingShots, [0], leaves, gridAt(spot)).gridFixed).toBe(
+      0,
+    );
+    expect(movingShots[0]).toBe(dolly);
   });
 
   it("rechecks cells against geometry that changed since the grid was built", () => {
@@ -335,6 +392,87 @@ describe("staging with the director's free-space grid", () => {
 });
 
 describe("stagePlan", () => {
+  const delayedTour = {
+    kind: "sweep",
+    role: "tourMove",
+    from: [-40, 0, 10],
+    to: [40, 0, 10],
+    target: [-40, 20, 3],
+    targetTo: [40, 20, 3],
+    startSec: 4,
+    endSec: 8,
+    moveSec: 4,
+    moveOffsetSec: 2,
+    easing: "linear",
+    transitionIn: "cut",
+    reason: "Map tour",
+  } satisfies Shot;
+
+  it("rejects a buried tour sweep even with no players to frame", () => {
+    const shots: Shot[] = [
+      { ...delayedTour, from: [-40, 0, -40], to: [40, 0, -40] },
+    ];
+    const report = stageShots(shots, [0], directorDataset());
+    expect(report.sweepTrimmed).toBe(0);
+    expect(report.sweepConverted).toBe(1);
+    expect(shots[0].kind).toBe("fixedOrbit");
+  });
+
+  it("keeps the open portion of a tour sweep with a buried tail", () => {
+    world.boxes.push({ min: [30, -5, -10], max: [50, 5, 45] });
+    const shots: Shot[] = [{ ...delayedTour }];
+    const report = stageShots(shots, [0], directorDataset());
+    expect(report.sweepTrimmed).toBe(1);
+    expect(shots[0]).toMatchObject({ kind: "sweep", pathSolved: true });
+    expect(inspectShot(shots[0])?.buried).toBe(0);
+  });
+
+  it.each([2, 4])(
+    "stages only the visible portion of a sweep after a %ss delay",
+    (moveOffsetSec) => {
+      world.boxes.push({ min: [-24, -40, -20], max: [-7, 35, 45] });
+      const sweep = {
+        kind: "sweep",
+        from: [-20, 0, 10],
+        to: [20, 0, 10],
+        target: [-20, 15, 6],
+        targetTo: [20, 15, 6],
+        startSec: 4,
+        endSec: 8,
+        moveSec: 4,
+        easing: "linear",
+        transitionIn: "cut",
+        reason: "Tracking wide",
+      } satisfies Shot;
+      const early = makePlan([{ ...sweep }]);
+      const late = makePlan([{ ...sweep, moveOffsetSec }]);
+      const dataset = directorDataset();
+      expect(stageShots(early.shots, [0], dataset).sweepConverted).toBe(1);
+      expect(stageShots(late.shots, [0], dataset).sweepClean).toBe(1);
+      expect(late.shots[0]).toMatchObject({
+        ...sweep,
+        moveOffsetSec,
+        pathSolved: true,
+      });
+    },
+  );
+
+  it("preserves a deliberate reversal of the aim on the same flag", () => {
+    const shot = indoorFollow();
+    const plan = makePlan([
+      { ...shot, aim: { mode: "forward" }, endSec: 5 },
+      { ...shot, aim: { mode: "backward" }, startSec: 5 },
+    ]);
+    expect(
+      auditAhead(
+        plan,
+        makeDataset(() => ANCHOR),
+        -Infinity,
+      ).merged,
+    ).toBe(0);
+    expect(plan.shots).toHaveLength(2);
+  });
+
   it("solves an unobstructed placement at full visibility", () => {
     const plan = makePlan([fixedShot()]);
     const report = stagePlan(

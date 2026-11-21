@@ -1,3 +1,4 @@
+import { matchPhaseFromScoreboard } from "./matchEvents";
 import { unclampMove, type PlayerMove } from "./playerPrediction";
 import type { PlayerPacketData } from "t2-demo-parser";
 import {
@@ -452,6 +453,8 @@ export interface DemoStreamingOptions {
   groundEffects?: boolean;
   /** Headless consumers that never pose a camera can skip player view data. */
   playerViews?: boolean;
+  /** Retain observed mortar and missile impacts for director sampling. */
+  directorImpacts?: boolean;
 }
 
 export type DemoSeekCheckpoint = ReturnType<
@@ -854,6 +857,7 @@ export class DemoStreamAdapter extends StreamEngine {
     this.checkpointsEnabled = options.checkpoints !== false;
     this.groundEffectsEnabled = options.groundEffects !== false;
     this.playerViewsEnabled = options.playerViews !== false;
+    this.captureDirectorImpacts = options.directorImpacts === true;
     this.parser = parser;
     this.registry = parser.getRegistry();
     this.ghostTracker = parser.getGhostTracker();
@@ -1238,6 +1242,10 @@ export class DemoStreamAdapter extends StreamEngine {
       name,
       score,
     }));
+    this.conn.phase = matchPhaseFromScoreboard(
+      this.gameClassName,
+      parsed.teamScores,
+    );
     this.conn.playerRoster = new Map(parsed.playerRoster);
     this.conn.flags = new Map(parsed.flags.map((flag) => [flag.teamId, flag]));
     refreshFlagCarriers(this.conn.flags, this.conn.resolvePlayers());

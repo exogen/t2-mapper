@@ -238,10 +238,20 @@ export class DemoCoordinator {
   }
 
   /** Close a connection's file locally. Publication waits for the match decision. */
-  finalize(recorder: DemoRecorder, reason: string): void {
+  finalize(
+    recorder: DemoRecorder,
+    reason: string,
+    options?: { discard?: boolean },
+  ): void {
     const entry = this.recorderEntries.get(recorder);
     if (!entry || entry.recorder !== recorder || entry.finalizing) return;
     entry.finalizing = true;
+    if (options?.discard) {
+      entry.state.keep = false;
+      entry.state.complete = true;
+      entry.retired = true;
+      this.savePolicy(entry);
+    }
     const inactiveSince = Date.now();
     entry.state.inactiveSince = inactiveSince;
     const promise = (async () => {

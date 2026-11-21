@@ -42,6 +42,11 @@ import {
 } from "./accountBackup.js";
 import { WatchSessionManager, normalizeAddress } from "./watchSession.js";
 import { WatchRequest } from "./watchRequest.js";
+import { createLiveCastFeedFactory } from "./liveCastProcess.js";
+import {
+  LIVE_CAST_LOOKAHEAD_MS,
+  LIVE_CAST_METRICS_INTERVAL_MS,
+} from "./liveCastTypes.js";
 import {
   loadAdminVotePolicies,
   loadAlwaysAdminPlayers,
@@ -180,6 +185,17 @@ const DEMO_MIN_PLAYERS = loadPatrolInteger(
   "DEMO_MIN_PLAYERS",
   2,
 );
+const recordingExclusions = loadPatrolList(
+  process.env.DEMO_RECORD_EXCLUDED_SERVERS,
+  "DEMO_RECORD_EXCLUDED_SERVERS",
+).map(globToRegExp);
+const isRecordingExcluded = recordingExclusions.length
+  ? (address: string, name?: string) =>
+      recordingExclusions.some(
+        (pattern) =>
+          pattern.test(address) || (!!name && pattern.test(name.trim())),
+      )
+  : undefined;
 const DEMO_PENDING_TIMEOUT_MS = Number(
   process.env.DEMO_PENDING_TIMEOUT_MS ?? 60 * 60_000,
 );
@@ -253,6 +269,19 @@ const WATCH_TOURNEY_DELAY_MS = parseInt(
   process.env.WATCH_TOURNEY_DELAY_MS || "60000",
   10,
 );
+const WATCH_LIVE_CAST_LOOKAHEAD_MS = loadPatrolInteger(
+  process.env.WATCH_LIVE_CAST_LOOKAHEAD_MS,
+  "WATCH_LIVE_CAST_LOOKAHEAD_MS",
+  LIVE_CAST_LOOKAHEAD_MS,
+);
+const WATCH_LIVE_CAST_DELIVERY_MS = loadPatrolInteger(
+  process.env.WATCH_LIVE_CAST_DELIVERY_MS,
+  "WATCH_LIVE_CAST_DELIVERY_MS",
+  2_000,
+);
+const WATCH_LIVE_CAST_ENABLED =
+  process.env.WATCH_LIVE_CAST_ENABLED === "true" ||
+  process.env.WATCH_LIVE_CAST_ENABLED === "1";
 /** Mission-type display names that never run in tournament mode — skip
  *  the tournament check and never delay these (e.g. LakRabbit). */
 const WATCH_TOURNEY_SKIP_TYPES =
@@ -768,6 +797,10 @@ const savedWatchState = await fs
     return {} as { addresses?: unknown; missionControls?: unknown };
   });
 
+const createLiveCast = WATCH_LIVE_CAST_ENABLED
+  ? createLiveCastFeedFactory(GAME_BASE_PATH, WATCH_LIVE_CAST_LOOKAHEAD_MS)
+  : undefined;
+
 /** Shared watch sessions (one game connection per server, N watchers). */
 const watchSessions = new WatchSessionManager({
   chatEnabled: CHAT_ENABLED,
@@ -778,10 +811,15 @@ const watchSessions = new WatchSessionManager({
   getCachedServer: findKnownServer,
   createConnection: createGameConnection,
   demoCoordinator,
+  isRecordingExcluded,
   onSessionsChanged: persistWatchState,
   initialMissionControls: savedWatchState.missionControls,
   tourneyDelayMs: WATCH_TOURNEY_DELAY_MS,
   tourneySkipTypes: WATCH_TOURNEY_SKIP_TYPES,
+  liveCastLookaheadMs: WATCH_LIVE_CAST_LOOKAHEAD_MS,
+  liveCastDelayMs: WATCH_LIVE_CAST_LOOKAHEAD_MS + WATCH_LIVE_CAST_DELIVERY_MS,
+  liveCastDeliveryMs: WATCH_LIVE_CAST_DELIVERY_MS,
+  createLiveCast,
 });
 
 const updateGamePresentation = createGamePresentationUpdater(
@@ -801,6 +839,7 @@ const patroller =
         maxSessions: DEMO_PATROL_MAX_SESSIONS,
         intervalMs: DEMO_PATROL_INTERVAL_MS,
         getServerList,
+        isRecordingExcluded,
         hasServerPassword: (server) => serverPasswords.hasPassword(server),
         sessions: watchSessions,
       })
@@ -977,6 +1016,7 @@ wss.on("connection", (ws, req) => {
   const clientLog = relayLog.child(audit.identity);
   audit.log.info({ event: "browser_connected" }, "Browser client connected");
   liveSockets.add(ws);
+  streamLiveCastMetrics(ws, req);
 
   /** First joinServer/watchServer claims the socket for that mode. */
   let role: "idle" | "player" | "watcher" | "replay" = "idle";
@@ -1028,9 +1068,9 @@ wss.on("connection", (ws, req) => {
         address,
         `No compatible Tribes 2 server responded at ${address}.`,
       ),
-    attach(address, channelId) {
+    attach(address, channelId, liveCast) {
       if (ws.readyState === WebSocket.OPEN)
-        watchSessions.watch(ws, address, channelId);
+        watchSessions.watch(ws, address, channelId, liveCast);
     },
     detach: () => watchSessions.detachSocket(ws),
   });
@@ -1298,7 +1338,13 @@ wss.on("connection", (ws, req) => {
         watchSessions.sendChat(ws, message.args[0] ?? "");
         return;
       }
-      const allowed = ["listServers", "watchServer", "leaveServer", "wsPing"];
+      const allowed = [
+        "listServers",
+        "watchServer",
+        "leaveServer",
+        "wsPing",
+        "setLiveCast",
+      ];
       if (!allowed.includes(message.type)) {
         clientLog.debug(
           { type: message.type },
@@ -1333,8 +1379,10 @@ wss.on("connection", (ws, req) => {
           typeof message.channelId === "string"
             ? message.channelId
             : watchSessions.getSession(address)?.getChannelId(ws);
+        const liveCast =
+          typeof message.liveCast === "boolean" ? message.liveCast : undefined;
         try {
-          await watchRequest.watch(address, channelId);
+          await watchRequest.watch(address, channelId, liveCast);
         } catch (err) {
           clientLog.error({ err, address }, "Watch request failed");
           rejectWatch(
@@ -1348,6 +1396,11 @@ wss.on("connection", (ws, req) => {
       case "leaveServer": {
         watchRequest.leave();
         if (role === "watcher") serverAddress = null;
+        break;
+      }
+      case "setLiveCast": {
+        if (role === "watcher" && typeof message.enabled === "boolean")
+          watchSessions.setLiveCast(ws, message.enabled);
         break;
       }
 
@@ -1478,4 +1531,46 @@ function sendToClient(ws: WebSocket, message: ServerMessage): void {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(message));
   }
+}
+
+function streamLiveCastMetrics(
+  ws: WebSocket,
+  { headers }: http.IncomingMessage,
+): void {
+  const auth = appAuth;
+  const { origin, cookie } = headers;
+  if (
+    !auth ||
+    !appAuthConfig ||
+    !cookie ||
+    !origin ||
+    (origin !== appAuthConfig.baseURL &&
+      !appAuthConfig.trustedOrigins.includes(origin))
+  )
+    return;
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let authorized = false;
+  ws.once("close", () => clearTimeout(timer));
+
+  const sendMetrics = async (): Promise<void> => {
+    if (shuttingDown || ws.readyState !== WebSocket.OPEN) return;
+    const user = await auth.getAccount(headers).catch(() => undefined);
+    if (shuttingDown || ws.readyState !== WebSocket.OPEN) return;
+    // Keep polling after a transient lookup failure for a verified admin.
+    // Each push requires a successful authorization check.
+    if (user !== undefined) authorized = user?.role === "admin";
+    if (!authorized) return;
+    if (user?.role === "admin") {
+      const metrics = createLiveCast?.getMetrics() ?? {
+        activeWorkers: 0,
+        workers: [],
+      };
+      sendToClient(ws, { type: "liveCastMetrics", ...metrics });
+    }
+    timer = setTimeout(() => void sendMetrics(), LIVE_CAST_METRICS_INTERVAL_MS);
+    timer.unref();
+  };
+
+  void sendMetrics();
 }

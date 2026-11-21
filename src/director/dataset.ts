@@ -16,18 +16,7 @@ import type {
 } from "./types";
 
 /** Player positions bucketed to whole seconds, for proximity queries. */
-export type PlayersAtSec = Map<
-  number,
-  {
-    targetId: number;
-    teamId: number | null;
-    pos: DirectorVec3;
-    heading?: number;
-    armor?: "light" | "medium" | "heavy";
-    pack?: string;
-    health?: number;
-  }[]
->;
+export type PlayersAtSec = Map<number, DirectorPlayerSample[]>;
 
 /**
  * One shared proximity index per SAMPLE ARRAY (several passes want it).
@@ -123,15 +112,7 @@ function indexPlayerSamples(
     const sec = Math.round(sample.timeSec);
     let list = playersAtSec.get(sec);
     if (!list) playersAtSec.set(sec, (list = []));
-    list.push({
-      targetId: sample.targetId,
-      teamId: sample.teamId,
-      pos: sample.pos,
-      heading: sample.heading,
-      armor: sample.armor,
-      pack: sample.pack,
-      health: sample.health,
-    });
+    list.push(sample);
   }
 }
 
@@ -273,19 +254,26 @@ export function eventFlagSlot(
 }
 
 /** Binary-search the last sample at or before `timeSec`. */
-export function sampleAt(
-  samples: DirectorFlagSample[],
+export function sampleAt<T extends { timeSec: number }>(
+  samples: readonly T[],
   timeSec: number,
-): DirectorFlagSample | null {
+): T | null {
+  return samples[sampleIndexAt(samples, timeSec)] ?? null;
+}
+
+export function sampleIndexAt(
+  samples: readonly { timeSec: number }[],
+  timeSec: number,
+): number {
   let lo = 0;
   let hi = samples.length - 1;
-  if (hi < 0 || samples[0].timeSec > timeSec) return null;
+  if (hi < 0 || samples[0].timeSec > timeSec) return -1;
   while (lo < hi) {
     const mid = (lo + hi + 1) >> 1;
     if (samples[mid].timeSec <= timeSec) lo = mid;
     else hi = mid - 1;
   }
-  return samples[lo];
+  return lo;
 }
 
 export function flagLabel(slot: number, dataset: DirectorDataset): string {

@@ -27,3 +27,72 @@ export function isRealMatchStart(rawBody: string): boolean {
     .toLowerCase()
     .includes("match started");
 }
+
+export type MatchPhase =
+  | { kind: "unknown" | "warmup"; startSec?: never }
+  | { kind: "countdown"; startSec: number }
+  | { kind: "running"; startSec: number | null };
+
+export const UNKNOWN_PHASE: MatchPhase = { kind: "unknown" };
+export const WARMUP: MatchPhase = { kind: "warmup" };
+
+/** Timestamps in catch-up snapshots travel relative to the source clock. */
+export function shiftMatchPhase(
+  phase: MatchPhase,
+  offsetSec: number,
+): MatchPhase {
+  if (phase.startSec == null) return phase;
+  return { ...phase, startSec: phase.startSec + offsetSec };
+}
+
+export function matchCountdownSeconds(
+  body: string,
+  argument?: string,
+): number | undefined {
+  const match = /match starts in (\d+|%1) second/i.exec(body);
+  if (!match) return;
+  const seconds = Number(match[1] === "%1" ? argument : match[1]);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
+}
+
+/** A CTF scoreboard with points proves play is underway without dating kickoff. */
+export function matchPhaseFromScoreboard(
+  gameClass: string | null | undefined,
+  teams: readonly { score: number }[],
+): MatchPhase {
+  return gameClass?.toLowerCase().includes("ctf") &&
+    teams.some((team) => team.score > 0)
+    ? { kind: "running", startSec: null }
+    : UNKNOWN_PHASE;
+}
+
+/** checkTimeLimit sends the full match limit plus time remaining. Short start/end
+ * announcements send the remaining time in both fields, rounded to fractional minutes. */
+export function matchPhaseFromClock(
+  phase: MatchPhase,
+  limitMs: number,
+  remainingMs: number,
+  nowSec: number,
+): MatchPhase {
+  // Later HUD synchronizations (including the final-minute announcements)
+  // must not move an established kickoff.
+  if (phase.kind === "running" && phase.startSec !== null) return phase;
+  if (
+    !Number.isFinite(limitMs) ||
+    !Number.isFinite(remainingMs) ||
+    limitMs <= 0 ||
+    remainingMs < 0
+  )
+    return phase;
+  const elapsedMs = limitMs - remainingMs;
+  if (elapsedMs > 1)
+    return { kind: "running", startSec: nowSec - elapsedMs / 1000 };
+  if (Math.abs(elapsedMs) <= 1) {
+    const deadline = nowSec + remainingMs / 1000;
+    // notifyMatchStart announces whole seconds before sending the exact clock.
+    if (phase.kind === "countdown" && Math.abs(phase.startSec - deadline) <= 1)
+      return { kind: "countdown", startSec: deadline };
+    if (remainingMs > 60_000) return { kind: "running", startSec: nowSec };
+  }
+  return phase;
+}

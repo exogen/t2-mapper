@@ -123,14 +123,8 @@ export function resolveShotSubjectEntityId(
     : findLivingEntityByTargetId(subject.targetId);
 }
 
-/** The scene group for a planned shot subject, if it's in scope now. */
-export function resolveShotSubjectGroup(subject: ShotSubject): Object3D | null {
-  const entityId = resolveShotSubjectEntityId(subject);
-  return entityId ? resolveSubjectGroup(entityId) : null;
-}
-
 /** Index of the shot containing `t`, or -1 when past the plan's end. */
-export function findShotIndex(shots: Shot[], t: number): number {
+export function findShotIndex(shots: readonly Shot[], t: number): number {
   if (t < shots[0].startSec) return 0;
   let lo = 0;
   let hi = shots.length - 1;

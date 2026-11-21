@@ -7,6 +7,7 @@
  * is authentic broadcasting, and the commentary can play it honestly.
  */
 import type { CausalView } from "./causalView";
+import { playerMotion } from "./analysis";
 import { dist } from "./geometry";
 
 /** How far back a player's motion is differenced for closing speed. */
@@ -66,13 +67,12 @@ export function inboundAttacker(
     speed: number;
     likelihood: number;
   } | null = null;
-  const players = view.playersAt();
-  const before = new Map(
-    view
-      .playersAt(view.now - PREDICT_MOTION_WINDOW_SEC)
-      .map((p) => [p.targetId, p]),
-  );
-  for (const p of players) {
+  for (const { player: p, before, elapsed } of playerMotion(
+    view,
+    view.now,
+    PREDICT_MOTION_WINDOW_SEC,
+  )) {
+    if (p.vehicleId || before.vehicleId) continue;
     // Same-team players return flags too — approach is approach; the
     // scorer decides what an arrival would mean.
     if (p.teamId != null && p.teamId === slot && flag.status === "home") {
@@ -80,10 +80,7 @@ export function inboundAttacker(
     }
     const d = dist(p.pos, flag.pos);
     if (d > PREDICT_GRAB_RANGE) continue;
-    const prev = before.get(p.targetId);
-    if (!prev) continue;
-    const dPrev = dist(prev.pos, flag.pos);
-    const closing = (dPrev - d) / PREDICT_MOTION_WINDOW_SEC;
+    const closing = (dist(before.pos, flag.pos) - d) / elapsed;
     if (closing < PREDICT_MIN_CLOSING_SPEED) continue;
     const eta = d / closing;
     const byArmor =
@@ -161,18 +158,16 @@ export function capLikelihood(view: CausalView, slot: number): number {
 export function returnConverging(view: CausalView, slot: number): boolean {
   const flag = view.flagAt(slot);
   if (!flag || flag.status !== "field") return false;
-  const before = new Map(
-    view
-      .playersAt(view.now - PREDICT_MOTION_WINDOW_SEC)
-      .map((p) => [p.targetId, p]),
-  );
-  for (const p of view.playersAt()) {
+  for (const { player: p, before, elapsed } of playerMotion(
+    view,
+    view.now,
+    PREDICT_MOTION_WINDOW_SEC,
+  )) {
+    if (p.vehicleId || before.vehicleId) continue;
     if (p.teamId !== slot) continue;
     const d = dist(p.pos, flag.pos);
     if (d > PREDICT_GRAB_RANGE) continue;
-    const prev = before.get(p.targetId);
-    if (!prev) continue;
-    const closing = (dist(prev.pos, flag.pos) - d) / PREDICT_MOTION_WINDOW_SEC;
+    const closing = (dist(before.pos, flag.pos) - d) / elapsed;
     if (closing >= PREDICT_MIN_CLOSING_SPEED || d <= 30) return true;
   }
   return false;

@@ -16,6 +16,7 @@ import type {
   DirectorEvent,
   DirectorFlagSample,
   DirectorFlagStand,
+  DirectorPlayerSample,
   DirectorVec3,
 } from "./types";
 import { DIRECTOR_LOOKAHEAD_SEC } from "./tunables";
@@ -24,7 +25,9 @@ import {
   carryDestination,
   eventFlagSlot,
   playersAtSecFor,
+  playerTracksFor,
   sampleAt,
+  sampleIndexAt,
   type FlagTrack,
   type PlayersAtSec,
 } from "./dataset";
@@ -33,6 +36,8 @@ import { dist } from "./geometry";
 export class CausalView {
   dataset: DirectorDataset;
   readonly lookaheadSec: number;
+  /** Live tail playback may have less than a full window of recorded input. */
+  private readonly boundToDataset: boolean;
   /** Per-flag samples/grab times (the future-laced outPeriods stay
    *  private — only horizon-filtered queries touch them). */
   private tracks: Map<number, FlagTrack>;
@@ -44,9 +49,14 @@ export class CausalView {
   /** The array `eventsByTime` was sorted from. */
   private eventsSource: DirectorEvent[];
 
-  constructor(dataset: DirectorDataset, lookaheadSec = DIRECTOR_LOOKAHEAD_SEC) {
+  constructor(
+    dataset: DirectorDataset,
+    lookaheadSec = DIRECTOR_LOOKAHEAD_SEC,
+    boundToDataset = false,
+  ) {
     this.dataset = dataset;
     this.lookaheadSec = lookaheadSec;
+    this.boundToDataset = boundToDataset;
     this.tracks = buildFlagTracks(dataset);
     this.playersAtSec = playersAtSecFor(dataset);
     this.eventsSource = dataset.events;
@@ -90,7 +100,10 @@ export class CausalView {
 
   /** The edge of the knowable: now + the configured lookahead. */
   get horizon(): number {
-    return this._now + this.lookaheadSec;
+    const horizon = this._now + this.lookaheadSec;
+    return this.boundToDataset
+      ? Math.min(horizon, this.dataset.durationSec)
+      : horizon;
   }
 
   /** Furthest past `now` any query has reached — the causality proof. */
@@ -141,9 +154,21 @@ export class CausalView {
     return sampleAt(this.tracks.get(slot)?.samples ?? [], this.clamp(t));
   }
 
-  /** Players bucketed at the whole second nearest `t` (≤ horizon). */
+  matchPhaseAt(t = this._now) {
+    return sampleAt(this.dataset.matchPhases ?? [], this.clamp(t))?.phase;
+  }
+
+  /** Use the current bucket only after its samples have arrived. */
   playersAt(t = this._now): NonNullable<ReturnType<PlayersAtSec["get"]>> {
-    return this.playersAtSec.get(Math.round(this.clamp(t))) ?? [];
+    const time = this.clamp(t);
+    const sec = Math.round(time);
+    const players = this.playersAtSec.get(sec);
+    if (players?.length) {
+      if (players[players.length - 1].timeSec <= time) return players;
+      const known = players.filter((player) => player.timeSec <= time);
+      if (known.length > 0) return known;
+    }
+    return this.playersAtSec.get(sec - 1) ?? [];
   }
 
   /** Events in [fromSec, toSec], the top clamped to the horizon. */
@@ -174,16 +199,20 @@ export class CausalView {
     );
   }
 
-  /** Trailing length of the current "held" stretch, measured backward
-   *  from `now` only — the causal stand-in for heldRunLength. */
-  trailingHeldSec(slot: number): number {
+  /** Trailing length of the current "held" stretch, optionally capped at
+   *  the duration the caller needs to distinguish. */
+  trailingHeldSec(slot: number, limitSec = Infinity): number {
     const samples = this.tracks.get(slot)?.samples ?? [];
-    let i = samples.length - 1;
-    while (i >= 0 && samples[i].timeSec > this._now) i--;
+    let i = sampleIndexAt(samples, this._now);
     if (i < 0 || samples[i].status !== "held") return 0;
     const end = samples[i].timeSec;
-    while (i > 0 && samples[i - 1].status === "held") i--;
-    return end - samples[i].timeSec;
+    while (
+      i > 0 &&
+      end - samples[i].timeSec < limitSec &&
+      samples[i - 1].status === "held"
+    )
+      i--;
+    return Math.min(limitSec, end - samples[i].timeSec);
   }
 
   /** How long the flag has lain continuously in the FIELD as of now
@@ -234,30 +263,30 @@ export class CausalView {
     };
   }
 
-  /** How far the flag has moved from where it was `windowSec` ago —
-   *  zero for a turtled carrier pacing a small room. */
-  trailingFlagDrift(slot: number, windowSec: number): number | null {
-    const before = this.flagAt(slot, this._now - windowSec);
-    const current = this.flagAt(slot);
-    if (!before || !current) return null;
-    if (this._now - before.timeSec > windowSec + 3) return null;
-    return dist(before.pos, current.pos);
+  /** Require a whole window of local movement. A run that loops back to
+   *  its starting point is still a run. */
+  flagStayedNear(slot: number, windowSec: number, radius: number): boolean {
+    const samples = this.tracks.get(slot)?.samples ?? [];
+    const end = sampleIndexAt(samples, this._now);
+    const start = sampleIndexAt(samples, this._now - windowSec);
+    if (start < 0 || end <= start) return false;
+    if (this._now - samples[start].timeSec > windowSec + 3) return false;
+    const pos = samples[end].pos;
+    for (let i = start; i < end; i++) {
+      if (dist(samples[i].pos, pos) > radius) return false;
+    }
+    return true;
   }
 
   /** A player's last sample at or before `t` (≤ horizon), scanning the
    *  trailing few seconds of the per-second buckets. */
-  playerAt(
-    targetId: number,
-    t = this._now,
-  ): { pos: DirectorVec3; teamId: number | null } | null {
-    const to = Math.round(this.clamp(t));
-    for (let sec = to; sec >= to - 3; sec--) {
-      const found = this.playersAtSec
-        .get(sec)
-        ?.find((p) => p.targetId === targetId);
-      if (found) return found;
-    }
-    return null;
+  playerAt(targetId: number, t = this._now): DirectorPlayerSample | null {
+    const to = this.clamp(t);
+    const sample = sampleAt(
+      playerTracksFor(this.dataset).get(targetId) ?? [],
+      to,
+    );
+    return sample && to - sample.timeSec <= 3 ? sample : null;
   }
 
   /** Entity-state deaths in [fromSec, toSec ≤ horizon] — present in

@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type {
+  IncomingHttpHeaders,
   IncomingMessage,
   RequestListener,
   ServerResponse,
@@ -13,6 +14,8 @@ import { NEUTRAL_MOVE } from "./moveList";
 import type { WatchSessionManagerOptions } from "./watchSession";
 import type { DemoCoordinatorOptions } from "./demoCoordinator";
 import type { PatrolOptions } from "./patrol";
+import type { AppAuthConfig, AppAuthService } from "./appAuth";
+import type { AccountUser } from "./accountTypes";
 
 const harness = vi.hoisted(() => ({
   server: null as EventEmitter | null,
@@ -45,6 +48,8 @@ const harness = vi.hoisted(() => ({
   patrolOptions: null as PatrolOptions | null,
   sweepPending: vi.fn(),
   shutdownCoordinator: vi.fn().mockResolvedValue(undefined),
+  appAuthConfig: null as AppAuthConfig | null,
+  getAccount: vi.fn<AppAuthService["getAccount"]>(),
   lifecycleHandlers: new Map<string | symbol, (...args: any[]) => void>(),
 }));
 
@@ -64,13 +69,19 @@ vi.mock("./eventLoopMonitor", () => ({
     stop = harness.stopEventLoopMonitor;
   },
 }));
-// Transport/chat tests never initialize OAuth, open account databases, or run backups.
+// Transport tests use fake accounts and never initialize OAuth or persistent storage.
 vi.mock("./appAuth", () => ({
-  loadAppAuthConfig: () => null,
-  createAppAuth: () => {
-    throw new Error("Accounts are disabled in the relay transport harness");
-  },
+  loadAppAuthConfig: () => harness.appAuthConfig,
+  createAppAuth: async () => ({
+    getAccount: harness.getAccount,
+    handle: async () => false,
+    close: () => {},
+  }),
   handleDisabledAppAuth: () => false,
+}));
+vi.mock("./accountDatabase", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./accountDatabase")>()),
+  openAccountDatabase: () => ({ open: true, close: () => {} }),
 }));
 vi.mock("./accountBackup", () => ({
   loadAccountBackupConfig: () => null,
@@ -214,10 +225,13 @@ describe("relay browser input", () => {
     harness.queryServerList.mockReset().mockResolvedValue([]);
     harness.watchOptions = null;
     harness.patrolOptions = null;
+    harness.appAuthConfig = null;
+    harness.getAccount.mockReset();
     harness.lifecycleHandlers.clear();
     harness.warmStart.mockReset();
     vi.useFakeTimers();
     vi.stubEnv("DEMO_RECORD_ENABLED", "0");
+    vi.stubEnv("DEMO_RECORD_EXCLUDED_SERVERS", undefined);
     vi.stubEnv("DEMO_PATROL_ENABLED", "0");
     vi.stubEnv("DEMO_PATROL_SERVERS", undefined);
     vi.stubEnv("DEMO_PATROL_MISSION_TYPES", undefined);
@@ -235,6 +249,9 @@ describe("relay browser input", () => {
     vi.stubEnv("DEMO_DIR", undefined);
     vi.stubEnv("DEMO_UPLOAD_RETRY_MS", "300000");
     vi.stubEnv("WATCH_STATE_PATH", "/nonexistent/chat-policy-watch-state.json");
+    vi.stubEnv("WATCH_LIVE_CAST_ENABLED", undefined);
+    vi.stubEnv("WATCH_LIVE_CAST_LOOKAHEAD_MS", undefined);
+    vi.stubEnv("WATCH_LIVE_CAST_DELIVERY_MS", undefined);
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -244,9 +261,10 @@ describe("relay browser input", () => {
   });
 
   async function connect(
-    role: "player" | "watcher",
+    role: "idle" | "player" | "watcher",
     enabled: string | undefined,
     clientIp = "192.0.2.10",
+    headers: IncomingHttpHeaders = {},
   ) {
     vi.stubEnv("RELAY_CHAT_ENABLED", enabled);
     // Importing the entry point must not register process exit/crash hooks.
@@ -263,15 +281,136 @@ describe("relay browser input", () => {
     }
     const browser = new Browser();
     harness.server!.emit("connection", browser, {
-      headers: {},
+      headers,
       socket: { remoteAddress: clientIp, remotePort: 50000 },
     });
-    await browser.request({
-      type: role === "player" ? "joinServer" : "watchServer",
-      address: "192.0.2.1:28000",
-    });
+    if (role !== "idle")
+      await browser.request({
+        type: role === "player" ? "joinServer" : "watchServer",
+        address: "192.0.2.1:28000",
+      });
     return browser;
   }
+
+  const baseURL = "https://mapgenius.test";
+  const trustedOrigin = "https://viewer.test";
+  const admin: AccountUser = {
+    id: "account-1",
+    name: "Test admin",
+    role: "admin",
+    image: null,
+    discordId: "123456789012345678",
+    discordUsername: "test-admin",
+    t2AccountNames: [],
+    t2Profile: null,
+  };
+
+  function enableAccountChecks(account: AccountUser | null) {
+    harness.appAuthConfig = {
+      baseURL,
+      trustedOrigins: [trustedOrigin],
+      secret: "unused-test-secret",
+      discordClientId: "unused-client-id",
+      discordClientSecret: "unused-client-secret",
+    };
+    harness.getAccount.mockResolvedValue(account);
+  }
+
+  function liveCastMetrics(browser: Browser) {
+    return browser.send.mock.calls
+      .map(([body]) => JSON.parse(body as string))
+      .filter(({ type }) => type === "liveCastMetrics");
+  }
+
+  it.each([baseURL, trustedOrigin])(
+    "pushes initial and periodic CastGenius metrics to an admin from %s until authorization is revoked",
+    async (origin) => {
+      enableAccountChecks(admin);
+      const headers = { origin, cookie: "session=admin-test" };
+      const browser = await connect("idle", undefined, undefined, headers);
+      await vi.advanceTimersByTimeAsync(0);
+      const sample = {
+        type: "liveCastMetrics",
+        activeWorkers: 0,
+        workers: [],
+      };
+      expect(liveCastMetrics(browser)).toEqual([sample]);
+      expect(harness.getAccount).toHaveBeenCalledExactlyOnceWith(headers);
+
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(liveCastMetrics(browser)).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(liveCastMetrics(browser)).toEqual([sample, sample]);
+      expect(harness.getAccount).toHaveBeenCalledTimes(2);
+
+      harness.getAccount.mockResolvedValue({ ...admin, role: "user" });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(liveCastMetrics(browser)).toEqual([sample, sample]);
+      expect(harness.getAccount).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(harness.getAccount).toHaveBeenCalledTimes(3);
+    },
+  );
+
+  it("skips a CastGenius sample when admin authorization cannot be verified and checks again", async () => {
+    enableAccountChecks(admin);
+    const browser = await connect("idle", undefined, undefined, {
+      origin: trustedOrigin,
+      cookie: "session=admin-test",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(liveCastMetrics(browser)).toHaveLength(1);
+    harness.getAccount.mockRejectedValueOnce(
+      new Error("account lookup failed"),
+    );
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(liveCastMetrics(browser)).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(liveCastMetrics(browser)).toHaveLength(2);
+  });
+
+  it.each([
+    {
+      label: "a non-admin",
+      origin: trustedOrigin,
+      cookie: "session=user-test",
+      account: { ...admin, role: "user" as const },
+      checks: 1,
+    },
+    {
+      label: "a request without cookies",
+      origin: trustedOrigin,
+      cookie: undefined,
+      account: admin,
+      checks: 0,
+    },
+    {
+      label: "an untrusted origin",
+      origin: "https://other.test",
+      cookie: "session=admin-test",
+      account: admin,
+      checks: 0,
+    },
+    {
+      label: "a request without an origin",
+      origin: undefined,
+      cookie: "session=admin-test",
+      account: admin,
+      checks: 0,
+    },
+  ])(
+    "does not push CastGenius metrics to $label",
+    async ({ origin, cookie, account, checks }) => {
+      enableAccountChecks(account);
+      const browser = await connect("idle", undefined, undefined, {
+        origin,
+        cookie,
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(liveCastMetrics(browser)).toEqual([]);
+      expect(harness.getAccount).toHaveBeenCalledTimes(checks);
+    },
+  );
 
   it("includes event loop diagnostics in health without failing on high delay", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "relay-health-"));
@@ -312,6 +451,29 @@ describe("relay browser input", () => {
       address: "192.0.2.1:28000",
       message: "Unable to join the game stream. Please try again.",
     });
+  });
+
+  it("passes the requested CastGenius channel preference to the watch session", async () => {
+    const browser = await connect("watcher", "false");
+    const address = "192.0.2.1:28000";
+    const channelId = "previous-epoch";
+    await browser.request({
+      type: "watchServer",
+      address,
+      channelId,
+      liveCast: true,
+    });
+    await browser.request({
+      type: "watchServer",
+      address,
+      channelId,
+      liveCast: false,
+    });
+    expect(harness.watch.mock.calls).toEqual([
+      [browser, address, undefined, undefined],
+      [browser, address, channelId, true],
+      [browser, address, channelId, false],
+    ]);
   });
 
   it.each(["player", "watcher"] as const)(
@@ -490,6 +652,31 @@ describe("relay browser input", () => {
     });
   });
 
+  it.each(["true", "1"])(
+    "enables live CastGenius with WATCH_LIVE_CAST_ENABLED=%s",
+    async (enabled) => {
+      vi.stubEnv("WATCH_LIVE_CAST_ENABLED", enabled);
+      await connect("watcher", "false");
+
+      expect(harness.watchOptions?.createLiveCast).toBeTypeOf("function");
+      expect(harness.watchOptions?.liveCastLookaheadMs).toBe(6_000);
+      expect(harness.watchOptions?.liveCastDelayMs).toBe(8_000);
+      expect(harness.watchOptions?.liveCastDeliveryMs).toBe(2_000);
+      expect(harness.patrolOptions).toBeNull();
+    },
+  );
+
+  it.each([undefined, "false", "0"])(
+    "disables live CastGenius with WATCH_LIVE_CAST_ENABLED=%s",
+    async (enabled) => {
+      vi.stubEnv("WATCH_LIVE_CAST_ENABLED", enabled);
+      await connect("watcher", "false");
+
+      expect(harness.watchOptions).not.toBeNull();
+      expect(harness.watchOptions?.createLiveCast).toBeUndefined();
+    },
+  );
+
   it("keeps patrol defaults when the new filters are unset", async () => {
     vi.stubEnv("DEMO_RECORD_ENABLED", "1");
     vi.stubEnv("DEMO_PATROL_ENABLED", "1");
@@ -536,6 +723,24 @@ describe("relay browser input", () => {
         watchStatePath: "/data/watch-state.json",
       }),
     );
+  });
+
+  it("passes the same recording exclusion to live watch and patrol", async () => {
+    vi.stubEnv("DEMO_RECORD_ENABLED", "1");
+    vi.stubEnv("DEMO_PATROL_ENABLED", "1");
+    vi.stubEnv("DEMO_PATROL_SERVERS", "*");
+    vi.stubEnv(
+      "DEMO_RECORD_EXCLUDED_SERVERS",
+      '["Blair Lag Project", "Bot Lab *", "192.0.2.1:28000"]',
+    );
+    await connect("watcher", "false");
+    const excludes = harness.watchOptions?.isRecordingExcluded;
+    expect(excludes).toBeTypeOf("function");
+    expect(harness.patrolOptions?.isRecordingExcluded).toBe(excludes);
+    expect(excludes?.("192.0.2.1:28000")).toBe(true);
+    expect(excludes?.("192.0.2.2:28000", "blair lag project")).toBe(true);
+    expect(excludes?.("192.0.2.2:28000", "Bot Lab West")).toBe(true);
+    expect(excludes?.("192.0.2.2:28000", "Old Blair Lag Project")).toBe(false);
   });
 
   it.each([false, true])(

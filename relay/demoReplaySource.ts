@@ -1,3 +1,4 @@
+import { matchPhaseFromScoreboard } from "../src/stream/matchEvents.js";
 import { setImmediate } from "node:timers/promises";
 import {
   BlockTypeInfo,
@@ -240,6 +241,10 @@ export class DemoReplaySource {
       initialGhosts: initial.initialGhosts,
       hudState: {
         ...hud,
+        matchPhase: matchPhaseFromScoreboard(
+          metadata.gameClassName,
+          values.teamScores,
+        ),
         playerRoster: Array.from(values.playerRoster, ([clientId, entry]) => ({
           clientId,
           ...entry,

@@ -1,4 +1,5 @@
 import { CastPanel } from "./CastPanel";
+import { LiveCastControl } from "./LiveCastControl";
 import { QuickCamPanel } from "./QuickCamPanel";
 import { IffOptions } from "./IffOptions";
 import { GraphicsEffects } from "./GraphicsEffects";
@@ -59,6 +60,7 @@ import { hasMission } from "../manifest";
 import { ChooseMapButton } from "./ChooseMapButton";
 import { MapInfoButton } from "./MapInfoButton";
 import { ShowScoresButton } from "./ShowScoresButton";
+import { DebugCastGeniusInfo } from "./DebugCastGeniusInfo";
 import { DebugEntityList } from "./DebugEntityList";
 import { DebugNetworkInfo } from "./DebugNetworkInfo";
 import { DebugRendererInfo } from "./DebugRendererInfo";
@@ -292,11 +294,13 @@ export const InspectorControls = memo(function InspectorControls({
                   <StatsPanel />
                 </Accordion>
               )}
-              {recording?.source === "demo" && hasCommentary && (
+              {mode === "live" ? (
+                <LiveCastControl />
+              ) : recording?.source === "demo" && hasCommentary ? (
                 <Accordion value="cast" label="Cast Genius">
                   <CastPanel />
                 </Accordion>
-              )}
+              ) : null}
               {recording?.source === "demo" && (
                 <Accordion
                   value="timeline"
@@ -943,6 +947,7 @@ export const InspectorControls = memo(function InspectorControls({
                   <InterpolationControls viewingClip={viewingClip} />
                 )}
                 <DebugNetworkInfo />
+                <DebugCastGeniusInfo />
                 {canShowEntityList && <DebugEntityList />}
                 <div className={styles.DebugActionField}>
                   <button

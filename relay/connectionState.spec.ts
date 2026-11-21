@@ -247,6 +247,7 @@ describe("ConnectionState", () => {
     state.beginMissionChange();
     expect(structuredClone(state.save())).toEqual({
       ...before,
+      matchPhase: { kind: "unknown" },
       flags: new Map(),
       flagDroppedAtSec: {},
       missionDisplayName: null,
@@ -255,6 +256,73 @@ describe("ConnectionState", () => {
       serverDisplayName: null,
       matchStarted: false,
     });
+  });
+
+  it("rebases countdown and running phases when the relay and worker use different clocks", () => {
+    const time = { now: 1000 };
+    const source = connection(time);
+    message(source, "MsgSystemClock", "", "0", "0");
+    expect(source.matchPhase.kind).toBe("unknown");
+    message(source, "0", "\x03%1 is READY.", "Player");
+    expect(source.matchPhase.kind).toBe("warmup");
+    message(
+      source,
+      "msgMissionStart",
+      "The admin has forced the match to start.",
+    );
+    expect(source.matchPhase.kind).toBe("warmup");
+    message(source, "MsgMissionStart", "Match starts in %1 seconds.", "90");
+    message(source, "MsgSystemClock", "", "1.50417", "90250");
+    time.now += 60;
+    const worker = connection({ now: 8 });
+    worker.hydrateHud(source.hudState());
+    expect(worker.matchPhase).toEqual({ kind: "countdown", startSec: 38.25 });
+    time.now += 31;
+    expect(source.matchPhase.kind).toBe("warmup");
+    message(source, "MsgMissionStart", "Match starts in 2 seconds.");
+    time.now += 2;
+    message(source, "msgMissionStart", "Match started!");
+    message(source, "MsgSystemClock", "", "20", "1200000");
+    time.now += 300;
+    worker.hydrateHud(source.hudState());
+    expect(worker.matchPhase).toEqual({ kind: "running", startSec: -292 });
+  });
+
+  it("recognizes a fresh match clock after the countdown even if the whistle was missed", () => {
+    const time = { now: 9 };
+    const state = connection(time);
+    message(state, "MsgMissionStart", "Match starts in 1 second.");
+    time.now = 10;
+    message(state, "MsgSystemClock", "", "0", "0");
+    expect(state.matchPhase).toEqual({ kind: "countdown", startSec: 10 });
+    message(state, "MsgSystemClock", "", "20", "1200000");
+    expect(state.matchPhase).toEqual({ kind: "running", startSec: 10 });
+  });
+
+  it("reads a late join during the last 30 seconds from the full limit and remaining time", () => {
+    const time = { now: 10 };
+    const state = connection(time);
+    message(state, "MsgSystemClock", "", "0", "0");
+    message(state, "MsgMissionEnd", "Match ends in %1 seconds.", "30");
+    message(state, "MsgSystemClock", "", "0.5", "30000");
+    expect(state.matchPhase).toEqual({ kind: "running", startSec: null });
+    message(state, "MsgSystemClock", "", "20", "30000");
+    expect(state.matchPhase).toEqual({ kind: "running", startSec: -1160 });
+    time.now += 15;
+    message(state, "MsgSystemClock", "", "0.25", "15000");
+    expect(state.matchPhase).toEqual({ kind: "running", startSec: -1160 });
+    message(state, "MsgClientReady", "", "CTFGame");
+    expect(state.matchPhase.kind).toBe("unknown");
+    message(state, "MsgSystemClock", "", "20", "5000");
+    expect(state.matchPhase).toEqual({ kind: "running", startSec: -1170 });
+  });
+
+  it("treats a score in an untimed game as active play with an unknown kickoff", () => {
+    const state = connection();
+    message(state, "MsgTeamScore", "", "1", "3");
+    message(state, "MsgSystemClock", "", "0", "0");
+    expect(state.matchPhase).toEqual({ kind: "running", startSec: null });
+    expect(state.hudState().matchPhase).toEqual(state.matchPhase);
   });
 
   it("holds the clock across a match end and resumes it at the next drop", () => {

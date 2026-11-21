@@ -212,6 +212,21 @@ describe("target finder follow targets", () => {
     expect(resolveWatchFollowTarget()).toBe("200");
   });
 
+  it("keeps a director shot on the old body through a fast respawn", () => {
+    gameEntityStore.getState().setAllStreamEntities([player("100", 32)]);
+    enterWatchFollow("100");
+    gameEntityStore
+      .getState()
+      .setAllStreamEntities([
+        player("100", 32, { damageState: 1 }),
+        player("200", 32),
+      ]);
+    expect(resolveWatchFollowTarget(false)).toBe("100");
+    gameEntityStore.getState().setAllStreamEntities([player("200", 32)]);
+    expect(resolveWatchFollowTarget(false)).toBeNull();
+    expect(resolveWatchFollowTarget()).toBe("200");
+  });
+
   it("keeps a flag distinct from its carrier and selects the same slot as the number key", () => {
     setStreamSnapshot({
       flagTargets: [

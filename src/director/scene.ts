@@ -1468,28 +1468,17 @@ function describeMatchState(
 ): Partial<Pick<ShotScene, "clockRemainingSec" | "recentCaps" | "topScorers">> {
   const facts = dataset.matchFacts;
   if (!facts) return {};
-  const lastAt = <T extends { timeSec: number }>(
-    series: T[],
-  ): T | undefined => {
-    let last: T | undefined;
-    for (const entry of series) {
-      if (entry.timeSec <= atSec) last = entry;
-      else break;
-    }
-    return last;
-  };
-  const clock = lastAt(facts.clock ?? []);
-  // Negative counts DOWN to the end; the remainder shrinks by the time
-  // elapsed since the sample. A sample from BEFORE the whistle is the
-  // countdown to the start, not the match clock — and it is never
-  // "time left": read by a shot spanning the kickoff it had the booth
-  // saying "under a minute left" as the match began.
-  const fromBeforeWhistle =
-    clock != null &&
-    facts.matchStartSec != null &&
-    clock.timeSec < facts.matchStartSec;
+  const clock = sampleAt(facts.clock ?? [], atSec);
+  // A negative HUD clock can also be a countdown to kickoff. Use the
+  // phase when the clock was sampled, even if the shot spans the whistle.
+  const phase =
+    clock && sampleAt(dataset.matchPhases ?? [], clock.timeSec)?.phase;
+  const inPlay = phase
+    ? phase.kind === "running"
+    : facts.matchStartSec == null ||
+      (clock != null && clock.timeSec >= facts.matchStartSec);
   const clockRemainingSec =
-    clock && clock.clockMs < 0 && !fromBeforeWhistle
+    clock && clock.clockMs < 0 && inPlay
       ? Math.max(0, -clock.clockMs / 1000 - (atSec - clock.timeSec))
       : null;
   // A capture of slot S is scored by the OTHER side.
@@ -1509,7 +1498,7 @@ function describeMatchState(
       0,
     ),
   }));
-  const roster = lastAt(facts.roster ?? []);
+  const roster = sampleAt(facts.roster ?? [], atSec);
   const topScorers = roster?.scorers.slice(0, 3).map((s) => ({
     name: spokenName(s.name),
     team: teamName(s.teamId, dataset) ?? null,

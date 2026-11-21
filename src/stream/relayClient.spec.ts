@@ -172,6 +172,59 @@ describe("RelayClient catch-up ordering", () => {
     expect(ws.readyState).toBe(FakeWebSocket.OPEN);
   });
 
+  it("attaches with the requested picture when resuming a CastGenius watch", () => {
+    const { client, ws } = setup();
+    client.watchServer("test:28000", "session:cast", true);
+    expect(JSON.parse(ws.send.mock.calls.at(-1)![0])).toEqual({
+      type: "watchServer",
+      address: "test:28000",
+      channelId: "session:cast",
+      liveCast: true,
+    });
+  });
+
+  it("replays optional CastGenius messages in order with game packets after catch-up", async () => {
+    const { ws, events } = setup({
+      onLiveCastMessage: (message) => events.push(message.type),
+      onLiveCastMetrics: (message) => events.push(message.type),
+    });
+    const marker = {
+      type: "liveCastTick",
+      gameId: "game-one",
+      epoch: 1,
+      tick: 100,
+    } as const;
+    ws.receive(marker);
+    snapshot(ws, 1);
+    ws.receive(new Uint8Array([91]));
+    ws.receive({
+      type: "liveCastShots",
+      gameId: "game-one",
+      epoch: 1,
+      plannedThroughTick: 100,
+      shots: [],
+    });
+    ws.receive(marker);
+    ws.receive(new Uint8Array([92]));
+    ws.receive({
+      type: "liveCastMetrics",
+      activeWorkers: 1,
+      workers: [],
+    });
+    expect(events).toEqual(["liveCastMetrics"]);
+    await decodes[0]();
+    await vi.waitFor(() =>
+      expect(events).toEqual([
+        "liveCastMetrics",
+        "hydrate:1",
+        "packet:91",
+        "liveCastShots",
+        "liveCastTick",
+        "packet:92",
+      ]),
+    );
+  });
+
   it("orders replay labels after catch-up and filters another room or epoch", async () => {
     const onReplayGamePresentation = vi.fn();
     const { client, ws, events } = setup({ onReplayGamePresentation });

@@ -1,4 +1,3 @@
-import { gzipSync } from "node:zlib";
 import { randomUUID } from "node:crypto";
 import type { WebSocket } from "ws";
 import {
@@ -41,6 +40,13 @@ import {
   CatchupDataBlockCache,
   serializeCatchupPayload,
 } from "./watchSerialize.js";
+import { MAX_CATCHUP_COMPRESSED_BYTES } from "./catchupLimits.js";
+import {
+  canQueueViewerData,
+  compressCatchup,
+  sendViewerCatchup,
+  VIEWER_BUFFER_BYTES,
+} from "./viewerSocket.js";
 import { buildCatchupPayload } from "./watchCatchup.js";
 import type {
   DemoCoordinator,
@@ -48,6 +54,17 @@ import type {
 } from "./demoCoordinator.js";
 import type { DemoRecorder } from "./demoRecorder.js";
 import type { PublishedGame } from "./gamePresentation.js";
+import {
+  LIVE_CAST_ANCHOR_TICKS,
+  LIVE_CAST_LOOKAHEAD_MS,
+  supportsLiveCastMode,
+  type LiveCastIdentity,
+  type LiveCastPlanBatch,
+  type CreateLiveCastFeed,
+  type LiveCastShotStart,
+} from "./liveCastTypes.js";
+import { LiveCastPlannerSession } from "./liveCastPlannerSession.js";
+import { MOVE_TICK_MS } from "./moveList.js";
 import { relayLog } from "./logger.js";
 import type {
   ConnectionStatus,
@@ -91,7 +108,8 @@ const CHAT_MAX_LENGTH = 255;
 const CONTROL_REPLY_INTERVAL_MS = 3_000;
 /** Stock serverDefaults.cs limits chat text, including its voice tag. */
 const CONTROL_REPLY_MAX_LENGTH = 120;
-const CATCHUP_CHUNK_BYTES = 256 * 1024;
+// Allow one complete catch-up burst plus the ordinary streaming backlog.
+const WATCH_BUFFER_BYTES = MAX_CATCHUP_COMPRESSED_BYTES + VIEWER_BUFFER_BYTES;
 /** Grace after the mission-drop burst (MsgClientReady) before resolving
  *  the tournament decision. The "Server is Running in Tournament Mode"
  *  banner, if any, rides in that same burst (it's the tail of
@@ -121,10 +139,21 @@ function toWatchStatus(status: ConnectionStatus): WatchStatus {
   }
 }
 
-function sendJson(ws: WebSocket, message: ServerMessage): void {
-  if (ws.readyState === ws.OPEN) {
-    ws.send(JSON.stringify(message));
-  }
+function sendJson(ws: WebSocket, message: ServerMessage): boolean {
+  const json = JSON.stringify(message);
+  if (!canQueueViewerData(ws, Buffer.byteLength(json), WATCH_BUFFER_BYTES))
+    return false;
+  ws.send(json);
+  return true;
+}
+
+function sendWatchPacket(ws: WebSocket, data: Uint8Array): void {
+  if (canQueueViewerData(ws, data.byteLength, WATCH_BUFFER_BYTES))
+    ws.send(data, { binary: true });
+}
+
+function supportsLiveCast(state: WatchStateAccumulator): boolean | undefined {
+  return supportsLiveCastMode(state.gameClassName, state.missionType);
 }
 
 export interface WatchSessionManagerOptions {
@@ -140,6 +169,8 @@ export interface WatchSessionManagerOptions {
   getCachedServer: (address: string) => ServerInfo | undefined;
   /** When present and enabled, sessions auto-record each mission to a .rec. */
   demoCoordinator?: DemoCoordinator;
+  /** A relay-wide exclusion takes precedence over mission recording controls. */
+  isRecordingExcluded?: (address: string, name?: string) => boolean;
   /** Persist sessions and per-mission restrictions across relay restarts. */
   onSessionsChanged?: (
     addresses: string[],
@@ -149,14 +180,19 @@ export interface WatchSessionManagerOptions {
   /**
    * Watcher-facing stream delay (ms) applied while a server is in
    * tournament mode (anti screen-peek). Recording and protocol handling
-   * stay live; 0/unset never delays.
+   * stay live. 0/unset disables the tournament delay.
    */
   tourneyDelayMs?: number;
   /**
    * Mission-type display names (case-insensitive) that never run in
-   * tournament mode (e.g. LakRabbit) — skip the check and never delay.
+   * tournament mode (e.g. LakRabbit) — skip the tournament delay.
    */
   tourneySkipTypes?: string[];
+  liveCastLookaheadMs?: number;
+  /** Minimum picture delay when watching CastGenius. */
+  liveCastDelayMs?: number;
+  liveCastDeliveryMs?: number;
+  createLiveCast?: CreateLiveCastFeed;
   /** Construct the game connection, including relay-only credentials. */
   createConnection?: (
     address: string,
@@ -196,12 +232,22 @@ export class WatchSessionManager {
   }
 
   /** Attach a watcher socket to the session for `address`, creating it. */
-  watch(ws: WebSocket, address: string, channelId?: string): void {
+  watch(
+    ws: WebSocket,
+    address: string,
+    channelId?: string,
+    liveCast?: boolean,
+  ): void {
     // A socket watches at most one server.
     channelId ??= this.getSession(address)?.getChannelId(ws);
     this.detachSocket(ws);
     const session = this.getOrCreateSession(address);
-    session.attach(ws, channelId);
+    session.attach(ws, channelId, liveCast);
+  }
+
+  setLiveCast(ws: WebSocket, enabled: boolean): void {
+    for (const session of this.sessions.values())
+      session.setLiveCast(ws, enabled);
   }
 
   /**
@@ -346,12 +392,14 @@ type SessionStatusSnapshot = SessionStatusMessage & {
   recordingPolicy?: { enabled: boolean };
 };
 
-/** A delayed channel spans consecutive tournament missions. */
-type WatchChannel = { kind: "live" } | { kind: "delayed"; firstEpoch: number };
+type WatchChannel =
+  | { kind: "live" }
+  | { kind: "delayed"; timeline: DelayedTimeline; firstEpoch: number };
 
 /** One step of the delayed (tournament) watcher stream. */
 type DelayedItem =
   | { kind: "packet"; at: number; data: Uint8Array }
+  | { kind: "liveCastTick"; at: number; epoch: number; tick: number }
   | { kind: "epoch"; at: number; epoch: number; status: SessionStatusSnapshot }
   | {
       kind: "connected";
@@ -361,6 +409,13 @@ type DelayedItem =
     }
   | { kind: "status"; at: number; status: SessionStatusSnapshot }
   | { kind: "end"; at: number; message?: string };
+
+interface WatchReleasePolicy {
+  delayMs: number;
+  normalSharesDelay: boolean;
+}
+
+type QueuedDelayedItem = DelayedItem & { releasePolicy?: WatchReleasePolicy };
 
 /**
  * The watcher-facing replica of the live parse, fed from the delay queue:
@@ -376,17 +431,42 @@ interface DelayedReplica {
   connected: boolean;
   failed: boolean;
   packetCount: number;
+  liveCastTick: number;
+  liveCastSupported?: boolean;
+  releasePolicy?: WatchReleasePolicy;
+  sourceTimeSec?: number;
+  drained?: boolean;
+}
+
+interface DelayedTimeline {
+  readonly id: "watch" | "cast";
+  queue: QueuedDelayedItem[];
+  timer: ReturnType<typeof setTimeout> | null;
+  replica: DelayedReplica | null;
+  status: SessionStatusSnapshot | null;
+  ended?: boolean;
+}
+
+function delayedTimeline(id: DelayedTimeline["id"]): DelayedTimeline {
+  return { id, queue: [], timer: null, replica: null, status: null };
 }
 
 /** What a catch-up is built from: the live pipeline or the delayed replica. */
-interface CatchupSource {
-  kind: "live" | "delayed";
+type CatchupSource = {
   packetParser: LiveParserKit["packetParser"];
   ghostTracker: LiveParserKit["ghostTracker"];
   ghostState: GhostStateAccumulator;
   watchState: WatchStateAccumulator;
   epoch: number;
   packetCount: number;
+} & ({ kind: "live" } | { kind: "delayed"; timeline: DelayedTimeline });
+
+interface ViewerPicture {
+  channel: WatchChannel | undefined;
+  replica?: DelayedReplica;
+  source?: CatchupSource;
+  releasedTick?: number;
+  canCatchUp: boolean;
 }
 
 interface WatchGame {
@@ -394,6 +474,32 @@ interface WatchGame {
   recorder: DemoRecorder | null;
   mission?: readonly [sequence: string, name: string];
   previous?: WatchGame;
+  releasePolicy?: WatchReleasePolicy;
+  liveCast?: LiveCastPlanBatch & { shots: LiveCastShotStart[] };
+  liveCastFinalTick?: number;
+  liveCastSupported?: boolean;
+  liveCastAdmitted?: boolean;
+}
+
+interface LiveCastClock {
+  epoch: number;
+  startTime: number;
+  tick: number;
+  packets: Uint8Array[];
+  planner: LiveCastPlannerSession;
+  timer?: ReturnType<typeof setInterval>;
+}
+
+interface PublishedLiveCastCursor extends LiveCastIdentity {
+  tick: number;
+  shotStartTick: number;
+  ended?: boolean;
+}
+
+interface LiveCastViewer {
+  available?: boolean | null;
+  published?: PublishedLiveCastCursor;
+  anchor?: LiveCastIdentity & { tick: number };
 }
 
 /**
@@ -423,6 +529,9 @@ export class WatchSession {
   /** A holder survives recorder finalization while a delayed viewer edits it. */
   private games = new Map<number, WatchGame>();
   private viewerEpochs = new Map<WebSocket, number>();
+  private readonly liveCastViewers = new Map<WebSocket, LiveCastViewer>();
+  private readonly liveCastSubscribers = new Set<WebSocket>();
+  private liveCastClock?: LiveCastClock;
   private epoch = 0;
   private packetCount = 0;
   private connectSynced = false;
@@ -439,6 +548,7 @@ export class WatchSession {
   private resyncCount = 0;
   /** One recorder per connection epoch (one connection = one demo). */
   private recorder: DemoRecorder | null = null;
+  private recordingExcluded = false;
   private minimumWatchEpoch = 0;
   /** Mission-cycle rotation pending: stream frozen until reconnect. */
   private rotating = false;
@@ -458,7 +568,7 @@ export class WatchSession {
     CatchupDataBlockCache
   >();
   private cachedPayload: {
-    kind: CatchupSource["kind"];
+    packetParser: CatchupSource["packetParser"];
     epoch: number;
     packetCount: number;
     createdAt: number;
@@ -474,11 +584,8 @@ export class WatchSession {
   /** The post-drop grace has been armed this epoch (armed once, when the
    *  mission-drop burst first lands). */
   private tourneyGraceArmed = false;
-  private delayQueue: DelayedItem[] = [];
-  private delayTimer: ReturnType<typeof setTimeout> | null = null;
-  private replica: DelayedReplica | null = null;
-  /** Status at the watcher playhead, independent of the live connection. */
-  private delayedStatus: SessionStatusSnapshot | null = null;
+  private readonly watchTimeline = delayedTimeline("watch");
+  private readonly extraCastTimeline = delayedTimeline("cast");
   private recordingPolicy = { enabled: false };
   /** Current upstream policy; provisional until the tournament probe resolves. */
   private epochDelayed = false;
@@ -517,6 +624,343 @@ export class WatchSession {
     return this.watchers.size + this.pending.size;
   }
 
+  setLiveCast(ws: WebSocket, enabled: boolean): void {
+    const viewer = this.liveCastViewers.get(ws);
+    if (!viewer || this.liveCastSubscribers.has(ws) === enabled) return;
+    if (enabled) this.liveCastSubscribers.add(ws);
+    else this.liveCastSubscribers.delete(ws);
+    viewer.published = undefined;
+    viewer.anchor = undefined;
+    const current = this.channels.get(ws);
+    const next = this.currentChannel(enabled);
+    const picture = this.resolveViewerPicture(current);
+    const sameDelayedPicture =
+      current?.kind === "delayed" &&
+      ((next.kind === "delayed" &&
+        current.timeline === next.timeline &&
+        (current.firstEpoch === next.firstEpoch ||
+          (picture.replica && picture.replica.epoch >= next.firstEpoch))) ||
+        (!enabled &&
+          this.watchers.has(ws) &&
+          this.viewerEpochs.get(ws) === picture.replica?.epoch &&
+          picture.replica?.releasePolicy?.normalSharesDelay));
+    if (
+      !sameDelayedPicture &&
+      !(current?.kind === "live" && next.kind === "live")
+    ) {
+      this.moveToChannel(ws, next);
+      return;
+    }
+    if (enabled && this.watchers.has(ws)) this.sendInitialLiveCast(ws, picture);
+  }
+
+  private get liveCastEnabled(): boolean {
+    return this.options.createLiveCast !== undefined;
+  }
+
+  private get castDelayMs(): number {
+    return this.liveCastEnabled ? (this.options.liveCastDelayMs ?? 0) : 0;
+  }
+
+  private get castTimeline(): DelayedTimeline {
+    const watchDelay = this.options.tourneyDelayMs ?? 0;
+    return watchDelay > 0 && watchDelay < this.castDelayMs
+      ? this.extraCastTimeline
+      : this.watchTimeline;
+  }
+
+  private get replica(): DelayedReplica | null {
+    return this.watchTimeline.replica;
+  }
+
+  private delayedView(ws: WebSocket): DelayedTimeline | undefined {
+    const channel = this.channels.get(ws);
+    if (channel?.kind === "delayed") return channel.timeline;
+  }
+
+  private startLiveCastClock(game: WatchGame): void {
+    const createFeed = this.options.createLiveCast;
+    if (!createFeed) return;
+    const gameId = game.current.id;
+    const epoch = this.epoch;
+    const clock: LiveCastClock = {
+      epoch,
+      startTime: performance.now(),
+      tick: 0,
+      packets: [],
+      planner: new LiveCastPlannerSession({
+        epoch,
+        gameId,
+        address: this.key,
+        createFeed,
+        buildCatchup: () =>
+          buildCatchupPayload({
+            packetParser: this.parserKit.packetParser,
+            ghostState: this.ghostState,
+            watchState: this.watchState,
+            epoch,
+            serverAddress: this.key,
+          }),
+        publish: (batch) => this.receiveLiveCastPlan(batch),
+        setAdmitted: (admitted) => {
+          if (game.liveCast?.shots.length || game.liveCastAdmitted === admitted)
+            return;
+          game.liveCastAdmitted = admitted;
+          this.publishLiveCastAvailability();
+        },
+      }),
+    };
+    this.liveCastClock = clock;
+    clock.timer = setInterval(() => this.flushLiveCastTick(), MOVE_TICK_MS);
+    clock.timer.unref();
+  }
+
+  private stopLiveCastClock(): void {
+    const clock = this.liveCastClock;
+    if (!clock) return;
+    this.flushLiveCastTick(true);
+    const game = this.games.get(clock.epoch);
+    if (game) game.liveCastFinalTick = clock.tick;
+    this.liveCastClock = undefined;
+    if (clock.timer) clearInterval(clock.timer);
+    clock.planner.close(supportsLiveCast(this.watchState) === true);
+  }
+
+  /** Seal the FIFO packet prefix before advancing its source clock. */
+  private flushLiveCastTick(force = false): void {
+    const clock = this.liveCastClock;
+    if (!clock) return;
+    const tick = Math.max(
+      Math.floor((performance.now() - clock.startTime) / MOVE_TICK_MS),
+      force && clock.packets.length ? clock.tick + 1 : clock.tick,
+    );
+    if (tick === clock.tick) return;
+    clock.tick = tick;
+    const { epoch, packets } = clock;
+    clock.packets = [];
+    const supported = this.games.get(epoch)?.liveCastSupported === true;
+    clock.planner.advance(tick, packets, {
+      canStart:
+        supported && !force && this.lastStatus === "connected" && !this.ending,
+      matchEnded: supported && this.watchState.matchEnded,
+    });
+    this.enqueueDelayed({
+      kind: "liveCastTick",
+      at: Date.now(),
+      epoch,
+      tick,
+    });
+    for (const ws of this.liveCastSubscribers) {
+      if (
+        this.watchers.has(ws) &&
+        !this.epochDelayed &&
+        !this.isDelayedViewer(ws)
+      )
+        this.sendLiveCastTick(ws, epoch);
+    }
+  }
+
+  private receiveLiveCastPlan(batch: LiveCastPlanBatch): void {
+    if (this.destroyed || batch.epoch < this.minimumWatchEpoch) return;
+    const game = this.games.get(batch.epoch);
+    if (!game || game.current.id !== batch.gameId) return;
+    const previous = game.liveCast;
+    if (previous && batch.plannedThroughTick < previous.plannedThroughTick)
+      return;
+    const shots = previous?.shots ?? [];
+    for (const shot of batch.shots) {
+      if (shot.startTick > (shots.at(-1)?.startTick ?? -1)) shots.push(shot);
+    }
+    const releaseDelayMs = game.releasePolicy?.delayMs ?? this.delayMs;
+    const retentionTicks = Math.ceil(
+      (releaseDelayMs + this.liveCastLookaheadMs) / MOVE_TICK_MS,
+    );
+    const cutoff = batch.plannedThroughTick - retentionTicks;
+    while (shots.length > 1 && shots[1].startTick <= cutoff) shots.shift();
+    game.liveCast = { ...batch, shots };
+    for (const ws of this.liveCastSubscribers) {
+      if (!this.watchers.has(ws) || this.viewerEpochs.get(ws) !== batch.epoch)
+        continue;
+      const { source, releasedTick } = this.resolveViewerPicture(
+        this.channels.get(ws),
+      );
+      if (source?.epoch === batch.epoch && releasedTick !== undefined)
+        this.sendLiveCastPlan(ws, batch.epoch, releasedTick);
+    }
+  }
+
+  private sendLiveCastTick(ws: WebSocket, epoch: number): void {
+    const viewer = this.liveCastViewers.get(ws);
+    const gameId = this.games.get(epoch)?.current.id;
+    if (!viewer || !gameId || this.viewerEpochs.get(ws) !== epoch) return;
+    const picture = this.resolveViewerPicture(this.channels.get(ws));
+    const { source, releasedTick: tick } = picture;
+    if (source?.epoch !== epoch || tick === undefined) return;
+    const previous = viewer.anchor;
+    const anchorDue =
+      !previous ||
+      previous.epoch !== epoch ||
+      tick - previous.tick >= LIVE_CAST_ANCHOR_TICKS ||
+      (this.games
+        .get(epoch)
+        ?.liveCast?.shots.findLast((shot) => shot.startTick <= tick)
+        ?.startTick ?? -1) > previous.tick;
+    if (anchorDue) this.sendLiveCastAnchor(ws, { gameId, epoch, tick });
+    this.sendLiveCastPlan(ws, epoch, tick, { sendCoverage: anchorDue });
+  }
+
+  private sendInitialLiveCast(ws: WebSocket, picture: ViewerPicture): void {
+    const epoch = picture.source?.epoch;
+    const tick = picture.releasedTick;
+    if (
+      epoch === undefined ||
+      tick === undefined ||
+      this.viewerEpochs.get(ws) !== epoch
+    )
+      return;
+    const gameId = this.games.get(epoch)?.current.id;
+    if (!gameId) return;
+    this.sendLiveCastAnchor(ws, { gameId, epoch, tick });
+    this.sendLiveCastPlan(ws, epoch, tick, { initial: true });
+    this.sendLiveCastPlan(ws, epoch, tick);
+  }
+
+  private sendLiveCastAnchor(
+    ws: WebSocket,
+    anchor: LiveCastIdentity & { tick: number },
+  ): void {
+    const viewer = this.liveCastViewers.get(ws);
+    if (
+      !viewer ||
+      (viewer.anchor?.epoch === anchor.epoch &&
+        viewer.anchor.tick === anchor.tick)
+    )
+      return;
+    viewer.anchor = anchor;
+    sendJson(ws, { type: "liveCastTick", ...anchor });
+  }
+
+  private sendLiveCastPlan(
+    ws: WebSocket,
+    epoch: number,
+    tick: number,
+    { sendCoverage = false, initial = false } = {},
+  ): void {
+    const viewer = this.liveCastViewers.get(ws);
+    if (!viewer) return;
+    const plan = this.games.get(epoch)?.liveCast;
+    if (!plan) return;
+    const { gameId } = plan;
+    let previous = viewer.published;
+    if (previous && (previous.epoch !== epoch || previous.gameId !== gameId))
+      previous = undefined;
+    const deliveryTicks = Math.floor(
+      (this.options.liveCastDeliveryMs ?? 0) / MOVE_TICK_MS,
+    );
+    const through = Math.min(
+      initial ? tick : tick + deliveryTicks,
+      plan.plannedThroughTick,
+    );
+    // Seed the active shot first, then allow a small lead for future cuts.
+    const first = previous
+      ? 0
+      : Math.max(
+          0,
+          plan.shots.findLastIndex((entry) => entry.startTick <= tick),
+        );
+    const shots = plan.shots
+      .slice(first)
+      .filter(
+        (entry) =>
+          entry.startTick <= through &&
+          entry.startTick > (previous?.shotStartTick ?? -1),
+      );
+    const terminal = tick >= plan.plannedThroughTick;
+    const ended = terminal ? plan.ended : undefined;
+    const anchorTick = viewer.anchor?.tick ?? tick;
+    const caughtUp =
+      previous && previous.tick < anchorTick && through >= anchorTick;
+    const coverageChanged =
+      previous && previous.tick < through && (sendCoverage || caughtUp);
+    if (
+      previous &&
+      shots.length === 0 &&
+      !coverageChanged &&
+      previous.ended === ended
+    )
+      return;
+    if (shots.length) this.sendLiveCastAnchor(ws, { gameId, epoch, tick });
+    sendJson(ws, {
+      type: "liveCastShots",
+      gameId,
+      epoch,
+      plannedThroughTick: through,
+      shots,
+      ...(initial && !previous && shots.length ? { initial: true } : {}),
+      ended,
+    });
+    viewer.published = {
+      gameId,
+      epoch,
+      tick: through,
+      shotStartTick: shots.at(-1)?.startTick ?? previous?.shotStartTick ?? -1,
+      ended,
+    };
+  }
+
+  private get liveCastLookaheadMs(): number {
+    return this.options.liveCastLookaheadMs ?? LIVE_CAST_LOOKAHEAD_MS;
+  }
+
+  private liveCastAvailable(
+    ws: WebSocket,
+    picture: ViewerPicture,
+  ): boolean | null {
+    if (!this.liveCastEnabled) return false;
+    const { source, replica } = picture;
+    const castReplica = this.liveCastSubscribers.has(ws)
+      ? replica
+      : this.castTimeline.replica;
+    if (
+      castReplica?.failed &&
+      castReplica.releasePolicy?.normalSharesDelay === false &&
+      castReplica.epoch >= this.minimumWatchEpoch &&
+      !castReplica.drained
+    )
+      return false;
+    if (!source) return null;
+    const game = this.games.get(source.epoch);
+    const supported = replica
+      ? replica.liveCastSupported
+      : game?.liveCastSupported;
+    if (!supported) return supported ?? null;
+    return game?.liveCastAdmitted ? true : null;
+  }
+
+  private updateLiveCastSupport(
+    watchState: WatchStateAccumulator,
+    picture?: DelayedReplica,
+  ): void {
+    if (!this.liveCastEnabled) return;
+    const source = picture ?? this.games.get(this.epoch);
+    const supported = supportsLiveCast(watchState);
+    if (!source || source.liveCastSupported === supported) return;
+    source.liveCastSupported = supported;
+    this.publishLiveCastAvailability();
+  }
+
+  private publishLiveCastAvailability(): void {
+    for (const ws of this.watchers) {
+      const viewer = this.liveCastViewers.get(ws);
+      if (!viewer) continue;
+      const picture = this.resolveViewerPicture(this.channels.get(ws));
+      const available = this.liveCastAvailable(ws, picture);
+      if (viewer.available === available) continue;
+      viewer.available = available;
+      sendJson(ws, this.sessionStatus(ws, "live", picture));
+    }
+  }
+
   getGameTarget(
     id: string,
   ): { game: PublishedGame; recorder: DemoRecorder | null } | undefined {
@@ -546,10 +990,13 @@ export class WatchSession {
     const retained = new Set([
       this.epoch,
       this.replica?.epoch,
+      this.extraCastTimeline.replica?.epoch,
       ...this.viewerEpochs.values(),
     ]);
-    for (const item of this.delayQueue) {
-      if (item.kind === "epoch") retained.add(item.epoch);
+    for (const timeline of [this.watchTimeline, this.extraCastTimeline]) {
+      for (const item of timeline.queue) {
+        if (item.kind === "epoch") retained.add(item.epoch);
+      }
     }
     for (const epoch of this.games.keys()) {
       if (!retained.has(epoch)) this.games.delete(epoch);
@@ -587,11 +1034,25 @@ export class WatchSession {
   getChannelId(ws: WebSocket): string | undefined {
     const channel = this.channels.get(ws);
     return channel
-      ? `${this.channelPrefix}:${channel.kind === "live" ? "live" : channel.firstEpoch}`
+      ? `${this.channelPrefix}:${channel.kind === "live" ? "live" : `${channel.timeline.id === "cast" ? "cast:" : ""}${channel.firstEpoch}`}`
       : undefined;
   }
 
-  private currentChannel(): WatchChannel {
+  private currentChannel(cast = false): WatchChannel {
+    if (cast && this.castDelayMs > 0) {
+      const timeline = this.castTimeline;
+      const waiting = timeline.queue.find((item) => item.kind === "epoch");
+      return {
+        kind: "delayed",
+        timeline,
+        firstEpoch: Math.max(
+          (timeline.replica?.drained ? undefined : timeline.replica?.epoch) ??
+            waiting?.epoch ??
+            this.epoch,
+          this.minimumWatchEpoch,
+        ),
+      };
+    }
     // A new arrival during a mission change must wait for the next
     // mission's policy. Resuming viewers carry their existing channel ID.
     if (!this.ending && (this.lastStatus === "disconnected" || this.rotating)) {
@@ -601,6 +1062,7 @@ export class WatchSession {
       (this.tourneyResolved || this.replica?.epoch === this.epoch)
       ? {
           kind: "delayed",
+          timeline: this.watchTimeline,
           firstEpoch: Math.max(
             this.lastNormalEpoch + 1,
             this.minimumWatchEpoch,
@@ -609,31 +1071,70 @@ export class WatchSession {
       : { kind: "live" };
   }
 
-  private resumeChannel(id?: string): WatchChannel | null {
+  private resumeChannel(id?: string, cast = false): WatchChannel | null {
     if (!id?.startsWith(`${this.channelPrefix}:`)) return null;
-    const firstEpoch = Number(id.slice(this.channelPrefix.length + 1));
+    const suffix = id.slice(this.channelPrefix.length + 1);
+    const extra = suffix.startsWith("cast:");
+    const timeline = extra ? this.extraCastTimeline : this.watchTimeline;
+    if (extra && (!cast || timeline !== this.castTimeline)) return null;
+    if (cast && this.castDelayMs > 0 && timeline !== this.castTimeline)
+      return null;
+    const firstEpoch = Number(extra ? suffix.slice(5) : suffix);
     // A channel that has finished cannot rewind a returning viewer.
     if (
       !Number.isInteger(firstEpoch) ||
-      firstEpoch <= this.releasedNormalEpoch ||
+      (!cast && firstEpoch <= this.releasedNormalEpoch) ||
       firstEpoch < this.minimumWatchEpoch ||
       firstEpoch > this.epoch
     )
       return null;
-    return { kind: "delayed", firstEpoch };
+    if (!cast && this.castDelayMs > 0 && timeline === this.castTimeline) {
+      const replica = timeline.replica;
+      const policy =
+        replica && !replica.drained && replica.epoch >= firstEpoch
+          ? replica.releasePolicy
+          : this.games.get(firstEpoch)?.releasePolicy;
+      // A terminal disconnect can leave a casual epoch draining on the
+      // same ordinary channel as the preceding tournament.
+      if (
+        !policy?.normalSharesDelay &&
+        !(this.ending && firstEpoch < this.lastNormalEpoch)
+      )
+        return null;
+    }
+    return { kind: "delayed", firstEpoch, timeline };
   }
 
   private isDelayedViewer(ws: WebSocket): boolean {
     return this.channels.get(ws)?.kind === "delayed";
   }
 
-  private receivesDelayedEpoch(ws: WebSocket, epoch: number): boolean {
+  private receivesDelayedEpoch(
+    ws: WebSocket,
+    timeline: DelayedTimeline,
+    epoch: number,
+  ): boolean {
     const channel = this.channels.get(ws);
-    return channel?.kind === "delayed" && channel.firstEpoch <= epoch;
+    return (
+      channel?.kind === "delayed" &&
+      channel.timeline === timeline &&
+      channel.firstEpoch <= epoch
+    );
   }
 
   private moveToCurrentChannel(ws: WebSocket): void {
-    this.channels.set(ws, this.currentChannel());
+    this.moveToChannel(
+      ws,
+      this.currentChannel(this.liveCastSubscribers.has(ws)),
+    );
+  }
+
+  private moveToChannel(ws: WebSocket, channel: WatchChannel): void {
+    this.channels.set(ws, channel);
+    if (this.ending && (channel.kind === "live" || channel.timeline.ended)) {
+      this.endViewer(ws, this.endMessage);
+      return;
+    }
     this.watchers.delete(ws);
     this.pending.add(ws);
     this.sendSessionStatus(ws);
@@ -663,6 +1164,7 @@ export class WatchSession {
 
   start(): void {
     if (this.destroyed || this.ending) return;
+    this.stopLiveCastClock();
     this.cancelControlReply();
     this.lastControlReplyAt = -Infinity;
     this.cancelReObserve();
@@ -677,7 +1179,14 @@ export class WatchSession {
     }
     this.rotating = false;
     const previousGame = this.games.get(this.epoch);
+    this.discardUnreleasedProvisionalCast(previousGame?.releasePolicy);
     this.epoch++;
+    const watchDelayMs = this.options.tourneyDelayMs ?? 0;
+    const castDelayMs = this.castDelayMs;
+    const delayMs =
+      this.castTimeline === this.watchTimeline
+        ? Math.max(castDelayMs, watchDelayMs)
+        : watchDelayMs;
     const game: WatchGame = {
       current: {
         id: randomUUID(),
@@ -686,6 +1195,13 @@ export class WatchSession {
       },
       recorder: null,
       previous: previousGame?.mission ? previousGame : previousGame?.previous,
+      releasePolicy:
+        castDelayMs > 0
+          ? {
+              delayMs: Math.max(castDelayMs, watchDelayMs),
+              normalSharesDelay: watchDelayMs >= castDelayMs,
+            }
+          : undefined,
     };
     this.games.set(this.epoch, game);
     this.pruneGames();
@@ -710,8 +1226,9 @@ export class WatchSession {
     this.tourneyResolved = false;
     this.resolvedTournamentMode = null;
     this.tourneyGraceArmed = false;
-    this.delayMs = this.options.tourneyDelayMs ?? 0;
-    this.epochDelayed = this.delayMs > 0;
+    this.delayMs = delayMs;
+    this.epochDelayed = watchDelayMs > 0;
+    this.startLiveCastClock(game);
 
     // Watchers are read-only, so the relay is the connection's only move
     // producer: an idle client's neutral moves, recorded as they are queued.
@@ -720,10 +1237,14 @@ export class WatchSession {
       new GameConnection(this.key, { generateMoves: true });
     this.connection = conn;
     const cached = this.options.getCachedServer(this.key);
+    this.recordingExcluded ||= !!this.options.isRecordingExcluded?.(
+      this.key,
+      cached?.name,
+    );
     if (cached?.mapName) conn.setMapName(cached.mapName);
     if (this.delayMs > 0) {
       const status = this.liveSessionStatus("connecting");
-      this.delayedStatus ??= { ...status, streamDelayMs: 0 };
+      this.watchTimeline.status ??= { ...status, streamDelayMs: 0 };
       this.enqueueDelayed({
         kind: "epoch",
         at: Date.now(),
@@ -732,46 +1253,47 @@ export class WatchSession {
       });
     }
 
-    const recorder =
-      this.options.demoCoordinator?.createRecorder({
-        address: this.key,
-        getGamePresentation: () => game.current,
-        getConnectSequence: () => conn.connectSequence,
-        getServerInfo: () => this.options.getCachedServer(this.key),
-        getServerIdentity: () => {
-          // The name is the stream's alone: the recorder opens its file
-          // once MsgMissionDropInfo names the server (Phase1 clears the
-          // epoch's name), falling back to the server list past its caps.
-          // The server-list cache fills the other gaps live at sample time
-          // — an entry may only appear on a later poll, and `mod` has no
-          // stream source at all. gameType is mission-scoped, so
-          // watchState.missionType (reset each epoch) is authoritative.
-          const info = this.options.getCachedServer(this.key);
-          return {
-            name: this.watchState.serverName,
-            gameType: this.watchState.missionType ?? info?.gameType,
-            mod: info?.mod,
-            // Detected from the stream (banner/vote), independent of the
-            // anti-peek delay feature. Sampled here at finalize entry so it
-            // reads the finalizing epoch's watchState, not the next one's.
-            tournament: this.watchState.tournamentMode === true,
-          };
-        },
-        getActivePlayerCount: () => this.watchState.countActivePlayers(),
-        getPlayerRoster: () => this.watchState.getPlayerRoster(),
-        getRecorderClientId: () => conn.selfClientId,
-        getMatchStarted: () => this.watchState.matchStarted,
-        getRecordContext: () => ({
-          pinned: this.pinned,
-          watchers: this.watcherCount,
-        }),
-        onStateChange: () => {
-          // Finalizing an old file may finish after a new epoch starts.
-          if (this.connection === conn && this.recorder === recorder) {
-            this.fanOutSessionStatus();
-          }
-        },
-      }) ?? null;
+    const recorder = this.recordingConfigured
+      ? (this.options.demoCoordinator?.createRecorder({
+          address: this.key,
+          getGamePresentation: () => game.current,
+          getConnectSequence: () => conn.connectSequence,
+          getServerInfo: () => this.options.getCachedServer(this.key),
+          getServerIdentity: () => {
+            // The name is the stream's alone: the recorder opens its file
+            // once MsgMissionDropInfo names the server (Phase1 clears the
+            // epoch's name), falling back to the server list past its caps.
+            // The server-list cache fills the other gaps live at sample time
+            // — an entry may only appear on a later poll, and `mod` has no
+            // stream source at all. gameType is mission-scoped, so
+            // watchState.missionType (reset each epoch) is authoritative.
+            const info = this.options.getCachedServer(this.key);
+            return {
+              name: this.watchState.serverName,
+              gameType: this.watchState.missionType ?? info?.gameType,
+              mod: info?.mod,
+              // Detected from the stream (banner/vote), independent of the
+              // anti-peek delay feature. Sampled here at finalize entry so it
+              // reads the finalizing epoch's watchState, not the next one's.
+              tournament: this.watchState.tournamentMode === true,
+            };
+          },
+          getActivePlayerCount: () => this.watchState.countActivePlayers(),
+          getPlayerRoster: () => this.watchState.getPlayerRoster(),
+          getRecorderClientId: () => conn.selfClientId,
+          getMatchStarted: () => this.watchState.matchStarted,
+          getRecordContext: () => ({
+            pinned: this.pinned,
+            watchers: this.watcherCount,
+          }),
+          onStateChange: () => {
+            // Finalizing an old file may finish after a new epoch starts.
+            if (this.connection === conn && this.recorder === recorder) {
+              this.fanOutSessionStatus();
+            }
+          },
+        }) ?? null)
+      : null;
     this.recorder = recorder;
     game.recorder = recorder;
 
@@ -861,16 +1383,19 @@ export class WatchSession {
     this.fanOut({ type: "relayRestarting" });
   }
 
-  attach(ws: WebSocket, channelId?: string): void {
+  attach(ws: WebSocket, channelId?: string, liveCast = false): void {
     if (this.destroyed) return;
     if (!this.controls.watching) {
       this.rejectWatcher(ws);
       return;
     }
     this.cancelIdleTimer();
+    if (this.liveCastEnabled) this.liveCastViewers.set(ws, {});
+    const cast = this.liveCastEnabled && liveCast;
+    if (cast) this.liveCastSubscribers.add(ws);
     this.channels.set(
       ws,
-      this.resumeChannel(channelId) ?? this.currentChannel(),
+      this.resumeChannel(channelId, cast) ?? this.currentChannel(cast),
     );
     this.pending.add(ws);
     // The retry timer can expire while nobody is watching. A returning
@@ -883,6 +1408,13 @@ export class WatchSession {
       this.start();
     }
     this.sendSessionStatus(ws);
+    if (
+      this.ending &&
+      (!this.isDelayedViewer(ws) || this.delayedView(ws)?.ended)
+    ) {
+      this.detach(ws);
+      return;
+    }
     this.broadcastWatcherCount();
     // A delayed replica remains usable while the upstream reconnects or
     // has ended. Joining must not wait for another live packet or handshake.
@@ -894,6 +1426,8 @@ export class WatchSession {
     if (!removed) return;
     this.channels.delete(ws);
     this.viewerEpochs.delete(ws);
+    this.liveCastViewers.delete(ws);
+    this.liveCastSubscribers.delete(ws);
     this.pruneGames();
     this.broadcastWatcherCount();
     if (this.watcherCount === 0 && !this.pinned) {
@@ -953,14 +1487,12 @@ export class WatchSession {
       this.maybeReObserve();
       this.startScoresPoll();
       this.startScoreHudPoll();
-      if (this.delayMs > 0) {
-        this.enqueueDelayed({
-          kind: "connected",
-          at: Date.now(),
-          epoch: this.epoch,
-          status: this.liveSessionStatus("live"),
-        });
-      }
+      this.enqueueDelayed({
+        kind: "connected",
+        at: Date.now(),
+        epoch: this.epoch,
+        status: this.liveSessionStatus("live"),
+      });
       // Vote policies also need the mode when stream delay is disabled.
       this.startTourneyDecision();
       // Serve everyone who was waiting on the handshake. A live/warm
@@ -1045,6 +1577,8 @@ export class WatchSession {
   private endSession(message?: string): void {
     if (this.ending || this.destroyed) return;
     this.ending = true;
+    const endedAt = Date.now();
+    this.stopLiveCastClock();
     this.endMessage = message;
     this.cancelControlReply();
     this.stopScoresPoll();
@@ -1057,39 +1591,54 @@ export class WatchSession {
     const conn = this.connection;
     this.connection = null;
     if (conn && conn.status !== "disconnected") conn.disconnect();
-    if (this.delayMs > 0) {
+    if (this.delayMs > 0 || this.castDelayMs > 0) {
       for (const ws of this.channels.keys()) {
-        if (!this.isDelayedViewer(ws)) {
-          sendJson(ws, { ...this.sessionStatus(ws, "ended"), message });
-        }
+        if (!this.isDelayedViewer(ws)) this.endViewer(ws, message);
       }
-      this.enqueueDelayed({ kind: "end", at: Date.now(), message });
-      return;
+      this.enqueueDelayed({ kind: "end", at: endedAt, message });
+    } else {
+      this.finishSession();
     }
-    this.finishSession(message);
   }
 
-  private finishSession(message?: string): void {
+  private finishTimeline(timeline: DelayedTimeline, message?: string): void {
+    timeline.ended = true;
     for (const ws of this.channels.keys()) {
-      sendJson(ws, {
-        ...this.sessionStatus(ws, "ended"),
-        message,
-        watcherCount: 0,
-      });
+      if (this.delayedView(ws) === timeline) this.endViewer(ws, message);
     }
+    if (this.watchTimeline.queue.length || this.extraCastTimeline.queue.length)
+      return;
+    this.finishSession();
+  }
+
+  private finishSession(): void {
+    for (const ws of this.channels.keys()) this.endViewer(ws, this.endMessage);
     this.destroy();
+  }
+
+  private endViewer(ws: WebSocket, message?: string): void {
+    sendJson(ws, {
+      ...this.sessionStatus(ws, "ended"),
+      message,
+      watcherCount: 0,
+    });
+    this.detach(ws);
   }
 
   destroy(reason?: string): void {
     if (this.destroyed) return;
+    this.ending = true;
+    this.stopLiveCastClock();
     this.destroyed = true;
     this.cancelControlReply();
     this.cancelIdleTimer();
     if (this.retryTimer) clearTimeout(this.retryTimer);
     if (this.rotateTimer) clearTimeout(this.rotateTimer);
-    if (this.delayTimer) clearTimeout(this.delayTimer);
-    this.delayQueue = [];
-    this.replica = null;
+    for (const timeline of [this.watchTimeline, this.extraCastTimeline]) {
+      if (timeline.timer) clearTimeout(timeline.timer);
+      timeline.queue = [];
+      timeline.replica = null;
+    }
     this.cancelTourneyDecision();
     this.stopScoresPoll();
     this.stopScoreHudPoll();
@@ -1109,6 +1658,8 @@ export class WatchSession {
     this.pending.clear();
     this.channels.clear();
     this.viewerEpochs.clear();
+    this.liveCastViewers.clear();
+    this.liveCastSubscribers.clear();
     this.games.clear();
     const conn = this.connection;
     this.connection = null;
@@ -1121,6 +1672,7 @@ export class WatchSession {
   // ── Packet pipeline ──
 
   private handlePacket(data: Uint8Array, dispatched: boolean): void {
+    this.flushLiveCastTick();
     this.processingPacket = true;
     try {
       this.processPacket(data, dispatched);
@@ -1179,7 +1731,9 @@ export class WatchSession {
     const recorder = this.recorder;
     const sampleRecordedState =
       recorder && recorder.onPacket(data, dispatched)
-        ? () => recorder.sampleRecordedState()
+        ? () => {
+            if (this.recorder === recorder) recorder.sampleRecordedState();
+          }
         : undefined;
 
     if (parsed) {
@@ -1197,10 +1751,16 @@ export class WatchSession {
       // here must never crash the process and lose every in-flight demo.
       // Contain it: log, skip this packet's local state update, carry on.
       try {
+        let serverName = this.watchState.serverName;
         this.watchState.applyPacket(
           parsed,
           sampleRecordedState,
           (name, args) => {
+            const reportedName = this.watchState.serverName;
+            if (reportedName && reportedName !== serverName) {
+              serverName = reportedName;
+              this.excludeServerRecording(reportedName);
+            }
             this.handleMissionControlEvent(name, args);
             this.handleResponderEvent({
               type: "RemoteCommandEvent",
@@ -1248,31 +1808,41 @@ export class WatchSession {
       }
     }
 
-    if (this.delayMs > 0) {
+    const retained =
+      this.delayMs > 0 || this.liveCastClock || this.castDelayMs > 0
+        ? data.slice()
+        : data;
+    this.liveCastClock?.packets.push(retained);
+    if (this.delayMs > 0 || this.castDelayMs > 0) {
       // Tournament delay: watchers get this packet `delayMs` later, via
       // the replica. Copy — `data` is a view over the dgram pool buffer.
       this.enqueueDelayed({
         kind: "packet",
         at,
-        data: data.slice(),
+        data: retained,
       });
     }
     for (const ws of this.watchers) {
-      if (
-        !this.epochDelayed &&
-        !this.isDelayedViewer(ws) &&
-        ws.readyState === ws.OPEN
-      ) {
-        ws.send(data, { binary: true });
-      }
+      if (!this.epochDelayed && !this.isDelayedViewer(ws))
+        sendWatchPacket(ws, data);
     }
+    if (parsed) this.updateLiveCastSupport(this.watchState);
   }
 
   // ── Tournament-mode stream delay ──
 
   /** Delay buffer currently retained (ms); individual viewers may be live. */
   get streamDelayMs(): number {
-    return this.delayMs;
+    if (!this.castDelayMs || this.castTimeline !== this.watchTimeline)
+      return this.delayMs;
+    const tournamentBuffered =
+      this.epochDelayed ||
+      (this.replica?.releasePolicy?.normalSharesDelay &&
+        !this.replica.drained) ||
+      this.watchTimeline.queue.some(
+        (item) => item.releasePolicy?.normalSharesDelay,
+      );
+    return tournamentBuffered ? (this.options.tourneyDelayMs ?? 0) : 0;
   }
 
   /** Whether a mission-type display name is exempt from the tournament
@@ -1285,22 +1855,71 @@ export class WatchSession {
     );
   }
 
-  /** Countdown to this channel's first usable snapshot, even across map cycles. */
-  private delayReadyInMs(ws: WebSocket): number | undefined {
-    const channel = this.channels.get(ws);
-    if (channel?.kind !== "delayed" || this.catchupSource(ws)) return undefined;
-    const connected = this.delayQueue.find(
-      (item) => item.kind === "connected" && item.epoch >= channel.firstEpoch,
+  /** A preceding epoch can hold up the next epoch's first snapshot. */
+  private delayedSnapshotBlocker(
+    timeline: DelayedTimeline,
+    connected: QueuedDelayedItem,
+  ): QueuedDelayedItem {
+    let blocker = connected;
+    for (const item of timeline.queue) {
+      if (item === connected) break;
+      if (this.delayedReleaseAt(item) > this.delayedReleaseAt(blocker))
+        blocker = item;
+    }
+    return blocker;
+  }
+
+  private discardUnreleasedProvisionalCast(policy?: WatchReleasePolicy): void {
+    const timeline = this.castTimeline;
+    if (
+      this.tourneyResolved ||
+      !policy?.normalSharesDelay ||
+      policy.delayMs <= this.castDelayMs ||
+      (timeline.replica?.epoch === this.epoch && timeline.replica.connected)
+    )
+      return;
+    // A failed or superseded probe never put this picture on air. Drop its
+    // provisional queue before it can hold a later confirmed casual map.
+    timeline.queue = timeline.queue.filter(
+      (item) => item.releasePolicy !== policy,
     );
-    return connected
-      ? Math.max(0, connected.at + this.delayMs - Date.now())
-      : undefined;
+    if (timeline.timer) clearTimeout(timeline.timer);
+    timeline.timer = null;
   }
 
   /** Resolve the new mission's policy without interrupting the old channel. */
   setTournamentMode(on: boolean): void {
     if (this.tourneyResolved || this.destroyed || this.ending) return;
     this.tourneyResolved = true;
+    const policy = this.games.get(this.epoch)?.releasePolicy;
+    if (policy && this.castTimeline === this.watchTimeline) {
+      if (!on) {
+        this.epochDelayed = false;
+        policy.normalSharesDelay = false;
+        // The cast can shorten before its first picture is released. Once
+        // playing, keep its clock stable until the next mission.
+        const castOnAir =
+          this.replica?.epoch === this.epoch &&
+          [...this.liveCastSubscribers].some(
+            (ws) =>
+              this.watchers.has(ws) && this.viewerEpochs.get(ws) === this.epoch,
+          );
+        if (!castOnAir) {
+          policy.delayMs = this.delayMs = this.castDelayMs;
+          if (this.watchTimeline.timer) clearTimeout(this.watchTimeline.timer);
+          this.watchTimeline.timer = null;
+          this.scheduleRelease(this.watchTimeline);
+        }
+        this.lastNormalEpoch = this.epoch;
+        this.finishNormalCastViewers(this.epoch);
+      }
+      for (const ws of [...this.pending]) {
+        const timeline = this.delayedView(ws);
+        if (!timeline) this.moveToCurrentChannel(ws);
+        else if (timeline === this.watchTimeline) this.sendSessionStatus(ws);
+      }
+      return;
+    }
     if (this.delayMs === 0) return;
     this.epochDelayed = on;
     if (!on) {
@@ -1308,7 +1927,7 @@ export class WatchSession {
       this.normalEpochs.add(this.epoch);
       const earlierEpochPending =
         (this.replica != null && this.replica.epoch < this.epoch) ||
-        this.delayQueue.some(
+        this.watchTimeline.queue.some(
           (item) => item.kind === "epoch" && item.epoch < this.epoch,
         );
       if (!earlierEpochPending) this.liftDelay();
@@ -1323,7 +1942,23 @@ export class WatchSession {
   private finishDelayedChannel(epoch: number): void {
     this.releasedNormalEpoch = epoch;
     for (const ws of this.channels.keys()) {
-      if (this.receivesDelayedEpoch(ws, epoch)) this.moveToCurrentChannel(ws);
+      if (this.receivesDelayedEpoch(ws, this.watchTimeline, epoch))
+        this.moveToCurrentChannel(ws);
+    }
+  }
+
+  private finishNormalCastViewers(epoch: number): void {
+    for (const [ws, channel] of this.channels) {
+      if (
+        this.liveCastSubscribers.has(ws) ||
+        channel.kind !== "delayed" ||
+        channel.timeline !== this.castTimeline ||
+        channel.firstEpoch > epoch ||
+        (this.replica?.epoch !== epoch &&
+          (this.viewerEpochs.get(ws) ?? channel.firstEpoch) < epoch)
+      )
+        continue;
+      this.moveToCurrentChannel(ws);
     }
   }
 
@@ -1331,13 +1966,14 @@ export class WatchSession {
   private liftDelay(): void {
     if (this.delayMs === 0) return;
     this.delayMs = 0;
-    if (this.delayTimer) {
-      clearTimeout(this.delayTimer);
-      this.delayTimer = null;
+    const timeline = this.watchTimeline;
+    if (timeline.timer) {
+      clearTimeout(timeline.timer);
+      timeline.timer = null;
     }
-    this.delayQueue = [];
-    this.replica = null;
-    this.delayedStatus = null;
+    timeline.queue = [];
+    timeline.replica = null;
+    timeline.status = null;
     this.normalEpochs.clear();
     this.finishDelayedChannel(this.epoch);
   }
@@ -1351,7 +1987,8 @@ export class WatchSession {
    * no need to re-send the probe.
    */
   private startTourneyDecision(): void {
-    if (this.delayMs === 0 && !this.options.adminVotePolicies?.length) return;
+    if (!this.options.tourneyDelayMs && !this.options.adminVotePolicies?.length)
+      return;
     this.connection?.sendCommand("GetVoteMenu", "TourneyQuery");
   }
 
@@ -1380,7 +2017,7 @@ export class WatchSession {
     if (
       this.tourneyGraceArmed ||
       this.resolvedTournamentMode !== null ||
-      (this.delayMs === 0 && !this.options.adminVotePolicies?.length)
+      (!this.options.tourneyDelayMs && !this.options.adminVotePolicies?.length)
     ) {
       return;
     }
@@ -1399,55 +2036,148 @@ export class WatchSession {
   }
 
   private enqueueDelayed(item: DelayedItem): void {
-    this.delayQueue.push(item);
-    this.scheduleRelease();
+    const releasePolicy = this.games.get(this.epoch)?.releasePolicy;
+    const cast = this.castTimeline;
+    if (releasePolicy) this.enqueueOn(cast, { ...item, releasePolicy });
+    if (
+      this.delayMs > 0 &&
+      (!releasePolicy ||
+        (cast !== this.watchTimeline && item.kind !== "liveCastTick"))
+    )
+      this.enqueueOn(this.watchTimeline, item);
   }
 
-  private scheduleRelease(): void {
-    if (this.delayTimer || this.delayQueue.length === 0 || this.destroyed) {
+  private enqueueOn(timeline: DelayedTimeline, item: QueuedDelayedItem): void {
+    timeline.queue.push(item);
+    if (item.kind === "epoch") this.retireSharedTail(timeline, Date.now());
+    this.scheduleRelease(timeline);
+  }
+
+  private delayedReleaseAt(item: QueuedDelayedItem): number {
+    return item.at + (item.releasePolicy?.delayMs ?? this.delayMs);
+  }
+
+  private scheduleRelease(timeline: DelayedTimeline): void {
+    if (timeline.timer || timeline.queue.length === 0 || this.destroyed) {
       return;
     }
-    const dueIn = this.delayQueue[0].at + this.delayMs - Date.now();
-    this.delayTimer = setTimeout(
+    const dueIn = this.delayedReleaseAt(timeline.queue[0]) - Date.now();
+    timeline.timer = setTimeout(
       () => {
-        this.delayTimer = null;
-        this.releaseDue();
+        timeline.timer = null;
+        this.releaseDue(timeline);
       },
       Math.max(0, dueIn),
     );
   }
 
-  private releaseDue(): void {
-    const cutoff = Date.now() - this.delayMs;
-    while (this.delayQueue.length > 0 && this.delayQueue[0].at <= cutoff) {
-      this.applyDelayed(this.delayQueue.shift()!);
-      // Catch up pending watchers as soon as the replica can serve them,
-      // before any later packet in this batch goes out (same packets-
-      // 1..N-then-N+1 guarantee as the live path).
-      if (this.pending.size > 0 && this.replica?.connected) {
-        for (const ws of [...this.pending]) this.deliverCatchup(ws);
+  private releaseDue(timeline: DelayedTimeline): void {
+    const now = Date.now();
+    while (
+      timeline.queue.length > 0 &&
+      this.delayedReleaseAt(timeline.queue[0]) <= now
+    ) {
+      const item = timeline.queue.shift()!;
+      this.applyDelayed(timeline, item);
+      // Ordinary watch attaches at the first usable packet boundary.
+      if (timeline.replica?.connected) {
+        for (const ws of [...this.pending]) {
+          if (
+            this.delayedView(ws) === timeline &&
+            (!item.releasePolicy || !this.liveCastSubscribers.has(ws))
+          )
+            this.deliverCatchup(ws);
+        }
       }
     }
-    this.scheduleRelease();
+    // A shorter-delay epoch may be well underway when the previous tail
+    // reaches its boundary. Build one seed at the newly eligible playhead
+    // instead of showing its opening state and bursting all overdue packets.
+    this.retireSharedTail(timeline, now);
+    if (
+      timeline.replica?.releasePolicy &&
+      timeline.replica.connected &&
+      !timeline.replica.drained
+    ) {
+      for (const ws of [...this.pending]) {
+        if (this.delayedView(ws) === timeline) this.deliverCatchup(ws);
+      }
+    }
+    this.scheduleRelease(timeline);
   }
 
-  private applyDelayed(item: DelayedItem): void {
+  private retireSharedTail(timeline: DelayedTimeline, now: number): void {
+    const next = timeline.queue[0];
+    const replica = timeline.replica;
+    if (
+      !replica?.releasePolicy ||
+      replica.drained ||
+      next?.kind !== "epoch" ||
+      !next.releasePolicy ||
+      next.releasePolicy.delayMs <= replica.releasePolicy.delayMs ||
+      this.delayedReleaseAt(next) <= now
+    )
+      return;
+    // The previous picture has finished, but the next epoch is still
+    // embargoed. Keep its last frame and show the pending epoch's wait.
+    replica.drained = true;
+    for (const ws of this.watchers) {
+      if (!this.receivesDelayedEpoch(ws, timeline, replica.epoch)) continue;
+      this.watchers.delete(ws);
+      this.pending.add(ws);
+    }
+    for (const ws of this.pending) {
+      if (this.delayedView(ws) === timeline) this.sendSessionStatus(ws);
+    }
+  }
+
+  private applyDelayed(
+    timeline: DelayedTimeline,
+    item: QueuedDelayedItem,
+  ): void {
+    if (
+      timeline.replica?.releasePolicy &&
+      timeline.replica.releasePolicy === item.releasePolicy
+    )
+      timeline.replica.sourceTimeSec = item.at / 1_000;
     switch (item.kind) {
       case "epoch": {
         // The delayed stream reaches a new connection: fresh replica, and
         // every watcher re-hydrates from it once its handshake completes.
-        this.replica = {
+        const replica: DelayedReplica = {
           epoch: item.epoch,
           kit: createLiveParser({ protocolVersion: GAME_PROTOCOL_VERSION }),
           ghostState: new GhostStateAccumulator(),
-          watchState: new WatchStateAccumulator(),
+          watchState: new WatchStateAccumulator(undefined, {
+            now: () => replica.sourceTimeSec ?? Date.now() / 1_000,
+          }),
           connectSynced: false,
           connected: false,
           failed: false,
           packetCount: 0,
+          liveCastTick: 0,
+          releasePolicy: item.releasePolicy,
+          sourceTimeSec: item.releasePolicy ? item.at / 1_000 : undefined,
         };
-        this.delayedStatus = item.status;
-        if (this.normalEpochs.delete(item.epoch) && !this.ending) {
+        timeline.replica = replica;
+        timeline.status = item.status;
+        if (
+          timeline === this.watchTimeline &&
+          item.releasePolicy &&
+          !item.releasePolicy.normalSharesDelay &&
+          !this.ending
+        ) {
+          this.releasedNormalEpoch = Math.max(
+            this.releasedNormalEpoch,
+            item.epoch,
+          );
+          this.finishNormalCastViewers(item.epoch);
+        }
+        if (
+          timeline === this.watchTimeline &&
+          this.normalEpochs.delete(item.epoch) &&
+          !this.ending
+        ) {
           this.finishDelayedChannel(item.epoch);
           if (item.epoch === this.epoch && !this.epochDelayed) {
             this.liftDelay();
@@ -1456,13 +2186,17 @@ export class WatchSession {
         }
         // An unresolved probe still fails closed: once a full delay has
         // elapsed, waiting viewers may use this epoch's delayed replica.
-        if (item.epoch === this.epoch && this.epochDelayed) {
+        if (
+          timeline === this.watchTimeline &&
+          item.epoch === this.epoch &&
+          this.epochDelayed
+        ) {
           for (const ws of [...this.pending]) {
             if (!this.isDelayedViewer(ws)) this.moveToCurrentChannel(ws);
           }
         }
         for (const ws of this.channels.keys()) {
-          if (!this.receivesDelayedEpoch(ws, item.epoch)) continue;
+          if (!this.receivesDelayedEpoch(ws, timeline, item.epoch)) continue;
           this.watchers.delete(ws);
           this.pending.add(ws);
           sendJson(ws, this.sessionStatus(ws, "connecting"));
@@ -1470,16 +2204,17 @@ export class WatchSession {
         return;
       }
       case "connected": {
-        if (this.replica && !this.replica.failed) this.replica.connected = true;
-        this.delayedStatus = item.status;
+        if (timeline.replica && !timeline.replica.failed)
+          timeline.replica.connected = true;
+        timeline.status = item.status;
         return;
       }
       case "status": {
-        this.delayedStatus = item.status;
+        timeline.status = item.status;
         for (const ws of this.channels.keys()) {
           if (
-            this.replica &&
-            this.receivesDelayedEpoch(ws, this.replica.epoch)
+            timeline.replica &&
+            this.receivesDelayedEpoch(ws, timeline, timeline.replica.epoch)
           ) {
             sendJson(ws, this.sessionStatus(ws, item.status.status));
           }
@@ -1487,11 +2222,24 @@ export class WatchSession {
         return;
       }
       case "end": {
-        this.finishSession(item.message);
+        this.finishTimeline(timeline, item.message);
+        return;
+      }
+      case "liveCastTick": {
+        const r = timeline.replica;
+        if (!r || r.failed || r.epoch !== item.epoch) return;
+        r.liveCastTick = item.tick;
+        for (const ws of this.liveCastSubscribers) {
+          if (
+            this.watchers.has(ws) &&
+            this.receivesDelayedEpoch(ws, timeline, item.epoch)
+          )
+            this.sendLiveCastTick(ws, item.epoch);
+        }
         return;
       }
       case "packet": {
-        const r = this.replica;
+        const r = timeline.replica;
         if (!r || r.failed) return;
         if (!r.connectSynced && item.data.length >= 1) {
           r.kit.packetParser.setConnectionProtocolState(
@@ -1516,40 +2264,41 @@ export class WatchSession {
           }
         } catch (err) {
           relayLog.error({ err, address: this.key }, "Delayed replica failed");
-          this.invalidateReplica();
+          this.invalidateReplica(timeline);
           return;
         }
         for (const ws of this.watchers) {
-          if (
-            this.receivesDelayedEpoch(ws, r.epoch) &&
-            ws.readyState === ws.OPEN
-          ) {
-            ws.send(item.data, { binary: true });
-          }
+          if (this.receivesDelayedEpoch(ws, timeline, r.epoch))
+            sendWatchPacket(ws, item.data);
         }
+        this.updateLiveCastSupport(r.watchState, r);
         return;
       }
     }
   }
 
-  private invalidateReplica(): void {
-    const replica = this.replica;
+  private invalidateReplica(timeline: DelayedTimeline): void {
+    const replica = timeline.replica;
     if (!replica || replica.failed) return;
+    const castOnly = replica.releasePolicy?.normalSharesDelay === false;
     replica.failed = true;
     replica.connected = false;
     this.cachedPayload = null;
     for (const ws of this.channels.keys()) {
-      if (!this.receivesDelayedEpoch(ws, replica.epoch)) continue;
+      if (!this.receivesDelayedEpoch(ws, timeline, replica.epoch)) continue;
       this.watchers.delete(ws);
       this.pending.add(ws);
       sendJson(ws, {
         ...this.sessionStatus(ws, "syncing"),
-        message: "Re-syncing delayed stream...",
+        message: castOnly
+          ? "Unable to read the CastGenius picture."
+          : "Re-syncing delayed stream...",
       });
     }
-    // If a newer epoch is already queued, it will repair the replica.
-    // Otherwise request one; never keep feeding a corrupt parser.
-    if (replica.epoch === this.epoch && !this.ending) {
+    if (castOnly) this.publishLiveCastAvailability();
+    // The next epoch rebuilds a Cast-only replica. Reconnect upstream only
+    // when ordinary viewers depend on the failed replica as well.
+    if (!castOnly && replica.epoch === this.epoch && !this.ending) {
       this.resyncSession("delayed replica diverged");
     }
   }
@@ -1583,6 +2332,7 @@ export class WatchSession {
    * receiving the previous epoch's delayed packets.
    */
   private rehydrateWatchers(): void {
+    this.stopLiveCastClock();
     for (const ws of this.watchers) {
       if (this.isDelayedViewer(ws)) continue;
       this.pending.add(ws);
@@ -1838,6 +2588,8 @@ export class WatchSession {
       this.pending.clear();
       this.channels.clear();
       this.viewerEpochs.clear();
+      this.liveCastViewers.clear();
+      this.liveCastSubscribers.clear();
       this.pruneGames();
     }
     if (settingsChanged) {
@@ -1869,7 +2621,10 @@ export class WatchSession {
           if (this.isDelayedViewer(ws))
             sendJson(
               ws,
-              this.sessionStatus(ws, this.delayedStatus?.status ?? "syncing"),
+              this.sessionStatus(
+                ws,
+                this.delayedView(ws)?.status?.status ?? "syncing",
+              ),
             );
         }
       }
@@ -2090,7 +2845,18 @@ export class WatchSession {
   }
 
   private get recordingConfigured(): boolean {
-    return !!this.options.demoCoordinator?.enabled;
+    return !!this.options.demoCoordinator?.enabled && !this.recordingExcluded;
+  }
+
+  private excludeServerRecording(name: string): void {
+    if (
+      this.recordingExcluded ||
+      !this.options.isRecordingExcluded?.(this.key, name)
+    )
+      return;
+    this.recordingExcluded = true;
+    if (this.recorder) this.stopRecording("server excluded");
+    else this.fanOutSessionStatus();
   }
 
   /** Detach the recorder and hand it to the coordinator to finalize —
@@ -2098,9 +2864,21 @@ export class WatchSession {
   private stopRecording(reason: string): void {
     const recorder = this.recorder;
     if (!recorder) return;
+    this.recordingExcluded ||= !!this.options.isRecordingExcluded?.(
+      this.key,
+      this.sessionServerName(),
+    );
     this.recorder = null;
     this.fanOutSessionStatus();
-    this.options.demoCoordinator?.finalize(recorder, reason);
+    if (this.recordingExcluded) {
+      const game = this.games.get(this.epoch);
+      if (game) game.recorder = null;
+      this.options.demoCoordinator?.finalize(recorder, reason, {
+        discard: true,
+      });
+    } else {
+      this.options.demoCoordinator?.finalize(recorder, reason);
+    }
   }
 
   /**
@@ -2313,35 +3091,52 @@ export class WatchSession {
     };
   }
 
-  /** Null when no catch-up can be built yet. */
-  private catchupSource(ws: WebSocket): CatchupSource | null {
-    if (this.isDelayedViewer(ws)) {
-      // Tournament delay: joiners see the replica's (past) state — the
-      // live connection's status is irrelevant to them.
-      const r = this.replica;
-      if (!r || !r.connected || !this.receivesDelayedEpoch(ws, r.epoch))
-        return null;
+  /** Resolve the packet boundary shared by catch-up, status, and shot delivery. */
+  private resolveViewerPicture(
+    channel: WatchChannel | undefined,
+  ): ViewerPicture {
+    if (channel?.kind === "delayed") {
+      const { timeline } = channel;
+      const replica = timeline.replica;
+      if (
+        !replica ||
+        timeline.ended ||
+        replica.drained ||
+        replica.epoch < channel.firstEpoch
+      )
+        return { channel, canCatchUp: false };
+      if (replica.failed || !replica.connected)
+        return { channel, replica, canCatchUp: false };
       return {
-        kind: "delayed",
-        packetParser: r.kit.packetParser,
-        ghostTracker: r.kit.ghostTracker,
-        ghostState: r.ghostState,
-        watchState: r.watchState,
-        epoch: r.epoch,
-        packetCount: r.packetCount,
+        channel,
+        replica,
+        source: {
+          kind: "delayed",
+          timeline,
+          packetParser: replica.kit.packetParser,
+          ghostTracker: replica.kit.ghostTracker,
+          ghostState: replica.ghostState,
+          watchState: replica.watchState,
+          epoch: replica.epoch,
+          packetCount: replica.packetCount,
+        },
+        releasedTick: replica.liveCastTick,
+        canCatchUp: true,
       };
     }
-    // A re-sync may have started mid-delivery-loop; these watchers get a
-    // fresh catch-up once the new connection is live. Same for a pending
-    // rotation — its post-EndGhosting state would seed an empty world.
-    if (
-      this.epochDelayed ||
-      this.lastStatus !== "connected" ||
-      this.rotating ||
-      this.ending
-    )
-      return null;
-    return this.liveSource();
+    if (!channel || this.epochDelayed) return { channel, canCatchUp: false };
+    return {
+      channel,
+      source: this.liveSource(),
+      releasedTick:
+        this.liveCastClock?.epoch === this.epoch
+          ? this.liveCastClock.tick
+          : this.games.get(this.epoch)?.liveCastFinalTick,
+      // Existing viewers can finish this picture, but a new catch-up
+      // must wait for the next connection if the current one is rotating.
+      canCatchUp:
+        this.lastStatus === "connected" && !this.rotating && !this.ending,
+    };
   }
 
   private deliverCatchup(ws: WebSocket): void {
@@ -2349,20 +3144,23 @@ export class WatchSession {
       this.destroyed ||
       !this.controls.watching ||
       this.processingPacket ||
+      ws.readyState !== ws.OPEN ||
       !this.pending.has(ws)
     )
       return;
-    const source = this.catchupSource(ws);
-    if (!source) return;
+    const picture = this.resolveViewerPicture(this.channels.get(ws));
+    const { source, canCatchUp } = picture;
+    if (!source || !canCatchUp) return;
+    const liveCastViewer = this.liveCastViewers.get(ws);
     // Never seed a joiner from diverged state — re-sync instead (the
     // replica can't be re-synced; it is rebuilt at the next epoch marker).
     if (!this.checkAccumulatorInvariant("catchup-build", source)) {
       if (source.kind === "live")
         this.resyncSession("ghost accumulator diverged");
-      else this.invalidateReplica();
+      else this.invalidateReplica(source.timeline);
       return;
     }
-    sendJson(ws, this.sessionStatus(ws, "syncing"));
+    if (!sendJson(ws, this.sessionStatus(ws, "syncing", picture))) return;
 
     let gzipped: Uint8Array;
     try {
@@ -2370,36 +3168,38 @@ export class WatchSession {
     } catch (e) {
       relayLog.error({ err: e, address: this.key }, "Catch-up build failed");
       sendJson(ws, {
-        ...this.sessionStatus(ws, "ended"),
+        ...this.sessionStatus(ws, "ended", picture),
         message: "Unable to prepare the game stream. Please try joining again.",
       });
       this.detach(ws);
       return;
     }
 
-    const chunkCount = Math.max(
-      1,
-      Math.ceil(gzipped.length / CATCHUP_CHUNK_BYTES),
-    );
-    sendJson(ws, {
-      type: "catchupBegin",
-      address: this.key,
-      epoch: source.epoch,
-      totalBytes: gzipped.length,
-      chunkCount,
-      encoding: "gzip",
-    });
-    for (let i = 0; i < gzipped.length; i += CATCHUP_CHUNK_BYTES) {
-      if (ws.readyState !== ws.OPEN) return;
-      ws.send(gzipped.subarray(i, i + CATCHUP_CHUNK_BYTES), { binary: true });
+    if (
+      !sendViewerCatchup(
+        ws,
+        this.key,
+        source.epoch,
+        gzipped,
+        WATCH_BUFFER_BYTES,
+      )
+    ) {
+      this.detach(ws);
+      return;
     }
-    sendJson(ws, { type: "catchupEnd" });
 
     this.pending.delete(ws);
     this.watchers.add(ws);
     this.viewerEpochs.set(ws, source.epoch);
+    if (liveCastViewer) {
+      liveCastViewer.published = undefined;
+      liveCastViewer.anchor = undefined;
+      liveCastViewer.available = this.liveCastAvailable(ws, picture);
+      if (this.liveCastSubscribers.has(ws))
+        this.sendInitialLiveCast(ws, picture);
+    }
     this.pruneGames();
-    sendJson(ws, this.sessionStatus(ws, "live"));
+    sendJson(ws, this.sessionStatus(ws, "live", picture));
     relayLog.info(
       {
         address: this.key,
@@ -2417,7 +3217,7 @@ export class WatchSession {
     const cached = this.cachedPayload;
     if (
       cached &&
-      cached.kind === source.kind &&
+      cached.packetParser === source.packetParser &&
       cached.epoch === source.epoch &&
       cached.packetCount === source.packetCount &&
       now - cached.createdAt < CATCHUP_CACHE_MAX_AGE_MS
@@ -2440,9 +3240,9 @@ export class WatchSession {
       this.dataBlockCaches.set(source.packetParser, dataBlockCache);
     }
     const json = serializeCatchupPayload(payload, dataBlockCache);
-    const gzipped = gzipSync(json, { level: 3 });
+    const gzipped = compressCatchup(json);
     this.cachedPayload = {
-      kind: source.kind,
+      packetParser: source.packetParser,
       epoch: source.epoch,
       packetCount: source.packetCount,
       createdAt: now,
@@ -2484,7 +3284,7 @@ export class WatchSession {
       watcherCount: this.watcherCount,
       recording: this.recording,
       recordingPolicy: this.recordingPolicy,
-      streamDelayMs: this.epochDelayed ? this.delayMs : 0,
+      streamDelayMs: this.epochDelayed ? (this.options.tourneyDelayMs ?? 0) : 0,
     };
   }
 
@@ -2492,21 +3292,43 @@ export class WatchSession {
   private sessionStatus(
     ws: WebSocket,
     status: WatchStatus,
+    picture = this.resolveViewerPicture(this.channels.get(ws)),
   ): SessionStatusMessage {
-    const delayed = this.isDelayedViewer(ws);
-    const hasReplica =
-      this.replica && this.receivesDelayedEpoch(ws, this.replica.epoch);
+    const { channel, replica } = picture;
+    const timeline = channel?.kind === "delayed" ? channel.timeline : undefined;
     const waitingEpoch =
-      delayed && !hasReplica
-        ? this.delayQueue.find(
-            (item) =>
-              item.kind === "epoch" &&
-              this.receivesDelayedEpoch(ws, item.epoch),
+      channel?.kind === "delayed" && !replica
+        ? channel.timeline.queue.find(
+            (item) => item.kind === "epoch" && item.epoch >= channel.firstEpoch,
           )
         : undefined;
+    const waitingConnection =
+      channel?.kind === "delayed" && !picture.canCatchUp
+        ? channel.timeline.queue.find(
+            (item) =>
+              item.kind === "connected" && item.epoch >= channel.firstEpoch,
+          )
+        : undefined;
+    const blocker =
+      timeline && waitingConnection
+        ? this.delayedSnapshotBlocker(timeline, waitingConnection)
+        : undefined;
+    const policy =
+      blocker?.releasePolicy ??
+      waitingConnection?.releasePolicy ??
+      replica?.releasePolicy ??
+      waitingEpoch?.releasePolicy;
+    // Keep the embargo while checking the mode, but let the CastGenius
+    // loading notice run without a provisional tournament countdown.
+    const waitingForMode =
+      waitingConnection?.kind === "connected" &&
+      waitingConnection.epoch === this.epoch &&
+      !this.tourneyResolved &&
+      waitingConnection.releasePolicy?.normalSharesDelay &&
+      this.liveCastSubscribers.has(ws);
     const { recordingPolicy, ...metadata } =
-      (hasReplica
-        ? this.delayedStatus
+      (replica
+        ? timeline?.status
         : waitingEpoch?.kind === "epoch"
           ? waitingEpoch.status
           : null) ?? this.liveSessionStatus(status);
@@ -2515,19 +3337,29 @@ export class WatchSession {
       message: status === "ended" ? this.endMessage : metadata.message,
       recording: recordingPolicy?.enabled ?? metadata.recording,
       status:
-        status === "live" &&
-        (!this.watchers.has(ws) || (hasReplica && this.replica?.failed))
+        status === "live" && (!this.watchers.has(ws) || replica?.failed)
           ? "syncing"
           : status,
-      mapName:
-        (hasReplica ? this.replica?.watchState.missionName : undefined) ??
-        metadata.mapName,
-      serverName:
-        (hasReplica ? this.replica?.watchState.serverName : undefined) ??
-        metadata.serverName,
+      mapName: replica?.watchState.missionName ?? metadata.mapName,
+      serverName: replica?.watchState.serverName ?? metadata.serverName,
       watcherCount: this.watcherCount,
-      streamDelayMs: delayed ? this.delayMs : 0,
-      streamDelayReadyInMs: this.delayReadyInMs(ws),
+      streamDelayMs: timeline
+        ? (policy?.delayMs ??
+          (timeline === this.extraCastTimeline
+            ? this.castDelayMs
+            : this.delayMs))
+        : 0,
+      streamDelayReason: timeline
+        ? policy?.normalSharesDelay === false &&
+          policy.delayMs <= this.castDelayMs
+          ? "castGenius"
+          : "tournament"
+        : undefined,
+      streamDelayReadyInMs:
+        blocker && !waitingForMode
+          ? Math.max(0, this.delayedReleaseAt(blocker) - Date.now())
+          : undefined,
+      liveCastAvailable: this.liveCastAvailable(ws, picture),
       channelId: this.getChannelId(ws),
     };
   }
@@ -2540,9 +3372,7 @@ export class WatchSession {
   ): void {
     if (this.destroyed) return;
     const update = { ...this.liveSessionStatus(status), message };
-    if (this.delayMs > 0) {
-      this.enqueueDelayed({ kind: "status", at: Date.now(), status: update });
-    }
+    this.enqueueDelayed({ kind: "status", at: Date.now(), status: update });
     for (const ws of this.channels.keys()) {
       if (!this.isDelayedViewer(ws)) {
         sendJson(ws, { ...this.sessionStatus(ws, status), message });
@@ -2551,17 +3381,20 @@ export class WatchSession {
   }
 
   private sendSessionStatus(ws: WebSocket): void {
+    const picture = this.resolveViewerPicture(this.channels.get(ws));
+    const { channel, canCatchUp } = picture;
     sendJson(
       ws,
       this.sessionStatus(
         ws,
-        this.ending && !this.isDelayedViewer(ws)
+        this.ending && (channel?.kind !== "delayed" || channel.timeline.ended)
           ? "ended"
-          : this.catchupSource(ws) ||
-              this.isDelayedViewer(ws) ||
+          : canCatchUp ||
+              channel?.kind === "delayed" ||
               this.lastStatus === "connected"
             ? "syncing"
             : "connecting",
+        picture,
       ),
     );
     if (this.lastPingMs != null) {

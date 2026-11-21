@@ -431,9 +431,7 @@ export interface MatchFacts {
    * time since.
    */
   clock: { timeSec: number; clockMs: number }[];
-  /** When the recording first SAW the match running. If this is later
-   *  than a few seconds in, the recording joined a match in progress:
-   *  open with "we're already under way", not a countdown. */
+  /** First stream time with evidence of active play, including late joins. */
   matchSeenRunningSec: number | null;
   /** When the map had fully arrived from the server. Internal. */
   worldCompleteSec?: number | null;

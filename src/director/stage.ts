@@ -21,6 +21,7 @@
  * runtime search.
  */
 import { Vector3 } from "three";
+import { framesTheSame } from "./assemble";
 import type {
   DirectorDataset,
   DirectorVec3,
@@ -42,6 +43,7 @@ import {
   cameraBuried,
   inspectShot,
   plannerSolved,
+  shotPoseAt,
   subjectVisible,
 } from "./shotPath";
 import {
@@ -52,12 +54,15 @@ import {
   OCCLUSION_HEIGHT_BOOSTS,
   ORBIT_HEIGHT_FACTOR,
   ORBIT_LOOK_LIFT,
+  ROOM_SUBJECT_MARGIN,
   orbitLiftFactor,
   STANDOFF_MIN,
   STANDOFF_MIN_SCALE,
   subjectViewBlocked,
   SUBJECT_MAX_RANGE,
   surfaceLiftedAnchor,
+  sweepClock,
+  sweepProgress,
 } from "./cameraRig";
 import {
   DIRECTOR_TIGHT_SHOT_SHARE,
@@ -97,6 +102,8 @@ const STAGE_TIGHT_LIFT = 0.25;
 const STAGE_FOLLOW_YAWS = 8;
 const STAGE_FOLLOW_PULL_FRACTIONS = [0.6, 0.35];
 const STAGE_FOLLOW_MIN_DISTANCE = 9;
+/** A tripod shot should cover a room or doorway, not a cross-map chase. */
+const ROOM_SHOT_RANGE = 24;
 
 export interface StageReport {
   fixedShots: number;
@@ -234,7 +241,7 @@ export function stagePlan(
     // After the fixed pass: its repairs may have created follow shots,
     // which get verified like the planner's own.
     for (let i = 0; i < plan.shots.length; i++) {
-      stageFollowShot(plan, i, tracks, dataset, report);
+      stageTrackedShot(plan, i, tracks, dataset, report);
     }
   } finally {
     _stageCtx = null;
@@ -301,48 +308,11 @@ export function stageShots(
   try {
     for (const i of indices) stageSweepShot(plan, i, tracks, dataset, report);
     for (const i of indices) stageFixedShot(plan, i, tracks, dataset, report);
-    for (const i of indices) stageFollowShot(plan, i, tracks, dataset, report);
+    for (const i of indices) stageTrackedShot(plan, i, tracks, dataset, report);
   } finally {
     _stageCtx = null;
   }
   return report;
-}
-
-/**
- * What a shot LOOKS like, for spotting a repeat.
- *
- * Timing, reason and role are deliberately excluded: two cuts a viewer
- * cannot tell apart are the same shot however differently the plan
- * describes them.
- */
-function framingKey(shot: Shot): string {
-  const r = (v: number) => Math.round(v * 100) / 100;
-  const p = (v: DirectorVec3) => v.map(r).join(",");
-  switch (shot.kind) {
-    case "fixedOrbit":
-      return [
-        "orbit",
-        p(shot.staged?.anchor ?? shot.center),
-        r(shot.staged?.radius ?? shot.radius),
-        r(shot.staged?.angle ?? shot.startAngle ?? 0),
-        r(shot.angularSpeed ?? 0),
-        r(shot.staged?.liftFactor ?? shot.heightFactor ?? 0),
-      ].join("|");
-    case "sweep":
-      return [
-        "sweep",
-        p(shot.from),
-        p(shot.to),
-        p(shot.target),
-        shot.targetTo ? p(shot.targetTo) : "-",
-      ].join("|");
-    case "followFlag":
-      return `flag|${shot.slot}|${r(shot.distance ?? 0)}|${r(shot.pitch ?? 0)}`;
-    case "followPlayer":
-      return `player|${shot.targetId}|${r(shot.distance ?? 0)}|${r(shot.pitch ?? 0)}`;
-    case "dolly":
-      return `dolly|${JSON.stringify(shot.subject)}`;
-  }
 }
 
 /**
@@ -361,16 +331,14 @@ function mergeConsecutiveDuplicates(
   mutableFromSec = -Infinity,
 ): void {
   const keep: Shot[] = [];
-  let lastKey: string | null = null;
   for (const shot of plan.shots) {
-    const key = framingKey(shot);
     const prev = keep[keep.length - 1];
     // Both halves must still be rewritable: the merge stretches `prev`,
     // and a shot the playhead has reached is on screen at its planned
     // length.
     if (
       prev &&
-      key === lastKey &&
+      framesTheSame(prev, shot) &&
       shot.startSec >= mutableFromSec &&
       prev.startSec >= mutableFromSec
     ) {
@@ -382,7 +350,6 @@ function mergeConsecutiveDuplicates(
       continue;
     }
     keep.push(shot);
-    lastKey = key;
   }
   // IN PLACE, not a reassignment. While streaming, this array is the
   // switcher's own — handing `plan` a fresh one leaves the switcher
@@ -529,6 +496,10 @@ function sweepPathClear(a: DirectorVec3, b: DirectorVec3): boolean {
   return castWorldRay(a, b, { includeStatics: true }) == null;
 }
 
+function lifted([x, y, z]: DirectorVec3, lift: number): DirectorVec3 {
+  return [x, y, z + lift];
+}
+
 /** The PLAYERS a sweep is about: bodies near its aim line at the
  *  shot's midpoint. The pass is judged on sight of THEM — an aim point
  *  can be "visible" past a roof lip while every model behind it is
@@ -536,11 +507,11 @@ function sweepPathClear(a: DirectorVec3, b: DirectorVec3): boolean {
 function sweepAudience(
   shot: Extract<Shot, { kind: "sweep" }>,
   dataset: DirectorDataset,
+  a: DirectorVec3,
+  b: DirectorVec3,
 ): DirectorVec3[] {
   const mid = Math.round((shot.startSec + shot.endSec) / 2);
   const players = playersAtSecFor(dataset).get(mid) ?? [];
-  const a = shot.target;
-  const b = shot.targetTo ?? shot.target;
   const abx = b[0] - a[0];
   const aby = b[1] - a[1];
   const len2 = abx * abx + aby * aby;
@@ -646,7 +617,11 @@ function stageSweepShot(
   }
   const closeUp = shot.role === "rosterCloseUp";
   const lifts = closeUp ? SWEEP_CLOSE_LIFTS : SWEEP_STAGE_LIFTS;
-  const audience = sweepAudience(shot, dataset);
+  const startFraction = sweepProgress(shot, sweepClock(shot, shot.startSec));
+  const start = shotPoseAt(shot, startFraction)!;
+  const mid = shotPoseAt(shot, (1 + startFraction) / 2)!;
+  const end = shotPoseAt(shot, 1)!;
+  const audience = sweepAudience(shot, dataset, start.aim, end.aim);
   // A roster pass exists to show PLAYERS: if nobody is near its aim
   // line by mid-shot (a countdown restart scattered the line-up), the
   // pass films an empty parade ground — hand it to a solved orbit.
@@ -658,29 +633,20 @@ function stageSweepShot(
     shot.role === "rosterWide" || shot.role === "rosterCloseUp";
   if (!rosterPass || audience.length > 0) {
     for (const lift of lifts) {
-      const from: DirectorVec3 = [
-        shot.from[0],
-        shot.from[1],
-        shot.from[2] + lift,
-      ];
-      const to: DirectorVec3 = [shot.to[0], shot.to[1], shot.to[2] + lift];
-      const mid: DirectorVec3 = [
-        (from[0] + to[0]) / 2,
-        (from[1] + to[1]) / 2,
-        (from[2] + to[2]) / 2,
-      ];
-      const endTarget = shot.targetTo ?? shot.target;
+      const from = lifted(start.eye, lift);
+      const middle = lifted(mid.eye, lift);
+      const to = lifted(end.eye, lift);
       if (
         sweepPathClear(from, to) &&
-        subjectVisible(from, shot.target) &&
-        subjectVisible(to, endTarget) &&
-        subjectVisible(mid, shot.target) &&
+        subjectVisible(from, start.aim) &&
+        subjectVisible(to, end.aim) &&
+        subjectVisible(middle, mid.aim) &&
         sweepSeesAudience(from, to, audience, closeUp ? 0.75 : 0.66, closeUp)
       ) {
         shot.pathSolved = true;
         if (lift > 0) {
-          shot.from = from;
-          shot.to = to;
+          shot.from = lifted(shot.from, lift);
+          shot.to = lifted(shot.to, lift);
           report.sweepLifted++;
         } else {
           report.sweepClean++;
@@ -695,18 +661,26 @@ function stageSweepShot(
   // pre-match tour move went straight to conversion instead — 41% of
   // the moves planned for the picking period came out as orbits.
   const trimmable = closeUp || shot.role === "tourMove";
-  if (trimmable && (!rosterPass || audience.length > 0)) {
+  if (trimmable && startFraction < 1 && (!rosterPass || audience.length > 0)) {
     // Find the longest clear stretch containing the midpoint by
     // sampling the path, and keep the pan if enough of it survives.
     const N = 24;
-    const point = (f: number): DirectorVec3 => [
-      shot.from[0] + (shot.to[0] - shot.from[0]) * f,
-      shot.from[1] + (shot.to[1] - shot.from[1]) * f,
-      shot.from[2] + (shot.to[2] - shot.from[2]) * f,
+    const at = (f: number, a: DirectorVec3, b: DirectorVec3): DirectorVec3 => [
+      a[0] + (b[0] - a[0]) * f,
+      a[1] + (b[1] - a[1]) * f,
+      a[2] + (b[2] - a[2]) * f,
     ];
+    const point = (f: number) => at(f, start.eye, end.eye);
     const clear: boolean[] = [];
-    for (let k = 0; k < N; k++) {
-      clear.push(sweepPathClear(point(k / N), point((k + 1) / N)));
+    let previous = point(0);
+    let previousClear = !cameraBuried(previous);
+    for (let k = 1; k <= N; k++) {
+      const next = point(k / N);
+      const nextClear = !cameraBuried(next);
+      // A ray wholly inside solid geometry can report no hit.
+      clear.push(previousClear && nextClear && sweepPathClear(previous, next));
+      previous = next;
+      previousClear = nextClear;
     }
     let lo = N >> 1;
     let hi = N >> 1;
@@ -716,17 +690,8 @@ function stageSweepShot(
     if (kept >= SWEEP_MIN_KEPT_FRACTION && hi > lo) {
       let f0 = lo / N;
       let f1 = hi / N;
-      const at = (
-        f: number,
-        a: DirectorVec3,
-        b: DirectorVec3,
-      ): DirectorVec3 => [
-        a[0] + (b[0] - a[0]) * f,
-        a[1] + (b[1] - a[1]) * f,
-        a[2] + (b[2] - a[2]) * f,
-      ];
-      let from = at(f0, shot.from, shot.to);
-      let to = at(f1, shot.from, shot.to);
+      let from = point(f0);
+      let to = point(f1);
       // Strip AUDIENCE-BLIND ends off the clear stretch (the "flies
       // into the building" tail) before judging what remains.
       if (audience.length > 0) {
@@ -741,8 +706,8 @@ function stageSweepShot(
           const g1 = f0 + (f1 - f0) * (b / span);
           f0 = g0;
           f1 = g1;
-          from = at(f0, shot.from, shot.to);
-          to = at(f1, shot.from, shot.to);
+          from = point(f0);
+          to = point(f1);
         }
       }
       const keptAfterBlind = f1 - f0;
@@ -754,10 +719,15 @@ function stageSweepShot(
       ) {
         // The aim window pans with the travel — trim it in proportion.
         if (shot.targetTo) {
-          const target = at(f0, shot.target, shot.targetTo);
-          const targetTo = at(f1, shot.target, shot.targetTo);
-          shot.target = target;
-          shot.targetTo = targetTo;
+          shot.target = at(f0, start.aim, end.aim);
+          shot.targetTo = at(f1, start.aim, end.aim);
+        }
+        if (shot.moveOffsetSec) {
+          shot.moveSec = Math.max(
+            0,
+            (shot.moveSec ?? shot.endSec - shot.startSec) - shot.moveOffsetSec,
+          );
+          shot.moveOffsetSec = undefined;
         }
         shot.from = from;
         shot.to = to;
@@ -786,7 +756,7 @@ function stageSweepShot(
   // The subject is the middle of the aim's travel. (A fly-by's aim runs
   // from one flag to the other, where the midpoint would be mid-map —
   // but those are planner-solved and never reach this conversion.)
-  const center = midAim(shot);
+  const center = startFraction > 0 ? mid.aim : midAim(shot);
   plan.shots[i] = {
     kind: "fixedOrbit",
     center,
@@ -862,9 +832,11 @@ function stageFixedShot(
   }
   // Search actual room space before lifting the anchor or trying rings
   // above it. Basement cameras may need to sit BELOW the subject.
-  if (_stageCtx?.freeSpace && isRoofed(shot.center)) {
+  const grid = _stageCtx?.freeSpace;
+  const roofed = grid != null && isRoofed(shot.center);
+  if (grid && roofed) {
     const path = subjectPath(shot, tracks, dataset, shot.center);
-    if (placeFixedFromGrid(shot, path, _stageCtx.freeSpace)) {
+    if (placeFixedFromGrid(shot, path, grid)) {
       report.gridFixed++;
       return;
     }
@@ -899,6 +871,12 @@ function stageFixedShot(
     } else {
       report.adjusted++;
     }
+    return;
+  }
+  // A subject beside a doorway or under a low overhang can fail the
+  // roof probe and still need a view from inside the structure.
+  if (grid && !roofed && placeFixedFromGrid(shot, path, grid)) {
+    report.gridFixed++;
     return;
   }
   // Repair ladder: the location admits no watchable orbit at the
@@ -965,13 +943,14 @@ function placeFixedFromGrid(
   shot: Extract<Shot, { kind: "fixedOrbit" }>,
   path: PathSample[],
   grid: FreeSpaceGrid,
+  wantDist = Math.min(shot.radius, ROOM_SHOT_RANGE),
 ): boolean {
   const subject = path[0]?.pos;
   if (!subject) return false;
   const anchor = shot.center;
   torqueVecToThree(anchor, _anchorThree);
   for (const spot of cameraSpotsFor(grid, threeToTorque(subject), {
-    wantDist: shot.radius,
+    wantDist,
     bearing: shot.startAngle,
   })) {
     const dx = spot[0] - anchor[0];
@@ -1022,7 +1001,7 @@ function placeFixedFromGrid(
  * target hands the camera to the impact zone, and anything else is
  * left for the runtime's best effort.
  */
-function stageFollowShot(
+function stageTrackedShot(
   plan: ShotPlan,
   i: number,
   tracks: Map<number, FlagTrack>,
@@ -1030,9 +1009,24 @@ function stageFollowShot(
   report: StageReport,
 ): void {
   const shot = plan.shots[i];
-  if (shot.kind !== "followFlag" && shot.kind !== "followPlayer") return;
+  if (
+    shot.kind !== "followFlag" &&
+    shot.kind !== "followPlayer" &&
+    shot.kind !== "dolly"
+  )
+    return;
+  if (shot.kind === "followPlayer" && shot.firstPerson) return;
+  if (shot.kind === "dolly" && !_stageCtx?.freeSpace) return;
   const path = followPath(shot, tracks, dataset);
   if (path.length === 0) return;
+  if (shot.kind === "dolly") {
+    const room = roomShot(shot, path);
+    if (room) {
+      plan.shots[i] = room;
+      report.gridFixed++;
+    }
+    return;
+  }
   report.followShots++;
   const wanted = shot.distance ?? DIRECTOR_DIST_CHASE;
   const pitch = shot.pitch ?? DIRECTOR_PITCH_CHASE;
@@ -1151,8 +1145,6 @@ function stageFollowShot(
   // The ring search keeps its pitch, which often puts every candidate
   // above a low ceiling. Use room cells to propose an offset at a new
   // height, then verify that offset along the available subject path.
-  // Keep a follow as a follow: a fixed room view would lose a carrier
-  // running out of the building after the current lookahead.
   const grid = _stageCtx?.freeSpace;
   const first = path[0].pos;
   if (grid && isRoofed([first.z, first.x, first.y - 1])) {
@@ -1182,6 +1174,12 @@ function stageFollowShot(
       report.gridFollow++;
       return;
     }
+  }
+  const room = roomShot(shot, path);
+  if (room) {
+    plan.shots[i] = room;
+    report.gridFixed++;
+    return;
   }
   // A shot that DECLARED a framing floor is stating intent that
   // outranks geometry: ship it as planned and let the runtime rails
@@ -1229,6 +1227,51 @@ function stageFollowShot(
   report.followUnsolved++;
 }
 
+type TrackedShot = Extract<
+  Shot,
+  { kind: "followFlag" | "followPlayer" | "dolly" }
+>;
+
+function trackedSubject(shot: TrackedShot) {
+  if (shot.kind === "dolly") return shot.subject;
+  return shot.kind === "followFlag"
+    ? ({ type: "flag", slot: shot.slot } as const)
+    : ({ type: "player", targetId: shot.targetId } as const);
+}
+
+/** A clear fixed lens can cover motion across a room when a camera
+ * riding along with that same motion would drag through its walls. */
+function roomShot(shot: TrackedShot, path: PathSample[]): Shot | null {
+  const grid = _stageCtx?.freeSpace;
+  if (!grid) return null;
+  const samples = path.filter(
+    ({ timeSec }) => timeSec >= shot.startSec && timeSec <= shot.endSec,
+  );
+  const first = samples[0]?.pos;
+  if (!first) return null;
+  const center: DirectorVec3 = [first.z, first.x, first.y - 1];
+  if (
+    !isRoofed(center) ||
+    samples.some(
+      ({ pos }) => pos.distanceToSquared(first) > ROOM_SHOT_RANGE ** 2,
+    )
+  )
+    return null;
+  const room = {
+    ...storyOf(shot),
+    kind: "fixedOrbit" as const,
+    center,
+    radius: 8,
+    trackSubject: true,
+    angularSpeed: 0,
+    lookLift: 1,
+    lookSubject: trackedSubject(shot),
+    role: shot.role,
+    quickCut: shot.quickCut,
+  };
+  return placeFixedFromGrid(room, samples, grid, 8) ? room : null;
+}
+
 /**
  * The subject's sampled positions across the shot (Three-space, lifted
  * to the verify height). Flags use the scanned flag track, players
@@ -1263,15 +1306,11 @@ function subjectPath(
 /** A follow shot's subject path — the chase goes wherever they go, so
  *  no range cap applies. */
 function followPath(
-  shot: Extract<Shot, { kind: "followFlag" | "followPlayer" }>,
+  shot: TrackedShot,
   tracks: Map<number, FlagTrack>,
   dataset: DirectorDataset,
 ): PathSample[] {
-  const subject =
-    shot.kind === "followFlag"
-      ? ({ type: "flag", slot: shot.slot } as const)
-      : ({ type: "player", targetId: shot.targetId } as const);
-  return collectPath(subject, shot, tracks, dataset, () => true);
+  return collectPath(trackedSubject(shot), shot, tracks, dataset, () => true);
 }
 
 function collectPath(
@@ -1427,7 +1466,9 @@ function evaluateCandidate(
     // above a basement generator scored a perfect 1.00 — the sight ray
     // down to the subject really is unobstructed — and the shot was
     // published as solved, then rendered as a faceful of sky.
-    if (!eyeBuried(_eye) && !subjectViewBlocked(_eye, sample.pos)) seen++;
+    const margin = shot.trackSubject ? ROOM_SUBJECT_MARGIN : undefined;
+    if (!eyeBuried(_eye) && !subjectViewBlocked(_eye, sample.pos, margin))
+      seen++;
     const prev = path[Math.max(0, i - 1)];
     const next = path[Math.min(path.length - 1, i + 1)];
     const dt = Math.max(0.5, next.timeSec - prev.timeSec);

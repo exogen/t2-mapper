@@ -14,7 +14,6 @@
   border: 1px solid rgba(255, 190, 90, 0.4);
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
   color: #fbf1df;
-  /* No scene renders behind this, so let the user select the text. */
   pointer-events: auto;
   user-select: text;
 }
@@ -37,13 +36,15 @@
   color: rgb(255, 190, 90);
 }
 
-.Subtitle {
-  font-size: 14px;
+.Countdown {
   font-variant-numeric: tabular-nums;
 }
 
-.Note {
-  font-size: 12px;
-  line-height: 1.5;
-  color: rgba(251, 241, 223, 0.6);
+.Subtitle {
+  composes: Countdown;
+  font-size: 14px;
+}
+
+.DismissButton {
+  composes: Button from "./Button.module.css";
 }

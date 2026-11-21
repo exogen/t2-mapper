@@ -8,14 +8,22 @@ import {
   exitDirector,
   nearFlagStand,
 } from "../state/demoDirectorStore";
+import {
+  findLiveDirectorShotIndex,
+  liveDirectorReleasedTick,
+  liveDirectorStore,
+  liveDirectorTimeAt,
+} from "../state/liveDirectorStore";
+import type { LiveCastIdentity } from "../../relay/liveCastTypes";
 import { streamClock, streamPlaybackStore } from "../state/streamPlaybackStore";
+import { streamSnapshotStore } from "../state/streamSnapshotStore";
 import {
   enterWatchFollow,
   exitToFreeFly,
   findLivingEntityByTargetId,
   followFlag,
 } from "../state/watchFollow";
-import { orbitPullbackDir } from "../stream/streamHelpers";
+import { STREAM_TICK_SEC, orbitPullbackDir } from "../stream/streamHelpers";
 import { aimCamera, placeCamera, shotPoseAt } from "../director/shotPath";
 import { plannerSolved } from "../director/shotPath";
 import { inRoomUnderTerrain } from "../collision/worldCollision";
@@ -23,6 +31,7 @@ import { subscribeAction } from "../state/inputControls";
 import type {
   DirectorVec3 as DirectorVec3Tuple,
   Shot,
+  ShotSubject,
 } from "../director/types";
 import { demoClock, describeShot } from "../director/shotLog";
 import { directorCamDebug } from "../state/cameraDebug";
@@ -61,6 +70,7 @@ import {
   TERRAIN_LIFT_FALL_RATE,
   TERRAIN_LIFT_RISE_RATE,
   ORBIT_LOOK_LIFT,
+  ROOM_SUBJECT_MARGIN,
   PARAM_EASE_RATE,
   STANDOFF_MIN,
   STANDOFF_MIN_SCALE,
@@ -112,7 +122,6 @@ import {
   findShotIndex,
   livingPlayerPositionsNear,
   resolveShotSubjectEntityId,
-  resolveShotSubjectGroup,
   resolveSubjectGroup,
   shotContains,
   shotSubjectOf,
@@ -157,6 +166,19 @@ function doorwaysNear(holdTorque: DirectorVec3Tuple): Doorway[] {
   }
   return doors;
 }
+
+function flagReturnedHome(position: Vector3, slot: number): boolean {
+  if (liveDirectorStore.getState().status === "playing") {
+    return (
+      streamSnapshotStore
+        .getState()
+        .snapshot?.flags?.some(
+          (flag) => flag.teamId === slot && flag.status === "home",
+        ) ?? false
+    );
+  }
+  return nearFlagStand(position, slot);
+}
 /**
  * The tripod pan's per-shot state, bundled so a shot boundary resets it
  * in ONE place (its refs used to be scattered, and a forgotten reset —
@@ -200,6 +222,7 @@ function driveSubjectPan(
   pan: PanState,
   shot: Extract<Shot, { kind: "fixedOrbit" }>,
   subject: NonNullable<Extract<Shot, { kind: "fixedOrbit" }>["lookSubject"]>,
+  entityId: string | null,
   camera: { position: Vector3 },
   aim: Vector3,
   seedAim: boolean,
@@ -210,7 +233,7 @@ function driveSubjectPan(
   demoDelta: number,
   rawDelta: number,
 ): void {
-  const subjectGroup = resolveShotSubjectGroup(subject);
+  const subjectGroup = entityId ? resolveSubjectGroup(entityId) : null;
   const lookLift = shot.lookLift ?? ORBIT_LOOK_LIFT;
   // Coverage gate for PLAYER subjects: a player only leaves a
   // fixed shot's coverage by dying and respawning — the body that
@@ -227,13 +250,12 @@ function driveSubjectPan(
   ) {
     if (subject.type === "player") {
       state = "respawned elsewhere";
-    } else if (nearFlagStand(subjectGroup.position, subject.slot)) {
+    } else if (flagReturnedHome(subjectGroup.position, subject.slot)) {
       state = "returned home";
     }
   }
-  // A player's death ENDS this shot's story: the body that comes
-  // back is a new scene, wherever it spawns — never re-acquire.
-  // (A flag that reappears is still the flag.)
+  // Keep the last framing after a body leaves the shot. A flag that
+  // reappears is still the same subject.
   if (
     subject.type === "player" &&
     state === "visible" &&
@@ -286,10 +308,9 @@ function driveSubjectPan(
       subjectGroup.position.x - cx,
       subjectGroup.position.z - cz,
     );
-    const track = Math.min(
-      1,
-      Math.max(0, fromAnchor / Math.max(1, shot.radius) - 1),
-    );
+    const track = shot.trackSubject
+      ? 1
+      : Math.min(1, Math.max(0, fromAnchor / Math.max(1, shot.radius) - 1));
     panTarget = _staticLook
       .copy(subjectGroup.position)
       .sub(_panAnchor.set(cx, cy, cz))
@@ -299,8 +320,7 @@ function driveSubjectPan(
     // Lead room: aim slightly AHEAD of a moving subject so they travel
     // into frame space instead of being pinned dead centre — scaled by
     // the tracking blend, so anchored framings stay anchored.
-    const entityId = resolveShotSubjectEntityId(subject);
-    if (entityId && subjectVelocity(entityId, _panLead)) {
+    if (!shot.trackSubject && entityId && subjectVelocity(entityId, _panLead)) {
       panTarget.addScaledVector(_panLead, 0.35 * track);
     }
   } else if (pan.state === "returned home") {
@@ -417,18 +437,29 @@ const _panProposed = new Vector3();
 const _panLead = new Vector3();
 
 /**
- * Auto-director playback driver — while demoDirectorStore is "playing",
+ * Auto-director playback driver — while a demo or live cast is playing,
  * looks up the planned shot for the current demo time each frame and
  * drives the existing follow/orbit selection state (watchFollow +
- * StreamPlaybackSession do the actual camera work, inheriting respawn
- * re-lock and flag hand-off), positioning the camera directly only for
- * fixedOrbit establishing shots. F or Escape is the one interrupt back
+ * StreamPlaybackSession do the orbit work, including flag hand-offs).
+ * Player shots stay with the same body. F or Escape interrupts back
  * to free-fly; the plan is demo-time-indexed, so seeks and speed
  * changes re-sync in a single frame.
  */
 export function installDirectorCamera(engine: GameEngine): () => void {
   let shotIndex = -1;
   let appliedShot: Shot | null = null;
+  let shotPlayerBody: string | null = null;
+  const currentSubjectEntity = (subject: ShotSubject): string | null =>
+    subject.type === "player"
+      ? (shotPlayerBody ??= findLivingEntityByTargetId(subject.targetId))
+      : resolveShotSubjectEntityId(subject);
+  const currentSubjectGroup = (subject: ShotSubject) => {
+    const entityId = currentSubjectEntity(subject);
+    return entityId ? resolveSubjectGroup(entityId) : null;
+  };
+  let liveIdentity: LiveCastIdentity | null = null;
+  let previousLiveTime: number | undefined;
+  let shotTimeSec = 0;
   let orbitAngle = 0;
   let currentHeightScale = 1;
   let currentRadiusScale = 1;
@@ -583,7 +614,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
           travelMinDuration = 0;
           log.info(
             "%s travel: cut (%s)",
-            demoClock(streamClock.time),
+            demoClock(shotTimeSec),
             blocked
               ? "flight path passes through geometry"
               : needed > budget
@@ -605,7 +636,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
             .addScaledVector(_travelForward, TRANSITION_AIM_LEVER);
           log.info(
             "%s travel: flying %dm over %ss (swing %d°)",
-            demoClock(streamClock.time),
+            demoClock(shotTimeSec),
             Math.round(distance),
             needed.toFixed(2),
             Math.round((swing * 180) / Math.PI),
@@ -622,7 +653,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
         if (distance > TRANSITION_MAX_DISTANCE) {
           log.info(
             "%s travel: cut (%dm is beyond flying range)",
-            demoClock(streamClock.time),
+            demoClock(shotTimeSec),
             Math.round(distance),
           );
         }
@@ -833,7 +864,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
     // from wherever the orbit happens to be, so a check landing a frame
     // earlier or later put the camera somewhere visibly different —
     // which is why replaying the same cast did not look the same twice.
-    const checkSlot = Math.floor(streamClock.time / VISIBILITY_CHECK_SEC);
+    const checkSlot = Math.floor(shotTimeSec / VISIBILITY_CHECK_SEC);
     if (checkSlot === visibilitySlot) return;
     visibilitySlot = checkSlot;
     // Probe the point the shot actually AIMS at. Using the rig default
@@ -846,7 +877,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
         ? (shot.lookLift ?? ORBIT_LOOK_LIFT)
         : ORBIT_LOOK_LIFT;
     if (subject) {
-      const group = resolveShotSubjectGroup(subject);
+      const group = currentSubjectGroup(subject);
       if (!group) return;
       _subjectPos.copy(group.position);
       _subjectPos.y += probeLift;
@@ -884,7 +915,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
         // the scene (the aftermath shot owns what happens next).
         if (
           subject?.type === "flag" &&
-          !nearFlagStand(_subjectPos, subject.slot)
+          !flagReturnedHome(_subjectPos, subject.slot)
         ) {
           strayed = true;
         } else {
@@ -902,7 +933,11 @@ export function installDirectorCamera(engine: GameEngine): () => void {
     // behind an "at the scene" bypass here for its entire duration. A
     // subject ducking briefly behind a pillar is debounced by the strike
     // counter, and the reanchor cooldown bounds any churn.
-    if (!strayed && !subjectViewBlocked(camera.position, _subjectPos)) {
+    const margin =
+      shot.kind === "fixedOrbit" && shot.trackSubject
+        ? ROOM_SUBJECT_MARGIN
+        : undefined;
+    if (!strayed && !subjectViewBlocked(camera.position, _subjectPos, margin)) {
       visibilityStrikes = 0;
       return;
     }
@@ -911,15 +946,15 @@ export function installDirectorCamera(engine: GameEngine): () => void {
     // A correction is itself a camera move; a second one on its heels
     // reads as the camera spinning in confusion (dropped flags roll,
     // scrums shuffle). Hold what we have until the last one has settled.
-    if (streamClock.time - lastCorrection < REANCHOR_COOLDOWN_SEC) {
+    if (shotTimeSec - lastCorrection < REANCHOR_COOLDOWN_SEC) {
       return;
     }
     // And NO correction in the shot's final stretch — the cut is coming
     // anyway; a retarget seconds before it is a jump with no payoff.
-    if (shot.endSec - streamClock.time < CORRECTION_MIN_REMAINING_SEC) {
+    if (shot.endSec - shotTimeSec < CORRECTION_MIN_REMAINING_SEC) {
       return;
     }
-    lastCorrection = streamClock.time;
+    lastCorrection = shotTimeSec;
 
     if (shot.kind === "fixedOrbit") {
       // Re-anchor around the SUBJECT (not the shot's stale centre) and
@@ -945,7 +980,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
       if (!placement.clear) {
         log.info(
           "%s visibility: subject %s but no clear placement found",
-          demoClock(streamClock.time),
+          demoClock(shotTimeSec),
           strayed ? "out of range" : "blocked",
         );
         return;
@@ -965,7 +1000,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
       const sweep = Math.acos(
         Math.max(-1, Math.min(1, _visForward.dot(_visNewAim))),
       );
-      const remaining = shot.endSec - streamClock.time;
+      const remaining = shot.endSec - shotTimeSec;
       if (
         (sweep > REANCHOR_MAX_SWEEP_RAD && budgetHolds < 2) ||
         remaining < REANCHOR_MIN_REMAINING_SEC
@@ -997,7 +1032,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
         if (room > 0) {
           log.info(
             "%s visibility: pulling in on current bearing to %dm (swing would be %d°)",
-            demoClock(streamClock.time),
+            demoClock(shotTimeSec),
             Math.round(room),
             Math.round((sweep * 180) / Math.PI),
           );
@@ -1015,7 +1050,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
         budgetHolds += 1;
         log.info(
           "%s visibility: holding imperfect frame — correction too disruptive (%d° sweep, %ss left)",
-          demoClock(streamClock.time),
+          demoClock(shotTimeSec),
           Math.round((sweep * 180) / Math.PI),
           remaining.toFixed(1),
         );
@@ -1024,7 +1059,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
       budgetHolds = 0;
       log.info(
         "%s visibility: %s — re-anchoring on subject (angle %d°, r×%s)",
-        demoClock(streamClock.time),
+        demoClock(shotTimeSec),
         strayed ? "subject left the frame" : "subject behind geometry",
         Math.round(((((placement.angle * 180) / Math.PI) % 360) + 360) % 360),
         placement.radiusScale.toFixed(2),
@@ -1038,7 +1073,10 @@ export function installDirectorCamera(engine: GameEngine): () => void {
       return;
     }
 
-    if (shot.kind === "followFlag" || shot.kind === "followPlayer") {
+    if (
+      shot.kind === "followFlag" ||
+      (shot.kind === "followPlayer" && !shot.firstPerson)
+    ) {
       // Swing the orbit round the subject until the line is clear, and
       // where no bearing has room for the full standoff, pull in to what
       // does fit — a subject indoors has metres, not tens of metres. The
@@ -1059,7 +1097,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
         const room = Math.max(clear.room, floor);
         log.info(
           "%s visibility: follow subject blocked — swinging yaw %d°%s",
-          demoClock(streamClock.time),
+          demoClock(shotTimeSec),
           Math.round((clear.offset * 180) / Math.PI),
           room < wanted ? ` and pulling in to ${Math.round(room)}m` : "",
         );
@@ -1069,7 +1107,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
       }
       log.info(
         "%s visibility: follow subject blocked on every bearing — holding",
-        demoClock(streamClock.time),
+        demoClock(shotTimeSec),
       );
     }
   };
@@ -1088,7 +1126,11 @@ export function installDirectorCamera(engine: GameEngine): () => void {
     shots: readonly Shot[],
     t: number,
     fallbackCamera: Camera,
+    allowTravel = true,
+    livePhase?: number,
   ): void => {
+    const snapEntry =
+      shot.transitionIn === "cut" || (livePhase != null && !allowTravel);
     // What the incoming shot can afford to spend on being arrived at.
     travelBudget = Math.max(0, shot.endSec - shot.startSec);
     // A jump of more than one shot means a seek re-synced the plan.
@@ -1106,6 +1148,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
     directorCamDebug.panActive = false;
     shotIndex = index;
     appliedShot = shot;
+    shotPlayerBody = null;
     // License the follow spring to snap: a shot boundary is the one
     // moment a discontinuous camera move is an EDIT rather than a
     // glitch (see StreamPlaybackSession's mid-shot teleport freeze).
@@ -1115,7 +1158,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
     const leaving = cameraRegistry.perspective ?? fallbackCamera;
     travelFrom.copy(leaving.position);
     travelFromQuat.copy(leaving.quaternion);
-    travelState = "armed";
+    travelState = allowTravel ? "armed" : "idle";
     travelArmedSec = 0;
     visibilityStrikes = 0;
     visibilityYaw = null;
@@ -1128,9 +1171,12 @@ export function installDirectorCamera(engine: GameEngine): () => void {
     centerOverride = null;
     terrainLift = -1;
     terrainPrev.valid = false;
-    applyShot(shot);
+    applyShot(shot, snapEntry, livePhase != null);
     dollySeeded = false;
-    if (shot.kind === "followFlag" || shot.kind === "followPlayer") {
+    if (
+      shot.kind === "followFlag" ||
+      (shot.kind === "followPlayer" && !shot.firstPerson)
+    ) {
       // Entry pre-clear: fixed shots already choose a placement that can
       // see their subject before the first frame — follow shots used to
       // open on the planned aim and only get swung clear by the periodic
@@ -1138,7 +1184,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
       // Sweep for a clear bearing NOW, from the yaw the aim would
       // command, and open there instead.
       const subject = shotSubjectOf(shot);
-      const group = subject ? resolveShotSubjectGroup(subject) : null;
+      const group = subject ? currentSubjectGroup(subject) : null;
       if (group) {
         _subjectPos.copy(group.position);
         _subjectPos.y += ORBIT_LOOK_LIFT;
@@ -1154,7 +1200,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
             shot.aim.target,
           );
         } else {
-          const heading = subjectHeading(resolveShotSubjectEntityId(subject!));
+          const heading = subjectHeading(currentSubjectEntity(subject!));
           if (heading != null) {
             entryYaw =
               shot.aim?.mode === "backward" ? heading + Math.PI : heading;
@@ -1172,7 +1218,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
           );
           visibilityYaw = clear.yaw;
           visibilityDistance = clear.room < wanted ? clear.room : null;
-          if (shot.transitionIn === "cut") {
+          if (snapEntry) {
             // A cut has no continuity to preserve: open ON the clear
             // bearing rather than swinging onto it in view.
             streamPlaybackStore.setState({
@@ -1323,7 +1369,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
       // runtime's scale form and go.
       const staged = shot.staged;
       if (staged.anchor) centerOverride = staged.anchor;
-      orbitAngle = staged.angle;
+      orbitAngle = staged.angle + (shot.angularSpeed ?? 0.1) * (livePhase ?? 0);
       currentRadiusScale = staged.radius / Math.max(1e-6, shot.radius);
       const plannedLift = orbitLiftFactor(
         shot.radius,
@@ -1363,7 +1409,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
         );
       }
       const subject = shot.lookSubject
-        ? resolveShotSubjectGroup(shot.lookSubject)
+        ? currentSubjectGroup(shot.lookSubject)
         : null;
       if (subject) {
         _subjectPos.copy(subject.position);
@@ -1391,10 +1437,13 @@ export function installDirectorCamera(engine: GameEngine): () => void {
       // orbit's phase — a restarted rotation from the planned angle
       // reads as a broken record when the same stand is revisited.
       const resumed =
-        recentOrbits.find(
-          (o) =>
-            Math.hypot(o.anchor[0] - anchor[0], o.anchor[1] - anchor[1]) <= 25,
-        )?.angle ?? null;
+        livePhase == null
+          ? (recentOrbits.find(
+              (o) =>
+                Math.hypot(o.anchor[0] - anchor[0], o.anchor[1] - anchor[1]) <=
+                25,
+            )?.angle ?? null)
+          : null;
       if (resumed != null) {
         log.info("%s apply: resuming the earlier orbit phase", demoClock(t));
       }
@@ -1408,17 +1457,24 @@ export function installDirectorCamera(engine: GameEngine): () => void {
           camera.position.x - anchor[1],
           camera.position.z - anchor[0],
         ) <= Math.max(60, shot.radius * 1.5);
-      if (resumed == null && alreadyNear && shot.startAngle != null) {
+      if (
+        livePhase == null &&
+        resumed == null &&
+        alreadyNear &&
+        shot.startAngle != null
+      ) {
         log.info(
           "%s apply: already at the scene — keeping the current bearing",
           demoClock(t),
         );
       }
       const planned =
-        resumed ??
-        (alreadyNear || shot.startAngle == null
-          ? orbitBearingOf(camera.position, anchor[1], anchor[0])
-          : shot.startAngle);
+        livePhase == null
+          ? (resumed ??
+            (alreadyNear || shot.startAngle == null
+              ? orbitBearingOf(camera.position, anchor[1], anchor[0])
+              : shot.startAngle))
+          : (shot.startAngle ?? 0) + (shot.angularSpeed ?? 0.1) * livePhase;
       const placement = chooseClearPlacement(
         anchor,
         shot.radius,
@@ -1463,7 +1519,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
     const anchor = centerOverride ?? shot.center;
     // Remember this orbit's phase, replacing an earlier entry for the
     // same spot; keep only a handful so stale anchors age out.
-    {
+    if (liveIdentity == null) {
       const ring = recentOrbits;
       const existing = ring.findIndex(
         (o) =>
@@ -1501,6 +1557,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
         panState,
         shot,
         shot.lookSubject,
+        currentSubjectEntity(shot.lookSubject),
         camera,
         dollyAim,
         seedAim,
@@ -1549,12 +1606,13 @@ export function installDirectorCamera(engine: GameEngine): () => void {
     shot: Extract<Shot, { kind: "dolly" }>,
     demoDelta: number,
     fallbackCamera: Camera,
+    snapEntry: boolean,
   ): void => {
     // Film-style flying camera: damped pursuit of a trailing
     // three-quarter offset off the subject's path, aim eased onto the
     // subject. Direct camera writes in freeFly, like fixedOrbit.
     const camera = cameraRegistry.perspective ?? fallbackCamera;
-    const entityId = resolveShotSubjectEntityId(shot.subject);
+    const entityId = currentSubjectEntity(shot.subject);
     const seeding = !dollySeeded;
     if (seeding) {
       dollyVel.set(0, 0, 0);
@@ -1636,7 +1694,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
         // entry (already riding beside this subject) glides in.
         dollySeeded = true;
         const gap = camera.position.distanceTo(_dollyDesired);
-        if (gap > DOLLY_GLIDE_MAX_GAP) {
+        if (snapEntry || gap > DOLLY_GLIDE_MAX_GAP) {
           dollyPos.copy(_dollyDesired);
           dollyAim.copy(_dollySubject);
         } else {
@@ -1686,9 +1744,12 @@ export function installDirectorCamera(engine: GameEngine): () => void {
       playbackState.followTargetId !== shot.targetId ||
       playbackState.followEntityId == null
     ) {
-      const entityId = findLivingEntityByTargetId(shot.targetId);
+      const entityId = shot.firstPerson
+        ? currentSubjectEntity({ type: "player", targetId: shot.targetId })
+        : findLivingEntityByTargetId(shot.targetId);
       if (entityId) enterWatchFollow(entityId);
     }
+    if (shot.kind === "followPlayer" && shot.firstPerson) return;
 
     // Ease framing parameters toward the shot's targets (continuous
     // transitions glide; cuts were snapped in applyShot), and steer the
@@ -1779,18 +1840,38 @@ export function installDirectorCamera(engine: GameEngine): () => void {
     subscribeAction("directorInterrupt", exitDirector),
     engine.scheduler.add(FramePriority.CameraDirector, (ctx) => {
       const delta = ctx.delta;
-      if (engineStore.getState().playback.status === "seeking") return;
-      const { status, plan, planComplete } = demoDirectorStore.getState();
-      if (status !== "playing" || !plan || plan.shots.length === 0) {
+      const playbackStatus = engineStore.getState().playback.status;
+      if (playbackStatus === "seeking") return;
+      const live = liveDirectorStore.getState();
+      const isLive = live.status === "playing";
+      const identity = isLive ? live.identity : null;
+      if (liveIdentity !== identity) {
+        liveIdentity = identity;
+        previousLiveTime = undefined;
+        shotIndex = -1;
+        appliedShot = null;
+        recentOrbits.length = 0;
+      }
+      const demo = demoDirectorStore.getState();
+      const shots = isLive ? live.shots : demo.plan?.shots;
+      if ((!isLive && demo.status !== "playing") || !shots?.length) {
         shotIndex = -1;
         appliedShot = null;
         return;
       }
 
-      const t = streamClock.time;
-      const shots = plan.shots;
+      const playbackTime = streamClock.time;
+      const t = isLive
+        ? Math.max(previousLiveTime ?? 0, liveDirectorTimeAt(playbackTime))
+        : playbackTime;
       let index = shotIndex;
-      if (index < 0 || !shotContains(shots[index], t)) {
+      if (isLive) {
+        // The clock interpolates movement, but only released ticks can cut.
+        index = findLiveDirectorShotIndex(
+          shots,
+          liveDirectorReleasedTick() * STREAM_TICK_SEC,
+        );
+      } else if (index < 0 || !shotContains(shots[index], t)) {
         // Normal advance hits the next shot; anything else is a seek.
         index =
           index >= 0 &&
@@ -1800,6 +1881,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
             : findShotIndex(shots, t);
       }
       if (index < 0) {
+        if (isLive) return;
         // Truly past the plan's end: hand back control, re-armed for a
         // replay. A fractional seam INSIDE the plan (a set-piece boundary
         // that escaped assembly) must never end the broadcast — ride the
@@ -1810,32 +1892,65 @@ export function installDirectorCamera(engine: GameEngine): () => void {
         // The plan GROWS while it plays. Outrunning it is the planner
         // being behind, not the broadcast being over — hold the last
         // shot and let the next slice arrive.
-        if (!planComplete) return;
+        if (!demo.planComplete) return;
         exitDirector();
         return;
       }
       const shot = shots[index];
-      if (shotIndex !== index || appliedShot !== shot) {
-        onShotChange(shot, index, shots, t, ctx.camera);
+      const previous = previousLiveTime;
+      shotTimeSec = isLive ? Math.max(shot.startSec, t) : t;
+      if (isLive) previousLiveTime = shotTimeSec;
+      const changed = appliedShot !== shot || (!isLive && shotIndex !== index);
+      const allowTravel =
+        !isLive ||
+        (shot.transitionIn === "continuous" &&
+          previous != null &&
+          shotTimeSec - shot.startSec <= 3 * STREAM_TICK_SEC);
+      if (changed) {
+        onShotChange(
+          shot,
+          index,
+          shots,
+          shotTimeSec,
+          ctx.camera,
+          allowTravel,
+          isLive ? shotTimeSec - shot.startSec : undefined,
+        );
+      } else {
+        shotIndex = index;
       }
 
-      // ALL camera motion runs on the demo clock, not wall time: paused
-      // playback freezes the camera entirely (a rotating orbit must not
-      // keep rotating over a frozen world), and at 2x the camera moves
-      // twice as fast to stay in step with it.
-      const isPlaying = engineStore.getState().playback.status === "playing";
-      const demoDelta = effectDeltaSec(delta);
+      // Drive camera motion from playback progress, so it freezes with
+      // the world and follows the playhead when its rate changes.
+      const demoDelta = isLive
+        ? changed || previous == null
+          ? 0
+          : shotTimeSec - previous
+        : effectDeltaSec(delta);
+      const isPlaying = isLive ? demoDelta > 0 : playbackStatus === "playing";
 
       if (shot.kind === "fixedOrbit") {
-        driveFixedOrbit(shot, t, isPlaying, demoDelta, delta, ctx.camera);
+        driveFixedOrbit(
+          shot,
+          shotTimeSec,
+          isPlaying,
+          demoDelta,
+          delta,
+          ctx.camera,
+        );
         return;
       }
       if (shot.kind === "sweep") {
-        driveSweep(shot, t, demoDelta, ctx.camera);
+        driveSweep(shot, shotTimeSec, demoDelta, ctx.camera);
         return;
       }
       if (shot.kind === "dolly") {
-        driveDolly(shot, demoDelta, ctx.camera);
+        driveDolly(
+          shot,
+          demoDelta,
+          ctx.camera,
+          isLive && changed && !allowTravel,
+        );
         return;
       }
       driveFollow(shot, isPlaying, demoDelta, ctx.camera);
@@ -1843,7 +1958,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
   );
 }
 
-function applyShot(shot: Shot): void {
+function applyShot(shot: Shot, snapEntry: boolean, holdMissing: boolean): void {
   if (
     shot.kind === "fixedOrbit" ||
     shot.kind === "dolly" ||
@@ -1855,12 +1970,19 @@ function applyShot(shot: Shot): void {
     return;
   }
   if (shot.kind === "followFlag") {
-    followFlag(shot.slot);
+    if (!followFlag(shot.slot) && holdMissing) exitToFreeFly();
   } else {
     const entityId = findLivingEntityByTargetId(shot.targetId);
+    if (!entityId && (holdMissing || shot.firstPerson)) exitToFreeFly();
+    streamPlaybackStore.setState({
+      followCameraMode: shot.firstPerson
+        ? "firstPersonOverride"
+        : "orbitOverride",
+    });
     if (entityId) enterWatchFollow(entityId);
+    if (shot.firstPerson) return;
   }
-  if (shot.transitionIn === "cut") {
+  if (snapEntry) {
     streamPlaybackStore.setState({
       ...(shot.distance != null
         ? { orbitOverrideDistance: shot.distance }

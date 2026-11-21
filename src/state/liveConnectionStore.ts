@@ -3,15 +3,35 @@ import type { ParseFault } from "t2-demo-parser";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { isChatCommand, normalizeAddress } from "../../relay/shared";
 import { readPublishedGame } from "../../relay/gamePresentation";
+import {
+  LIVE_CAST_METRICS_INTERVAL_MS,
+  type LiveCastIdentity,
+  type LiveCastMetricsMessage,
+} from "../../relay/liveCastTypes";
 import { createLogger } from "../logger";
 import { RelayClient } from "../stream/relayClient";
 import { LiveStreamAdapter } from "../stream/liveStreaming";
+import { TICK_DURATION_MS } from "../stream/streamHelpers";
 import { gameEntityStore } from "./gameEntityStore";
 import { casterStore } from "./casterStore";
+import {
+  activateLiveDirector,
+  applyLiveDirectorPlan,
+  applyLiveDirectorTick,
+  failLiveDirector,
+  liveDirectorReleasedTick,
+  liveDirectorStore,
+  prepareLiveDirector,
+  resetLiveDirector,
+  sameLiveCast,
+  setLiveDirectorTransport,
+} from "./liveDirectorStore";
+import { streamClock } from "./streamPlaybackStore";
 import type {
   ClientMove,
   ServerInfo,
   ConnectionStatus,
+  WatchDelayReason,
   WatchStatus,
   WatchEndReason,
 } from "../../relay/types";
@@ -62,9 +82,13 @@ export interface LiveConnectionState {
   watcherCount: number;
   /** Whether demo retention is enabled for the mission being watched. */
   recording: boolean;
-  /** Watcher-facing stream delay in ms (tournament anti-screen-peek);
-   *  0 = live. */
+  /** Watcher-facing stream delay in ms; 0 = live. */
   streamDelayMs: number;
+  streamDelayReason: WatchDelayReason | null;
+  liveCastAvailable: boolean;
+  castMetrics: LiveCastMetricsMessage | null;
+  castShotLeadMs: number | null;
+  castCoverageLeadMs: number | null;
   /** Epoch ms at which a still-buffering delayed stream is expected to
    *  begin, for a "live in ~Xs" countdown; null when not buffering. */
   streamDelayReadyAt: number | null;
@@ -108,6 +132,24 @@ let reconnectAttempts = 0;
 let restartPending = false;
 let resumeAddress: string | null = null;
 let watchRequest = 0;
+let castRequested = false;
+
+const emptyCastTiming = { castShotLeadMs: null, castCoverageLeadMs: null };
+
+function clearLiveCast(): void {
+  castRequested = false;
+  resetLiveDirector();
+}
+
+function advanceLiveCast(state: LiveConnectionState): void {
+  const director = liveDirectorStore.getState();
+  if (director.status !== "loading") return;
+  if (director.ended && !director.shots.length) {
+    failLiveDirector("No CastGenius shots were available for this match.");
+  } else if (state.liveReady && state.watchStatus === "live") {
+    activateLiveDirector();
+  }
+}
 
 function cancelReconnect(): void {
   if (reconnectTimer) {
@@ -150,6 +192,10 @@ function disconnectedState(
     watcherCount: 0,
     recording: false,
     streamDelayMs: 0,
+    streamDelayReason: null,
+    liveCastAvailable: false,
+    castMetrics: null,
+    ...emptyCastTiming,
     streamDelayReadyAt: null,
     catchupProgress: null,
     reconnecting: false,
@@ -172,7 +218,9 @@ function createSessionAdapter(
   const adapter = new LiveStreamAdapter(relay, { mode });
   const isCurrent = () => liveConnectionStore.getState()._adapter === adapter;
   adapter.onReady = () => {
-    if (isCurrent()) liveConnectionStore.setState({ liveReady: true });
+    if (!isCurrent()) return;
+    liveConnectionStore.setState({ liveReady: true });
+    advanceLiveCast(liveConnectionStore.getState());
   };
   adapter.onMissionChange = (missionName) => {
     if (!isCurrent()) return;
@@ -243,6 +291,10 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     watcherCount: 0,
     recording: false,
     streamDelayMs: 0,
+    streamDelayReason: null,
+    liveCastAvailable: false,
+    castMetrics: null,
+    ...emptyCastTiming,
     streamDelayReadyAt: null,
     catchupProgress: null,
     reconnecting: false,
@@ -257,7 +309,19 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
       if (s._relay) {
         s._relay.close();
       }
+      let latestCastShotTick = -1;
+      let castMetricsExpiry: ReturnType<typeof setTimeout> | undefined;
+      setLiveDirectorTransport((enabled) => {
+        if (castRequested === enabled) return;
+        const state = get();
+        castRequested = enabled;
+        latestCastShotTick = -1;
+        set(emptyCastTiming);
+        if (state.role === "watcher") state._relay?.setLiveCast(enabled);
+      });
 
+      let castIdentity: LiveCastIdentity | null = null;
+      let castAdapter: LiveStreamAdapter | null = null;
       const relay = new RelayClient(url, {
         onOpen() {
           if (get()._relay !== relay) return;
@@ -308,6 +372,64 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           }
           a?.feedPacket(data);
         },
+        onLiveCastMessage(message) {
+          const state = get();
+          const adapter = state._adapter;
+          if (
+            state._relay !== relay ||
+            !castRequested ||
+            !castIdentity ||
+            !adapter ||
+            adapter !== castAdapter ||
+            !sameLiveCast(castIdentity, message)
+          )
+            return;
+          if (message.type === "liveCastTick") {
+            // A new picture's first anchors may arrive in the same network
+            // batch as hydration, before the frame loop resets its clock.
+            const localTime = Math.min(
+              streamClock.time,
+              adapter.simulationTimeSec,
+            );
+            applyLiveDirectorTick(message.tick, localTime);
+          } else {
+            const latestShot = message.shots.at(-1);
+            const releasedTick = liveDirectorReleasedTick();
+            if (latestShot && latestShot.startTick > latestCastShotTick) {
+              latestCastShotTick = latestShot.startTick;
+              if (!message.initial && releasedTick >= 0) {
+                const castShotLeadMs =
+                  (latestCastShotTick - releasedTick) * TICK_DURATION_MS;
+                if (castShotLeadMs !== state.castShotLeadMs)
+                  set({ castShotLeadMs });
+              }
+            }
+            applyLiveDirectorPlan(message);
+          }
+          advanceLiveCast(get());
+        },
+        onLiveCastMetrics(message) {
+          const state = get();
+          if (state._relay !== relay) return;
+          const releasedTick = liveDirectorReleasedTick();
+          const identity = castIdentity;
+          const worker =
+            castRequested && identity && state._adapter === castAdapter
+              ? message.workers.find((worker) => sameLiveCast(identity, worker))
+              : undefined;
+          set({
+            castMetrics: message,
+            castCoverageLeadMs:
+              worker?.plannedThroughTick != null && releasedTick >= 0
+                ? (worker.plannedThroughTick - releasedTick) * TICK_DURATION_MS
+                : null,
+          });
+          clearTimeout(castMetricsExpiry);
+          castMetricsExpiry = setTimeout(() => {
+            if (get()._relay === relay)
+              set({ castMetrics: null, castCoverageLeadMs: null });
+          }, LIVE_CAST_METRICS_INTERVAL_MS * 3);
+        },
         onPing(ms) {
           if (get()._relay !== relay) return;
           set({ relayToGameServerPing: ms });
@@ -345,6 +467,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           // "ended" is not this session's ending.
           if (status === "ended" && restartPending && !info.endReason) return;
           if (status === "ended") {
+            clearLiveCast();
             cancelReconnect();
             watchRequest++;
             // Invalidate callbacks (including parse-fault retries) from the
@@ -375,8 +498,14 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
             // Partial transition notices from older relays do not mean
             // that recording or the tournament delay was switched off.
             ...(info.recording != null ? { recording: info.recording } : {}),
+            ...(info.liveCastAvailable !== undefined || status !== "live"
+              ? { liveCastAvailable: info.liveCastAvailable ?? false }
+              : {}),
             ...(info.streamDelayMs != null
-              ? { streamDelayMs: info.streamDelayMs }
+              ? {
+                  streamDelayMs: info.streamDelayMs,
+                  streamDelayReason: info.streamDelayReason ?? null,
+                }
               : {}),
             streamDelayReadyAt:
               info.streamDelayReadyInMs != null
@@ -389,9 +518,12 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
                   watchChannelId: null,
                   recording: false,
                   streamDelayMs: 0,
+                  streamDelayReason: null,
                   streamDelayReadyAt: null,
                   adapter: null,
                   liveReady: false,
+                  liveCastAvailable: false,
+                  ...emptyCastTiming,
                   reconnecting: false,
                 }
               : {}),
@@ -406,6 +538,13 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
             ...(status !== "syncing" ? { catchupProgress: null } : {}),
             ...(status === "live" ? { reconnecting: false } : {}),
           });
+          if (
+            castRequested &&
+            (status === "live" || status === "syncing") &&
+            info.liveCastAvailable === false
+          )
+            failLiveDirector("CastGenius is unavailable for this match.");
+          else advanceLiveCast(get());
         },
         onWatcherCount(count) {
           if (get()._relay !== relay || get().watchStatus === "ended") return;
@@ -443,12 +582,22 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           // so onReady re-fires (restoring liveReady) once the hydrated
           // world has entities — including on reconnect re-hydrations
           // where the adapter had already been ready before the drop.
-          set({ liveReady: false });
+          const watching = get().role === "watcher";
+          const game = watching
+            ? readPublishedGame(payload.gamePresentation)
+            : null;
+          castIdentity = game
+            ? { gameId: game.id, epoch: payload.epoch }
+            : null;
+          castAdapter = watching ? a : null;
+          latestCastShotTick = -1;
+          if (castRequested) {
+            if (castIdentity) prepareLiveDirector();
+            else clearLiveCast();
+          }
+          set({ liveReady: false, ...emptyCastTiming });
           a.hydrate(payload);
-          if (get().role === "watcher")
-            casterStore
-              .getState()
-              .setPublishedGame(readPublishedGame(payload.gamePresentation));
+          if (watching) casterStore.getState().setPublishedGame(game);
         },
         onError(message, requestType) {
           if (get()._relay !== relay) return;
@@ -459,6 +608,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           }
         },
         onClose() {
+          clearTimeout(castMetricsExpiry);
           const s = get();
           if (s._relay !== relay) return;
           s._relay = null;
@@ -515,7 +665,11 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
               streamDelayReadyAt: null,
               catchupProgress: null,
               reconnecting: true,
+              liveCastAvailable: false,
+              castMetrics: null,
+              ...emptyCastTiming,
             });
+            resetLiveDirector();
             reconnectTimer = setTimeout(() => {
               reconnectTimer = null;
               get().connectRelay(url);
@@ -530,6 +684,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
             );
           }
           cancelReconnect();
+          clearLiveCast();
           const failed = s.role !== null && s.disconnectReason !== "voluntary";
           const failureMessage =
             selectConnectionFailureMessage(s) ??
@@ -562,11 +717,17 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
 
       relay.connect();
       get()._relay = relay;
-      set({ relayUrl: url, chatEnabled: false });
+      set({
+        relayUrl: url,
+        chatEnabled: false,
+        castMetrics: null,
+        ...emptyCastTiming,
+      });
     },
 
     disconnectRelay() {
       casterStore.getState().suspend();
+      clearLiveCast();
       const s = get();
       watchRequest++;
       cancelReconnect();
@@ -604,6 +765,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
 
     joinServer(address, warriorName) {
       casterStore.getState().suspend();
+      clearLiveCast();
       address = normalizeAddress(address);
       watchRequest++;
       const s = get();
@@ -642,6 +804,8 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         sessionEstablished: false,
         chatEnabled: false,
         disconnectReason: null,
+        liveCastAvailable: false,
+        ...emptyCastTiming,
       });
 
       // Set initial mission info from the server browser's cached data.
@@ -662,6 +826,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
       const request = ++watchRequest;
       const s = get();
       const sameServer = s.role === "watcher" && s.serverAddress === address;
+      if (!sameServer) clearLiveCast();
       // Opening a socket isn't a successful recovery. Preserve the retry
       // budget on automatic reattachment until the stream becomes live.
       if (!resume) cancelReconnect();
@@ -680,6 +845,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
                 recording: false,
                 watchChannelId: null,
                 streamDelayMs: 0,
+                streamDelayReason: null,
                 streamDelayReadyAt: null,
               }
             : {}),
@@ -687,6 +853,8 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           chatEnabled: false,
           serverAddress: address,
           liveReady: false,
+          liveCastAvailable: false,
+          ...emptyCastTiming,
           gameStatus: null,
           watchStatus: "connecting",
           watchStatusMessage: undefined,
@@ -730,6 +898,8 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         serverName: sameServer ? s.serverName : cachedServer?.name,
         serverAddress: address,
         liveReady: false,
+        liveCastAvailable: false,
+        ...emptyCastTiming,
         gameStatus: null,
         adapter: newAdapter,
         role: "watcher",
@@ -743,6 +913,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         recording: sameServer ? s.recording : false,
         watchChannelId: sameServer ? s.watchChannelId : null,
         streamDelayMs: sameServer ? s.streamDelayMs : 0,
+        streamDelayReason: sameServer ? s.streamDelayReason : null,
         streamDelayReadyAt: null,
         catchupProgress: null,
         reconnecting: resume,
@@ -754,14 +925,18 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         serverDisplayName: cachedServer?.name ?? undefined,
       });
 
+      // A relay may reject the Cast picture before sending any catch-up.
+      if (castRequested) prepareLiveDirector();
       s._relay.watchServer(
         address,
         sameServer ? (s.watchChannelId ?? undefined) : undefined,
+        castRequested,
       );
     },
 
     leaveServer() {
       casterStore.getState().suspend();
+      clearLiveCast();
       watchRequest++;
       const s = get();
       cancelReconnect();
@@ -775,6 +950,8 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         chatEnabled: false,
         adapter: null,
         liveReady: false,
+        liveCastAvailable: false,
+        ...emptyCastTiming,
         gameStatus: null,
         gameStatusMessage: undefined,
         serverAddress: null,
@@ -788,6 +965,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         watcherCount: 0,
         recording: false,
         streamDelayMs: 0,
+        streamDelayReason: null,
         streamDelayReadyAt: null,
         catchupProgress: null,
         role: null,

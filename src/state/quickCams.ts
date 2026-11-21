@@ -11,7 +11,8 @@ import { replayConnectionStore } from "./replayConnectionStore";
 import { gameEntityStore } from "./gameEntityStore";
 import { streamPlaybackStore } from "./streamPlaybackStore";
 import { cameraTourStore } from "./cameraTourStore";
-import { demoDirectorStore, exitDirector } from "./demoDirectorStore";
+import { exitDirector } from "./demoDirectorStore";
+import { resolveCameraOwner } from "./cameraOwner";
 import { commandCircuitStore } from "./commandCircuitStore";
 import { referencePlayerEntity, lookupPlayerBody } from "./playerResolver";
 import { exitToFreeFly, followFlag, resolveFlagEntityId } from "./watchFollow";
@@ -40,9 +41,8 @@ export function saveQuickCam(
   const perspective = cameraRegistry.perspective;
   if (!ready() || !perspective || !caster.context) return;
   const stream = streamPlaybackStore.getState();
-  const automatic =
-    cameraTourStore.getState().animation != null ||
-    demoDirectorStore.getState().status === "playing";
+  const owner = resolveCameraOwner();
+  const automatic = owner === "tour" || owner === "director";
   const following =
     (stream.followEntityId != null || stream.followPlayer != null) &&
     !automatic;

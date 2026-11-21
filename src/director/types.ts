@@ -1,3 +1,5 @@
+import type { MatchPhase } from "../stream/matchEvents";
+import type { StreamOrdnanceImpact } from "../stream/types";
 import type { TimelineEvent } from "../state/demoTimelineStore";
 
 /** Torque-space position [x, y, z]. */
@@ -44,6 +46,8 @@ export interface DirectorPlayerSample {
   /** Armor class from the player's shape ("heavy" carries the mortar;
    *  "light" cannot) — the ground truth for weapon attribution. */
   armor?: "light" | "medium" | "heavy";
+  /** The vehicle this player was actually mounted to in this sample. */
+  vehicleId?: string;
   /** Mounted backpack, by commentary name ("energy pack", "mortar
    *  turret barrel", …) — what they're equipped FOR. */
   pack?: string;
@@ -173,7 +177,7 @@ export interface SkillShot {
  */
 export interface DirectorStation {
   pos: DirectorVec3;
-  kind: "inventory" | "generator";
+  kind: "inventory" | "generator" | "vehiclePad";
   /** Deployable inventories read differently from base stations. */
   deployed: boolean;
   /**
@@ -201,6 +205,8 @@ export interface DirectorVehicleSample {
   passengers: number;
 }
 
+export type DirectorOrdnanceImpact = Omit<StreamOrdnanceImpact, "id">;
+
 export interface DirectorEvent extends TimelineEvent {
   /** match-countdown only: seconds until the announced kickoff. */
   secondsUntil?: number;
@@ -227,6 +233,8 @@ export interface DirectorVisibility {
  * a headless DemoStreamAdapter over the demo (demoDirectorScanner).
  */
 export interface DirectorDataset {
+  /** Packet-derived phase changes, timestamped when they became known. */
+  matchPhases?: { timeSec: number; phase: MatchPhase }[];
   durationSec: number;
   /** See MatchFacts — collected during the scan, attached to the plan.
    *  Optional so test fixtures don't need one; real scans always set it. */
@@ -260,6 +268,8 @@ export interface DirectorDataset {
   structureInventory: StructurePresence[];
   /** Mortar shells seen in flight, oldest first. */
   mortarShots: MortarShot[];
+  /** Actual simulated or packet-reported explosions, excluding scope loss. */
+  ordnanceImpacts?: DirectorOrdnanceImpact[];
   /** Discs and grenade rounds, tracked the same way (absent in older
    *  datasets) — the direct-hit evidence behind midair verdicts. */
   discShots?: MortarShot[];
@@ -273,7 +283,7 @@ export interface DirectorDataset {
   deaths: DirectorDeath[];
   /** Inventory stations, for suit-up moments. */
   stations: DirectorStation[];
-  /** Vehicle sightings with rider counts (absent in older datasets). */
+  /** Time-ordered vehicle sightings with rider counts (absent in older datasets). */
   vehicles?: DirectorVehicleSample[];
   /** Player name → target id, for joining event actor names to samples.
    *  `name` is the LOWERCASE matching key; `displayName` preserves the
@@ -437,6 +447,7 @@ export type Shot =
   | (ShotBase & {
       kind: "followPlayer";
       targetId: number;
+      firstPerson?: boolean;
       distance?: number;
       /** See followFlag.minDistance. */
       minDistance?: number;
@@ -468,6 +479,8 @@ export type Shot =
        * dropped flag slides downhill) stays framed.
        */
       lookSubject?: ShotSubject;
+      /** Pan directly with the subject from a surveyed room position. */
+      trackSubject?: boolean;
       /**
        * When set, this shot is a DOORWAY watch: the point is inside an
        * interior (a turtled carrier's hold), and at apply time the
@@ -506,6 +519,8 @@ export type Shot =
        * then holds at its end.
        */
       moveSec: number;
+      /** Time already elapsed in the move when a delayed live cut airs. */
+      moveOffsetSec?: number;
       /** Set by the staging pass: this exact path was verified against
        *  geometry AND player visibility — the runtime must fly it
        *  as-is, never re-lift it (the old ends-visibility probe used to

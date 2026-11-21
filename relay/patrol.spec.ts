@@ -75,6 +75,7 @@ function setup(
       | "minPlayersByType"
       | "excludedMissionTypes"
       | "hasServerPassword"
+      | "isRecordingExcluded"
     >
   > = {},
 ) {
@@ -100,6 +101,7 @@ function setup(
     getServerList: () => Promise.resolve(servers),
     sessions: manager,
     hasServerPassword: opts.hasServerPassword,
+    isRecordingExcluded: opts.isRecordingExcluded,
   });
   return { connections, manager, servers, patroller };
 }
@@ -396,6 +398,25 @@ describe("Patroller", () => {
     servers[2] = { ...servers[2], gameType: "LakRabbit" };
     await patroller.tick();
     expect(patroller.pinnedCount).toBe(1);
+  });
+
+  it("skips recording exclusions even with wildcard patrol", async () => {
+    const { connections, manager, servers, patroller } = setup(["*"], {
+      isRecordingExcluded: (_address, name) => name === "Blair Lag Project",
+    });
+    servers.push(
+      makeServer("Blair Lag Project", "1.1.1.1:28000", 8),
+      makeServer("CTF", "2.2.2.2:28000", 8),
+    );
+    await patroller.tick();
+    expect(connections.map(({ address }) => address)).toEqual([
+      "2.2.2.2:28000",
+    ]);
+
+    servers[1].name = "Blair Lag Project";
+    await patroller.tick();
+    expect(patroller.pinnedCount).toBe(0);
+    manager.shutdown();
   });
 
   it("respects the max session cap", async () => {

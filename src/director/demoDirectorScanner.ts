@@ -68,6 +68,7 @@ export async function createDirectorScanStream(
     checkpoints: false,
     groundEffects: false,
     playerViews: false,
+    directorImpacts: true,
   });
   const playback = recording.streamingPlayback;
   const durationSec = Number.isFinite(recording.duration)

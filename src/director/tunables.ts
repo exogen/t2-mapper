@@ -90,8 +90,11 @@ export const DIRECTOR_VARIETY_WEIGHTS = {
   suitUp: 0.6,
   /** A capper winding up their route toward the enemy stand. */
   capperSetup: 1.2,
+  offensiveWave: 1.25,
   /** Ride-alongs with loaded transports / active vehicles. */
   vehicle: 1.1,
+  vehiclePad: 0.85,
+  ordnanceImpact: 1.05,
   /** Slow map fly-throughs between the bases. */
   flyThrough: 0.45,
 };
@@ -99,18 +102,21 @@ export const DIRECTOR_VARIETY_WEIGHTS = {
  * How hot the CURRENT story may be for each family to still interrupt
  * it: breaking events (kills, structures falling) may cut in over
  * quiet stand-watching; ambient filler (clusters, fly-throughs) waits
- * for a true lull. A live carry (SCORE_CARRIED=100) outranks all.
+ * for a true lull. An active carry (SCORE_CARRIED=100) outranks all.
  */
 export const DIRECTOR_VARIETY_INTERRUPT: Record<
   keyof typeof DIRECTOR_VARIETY_WEIGHTS,
   number
 > = {
-  // 95: interrupt anything except an imminent grab (96) or live carry.
+  // 95: interrupt anything below an imminent grab (96) or active carry.
   killCutIn: 95,
   destruction: 95,
   repair: 85,
   capperSetup: 85,
+  offensiveWave: 85,
   vehicle: 85,
+  vehiclePad: 70,
+  ordnanceImpact: 92,
   suitUp: 60,
   cluster: 60,
   flyThrough: 60,
@@ -128,6 +134,8 @@ export const DIRECTOR_TIGHT_SHOT_SHARE = 0.5;
 
 /** Interest-grid tick. */
 export const DIRECTOR_TICK_SEC = 0.5;
+/** Give the outcome of an on-camera death time to read. */
+export const DIRECTOR_DEATH_REACTION_SEC = 2;
 /** A shot normally holds at least this long before switching subjects. */
 export const DIRECTOR_MIN_SHOT_SEC = 5;
 /** Tier-1 preemption (a flag pickup elsewhere) may cut in after this. */
@@ -157,7 +165,7 @@ export const DIRECTOR_GRAB_REACT_SEC = 3;
 /** Recent captures still merit an aftermath if their message missed the
  *  anticipation window. This does not change the picture's lookahead. */
 export const DIRECTOR_CAP_REACT_SEC = 3;
-/** Follow an exchange near the scoring stand long enough to read its next beat. */
+/** Hold a local possession exchange long enough to read its next beat. */
 export const DIRECTOR_POSSESSION_HOLD_SEC = 2.5;
 /** The final delivery area where a recovery/drop can decide a scoring attempt. */
 export const DIRECTOR_POSSESSION_SCORING_RANGE = 100;
@@ -527,6 +535,8 @@ export const DIRECTOR_BOMBARDMENT_CLOSE_HEIGHT = 0.35;
 export const DIRECTOR_SCRAMBLE_RADIUS = 80;
 /** Interest scores. */
 export const SCORE_CARRIED = 100;
+/** A settled, unthreatened carry can yield to another developing play. */
+export const SCORE_QUIET_CARRY = 35;
 export const SCORE_DROPPED = 80;
 export const SCORE_GRAB_SOON = 70;
 /**

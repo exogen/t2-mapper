@@ -36,6 +36,7 @@ import { INTERSECTED, MeshBVH, NOT_INTERSECTED } from "three-mesh-bvh";
 import {
   castTerrainRay,
   terrainHeightAt,
+  terrainHoleAt,
   terrainTrianglesInBox,
   type TriangleFacing,
   type Vec3,
@@ -750,11 +751,14 @@ export function pointObstructed(
   // against 26-direction raycasts found 318 of 3000 points near a base
   // where the rays hit ground the sphere never looked for.
   //
-  // By default, sample heights as a solid volume. Camera clearance instead
-  // tests the surface triangles so holes and underground rooms stay open.
+  // By default, sample heights as a solid volume. At a hole, test the
+  // nearby triangles instead so only the real rim can block the probe.
   const gz = torquePoint[2];
   let nearGround = false;
-  if (options?.terrainSurfaceOnly) {
+  if (
+    options?.terrainSurfaceOnly ||
+    terrainHoleAt(torquePoint[0], torquePoint[1])
+  ) {
     if (nearTerrainSurface(torquePoint, radius)) return true;
   } else {
     for (const [ox, oy] of TERRAIN_PROBE_OFFSETS) {

@@ -1,7 +1,7 @@
 import { Quaternion, Vector3 } from "three";
 import { createLogger } from "../logger";
 import { cameraRegistry } from "../state/cameraRegistry";
-import { demoDirectorStore } from "../state/demoDirectorStore";
+import { resolveCameraOwner } from "../state/cameraOwner";
 import { directorCamDebug, orbitSpringDebug } from "../state/cameraDebug";
 import { streamClock, streamPlaybackStore } from "../state/streamPlaybackStore";
 import { demoClock } from "../director/shotLog";
@@ -36,7 +36,7 @@ export function installCameraWatchdog(engine: GameEngine): () => void {
   return engine.scheduler.add(FramePriority.CameraWatchdog, ({ delta }) => {
     const camera = cameraRegistry.perspective;
     if (!camera || delta <= 0) return;
-    if (demoDirectorStore.getState().status !== "playing") {
+    if (resolveCameraOwner() !== "director") {
       primed = false;
       return;
     }

@@ -14,9 +14,31 @@ import { skyFogPercentage } from "../scene/skyWeather";
 import { precipitationPercentage } from "../weather/data";
 import { LiveStreamAdapter } from "./liveStreaming";
 import type { RelayClient } from "./relayClient";
+import { PlaybackClock } from "./PlaybackClock";
 import { ReplayStreamAdapter } from "./replayStreaming";
 
 afterEach(() => vi.unstubAllGlobals());
+
+it("rebases the existing watch playback clock after a same-match picture switch", () => {
+  const watcher = new LiveStreamAdapter({} as RelayClient, { mode: "watch" });
+  const clock = new PlaybackClock();
+  const playback = {
+    status: "playing",
+    rate: 1,
+    seekTime: 0,
+    seekNonce: 0,
+  } as const;
+  const snapshot = testCatchupPayload();
+  watcher.hydrate(snapshot);
+  clock.step(watcher, playback, 0);
+  clock.step(watcher, playback, 1);
+  expect(clock.time).toBe(1);
+
+  watcher.hydrate(snapshot);
+  expect(watcher.simulationTimeSec).toBe(0);
+  clock.step(watcher, playback, 1);
+  expect(clock.time).toBe(0);
+});
 
 it("constructs live and replay adapters on HTTP/LAN hosts without randomUUID", () => {
   let seed = 0;

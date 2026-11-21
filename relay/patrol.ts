@@ -42,6 +42,7 @@ export interface PatrolOptions {
   maxSessions: number;
   intervalMs: number;
   getServerList: () => Promise<ServerInfo[]>;
+  isRecordingExcluded?: (address: string, name: string) => boolean;
   /** Relay-only availability check; no passwords enter patrol status. */
   hasServerPassword?: (server: ServerInfo) => boolean;
   sessions: WatchSessionManager;
@@ -379,7 +380,10 @@ export class Patroller {
         state.serverName = listed.name;
         state.gameType = listed.gameType;
       }
-      if (!this.matches(state.serverName)) {
+      if (
+        !this.matches(state.serverName) ||
+        this.opts.isRecordingExcluded?.(address, state.serverName)
+      ) {
         log.info(
           { address, name: state.serverName },
           "Patrol releasing server (server name not allowed)",
@@ -437,6 +441,7 @@ export class Patroller {
       if (this.pinned.has(address)) continue;
       if (this.cooldown.has(address)) continue;
       if (!this.matches(server.name)) continue;
+      if (this.opts.isRecordingExcluded?.(address, server.name)) continue;
       if (!this.matchesType(server.gameType)) continue;
       // Can't join what we can't authenticate to.
       if (server.passwordRequired && !this.opts.hasServerPassword?.(server))

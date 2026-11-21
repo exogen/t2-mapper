@@ -18,7 +18,14 @@
  * deliver — there is no retroactive splicing (and, by design decision,
  * no replays); reportCoverage still says plainly what was missed.
  */
-import type { DirectorDataset, DirectorVec3, Shot, ShotPlan } from "./types";
+import type {
+  DirectorDataset,
+  DirectorEvent,
+  DirectorFlagSample,
+  DirectorVec3,
+  Shot,
+  ShotPlan,
+} from "./types";
 import { CAST_CONTRACT_VERSION } from "./castContract";
 import { describeVenue } from "./venue";
 import {
@@ -27,7 +34,6 @@ import {
   DIRECTOR_LINEUP_SWEEP_SEC,
   DIRECTOR_STATION_CAM_HEIGHT,
   DIRECTOR_STATION_CAM_RADIUS,
-  DIRECTOR_STATION_RANGE,
   DIRECTOR_SUITUP_KICKOFF_SEC,
   DIRECTOR_AFTERMATH_RADIUS,
   DIRECTOR_CLUSTER_CAM_HEIGHT,
@@ -42,6 +48,7 @@ import {
   DIRECTOR_CHASE_SEGMENT_SEC,
   DIRECTOR_CROWD_ORBIT_HEIGHT,
   DIRECTOR_CROWD_ORBIT_RADIUS,
+  DIRECTOR_DEATH_REACTION_SEC,
   DIRECTOR_DIST_STAND_WIDE,
   DIRECTOR_GRAB_ALONGSIDE_DIST,
   DIRECTOR_GRAB_ALONGSIDE_HEIGHT,
@@ -98,6 +105,7 @@ import {
   SCORE_IDLE,
   SCORE_KILLS_NEAR_FLAG,
   SCORE_QUIET,
+  SCORE_QUIET_CARRY,
   SCORE_RETURN_IMMINENT,
   SCORE_RETURN_SOON,
   SCORE_THREAT,
@@ -110,8 +118,8 @@ import {
   returnConverging,
 } from "./predictors";
 import { buildSubjects, type Subject } from "./interest";
-import { busiestCluster } from "./analysis";
-import { boundingSpread, centroid, dist } from "./geometry";
+import { busiestCluster, busiestInventory } from "./analysis";
+import { bearingYaw, boundingSpread, centroid, dist } from "./geometry";
 import {
   distanceForSpeed,
   onBroadcastSide,
@@ -147,13 +155,16 @@ import {
   type FreeSpaceGrid,
 } from "./freeSpace";
 import { publishFreeSpace } from "./freeSpaceRegistry";
-import { inspectShot, shotCameraPath } from "./shotPath";
+import { inspectShot, shotCameraPath, shotSubjectOf } from "./shotPath";
 import { PLAYER_AIM_LIFT, PLAYER_STANDOFF } from "./humanScale";
-import { assetBoxCenter } from "../collision/worldCollision";
+import { assetBoxCenter, castWorldRay } from "../collision/worldCollision";
 import {
   canContinueVarietyShot,
+  offensiveWaveShot,
+  pickDogfightShot,
   pickVarietyShot,
   type VarietyContinuation,
+  type VarietyKey,
   type VarietyMemory,
 } from "./variety";
 import { framesTheSame, reportCoverage } from "./assemble";
@@ -179,11 +190,14 @@ export interface ShotCandidate {
  * and it ships only if it never enters the world and actually shows its
  * subject. Nothing here is trusted because it looked right on paper.
  */
-export function firstWatchable(candidates: ShotCandidate[]): Shot | null {
+export function firstWatchable(
+  candidates: ShotCandidate[],
+  accepts: (shot: Shot) => boolean = () => true,
+): Shot | null {
   for (const candidate of candidates) {
     for (const spot of candidate.spots()) {
       const shot = candidate.build(spot);
-      if (inspectShot(shot)?.ok) return shot;
+      if (accepts(shot) && inspectShot(shot)?.ok) return shot;
     }
   }
   return null;
@@ -219,6 +233,8 @@ const ROSTER_FRAMINGS: RosterFraming[] = [
   { standoffScale: 1.4 },
   { lift: 3 },
   { mirror: true, standoffScale: 0.7 },
+  { angle: Math.PI / 4 },
+  { angle: -Math.PI / 4 },
 ];
 
 /** At most one establishing stand-to-stand run per this long. */
@@ -378,6 +394,7 @@ const LINEUP_MAX_CLOSEUPS = 3;
 
 /** Trailing stillness that reads as a turtle (with the flag held). */
 const TURTLE_HELD_SEC = 10;
+const TURTLE_DRIFT_WINDOW_SEC = 8;
 const TURTLE_DRIFT_MAX = 15;
 /** Players near the stand right now that read as a battle. */
 const STAND_BATTLE_MIN_PLAYERS = 4;
@@ -478,7 +495,7 @@ interface SwitcherState {
     atSec: number;
     untilSec: number;
     shot: Shot;
-    kind: "ceremony" | "filler";
+    kind: "ceremony" | "filler" | "exchange";
     continuation?: VarietyContinuation;
   } | null;
   /** Latest capture handled, including anticipation. Older late messages
@@ -488,29 +505,33 @@ interface SwitcherState {
    *  once while it is still coming ("pre", anticipation) and once
    *  after it lands ("post", reaction) — so a shot that drifted away
    *  between the two can still be recovered, without ping-ponging. */
-  handledGrabs: Map<number, Set<"pre" | "post">>;
-  handledKickoff: boolean;
+  handledGrabs: Map<DirectorEvent, Set<"pre" | "post">>;
+  /** Undefined before play, null when a late join proves play but not its start time. */
+  kickoffSec: number | null | undefined;
   chaseStyle: number;
   turtleViews: number;
   /** True for the first shot after a SUBJECT change — a cold cut,
    *  which must establish rather than open on an intimate framing. */
   freshSubject: boolean;
-  /** The flag status the current shot was styled FOR — a transition
-   *  (home→held, held→field…) forces an immediate restyle, since quiet
-   *  framings deliberately never rotate on their own. */
-  currentStyleStatus: string | null;
+  /** The flag status the current shot was styled for. */
+  currentStyleStatus: DirectorFlagSample["status"] | null;
   /** Commitment to the flag play actually on screen, across restyles and
    *  changes of carrier. A deferred flag is revalidated before handoff. */
   possession: {
     slot: number;
-    status: string;
+    status: DirectorFlagSample["status"];
     carrierTargetId: number | null;
+    pos: DirectorVec3;
     holdUntilSec: number;
     canExtend: boolean;
-    deferred: { slot: number; sinceSec: number; grabSec?: number } | null;
+    deferred: { slot: number; sinceSec: number; grab?: DirectorEvent } | null;
   } | null;
   /** When each variety family last aired (freshness rotation). */
   readonly varietyMem: VarietyMemory;
+  readonly varietyChoices: WeakMap<
+    Shot,
+    { key: VarietyKey; latestStartSec?: number }
+  >;
   /** Roster line-up mode: runs until this time once the pre-kickoff
    *  countdown is announced. Keyed by the countdown's IMPLIED START so
    *  a cancelled-and-restarted countdown re-triggers a fresh block at
@@ -588,6 +609,8 @@ interface SwitcherState {
   teamedStableSince: number;
   /** Last tick a non-flag subject held the screen (variety fatigue). */
   lastNonFlagSec: number;
+  /** Live cuts have already been sent to viewers and cannot be pruned. */
+  isCommitted?: (shot: Shot) => boolean;
 }
 
 /** Fresh switcher state for a view. Shared by the batch and streaming
@@ -607,13 +630,14 @@ function newSwitcherState(view: CausalView): SwitcherState {
     directive: null,
     latestCapSec: Number.NEGATIVE_INFINITY,
     handledGrabs: new Map(),
-    handledKickoff: false,
+    kickoffSec: undefined,
     chaseStyle: 0,
     turtleViews: 0,
     freshSubject: false,
     currentStyleStatus: null,
     possession: null,
     varietyMem: new Map(),
+    varietyChoices: new WeakMap(),
     lastNonFlagSec: 0,
     lineupUntil: Number.NEGATIVE_INFINITY,
     lineupStartAt: Number.NEGATIVE_INFINITY,
@@ -717,16 +741,34 @@ export interface SwitcherStream {
   readonly freeSpace: FreeSpaceGrid | null;
   /** How far the switcher has been driven. */
   readonly plannedToSec: number;
+  /** Record only shots admitted to the live broadcast. */
+  markAired(shot: Shot, atSec: number): void;
+  latestStart(shot: Shot): number | undefined;
   /** Run ticks up to `sec`, against a dataset covering at least that. */
-  advanceTo(sec: number, dataset: DirectorDataset): void;
+  advanceTo(sec: number, dataset: DirectorDataset, kickoffAtSec?: number): void;
   /** Close the final shot; no more ticks after this. */
   finish(atSec: number): void;
 }
 
-export function createSwitcherStream(view: CausalView): SwitcherStream {
+export function createSwitcherStream(
+  view: CausalView,
+  options: {
+    startSec?: number;
+    isCommitted?: (shot: Shot) => boolean;
+  } = {},
+): SwitcherStream {
   const state = newSwitcherState(view);
-  openShot(state, 0);
-  let cursor = 0;
+  let cursor = options.startSec ?? 0;
+  state.isCommitted = options.isCommitted;
+  if (options.startSec !== undefined) {
+    view.advanceTo(cursor);
+    state.segStartSec = cursor;
+    state.lastNonFlagSec = cursor;
+  }
+  const initial = view.matchPhaseAt(cursor);
+  if (initial?.kind === "running") markKickoff(state, initial.startSec);
+  openShot(state, cursor);
+  if (cursor < state.suitUpUntil) state.rotateAt = cursor;
   return {
     get shots() {
       return state.shots;
@@ -737,16 +779,28 @@ export function createSwitcherStream(view: CausalView): SwitcherStream {
     get plannedToSec() {
       return cursor;
     },
-    advanceTo(sec: number, dataset: DirectorDataset): void {
+    markAired(shot, atSec) {
+      markVarietyAired(state, shot, atSec);
+    },
+    latestStart(shot) {
+      return state.varietyChoices.get(shot)?.latestStartSec;
+    },
+    advanceTo(
+      sec: number,
+      dataset: DirectorDataset,
+      kickoffAtSec?: number,
+    ): void {
       // The view reads through to the dataset it was built with, so a
       // growing dataset has to be swapped in as it grows.
       view.useDataset(dataset);
       refreshSubjects(state);
-      for (
-        let t = cursor + DIRECTOR_TICK_SEC;
-        t <= sec;
-        t += DIRECTOR_TICK_SEC
-      ) {
+      while (true) {
+        const regularTick = cursor + DIRECTOR_TICK_SEC;
+        const t =
+          kickoffAtSec != null && kickoffAtSec > cursor
+            ? Math.min(kickoffAtSec, regularTick)
+            : regularTick;
+        if (t > sec) break;
         view.advanceTo(t);
         tick(state, t);
         cursor = t;
@@ -770,15 +824,63 @@ export function createSwitcherStream(view: CausalView): SwitcherStream {
   };
 }
 
+function markKickoff(state: SwitcherState, timeSec: number | null): void {
+  state.kickoffSec = timeSec;
+  // Once play starts, show players at inventory stations gearing up.
+  state.lineupUntil = -Infinity;
+  state.suitUpUntil = (timeSec ?? -Infinity) + DIRECTOR_SUITUP_KICKOFF_SEC;
+}
+
 function tick(state: SwitcherState, t: number): void {
   const { view, subjects } = state;
+  const open = state.shots.at(-1);
+  if (!state.isCommitted && open && t - open.startSec >= 2)
+    markVarietyAired(state, open, open.startSec);
+  const phase = view.matchPhaseAt();
+  if (phase?.kind === "running" && state.kickoffSec !== phase.startSec) {
+    const enteringPlay = state.kickoffSec === undefined;
+    markKickoff(state, phase.startSec);
+    if (enteringPlay || t < state.suitUpUntil) state.rotateAt = t;
+  } else if (
+    state.kickoffSec !== undefined &&
+    (phase?.kind === "warmup" || phase?.kind === "countdown")
+  ) {
+    // A recording can span the start of the next round.
+    state.kickoffSec = undefined;
+    state.suitUpUntil = -Infinity;
+    state.lineupStartAt = -Infinity;
+    state.lineupUntil = -Infinity;
+    state.rosterIntroDone = false;
+    state.directive = null;
+    state.rotateAt = t;
+  }
+  // Live candidates can spend their entire window behind the minimum hold.
+  // Drop an expired proposal before it can keep directing the switcher.
+  const pending =
+    state.directive?.kind === "filler" ? state.directive.shot : undefined;
+  const proposed = pending ?? open;
+  if (
+    state.isCommitted &&
+    proposed &&
+    t > (state.varietyChoices.get(proposed)?.latestStartSec ?? Infinity)
+  ) {
+    if (pending) state.directive = null;
+    const previous = state.shots.at(-2);
+    if (proposed === open && previous) {
+      state.shots.pop();
+      previous.endSec = t;
+      state.segStartSec = previous.startSec;
+      state.rotateAt = t;
+    }
+  }
   // Indoor match shots need the same grid as the opening tour. Keep
   // building after kickoff, including when we join an ongoing match.
   ensureFreeSpace(state, view.dataset, t);
   observePossession(state, t);
   // Before the whistle: watch every tick, shot or no shot. Decisions
   // come later in this function and read what was observed here.
-  if (!state.handledKickoff) observePreMatch(state, view, t);
+  const preMatch = state.kickoffSec === undefined && phase?.kind !== "unknown";
+  if (preMatch) observePreMatch(state, view, t);
   // A CAPTURE preempts everything — fairness, phases, and any running
   // variety set piece. This check must come before the directive
   // branch, or a cap landing during a 9s cut-in goes uncovered.
@@ -795,7 +897,7 @@ function tick(state: SwitcherState, t: number): void {
     if (capEvent.timeSec <= state.latestCapSec) continue;
     const slot = view.eventSlot(capEvent);
     if (slot == null) continue;
-    const aftermath = captureAftermath(state, slot, capEvent.timeSec, t);
+    const aftermath = captureAftermath(state, slot, capEvent, t);
     if (!aftermath) continue;
     state.latestCapSec = capEvent.timeSec;
     const interruptedDirective = state.directive != null;
@@ -828,6 +930,48 @@ function tick(state: SwitcherState, t: number): void {
     }
     return;
   }
+  // A manual return can be the play that makes a score possible. Take it
+  // ahead of routine grabs when a carrier is already at the scoring end.
+  const returnSlot = scoringReturn(view);
+  if (returnSlot != null && state.directive?.kind !== "ceremony") {
+    const index = subjects.findIndex(
+      (subject) => subject.kind === "flag" && subject.slot === returnSlot,
+    );
+    if (index >= 0) {
+      const interruptedDirective = state.directive != null;
+      state.directive = null;
+      state.suitUpUntil = Math.min(state.suitUpUntil, t);
+      if (index !== state.current || interruptedDirective)
+        switchTo(state, index, t, interruptedDirective);
+      else if (state.currentStyleStatus !== "field") openShot(state, t);
+      return;
+    }
+  }
+  if (state.directive?.kind === "exchange" && t < state.directive.untilSec)
+    return;
+  // Finish the reaction in the current framing. Only a capture or a
+  // return that could immediately enable a score outranks it.
+  const onAir = state.shots.at(-1);
+  const onAirSubject = onAir && shotSubjectOf(onAir);
+  if (
+    state.kickoffSec !== undefined &&
+    onAir &&
+    onAirSubject?.type === "player"
+  ) {
+    const death = view
+      .deathsIn(Math.max(onAir.startSec, t - DIRECTOR_DEATH_REACTION_SEC), t)
+      .find((event) => event.targetId === onAirSubject.targetId);
+    const holdUntil =
+      (death?.timeSec ?? -Infinity) + DIRECTOR_DEATH_REACTION_SEC;
+    if (t < holdUntil) {
+      if (state.directive?.shot === onAir)
+        state.directive.untilSec = Math.max(
+          state.directive.untilSec,
+          holdUntil,
+        );
+      return;
+    }
+  }
   // A GRAB is the story, and the camera goes there whether the peek
   // warned us (anticipation) or it simply happened (pure reaction) —
   // the window spans both, so this works identically at ANY lookahead,
@@ -842,8 +986,7 @@ function tick(state: SwitcherState, t: number): void {
       .eventsIn(t - DIRECTOR_GRAB_REACT_SEC, view.horizon)
       .find(
         (e) =>
-          e.type === "flag-grab" &&
-          !state.handledGrabs.get(e.timeSec)?.has(phaseOf(e)),
+          e.type === "flag-grab" && !state.handledGrabs.get(e)?.has(phaseOf(e)),
       );
     const slot = grab ? view.eventSlot(grab) : null;
     if (grab && slot != null) {
@@ -858,20 +1001,25 @@ function tick(state: SwitcherState, t: number): void {
           ? view.peekFlagEvents(current.slot, HOLD_EVENT_TYPES)[0]?.timeSec
           : undefined;
       const markHandled = () => {
-        let phases = state.handledGrabs.get(grab.timeSec);
-        if (!phases) state.handledGrabs.set(grab.timeSec, (phases = new Set()));
+        let phases = state.handledGrabs.get(grab);
+        if (!phases) state.handledGrabs.set(grab, (phases = new Set()));
         phases.add(phaseOf(grab));
       };
-      if (alreadyOnIt) {
+      // A touch that already ended is not a reason to leave the current
+      // play. The loose flag can still win on its own merits.
+      const resolved = grabEndsBy(view, slot, grab, t);
+      const fleeting =
+        ownStory != null && grabEndsBy(view, slot, grab, grab.timeSec + 1);
+      if (alreadyOnIt || resolved || fleeting) {
         markHandled();
       } else if (
         state.directive?.kind !== "ceremony" &&
-        deferForPossession(state, slot, t, grab.timeSec)
+        deferForPossession(state, slot, t, grab)
       ) {
         markHandled();
       } else if (
         state.directive?.kind !== "ceremony" &&
-        (ownStory == null || ownStory > grab.timeSec)
+        (ownStory == null || ownStory > Math.max(t + 1, grab.timeSec))
       ) {
         markHandled();
         const interruptedDirective = state.directive != null;
@@ -926,6 +1074,11 @@ function tick(state: SwitcherState, t: number): void {
       return;
     }
   }
+  if (
+    !state.directive &&
+    (showGrabPov(state, t) || widenForFlagBombardment(state, t))
+  )
+    return;
   const deferred = takeDeferredPossession(state, t);
   if (deferred != null) {
     switchTo(
@@ -942,7 +1095,7 @@ function tick(state: SwitcherState, t: number): void {
   }
   // Filler keeps the screen only while its premise survives. Observed flag
   // state is enough to reclaim it: live feeds need not supply a grab message.
-  // A quiet, abandoned field flag still permits variety, as at selection time.
+  // A parked flag or an unthreatened turtle still permits variety.
   if (state.directive?.kind === "filler" && t < state.directive.untilSec) {
     const directive = state.directive;
     let urgent = -1;
@@ -990,17 +1143,12 @@ function tick(state: SwitcherState, t: number): void {
     openShot(state, at);
     return;
   }
-  if (!state.handledKickoff) {
+  if (state.kickoffSec === undefined && !phase) {
     const start = view
       .eventsIn(t - DIRECTOR_TICK_SEC, view.horizon)
       .find((e) => e.type === "match-start");
     if (start) {
-      state.handledKickoff = true;
-      // The whistle ends the line-ups; what follows is NOT a wide of
-      // an empty mid-map — everyone is at the inventory stations
-      // gearing up, and that is the shot (user direction).
-      state.lineupUntil = Math.min(state.lineupUntil, start.timeSec);
-      state.suitUpUntil = start.timeSec + DIRECTOR_SUITUP_KICKOFF_SEC;
+      markKickoff(state, start.timeSec);
       return;
     }
   }
@@ -1009,16 +1157,30 @@ function tick(state: SwitcherState, t: number): void {
   // ranks until just before the whistle. Detection is causal — the
   // message is in the chat log, and each pass frames the players where
   // they stand RIGHT NOW (they are standing still; that is the shot).
-  if (!state.handledKickoff) {
-    const countdown = view
-      .eventsIn(t - DIRECTOR_TICK_SEC, view.horizon)
-      .find(
-        (e) =>
-          e.type === "match-countdown" &&
-          (e.secondsUntil ?? 0) >= DIRECTOR_LINEUP_SWEEP_SEC + 4,
-      );
-    if (countdown) {
-      const impliedStart = countdown.timeSec + (countdown.secondsUntil ?? 0);
+  if (preMatch) {
+    if (
+      phase?.kind === "warmup" &&
+      state.lineupUntil === state.lineupStartAt &&
+      t < state.lineupUntil
+    ) {
+      state.lineupUntil = t;
+      state.rotateAt = t;
+    }
+    // A catch-up can carry a countdown whose announcement predates the worker.
+    const countdown = !phase
+      ? view
+          .eventsIn(t - DIRECTOR_TICK_SEC, view.horizon)
+          .find(
+            (e) =>
+              e.type === "match-countdown" &&
+              (e.secondsUntil ?? 0) >= DIRECTOR_LINEUP_SWEEP_SEC + 4,
+          )
+      : undefined;
+    const impliedStart =
+      phase?.kind === "countdown" && phase.startSec > t
+        ? phase.startSec
+        : countdown && countdown.timeSec + (countdown.secondsUntil ?? 0);
+    if (impliedStart !== undefined) {
       // A genuinely NEW schedule (not a repeat tick of the running
       // one): line-ups run to the new whistle — the kickoff directive
       // trims the final pass, seam-free. An already-running intro
@@ -1080,7 +1242,7 @@ function tick(state: SwitcherState, t: number): void {
       }
     }
   }
-  if (!state.handledKickoff && t < state.lineupUntil) {
+  if (preMatch && t < state.lineupUntil) {
     state.lastNonFlagSec = t;
     if (t >= state.rotateAt) emitLineupPass(state, t);
     return;
@@ -1095,7 +1257,10 @@ function tick(state: SwitcherState, t: number): void {
   // of a whistle". A recorded demo always carries matchStartSec, so
   // testing for its absence never fired.
   const whistleSec = view.dataset.matchFacts?.matchStartSec;
-  if (!state.handledKickoff && (whistleSec == null || t < whistleSec)) {
+  if (
+    preMatch &&
+    (phase !== undefined || whistleSec == null || t < whistleSec)
+  ) {
     // rotateAt starts at Infinity ("hold until something decides"), so
     // a plain `t >= rotateAt` never fires and the opening shot stretched
     // across the entire picking period — 460 seconds on one static wide.
@@ -1149,7 +1314,10 @@ function tick(state: SwitcherState, t: number): void {
     const cur = subjects[state.current];
     const status =
       cur.kind === "flag" ? (view.flagAt(cur.slot)?.status ?? null) : null;
-    if (status !== state.currentStyleStatus) {
+    if (
+      status !== state.currentStyleStatus &&
+      !holdingExchangeFraming(state, t)
+    ) {
       // A fresh grab plays out IN the stand framing for a beat — the
       // viewer should see the flag leave the stand, not a cut landing
       // exactly on the moment. Everything else restyles immediately.
@@ -1196,7 +1364,7 @@ function tick(state: SwitcherState, t: number): void {
   // Pre-match belongs to the roster machinery; the mixer runs once
   // the match is live. Per-family interrupt ceilings decide what may
   // cut in over how hot a story (a kill beats quiet stand-watching; a
-  // fly-through waits for a real lull; a live carry beats everything).
+  // fly-through waits for a real lull; an active carry beats filler).
   const currentMax = Math.max(...scores);
   // A flag on the ground is usually live play — a pass mid-flight, a
   // scramble forming — and filler never takes the screen from that.
@@ -1208,20 +1376,31 @@ function tick(state: SwitcherState, t: number): void {
     return fieldStaleness(view, slot, flag.pos, t) < 0.5;
   });
   if (
-    state.handledKickoff &&
+    state.kickoffSec !== undefined &&
     !anyFieldFlag &&
-    currentMax < SCORE_CARRIED &&
     !holdingPossession(state, t)
   ) {
-    const pick = pickVarietyShot(
-      view,
-      t,
-      state.varietyMem,
-      state.variety,
-      9,
-      currentMax,
-    );
+    const stalled =
+      current.kind === "flag" &&
+      scores[state.current] === SCORE_QUIET_CARRY &&
+      currentMax < SCORE_GRAB_IMMINENT &&
+      view.peekFlagEvents(null, HOLD_EVENT_TYPES).length === 0;
+    const pick =
+      (stalled && pickDogfightShot(view, t, state.varietyMem, state.variety)) ||
+      (currentMax < SCORE_CARRIED &&
+        pickVarietyShot(
+          view,
+          t,
+          state.varietyMem,
+          state.variety,
+          9,
+          currentMax,
+        ));
     if (pick) {
+      state.varietyChoices.set(pick.shot, {
+        key: pick.cooldownKey ?? pick.family,
+        latestStartSec: pick.latestStartSec,
+      });
       state.directive = {
         atSec: t,
         untilSec: pick.shot.endSec,
@@ -1313,6 +1492,7 @@ function observePossession(state: SwitcherState, t: number): void {
       slot: sample.slot,
       status: sample.status,
       carrierTargetId: sample.carrierTargetId,
+      pos: sample.pos,
       holdUntilSec: Number.NEGATIVE_INFINITY,
       canExtend: false,
       deferred: null,
@@ -1321,23 +1501,28 @@ function observePossession(state: SwitcherState, t: number): void {
     sample.status !== story.status ||
     sample.carrierTargetId !== story.carrierTargetId
   ) {
-    // Protect an exchange near its scoring destination. Routine midfield
-    // drops and grabs from home retain normal breaking-event priorities.
-    const destination = state.view.carryDestination(sample.slot);
+    // A nearby drop, pickup or handoff can be covered as one play.
+    const sameExchange =
+      sample.status !== "home" &&
+      tracksFlag(state.shots.at(-1), sample.slot) &&
+      dist(story.pos, sample.pos) <= DIRECTOR_THREAT_RANGE;
     if (
       story.status !== "home" &&
-      destination &&
-      dist(sample.pos, destination) <= DIRECTOR_POSSESSION_SCORING_RANGE
+      (sameExchange || nearScoringStand(state.view, sample))
     ) {
       story.holdUntilSec = t + DIRECTOR_POSSESSION_HOLD_SEC;
       story.canExtend = true;
+    } else {
+      story.holdUntilSec = Number.NEGATIVE_INFINITY;
     }
     story.status = sample.status;
     story.carrierTargetId = sample.carrierTargetId;
   }
+  story.pos = sample.pos;
+  if (t > story.holdUntilSec) return;
   if (!isLiveFlag(state.view, subject))
     story.holdUntilSec = Number.NEGATIVE_INFINITY;
-  else if (story.canExtend && t <= story.holdUntilSec) {
+  else if (story.canExtend) {
     // Finish an outcome already inside the normal peek. This never widens
     // the information horizon or resets the competing play's deadline.
     const next = state.view.peekFlagEvents(story.slot, HOLD_EVENT_TYPES)[0];
@@ -1347,6 +1532,68 @@ function observePossession(state: SwitcherState, t: number): void {
         Math.ceil(next.timeSec / DIRECTOR_TICK_SEC) * DIRECTOR_TICK_SEC,
       );
   }
+}
+
+/** Keep the flag in frame while showing the blast and the players around it. */
+function widenForFlagBombardment(state: SwitcherState, t: number): boolean {
+  const shot = state.shots.at(-1);
+  const story = state.possession;
+  if (
+    !shot ||
+    !story ||
+    story.status === "home" ||
+    !tracksFlag(shot, story.slot) ||
+    t - shot.startSec < DIRECTOR_MIN_SHOT_SEC
+  )
+    return false;
+  const { view } = state;
+  const impacts = view
+    .deathsIn(Math.max(shot.startSec, t - 1), Math.min(t + 1, view.horizon))
+    .filter(
+      (death) => death.weapon === "mortar" && dist(death.pos, story.pos) <= 45,
+    );
+  if (impacts.length < 2) return false;
+  const center = centroid([story.pos, ...impacts.map((death) => death.pos)]);
+  const wide = orbitShot({
+    center,
+    radius: DIRECTOR_BOMBARDMENT_CAM_RADIUS,
+    heightFactor: DIRECTOR_BOMBARDMENT_CAM_HEIGHT,
+    still: true,
+    startSec: t,
+    endSec: t + DIRECTOR_MIN_SHOT_SEC,
+    framing: { dataset: view.dataset, variety: state.variety },
+    reason: "Mortar fire around the flag",
+    topic: "bombardment",
+  });
+  if (inspectShot(wide)?.ok === false) return false;
+  pushShot(state, wide, t, wide.endSec);
+  state.directive = {
+    atSec: t,
+    untilSec: wide.endSec,
+    kind: "exchange",
+    shot: wide,
+  };
+  return true;
+}
+
+function tracksFlag(shot: Shot | undefined, slot: number): boolean {
+  return (
+    (shot?.kind === "followFlag" && shot.slot === slot) ||
+    (shot?.kind === "dolly" &&
+      shot.subject.type === "flag" &&
+      shot.subject.slot === slot)
+  );
+}
+
+function holdingExchangeFraming(state: SwitcherState, t: number): boolean {
+  const story = state.possession;
+  return (
+    story != null &&
+    story.status !== "home" &&
+    story.status !== state.currentStyleStatus &&
+    tracksFlag(state.shots.at(-1), story.slot) &&
+    holdingPossession(state, t)
+  );
 }
 
 function holdingPossession(state: SwitcherState, t: number): boolean {
@@ -1367,7 +1614,7 @@ function deferForPossession(
   state: SwitcherState,
   slot: number,
   t: number,
-  grabSec?: number,
+  grab?: DirectorEvent,
 ): boolean {
   const story = state.possession;
   if (!story || slot === story.slot || !holdingPossession(state, t))
@@ -1376,10 +1623,29 @@ function deferForPossession(
   story.deferred = {
     slot,
     sinceSec: previous?.sinceSec ?? t,
-    grabSec:
-      grabSec ?? (previous?.slot === slot ? previous.grabSec : undefined),
+    grab: grab ?? (previous?.slot === slot ? previous.grab : undefined),
   };
   return true;
+}
+
+function grabEndsBy(
+  view: CausalView,
+  slot: number,
+  grab: DirectorEvent,
+  endSec: number,
+): boolean {
+  const visible = view.eventsIn(grab.timeSec, endSec);
+  const index = visible.indexOf(grab);
+  return (
+    index !== -1 &&
+    visible
+      .slice(index + 1)
+      .some(
+        (event) =>
+          (event.type === "flag-drop" || event.type === "flag-return") &&
+          view.eventSlot(event) === slot,
+      )
+  );
 }
 
 /** Hand off to the current play, not a replay of the grab that requested it.
@@ -1392,30 +1658,45 @@ function takeDeferredPossession(
   const story = state.possession;
   const pending = story?.deferred;
   if (!story || !pending) return null;
-  const sample = state.view.flagAt(pending.slot);
+  const { view } = state;
+  if (pending.grab && grabEndsBy(view, pending.slot, pending.grab, t)) {
+    story.deferred = null;
+    return null;
+  }
+  const sample = view.flagAt(pending.slot);
   const live =
     sample &&
     t - sample.timeSec <= 3 &&
     // The deferred grab was a request to see a run. If it has already
     // ended in a drop, discard that request; ordinary scoring can still
     // choose the loose flag if the new situation merits it.
-    (pending.grabSec == null || sample.status === "held") &&
+    (pending.grab == null || sample.status === "held") &&
     isLiveFlag(state.view, { kind: "flag", slot: pending.slot });
   const imminent =
-    pending.grabSec != null &&
-    pending.grabSec > t &&
-    pending.grabSec <= state.view.horizon;
+    pending.grab != null &&
+    pending.grab.timeSec > t &&
+    pending.grab.timeSec <= state.view.horizon;
   if (!live && !imminent) {
     // Let an unobserved touch acquire its first sample, without showing a
     // flag that is already known to have returned home after that touch.
     const awaitingSample =
-      pending.grabSec != null &&
-      t - pending.grabSec <= DIRECTOR_GRAB_REACT_SEC &&
-      (!sample || sample.timeSec < pending.grabSec);
+      pending.grab != null &&
+      t - pending.grab.timeSec <= DIRECTOR_GRAB_REACT_SEC &&
+      (!sample || sample.timeSec < pending.grab.timeSec);
     if (!awaitingSample) story.deferred = null;
     return null;
   }
   if (holdingPossession(state, t)) return null;
+  // Allow the exchange already on screen to finish its next beat, with
+  // a short grace period beyond the normal handoff deadline.
+  const nextBeat = view.peekFlagEvents(story.slot, HOLD_EVENT_TYPES)[0];
+  if (
+    nextBeat &&
+    tracksFlag(state.shots.at(-1), story.slot) &&
+    nextBeat.timeSec <= t + 1 &&
+    t < pending.sinceSec + DIRECTOR_POSSESSION_DEFER_SEC + 1
+  )
+    return null;
   story.deferred = null;
   return pending.slot;
 }
@@ -1480,7 +1761,8 @@ function switchTo(
 }
 
 function maybeRotate(state: SwitcherState, t: number): void {
-  if (t >= state.rotateAt) openShot(state, t);
+  if (t >= state.rotateAt && !holdingExchangeFraming(state, t))
+    openShot(state, t);
 }
 
 /** Seal the running shot at exactly `t` — trimming OR extending, so a
@@ -1500,7 +1782,8 @@ function closeShot(state: SwitcherState, t: number): void {
   if (
     !open.quickCut &&
     open.endSec - open.startSec < 2 &&
-    state.shots.length > 1
+    state.shots.length > 1 &&
+    !state.isCommitted?.(open)
   ) {
     state.shots.pop();
     const previous = state.shots[state.shots.length - 1];
@@ -1508,6 +1791,20 @@ function closeShot(state: SwitcherState, t: number): void {
     if (previous.quickCut && previous.endSec - previous.startSec > 4) {
       previous.quickCut = undefined;
     }
+  } else if (!state.isCommitted) {
+    markVarietyAired(state, open, open.startSec);
+  }
+}
+
+function markVarietyAired(
+  state: SwitcherState,
+  shot: Shot,
+  atSec: number,
+): void {
+  const choice = state.varietyChoices.get(shot);
+  if (choice) {
+    state.varietyMem.set(choice.key, atSec);
+    state.varietyChoices.delete(shot);
   }
 }
 
@@ -1560,6 +1857,8 @@ function syncStyleStatus(state: SwitcherState): void {
  *  at a slightly different angle is churn; the subject rotation moves
  *  the story along. Everything else keeps its cadence. */
 function rotationFor(state: SwitcherState, shot: Shot, t: number): number {
+  if (shot.kind === "sweep" && shot.topic === "action") return t + shot.moveSec;
+  if (shot.kind === "followPlayer" && shot.firstPerson) return t + 3.5;
   const quietHold = shot.kind === "fixedOrbit" && shot.role === "quiet";
   return quietHold
     ? Number.POSITIVE_INFINITY
@@ -2023,7 +2322,14 @@ function emitPreMatchFiller(
   const observers = roster
     ? roster.observers
     : Math.max(0, players.length - teamed.length);
-  const { pace } = preMatchPace({ observers });
+  const phase = view.matchPhaseAt();
+  const { pace } = preMatchPace({
+    observers,
+    countdownSec:
+      phase?.kind === "countdown" && phase.startSec > t
+        ? phase.startSec - t
+        : null,
+  });
 
   const marks = state.landmarks ?? [];
   let shot: Shot | null = null;
@@ -2035,11 +2341,13 @@ function emitPreMatchFiller(
   // Hurrying: the lobby is nearly full, so stop sightseeing and look at
   // the people who are about to play. Roaming: there is real time to
   // fill, so tour the map. Touring sits between, alternating.
-  const wantPeople =
-    pace === "hurrying" || (pace === "touring" && pass % 2 === 1);
+  const wantPeople = pace === "hurrying" || pass % 2 === 1;
   if (wantPeople && teamed.length >= 2) {
     const teamIds = [...new Set(teamed.map((p) => p.teamId!))].sort();
-    const teamId = teamIds[pass % teamIds.length];
+    const teamId =
+      teamIds[
+        (pace === "hurrying" ? pass : Math.floor(pass / 2)) % teamIds.length
+      ];
     const squad = teamed.filter((p) => p.teamId === teamId);
     const teamName =
       view.dataset.teams.find((team) => team.teamId === teamId)?.name ??
@@ -2120,7 +2428,8 @@ function emitPreMatchFiller(
       // The director knows a shot's whole camera path up front, so
       // there is no excuse for publishing one that spends its duration
       // inside a wall or looking at the back of a building.
-      shot = fly && inspectShot(fly)?.ok ? fly : null;
+      shot =
+        fly && freshWarmupShot(state, fly) && inspectShot(fly)?.ok ? fly : null;
       if (shot) {
         state.lastFlyBySec = t;
         state.flyByCount++;
@@ -2131,11 +2440,12 @@ function emitPreMatchFiller(
         // clear says nothing about where the move goes next.
         const grid = state.freeSpace;
         const subject = chosen;
+        let rankedSpots: DirectorVec3[] | undefined;
         const spots = () =>
-          cameraSpotsFor(grid, aimOf(subject), {
+          (rankedSpots ??= cameraSpotsFor(grid, aimOf(subject), {
             wantDist: standoffFor(subject),
             maxDist: subject.radius * 4,
-          });
+          }));
         shot = firstWatchable(
           orbitLast<ShotCandidate>(
             [
@@ -2146,6 +2456,7 @@ function emitPreMatchFiller(
             ],
             style,
           ),
+          (candidate) => freshWarmupShot(state, candidate),
         );
       }
       if (!shot) {
@@ -2165,6 +2476,29 @@ function emitPreMatchFiller(
   state.segStartSec = t;
   state.rotateAt = shot.endSec;
   state.preMatchSubject = nextSubject;
+}
+
+/** Compare the actual path, including its reverse, rather than the landmark name. */
+function freshWarmupShot(state: SwitcherState, shot: Shot): boolean {
+  const roster = shot.role === "rosterWide" || shot.role === "rosterCloseUp";
+  for (let i = state.shots.length - 1; i >= 0; i--) {
+    const previous = state.shots[i];
+    if (!roster && shot.startSec - previous.startSec > 90) break;
+    if (roster && shot.role !== previous.role) continue;
+    if (shot.kind === "sweep" && previous.kind === "sweep") {
+      if (dist(shot.target, previous.target) > 8) continue;
+      const direct = Math.max(
+        dist(shot.from, previous.from),
+        dist(shot.to, previous.to),
+      );
+      const reversed = Math.max(
+        dist(shot.from, previous.to),
+        dist(shot.to, previous.from),
+      );
+      if (Math.min(direct, reversed) <= 8) return false;
+    } else if (framesTheSame(previous, shot)) return false;
+  }
+  return true;
 }
 
 /** The roster sample in effect at t, for the observer count. */
@@ -2201,7 +2535,19 @@ function rosterPass(
   let seen = state.lineupFeatured.get(teamId);
   if (!seen) state.lineupFeatured.set(teamId, (seen = new Set()));
   if (!closeUp) {
-    return watchableWide(rosterWide(t, end, squad, teamName), state.freeSpace);
+    for (const angle of [
+      0,
+      Math.PI / 4,
+      -Math.PI / 4,
+      Math.PI,
+      Math.PI / 2,
+      -Math.PI / 2,
+    ]) {
+      const shot = rosterWide(t, end, squad, teamName, angle);
+      if (freshWarmupShot(state, shot) && watchableWide(shot, state.freeSpace))
+        return shot;
+    }
+    return null;
   }
   // Try FRAMINGS, not one framing. A rank standing against a wall
   // has no room on its front side, and the answer to that is to film
@@ -2215,7 +2561,11 @@ function rosterPass(
   for (const framing of ROSTER_FRAMINGS) {
     const trial = new Set(seen);
     const shot = rosterCloseUp(t, end, squad, teamName, trial, framing);
-    if (shot && inspectShot(shot)?.ok !== false) {
+    if (
+      shot &&
+      freshWarmupShot(state, shot) &&
+      inspectShot(shot)?.ok !== false
+    ) {
       for (const id of trial) seen.add(id);
       return shot;
     }
@@ -2284,11 +2634,15 @@ function emitLineupPass(state: SwitcherState, t: number): void {
     // No clean group to pan across: quick cuts to INDIVIDUAL players
     // instead (2-3 seconds each) — a portrait montage beats forcing a
     // pan over stragglers. Three portraits spend one close-up slot.
-    if (!shot && closeUpPhase) {
+    if (!shot) {
       // A fresh face only. Falling back to "anyone" showed the same
       // player twice in a row once the rank was used up; a side with
       // no one left to introduce has had its close-ups.
-      const subject = squad.find((p) => !seen.has(p.targetId));
+      const subject =
+        squad.find((p) => !seen.has(p.targetId)) ??
+        (state.lineupUntil === state.lineupStartAt
+          ? squad[pass % squad.length]
+          : undefined);
       if (!subject) {
         state.lineupCloseDone.set(
           teamId,
@@ -2305,31 +2659,34 @@ function emitLineupPass(state: SwitcherState, t: number): void {
         // unwatchable roster shots — a portrait of somebody standing
         // against a wall has to be taken from somewhere else, and the
         // machinery to find that already exists.
-        const portrait = firstWatchable([
-          {
-            build: (spot) =>
-              ({
-                ...holdShotAt(
-                  t,
-                  {
-                    name: name ?? "a player",
-                    pos: subject.pos,
-                    radius: PLAYER_STANDOFF,
-                    indoor: false,
-                    aimLift: PLAYER_AIM_LIFT,
-                  },
-                  spot,
-                  state.lineupPass,
-                ),
-                lookSubject: { type: "player", targetId: subject.targetId },
-                endSec: quickEnd,
-                quickCut: true,
-                reason: `Roster — ${name ?? "a player"} (${teamName})`,
-                role: "rosterCloseUp",
-              }) as Shot,
-            spots: () => playerCloseUpSpots(subject, state.lineupPass),
-          },
-        ]);
+        const portrait = firstWatchable(
+          [
+            {
+              build: (spot) =>
+                ({
+                  ...holdShotAt(
+                    t,
+                    {
+                      name: name ?? "a player",
+                      pos: subject.pos,
+                      radius: PLAYER_STANDOFF,
+                      indoor: false,
+                      aimLift: PLAYER_AIM_LIFT,
+                    },
+                    spot,
+                    state.lineupPass,
+                  ),
+                  lookSubject: { type: "player", targetId: subject.targetId },
+                  endSec: quickEnd,
+                  quickCut: true,
+                  reason: `Roster — ${name ?? "a player"} (${teamName})`,
+                  role: "rosterCloseUp",
+                }) as Shot,
+              spots: () => playerCloseUpSpots(subject, state.lineupPass),
+            },
+          ],
+          (candidate) => freshWarmupShot(state, candidate),
+        );
         shot = portrait;
         state.lineupCloseDone.set(
           teamId,
@@ -2355,16 +2712,27 @@ function emitLineupPass(state: SwitcherState, t: number): void {
 function captureAftermath(
   state: SwitcherState,
   slot: number,
-  capSec: number,
+  event: DirectorEvent,
   now: number,
 ): SwitcherState["directive"] {
   const view = state.view;
+  const capSec = event.timeSec;
   // The ceremony happens where the flag was the instant before the cap
   // teleports it home. If that sample is absent/already home, use the
   // scoring stand, never the captured flag's stand on the opposite side.
   const at = view.flagAt(slot, capSec - 0.5);
+  const stand = view.carryDestination(slot);
+  const scorer = event.capturer
+    ? targetIdForName(event.capturer, view.dataset, capSec)
+    : null;
+  const finish = scorer == null ? null : view.playerAt(scorer, capSec)?.pos;
+  // A stale carry sample can still be halfway along the approach. Set
+  // the cut at the scoring end and fit the scorer and stand together.
+  const observed = finish ?? (at?.status === "held" ? at.pos : null);
   const center =
-    at && at.status !== "home" ? at.pos : view.carryDestination(slot);
+    stand && observed && dist(stand, observed) <= DIRECTOR_AFTERMATH_RADIUS
+      ? centroid([stand, observed])
+      : (stand ?? observed);
   if (!center) return null;
   const startSec = Math.max(capSec, now);
   const endSec = capSec + DIRECTOR_AFTERMATH_HOLD_SEC;
@@ -2391,38 +2759,6 @@ function captureAftermath(
 }
 
 /**
- * The busiest inventory station RIGHT NOW: players within the station
- * range, an in-window activation counting double (the activate
- * animation is ground truth for "being used" — a crowd near an idle
- * machine is just a crowd). `awayFrom` steers alternation to the other
- * base's stations.
- */
-function busiestInvo(
-  view: CausalView,
-  t: number,
-  awayFrom: DirectorVec3 | null,
-): { pos: DirectorVec3; count: number } | null {
-  const players = view.playersAt(t);
-  let best: { pos: DirectorVec3; count: number; score: number } | null = null;
-  for (const station of view.dataset.stations) {
-    if (station.kind !== "inventory" || station.deployed) continue;
-    if (awayFrom && dist(station.pos, awayFrom) < 80) continue;
-    const near = players.filter(
-      (p) => dist(p.pos, station.pos) <= DIRECTOR_STATION_RANGE,
-    ).length;
-    if (near < 2) continue;
-    const active = (station.activations ?? []).some(
-      (a) => a >= t - 3 && a <= t + 2,
-    );
-    const score = near + (active ? 2 : 0);
-    if (!best || score > best.score) {
-      best = { pos: station.pos, count: near, score };
-    }
-  }
-  return best;
-}
-
-/**
  * One suit-up pass: orbit the busiest inventory (alternating bases),
  * or — in the very first seconds while everyone is still flying home —
  * the spawn wave itself. Never an empty mid-map wide.
@@ -2432,7 +2768,8 @@ function emitSuitUpPass(state: SwitcherState, t: number): void {
   const end = Math.min(t + 9, state.suitUpUntil);
   let shot: Shot | null = null;
   const invo =
-    busiestInvo(view, t, state.suitUpLastPos) ?? busiestInvo(view, t, null);
+    busiestInventory(view, t, { minimum: 2, awayFrom: state.suitUpLastPos }) ??
+    busiestInventory(view, t, { minimum: 2 });
   if (invo) {
     state.suitUpLastPos = invo.pos;
     shot = orbitShot({
@@ -2507,13 +2844,10 @@ function scoreSubject(
   if (!sample || t - sample.timeSec > 3) return 0;
   let score: number;
   if (sample.status === "held") {
-    // A possession is the top story from its FIRST tick. The oracle
-    // scored a short run as a scramble because it could see the run
-    // was a fumble; causally, "held for only half a second" just means
-    // THE GRAB JUST HAPPENED — the most valuable moment on the map,
-    // not a reason to stay on a speculative stand elsewhere.
-    score = SCORE_CARRIED;
-    score += capLikelihood(view, subject.slot) * SCORE_CAP_CHAIN_BONUS;
+    score = isQuietCarry(view, sample)
+      ? SCORE_QUIET_CARRY
+      : SCORE_CARRIED +
+        capLikelihood(view, subject.slot) * SCORE_CAP_CHAIN_BONUS;
   } else if (sample.status === "field") {
     const homePos = stand?.pos;
     const fromHome = homePos ? dist(sample.pos, homePos) : Infinity;
@@ -2593,8 +2927,12 @@ function scoreSubject(
 }
 
 function isChasing(view: CausalView, subject: Subject): boolean {
+  if (subject.kind !== "flag") return false;
+  const sample = view.flagAt(subject.slot);
   return (
-    subject.kind === "flag" && view.flagAt(subject.slot)?.status === "held"
+    sample?.status === "held" &&
+    view.now - sample.timeSec <= 3 &&
+    !isQuietCarry(view, sample)
   );
 }
 
@@ -2627,16 +2965,68 @@ function fieldStaleness(
 function isLiveFlag(view: CausalView, subject: Subject): boolean {
   if (subject.kind !== "flag") return false;
   const sample = view.flagAt(subject.slot);
-  if (sample == null || sample.status === "home") return false;
-  // A flag parked in the field with nobody contesting it is a
-  // position, not live play — the stale-shot rotation may leave it.
-  if (
+  if (sample == null || view.now - sample.timeSec > 3) return false;
+  if (sample.status === "held") return !isQuietCarry(view, sample);
+  return (
     sample.status === "field" &&
-    fieldStaleness(view, subject.slot, sample.pos, view.now) >= 0.5
-  ) {
+    fieldStaleness(view, subject.slot, sample.pos, view.now) < 0.5
+  );
+}
+
+function isTurtling(view: CausalView, slot: number): boolean {
+  return (
+    view.trailingHeldSec(slot, TURTLE_HELD_SEC) >= TURTLE_HELD_SEC &&
+    view.flagStayedNear(slot, TURTLE_DRIFT_WINDOW_SEC, TURTLE_DRIFT_MAX)
+  );
+}
+
+function nearScoringStand(
+  view: CausalView,
+  sample: DirectorFlagSample,
+  range = DIRECTOR_POSSESSION_SCORING_RANGE,
+): boolean {
+  const destination = view.carryDestination(sample.slot);
+  return destination != null && dist(sample.pos, destination) <= range;
+}
+
+function isQuietCarry(view: CausalView, sample: DirectorFlagSample): boolean {
+  if (!isTurtling(view, sample.slot)) return false;
+  const ownSlot = view.flagSlots().find((slot) => slot !== sample.slot);
+  const ownFlag = ownSlot != null ? view.flagAt(ownSlot) : null;
+  if (
+    nearScoringStand(view, sample) &&
+    (!ownFlag || ownFlag.status === "home" || view.now - ownFlag.timeSec > 3)
+  )
     return false;
+  if (view.peekFlagEvents(sample.slot, HOLD_EVENT_TYPES).length > 0)
+    return false;
+  const defendingTeam = view.standFor(sample.slot)?.teamId ?? sample.slot;
+  return !view
+    .playersAt(Math.floor(view.now))
+    .some(
+      (player) =>
+        player.teamId === defendingTeam &&
+        dist(player.pos, sample.pos) <= DIRECTOR_THREAT_RANGE,
+    );
+}
+
+/** The flag that must be brought home before the other flag can score. */
+function scoringReturn(view: CausalView): number | undefined {
+  for (const event of view.peekFlagEvents(null, ["flag-return"])) {
+    if (!event.actor) continue;
+    const slot = view.eventSlot(event);
+    if (slot == null) continue;
+    const loose = view.flagAt(slot);
+    if (loose?.status !== "field" || view.now - loose.timeSec > 3) continue;
+    const otherSlot = view.flagSlots().find((candidate) => candidate !== slot);
+    const carrier = otherSlot != null ? view.flagAt(otherSlot) : null;
+    if (
+      carrier?.status === "held" &&
+      view.now - carrier.timeSec <= 3 &&
+      nearScoringStand(view, carrier, DIRECTOR_CAP_APPROACH_RANGE)
+    )
+      return slot;
   }
-  return true;
 }
 
 // ── Shot styles: what the present state calls for ──
@@ -2647,6 +3037,68 @@ function nextGrabber(view: CausalView, slot: number): number | null {
   return grab?.actor
     ? targetIdForName(grab.actor, view.dataset, grab.timeSec)
     : null;
+}
+
+/** Once viewers know where the stand is, give an occasional grab the runner's view. */
+function showGrabPov(state: SwitcherState, t: number): boolean {
+  const { view } = state;
+  const current = state.subjects[state.current];
+  const open = state.shots.at(-1);
+  if (
+    current.kind !== "flag" ||
+    !open ||
+    (open.kind === "followPlayer" && open.firstPerson) ||
+    t - open.startSec < 3 ||
+    t - (state.varietyMem.get("flagGrabPov") ?? -Infinity) < 45 ||
+    view.flagAt(current.slot)?.status !== "home"
+  )
+    return false;
+  const framed = shotSubjectOf(open);
+  if (
+    open.topic !== "flag-stand" &&
+    !(
+      open.topic === "base" &&
+      framed?.type === "flag" &&
+      framed.slot === current.slot
+    )
+  )
+    return false;
+  const grab = view.peekFlagEvents(current.slot, ["flag-grab"])[0];
+  if (!grab?.actor || grab.timeSec - t > 2.5) return false;
+  const stand = view.standFor(current.slot);
+  const targetId = targetIdForName(grab.actor, view.dataset, grab.timeSec);
+  const player = targetId == null ? null : view.playerAt(targetId);
+  if (
+    !stand ||
+    player?.heading == null ||
+    player.vehicleId ||
+    t - player.timeSec > 1 ||
+    dist(player.pos, stand.pos) > 250 ||
+    Math.cos(player.heading - bearingYaw(player.pos, stand.pos)) <=
+      Math.SQRT1_2 ||
+    castWorldRay(
+      [player.pos[0], player.pos[1], player.pos[2] + 1.5],
+      [stand.pos[0], stand.pos[1], stand.pos[2] + 1],
+      { includeStatics: false },
+    )
+  )
+    return false;
+  const shot: Shot = {
+    kind: "followPlayer",
+    targetId: player.targetId,
+    firstPerson: true,
+    startSec: t,
+    endSec: t + 3.5,
+    transitionIn: "cut",
+    reason: `${grab.actor}'s view on the approach to the ${flagLabel(current.slot, view.dataset)}`,
+    topic: "flag-stand",
+  };
+  state.varietyChoices.set(shot, {
+    key: "flagGrabPov",
+    latestStartSec: grab.timeSec,
+  });
+  openShot(state, t, shot);
+  return true;
 }
 
 /** A moving flag view carries the touch out of the stand's static framing. */
@@ -2682,10 +3134,7 @@ function styleFor(state: SwitcherState, t: number): Shot {
     if (sample?.status === "held") {
       const carrier = playerName(sample.carrierTargetId, dataset, t);
       // Turtled: the carrier has sat in one spot for a while.
-      if (
-        view.trailingHeldSec(slot) >= TURTLE_HELD_SEC &&
-        (view.trailingFlagDrift(slot, 8) ?? Infinity) <= TURTLE_DRIFT_MAX
-      ) {
+      if (isTurtling(view, slot)) {
         const inside = state.turtleViews++ % 2 === 0;
         return inside
           ? orbitShot({
@@ -2818,7 +3267,10 @@ function styleFor(state: SwitcherState, t: number): Shot {
       // Settling: frame slightly AHEAD of it, from a bearing square to
       // its drift, so the last of the slide crosses the frame instead
       // of running out of the back of it.
-      const settled = view.flagAt(slot, view.horizon) ?? sample;
+      const ahead = view.flagAt(slot, view.horizon);
+      // A return teleports the flag. Frame its loose position so the
+      // audience can see the retrieval itself.
+      const settled = ahead?.status === "field" ? ahead : sample;
       const drift = velocity && Math.hypot(velocity.x, velocity.y) > 1;
       const center: DirectorVec3 = drift
         ? [
@@ -2867,6 +3319,11 @@ function styleFor(state: SwitcherState, t: number): Shot {
           topic: "flag-stand",
         });
       }
+      const wave = offensiveWaveShot(view, t, state.varietyMem, slot);
+      if (wave) {
+        state.varietyChoices.set(wave.shot, { key: wave.cooldownKey });
+        return wave.shot;
+      }
       const inbound = inboundAttacker(view, slot);
       if (
         inbound &&
@@ -2874,7 +3331,7 @@ function styleFor(state: SwitcherState, t: number): Shot {
         inbound.likelihood >= DIRECTOR_CAPPER_MIN_LIKELIHOOD
       ) {
         // A grab is a fast, wide-open moment: never shoot it tight.
-        // Three framings rotate so repeat grabs never look alike.
+        // Rotate framings so repeat grabs never look alike.
         const rotation = state.variety.grabViews ?? 0;
         state.variety.grabViews = rotation + 1;
         // A COLD cut opens on an establishing framing. Landing

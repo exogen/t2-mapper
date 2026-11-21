@@ -20,12 +20,18 @@ import { DemoCoordinator } from "./demoCoordinator";
 import { WatchRequest } from "./watchRequest";
 import type { GameConnection } from "./gameConnection";
 import type { ServerMessage } from "./types";
+import type { LiveCastPlanBatch } from "./liveCastTypes";
 import { GAME_PROTOCOL_VERSION } from "./shared";
+import { MAX_CATCHUP_COMPRESSED_BYTES } from "./catchupLimits";
+import { VIEWER_BUFFER_BYTES } from "./viewerSocket";
+import { MOVE_TICK_MS } from "./moveList";
 import { relayLog } from "./logger";
 import { extractWavTag } from "../src/stream/streamHelpers";
 import {
+  command,
   decodedPacket,
   gravityEvent,
+  netString,
   remoteCommandEvent,
   remoteCommandPacket,
   serverMessagePacket,
@@ -104,6 +110,10 @@ interface SentFrame {
 }
 
 class FakeWebSocket {
+  bufferedAmount = 0;
+  close = vi.fn((_code?: number, _reason?: string) => {
+    this.readyState = 3;
+  });
   OPEN = 1;
   readyState = 1;
   sent: SentFrame[] = [];
@@ -3088,6 +3098,1277 @@ describe("WatchSession delayed transitions", () => {
     session!.setTournamentMode(tournament);
   }
 
+  function castMission(gameClass: string, start = "Match started!") {
+    return serverPacket(1, {
+      events: [
+        netString(0, 1, "ServerMessage"),
+        command(1, 1, "MsgClientReady", "", gameClass),
+        command(2, 1, "MsgMissionStart", start),
+      ],
+    });
+  }
+
+  const castDelayMs = 7_000;
+  const tournamentDelayMs = 20_000;
+
+  function startCastSession(
+    tournament: boolean,
+    tourneyDelayMs = tournamentDelayMs,
+    liveCast = false,
+  ) {
+    const { manager, connections } = createManager({
+      tourneyDelayMs,
+      liveCastDelayMs: castDelayMs,
+      createLiveCast: () => ({
+        hydrate: vi.fn(),
+        tick: vi.fn(),
+        close: vi.fn(),
+      }),
+    });
+    managers.push(manager);
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, address, undefined, liveCast);
+    const session = manager.getSession(address)!;
+    connections[0].setStatus("connected");
+    session.setTournamentMode(tournament);
+    return { manager, connections, ws, session };
+  }
+
+  it("updates the CastGenius countdown as soon as a casual server is confirmed", () => {
+    const { manager, connections } = createManager({
+      tourneyDelayMs: 120_000,
+      liveCastDelayMs: castDelayMs,
+      createLiveCast: () => ({
+        hydrate: vi.fn(),
+        tick: vi.fn(),
+        close: vi.fn(),
+      }),
+    });
+    managers.push(manager);
+    const casting = new FakeWebSocket();
+    manager.watch(casting as unknown as WebSocket, address, undefined, true);
+    const conn = connections[0];
+    conn.setStatus("connected");
+    conn.emit("packet", castMission("CTFGame"), true);
+    expect(statuses(casting).at(-1)).not.toHaveProperty("streamDelayReadyInMs");
+    expect(casting.frameTypes()).not.toContain("catchupBegin");
+
+    const modeGraceMs = 4_000;
+    vi.advanceTimersByTime(modeGraceMs);
+    expect(statuses(casting).at(-1)).toMatchObject({
+      status: "syncing",
+      streamDelayMs: castDelayMs,
+      streamDelayReason: "castGenius",
+      streamDelayReadyInMs: castDelayMs - modeGraceMs,
+    });
+    vi.advanceTimersByTime(castDelayMs - modeGraceMs - 1);
+    expect(casting.frameTypes()).not.toContain("catchupBegin");
+    vi.advanceTimersByTime(1);
+    expect(casting.frameTypes()).toContain("catchupBegin");
+    expect(statuses(casting).at(-1)).toMatchObject({
+      status: "live",
+      streamDelayMs: castDelayMs,
+      streamDelayReason: "castGenius",
+    });
+    expect(statuses(casting).at(-1)).not.toHaveProperty("streamDelayReadyInMs");
+  });
+
+  it.each(["abandoned handshake", "unresolved mode", "confirmed tournament"])(
+    "uses the correct CastGenius countdown after a casual rollover from a %s",
+    (previous) => {
+      const confirmed = previous === "confirmed tournament";
+      const { manager, connections } = createManager({
+        tourneyDelayMs: 120_000,
+        liveCastDelayMs: castDelayMs,
+        createLiveCast: () => ({
+          hydrate: vi.fn(),
+          tick: vi.fn(),
+          close: vi.fn(),
+        }),
+      });
+      managers.push(manager);
+      const ws = new FakeWebSocket();
+      manager.watch(ws as unknown as WebSocket, address);
+      const session = manager.getSession(address)!;
+      if (previous !== "abandoned handshake")
+        connections[0].setStatus("connected");
+      if (confirmed) session.setTournamentMode(true);
+      vi.advanceTimersByTime(27_000);
+      cycle(connections, session, false);
+      connections[1].emit("packet", castMission("CTFGame"), true);
+      const casting = new FakeWebSocket();
+      manager.watch(casting as unknown as WebSocket, address);
+      expect(catchup(casting).epoch).toBe(2);
+      casting.sent = [];
+      manager.setLiveCast(casting as unknown as WebSocket, true);
+      const remaining = confirmed ? 88_000 : castDelayMs;
+      expect(statuses(casting).at(-1)).toMatchObject({
+        status: "syncing",
+        streamDelayReason: confirmed ? "tournament" : "castGenius",
+        streamDelayReadyInMs: remaining,
+      });
+      vi.advanceTimersByTime(remaining - 1);
+      expect(casting.frameTypes()).not.toContain("catchupBegin");
+      vi.advanceTimersByTime(1);
+      expect(catchup(casting).epoch).toBe(confirmed ? 1 : 2);
+    },
+  );
+
+  it("uses the ordinary live picture when CastGenius is disabled", () => {
+    const { manager, connections } = createManager({
+      liveCastDelayMs: castDelayMs,
+    });
+    managers.push(manager);
+    const viewer = new FakeWebSocket();
+    manager.watch(viewer as unknown as WebSocket, address, undefined, true);
+    connections[0].setStatus("connected");
+    const packet = castMission("CTFGame");
+    connections[0].emit("packet", packet, true);
+    expect(viewer.binaryFrames()).toContainEqual(packet);
+    expect(statuses(viewer).at(-1)?.streamDelayMs).toBe(0);
+    vi.advanceTimersByTime(castDelayMs);
+    expect(viewer.frameTypes()).not.toContain("liveCastTick");
+    expect(statuses(viewer).at(-1)?.liveCastAvailable).toBe(false);
+  });
+
+  it.each([false, true])(
+    "a slow socket rejoins from a fresh snapshot without interrupting its peers (cast=%s)",
+    (cast) => {
+      const {
+        manager,
+        connections,
+        ws: slow,
+      } = startCastSession(false, 0, cast);
+      const healthy = new FakeWebSocket();
+      manager.watch(healthy as unknown as WebSocket, address, undefined, cast);
+      const conn = connections[0];
+      conn.emit("packet", castMission("CTFGame"), true);
+      vi.advanceTimersByTime(castDelayMs);
+      expect(healthy.frameTypes()).toContain("catchupEnd");
+      expect(slow.frameTypes()).toContain("catchupEnd");
+
+      slow.bufferedAmount =
+        MAX_CATCHUP_COMPRESSED_BYTES + VIEWER_BUFFER_BYTES - 1;
+      const next = serverPacket(2, { events: [gravityEvent(3, -20)] });
+      conn.emit("packet", next, true);
+      vi.advanceTimersByTime(castDelayMs);
+      expect(slow.close).toHaveBeenCalledExactlyOnceWith(
+        1013,
+        expect.any(String),
+      );
+      expect(slow.binaryFrames()).not.toContainEqual(next);
+      expect(healthy.binaryFrames().at(-1)).toEqual(next);
+      expect(healthy.close).not.toHaveBeenCalled();
+
+      // The socket close handler detaches the old connection. The browser
+      // requests the same cast channel on its replacement connection.
+      manager.detachSocket(slow as unknown as WebSocket);
+      const resumed = new FakeWebSocket();
+      manager.watch(resumed as unknown as WebSocket, address, undefined, cast);
+      expect(catchup(resumed).worldGravity).toBe(-20);
+      expect(connections).toHaveLength(1);
+      expect(
+        healthy.frameTypes().filter((type) => type === "catchupBegin"),
+      ).toHaveLength(1);
+    },
+  );
+
+  it("checks room for a whole catch-up and lets a fresh viewer receive a maximum-size snapshot", () => {
+    const { manager, session } = startCastSession(false, 0);
+    const snapshot = new Uint8Array(MAX_CATCHUP_COMPRESSED_BYTES);
+    vi.spyOn(session as any, "buildPayloadBytes").mockReturnValue(snapshot);
+    const slow = new FakeWebSocket();
+    slow.bufferedAmount = VIEWER_BUFFER_BYTES + 1;
+    manager.watch(slow as unknown as WebSocket, address);
+    expect(slow.close).toHaveBeenCalledExactlyOnceWith(
+      1013,
+      expect.any(String),
+    );
+    expect(slow.frameTypes()).not.toContain("catchupBegin");
+
+    const fresh = new FakeWebSocket();
+    manager.watch(fresh as unknown as WebSocket, address);
+    expect(fresh.frameTypes()).toContain("catchupEnd");
+    expect(
+      fresh.binaryFrames().reduce((sum, chunk) => sum + chunk.byteLength, 0),
+    ).toBe(snapshot.byteLength);
+    expect(fresh.close).not.toHaveBeenCalled();
+  });
+
+  it("advertises worker admission changes without interrupting ordinary watch", () => {
+    const feed = { hydrate: vi.fn(), tick: vi.fn(), close: vi.fn() };
+    const createLiveCast = vi
+      .fn()
+      .mockReturnValueOnce(undefined)
+      .mockReturnValue(feed);
+    const { manager, connections } = createManager({
+      liveCastDelayMs: castDelayMs,
+      createLiveCast,
+    });
+    managers.push(manager);
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, address);
+    const conn = connections[0];
+    conn.setStatus("connected");
+    conn.emit("packet", castMission("CTFGame"), true);
+    expect(statuses(ws).at(-1)?.liveCastAvailable).toBeNull();
+    ws.sent = [];
+
+    vi.advanceTimersByTime(MOVE_TICK_MS);
+    expect(statuses(ws)).toHaveLength(0);
+    const packet = serverPacket(2, { events: [gravityEvent(3, -20)] });
+    conn.emit("packet", packet, true);
+    vi.advanceTimersByTime(2_999);
+    expect(createLiveCast).toHaveBeenCalledOnce();
+    expect(ws.binaryFrames()).toEqual([packet]);
+    expect(statuses(ws)).toHaveLength(0);
+
+    vi.advanceTimersByTime(1_000);
+    expect(createLiveCast).toHaveBeenCalledTimes(2);
+    expect(statuses(ws).map((status) => status.liveCastAvailable)).toEqual([
+      true,
+    ]);
+    expect(ws.frameTypes()).not.toContain("catchupBegin");
+    expect(ws.frameTypes()).not.toContain("liveCastTick");
+  });
+
+  it("rebases only the viewer who opts in or out of the additional delay", () => {
+    const { manager, connections, ws } = startCastSession(false);
+    const casting = new FakeWebSocket();
+    manager.watch(casting as unknown as WebSocket, address);
+    const conn = connections[0];
+    conn.emit("packet", castMission("CTFGame"), true);
+    const gameId = catchup(ws).gamePresentation.id;
+    vi.advanceTimersByTime(castDelayMs + 32);
+    ws.sent = [];
+    casting.sent = [];
+
+    const delayed = serverPacket(2, { events: [gravityEvent(3, -20)] });
+    conn.emit("packet", delayed, true);
+    expect(ws.binaryFrames()).toEqual([delayed]);
+    expect(casting.binaryFrames()).toEqual([delayed]);
+    casting.sent = [];
+    manager.setLiveCast(casting as unknown as WebSocket, true);
+    expect(catchup(casting)).toMatchObject({
+      gamePresentation: { id: gameId },
+      connectionState: { lastSeqRecvd: 1 },
+    });
+    expect(statuses(casting).at(-1)?.streamDelayMs).toBe(castDelayMs);
+    const chunkCount = casting.binaryFrames().length;
+    vi.advanceTimersByTime(castDelayMs - 1);
+    expect(casting.binaryFrames()).toHaveLength(chunkCount);
+    vi.advanceTimersByTime(1);
+    expect(casting.binaryFrames().at(-1)).toEqual(delayed);
+
+    const skipped = serverPacket(3, { events: [gravityEvent(4, -30)] });
+    conn.emit("packet", skipped, true);
+    expect(casting.binaryFrames()).not.toContainEqual(skipped);
+    casting.sent = [];
+    manager.setLiveCast(casting as unknown as WebSocket, false);
+    expect(catchup(casting)).toMatchObject({
+      gamePresentation: { id: gameId },
+      connectionState: { lastSeqRecvd: 3 },
+      worldGravity: -30,
+    });
+    expect(statuses(casting).at(-1)?.streamDelayMs).toBe(0);
+    expect(ws.binaryFrames()).toEqual([delayed, skipped]);
+    expect(ws.frameTypes()).not.toContain("catchupBegin");
+    expect(ws.frameTypes()).not.toContain("liveCastTick");
+  });
+
+  it.each([castDelayMs, tournamentDelayMs])(
+    "shares the tournament picture when its %i ms delay meets the CastGenius minimum",
+    (tourneyDelayMs) => {
+      const { manager, connections, ws, session } = startCastSession(
+        true,
+        tourneyDelayMs,
+      );
+      const conn = connections[0];
+      conn.emit("packet", castMission("CTFGame"), true);
+      vi.advanceTimersByTime(tourneyDelayMs + 32);
+      const channelId = session.getChannelId(ws as unknown as WebSocket);
+      ws.sent = [];
+      manager.setLiveCast(ws as unknown as WebSocket, true);
+      expect(ws.frameTypes()).toContain("liveCastTick");
+      expect(ws.frameTypes()).not.toContain("catchupBegin");
+      expect(session.getChannelId(ws as unknown as WebSocket)).toBe(channelId);
+      manager.setLiveCast(ws as unknown as WebSocket, false);
+      expect(ws.frameTypes()).not.toContain("catchupBegin");
+      expect(session.getChannelId(ws as unknown as WebSocket)).toBe(channelId);
+      const joining = new FakeWebSocket();
+      manager.watch(joining as unknown as WebSocket, address, undefined, true);
+      expect(statuses(joining).at(-1)?.streamDelayMs).toBe(tourneyDelayMs);
+      expect(joining.frameTypes()).toContain("liveCastTick");
+    },
+  );
+
+  it("independently hydrates a short tournament delay and the CastGenius delay", () => {
+    const shortDelayMs = 3_000;
+    const { manager, connections, ws } = startCastSession(true, shortDelayMs);
+    const casting = new FakeWebSocket();
+    const conn = connections[0];
+    conn.emit("packet", castMission("CTFGame"), true);
+    vi.advanceTimersByTime(1);
+    conn.emit(
+      "packet",
+      serverPacket(2, { events: [gravityEvent(3, -20)] }),
+      true,
+    );
+    vi.advanceTimersByTime(5_000);
+    const later = serverPacket(3, { events: [gravityEvent(4, -30)] });
+    conn.emit("packet", later, true);
+    vi.advanceTimersByTime(5_000);
+
+    manager.watch(casting as unknown as WebSocket, address, undefined, true);
+    const ordinary = new FakeWebSocket();
+    manager.watch(ordinary as unknown as WebSocket, address);
+    const gameId = catchup(ws).gamePresentation.id;
+    expect(catchup(ordinary)).toMatchObject({
+      gamePresentation: { id: gameId },
+      connectionState: { lastSeqRecvd: 3 },
+      worldGravity: -30,
+    });
+    expect(catchup(casting)).toMatchObject({
+      gamePresentation: { id: gameId },
+      connectionState: { lastSeqRecvd: 2 },
+      worldGravity: -20,
+    });
+    expect(statuses(ordinary).at(-1)?.streamDelayMs).toBe(shortDelayMs);
+    expect(statuses(casting).at(-1)?.streamDelayMs).toBe(castDelayMs);
+    casting.sent = [];
+    manager.setLiveCast(casting as unknown as WebSocket, false);
+    expect(catchup(casting)).toMatchObject({
+      connectionState: { lastSeqRecvd: 3 },
+      worldGravity: -30,
+    });
+    expect(statuses(casting).at(-1)?.streamDelayMs).toBe(shortDelayMs);
+
+    casting.sent = [];
+    ordinary.sent = [];
+    manager.setLiveCast(casting as unknown as WebSocket, true);
+    expect(catchup(casting)).toMatchObject({
+      connectionState: { lastSeqRecvd: 2 },
+      worldGravity: -20,
+    });
+    vi.advanceTimersByTime(castDelayMs - 5_000 - 1);
+    expect(casting.binaryFrames()).not.toContainEqual(later);
+    vi.advanceTimersByTime(1);
+    expect(casting.binaryFrames().at(-1)).toEqual(later);
+    expect(ordinary.binaryFrames()).toEqual([]);
+  });
+
+  it.each([0, 3_000])(
+    "keeps ordinary watch and recording healthy after a Cast-only replica fault with %i ms ordinary delay",
+    (tourneyDelayMs) => {
+      const coordinator = policyCoordinator();
+      const onPacket = vi.fn(() => false);
+      const recorder = {
+        state: "recording",
+        onPacket,
+      } as unknown as NonNullable<
+        ReturnType<DemoCoordinator["createRecorder"]>
+      >;
+      vi.spyOn(coordinator, "createRecorder").mockReturnValue(recorder);
+      const { manager, connections } = createManager({
+        tourneyDelayMs,
+        demoCoordinator: coordinator,
+        liveCastDelayMs: castDelayMs,
+        createLiveCast: () => ({
+          hydrate: vi.fn(),
+          tick: vi.fn(),
+          close: vi.fn(),
+        }),
+      });
+      managers.push(manager);
+      const ordinary = new FakeWebSocket();
+      const casting = new FakeWebSocket();
+      manager.watch(ordinary as unknown as WebSocket, address);
+      manager.watch(casting as unknown as WebSocket, address, undefined, true);
+      const session = manager.getSession(address)!;
+      const conn = connections[0];
+      conn.setStatus("connected");
+      session.setTournamentMode(tourneyDelayMs > 0);
+      conn.emit("packet", castMission("CTFGame"), true);
+      vi.advanceTimersByTime(castDelayMs + MOVE_TICK_MS);
+      expect(catchup(casting).gamePresentation.id).toBe(
+        catchup(ordinary).gamePresentation.id,
+      );
+      ordinary.sent = [];
+      casting.sent = [];
+      const parser = (session as any).castTimeline.replica.kit.packetParser;
+      vi.spyOn(parser, "parsePacket").mockImplementation(() => {
+        throw new Error("Cast-only parser fault");
+      });
+
+      const packet = serverPacket(2, { events: [gravityEvent(3, -20)] });
+      conn.emit("packet", packet, true);
+      vi.advanceTimersByTime(castDelayMs);
+
+      expect(connections).toHaveLength(1);
+      expect(conn.status).toBe("connected");
+      expect(coordinator.finalize).not.toHaveBeenCalled();
+      expect(ordinary.binaryFrames()).toEqual([packet]);
+      expect(statuses(ordinary).every(({ status }) => status === "live")).toBe(
+        true,
+      );
+      expect(casting.binaryFrames()).not.toContainEqual(packet);
+      expect(statuses(casting).at(-1)).toMatchObject({
+        status: "syncing",
+        liveCastAvailable: false,
+      });
+
+      const late = new FakeWebSocket();
+      manager.watch(late as unknown as WebSocket, address, undefined, true);
+      expect(late.frameTypes()).not.toContain("catchupBegin");
+      expect(statuses(late).at(-1)).toMatchObject({
+        status: "syncing",
+        liveCastAvailable: false,
+      });
+      manager.setLiveCast(casting as unknown as WebSocket, false);
+      expect(catchup(casting)).toMatchObject({ worldGravity: -20 });
+      expect(statuses(casting).at(-1)?.streamDelayMs).toBe(tourneyDelayMs);
+
+      const next = serverPacket(3);
+      conn.emit("packet", next, true);
+      vi.advanceTimersByTime(tourneyDelayMs);
+      expect(ordinary.binaryFrames()).toEqual([packet, next]);
+      expect(casting.binaryFrames().at(-1)).toEqual(next);
+      expect(onPacket).toHaveBeenLastCalledWith(next, true);
+    },
+  );
+
+  it("reconnects after a shared tournament replica fault to restore ordinary watch", () => {
+    const { manager, connections, session, ws } = startCastSession(true);
+    const casting = new FakeWebSocket();
+    manager.watch(casting as unknown as WebSocket, address, undefined, true);
+    const conn = connections[0];
+    conn.emit("packet", castMission("CTFGame"), true);
+    vi.advanceTimersByTime(tournamentDelayMs + MOVE_TICK_MS);
+    expect(catchup(casting).gamePresentation.id).toBe(
+      catchup(ws).gamePresentation.id,
+    );
+    ws.sent = [];
+    const parser = (session as any).castTimeline.replica.kit.packetParser;
+    vi.spyOn(parser, "parsePacket").mockImplementation(() => {
+      throw new Error("Shared parser fault");
+    });
+
+    conn.emit("packet", serverPacket(2), true);
+    vi.advanceTimersByTime(tournamentDelayMs);
+
+    expect(connections).toHaveLength(2);
+    expect(conn.status).toBe("disconnected");
+    expect(ws.binaryFrames()).toEqual([]);
+    expect(statuses(ws).at(-1)?.status).toBe("syncing");
+  });
+
+  it("ends each delayed picture after its own final packet from the shared connection", () => {
+    const shortDelayMs = 3_000;
+    const { manager, connections, ws } = startCastSession(true, shortDelayMs);
+    const casting = new FakeWebSocket();
+    manager.watch(casting as unknown as WebSocket, address, undefined, true);
+    const conn = connections[0];
+    conn.emit("packet", castMission("CTFGame"), true);
+    vi.advanceTimersByTime(castDelayMs + 32);
+    expect(catchup(casting).gamePresentation.id).toBe(
+      catchup(ws).gamePresentation.id,
+    );
+    ws.sent = [];
+    casting.sent = [];
+
+    const finalPacket = serverPacket(2);
+    const reason = "You have been kicked";
+    conn.emit("packet", finalPacket, true);
+    conn.setStatus("disconnected", reason);
+    vi.advanceTimersByTime(shortDelayMs - 1);
+    expect(ws.binaryFrames()).toEqual([]);
+    expect(casting.binaryFrames()).toEqual([]);
+    expect(statuses(ws).some(({ status }) => status === "ended")).toBe(false);
+    expect(statuses(casting).some(({ status }) => status === "ended")).toBe(
+      false,
+    );
+
+    vi.advanceTimersByTime(1);
+    expect(ws.binaryFrames()).toEqual([finalPacket]);
+    expect(ws.frameTypes().slice(-2)).toEqual(["<binary>", "sessionStatus"]);
+    expect(statuses(ws).at(-1)).toMatchObject({
+      status: "ended",
+      message: reason,
+    });
+    expect(manager.getSession(address)).toBeDefined();
+    vi.advanceTimersByTime(castDelayMs - shortDelayMs - 1);
+    expect(casting.binaryFrames()).toEqual([]);
+    expect(statuses(casting).some(({ status }) => status === "ended")).toBe(
+      false,
+    );
+
+    vi.advanceTimersByTime(1);
+    expect(casting.binaryFrames()).toEqual([finalPacket]);
+    expect(casting.frameTypes().slice(-2)).toEqual([
+      "<binary>",
+      "sessionStatus",
+    ]);
+    expect(statuses(casting).at(-1)).toMatchObject({
+      status: "ended",
+      message: reason,
+    });
+    expect(manager.getSession(address)).toBeUndefined();
+    expect(connections).toHaveLength(1);
+  });
+
+  it("drains the tournament epoch before seeding cast viewers at the shorter delay", () => {
+    const { manager, connections, ws, session } = startCastSession(
+      true,
+      tournamentDelayMs,
+      true,
+    );
+    connections[0].emit("packet", castMission("CTFGame"), true);
+    vi.advanceTimersByTime(tournamentDelayMs + 32);
+    const oldGameId = catchup(ws).gamePresentation.id;
+    ws.sent = [];
+    const tail = serverPacket(2);
+    connections[0].emit("packet", tail, true);
+    cycle(connections, session, false);
+    const next = connections[1];
+    const preamble = castMission("CTFGame");
+    next.emit("packet", preamble, true);
+    vi.advanceTimersByTime(1_000);
+    const clock = serverPacket(2, {
+      events: [command(3, 1, "MsgSystemClock", "", "20", "1200000")],
+    });
+    next.emit("packet", clock, true);
+    const joining = new FakeWebSocket();
+    manager.watch(joining as unknown as WebSocket, address, undefined, true);
+    expect(catchup(joining).gamePresentation.id).toBe(oldGameId);
+    expect(statuses(joining).at(-1)?.streamDelayMs).toBe(tournamentDelayMs);
+    joining.sent = [];
+    expect(ws.frameTypes()).not.toContain("catchupBegin");
+
+    vi.advanceTimersByTime(tournamentDelayMs - 6_000);
+    const newGame = catchup(ws);
+    expect(newGame.gamePresentation.id).not.toBe(oldGameId);
+    expect(catchup(joining).gamePresentation.id).toBe(
+      newGame.gamePresentation.id,
+    );
+    expect(newGame.hudState.gameClassName).toBe("CTFGame");
+    expect(newGame.hudState.clock.elapsedMs).toBeCloseTo(7_000, -2);
+    expect(ws.binaryFrames()[0]).toEqual(tail);
+    expect(ws.binaryFrames()).not.toContainEqual(preamble);
+    expect(ws.binaryFrames()).not.toContainEqual(clock);
+    expect(
+      ws.frameTypes().filter((type) => type === "catchupBegin"),
+    ).toHaveLength(1);
+    expect(statuses(ws).at(-1)?.streamDelayMs).toBe(castDelayMs);
+  });
+
+  it("preserves the tournament embargo when the next cast epoch has a longer delay", () => {
+    const { connections, ws, session } = startCastSession(
+      false,
+      tournamentDelayMs,
+      true,
+    );
+    connections[0].emit("packet", castMission("CTFGame"), true);
+    vi.advanceTimersByTime(castDelayMs + 32);
+    const oldGameId = catchup(ws).gamePresentation.id;
+    ws.sent = [];
+    const tail = serverPacket(2);
+    connections[0].emit("packet", tail, true);
+    cycle(connections, session, true);
+    const next = castMission("CTFGame");
+    connections[1].emit("packet", next, true);
+    vi.advanceTimersByTime(castDelayMs - 5_000);
+    expect(ws.binaryFrames()).toEqual([tail]);
+    expect(ws.frameTypes()).not.toContain("catchupBegin");
+    expect(statuses(ws).at(-1)).toMatchObject({
+      status: "syncing",
+      streamDelayMs: tournamentDelayMs,
+      streamDelayReason: "tournament",
+      streamDelayReadyInMs: tournamentDelayMs - (castDelayMs - 5_000),
+    });
+    vi.advanceTimersByTime(tournamentDelayMs - (castDelayMs - 5_000) - 1);
+    expect(ws.frameTypes()).not.toContain("catchupBegin");
+    expect(ws.binaryFrames()).not.toContainEqual(next);
+    vi.advanceTimersByTime(1);
+    expect(catchup(ws).gamePresentation.id).not.toBe(oldGameId);
+    expect(catchup(ws).hudState.gameClassName).toBe("CTFGame");
+    expect(statuses(ws).at(-1)?.streamDelayMs).toBe(tournamentDelayMs);
+  });
+
+  it("keeps ordinary viewers off a cast-only epoch when a later tournament is embargoed", () => {
+    const { manager, connections, ws, session } = startCastSession(true);
+    const casting = new FakeWebSocket();
+    manager.watch(casting as unknown as WebSocket, address, undefined, true);
+    connections[0].emit("packet", castMission("CTFGame"), true);
+    vi.advanceTimersByTime(tournamentDelayMs + 32);
+    expect(catchup(ws).epoch).toBe(1);
+    expect(catchup(casting).epoch).toBe(1);
+    ws.sent = [];
+    casting.sent = [];
+
+    const firstTail = serverPacket(2);
+    connections[0].emit("packet", firstTail, true);
+    cycle(connections, session, false);
+    connections[1].emit("packet", castMission("CTFGame"), true);
+    vi.advanceTimersByTime(tournamentDelayMs - castDelayMs - 2_000);
+    const castOnlyTail = serverPacket(2, { events: [gravityEvent(3, -20)] });
+    connections[1].emit("packet", castOnlyTail, true);
+    cycle(connections, session, true);
+    connections[2].emit("packet", castMission("CTFGame"), true);
+
+    expect(catchup(casting).epoch).toBe(2);
+    expect(ws.binaryFrames()).toEqual([firstTail]);
+    expect(ws.frameTypes()).not.toContain("catchupBegin");
+    vi.advanceTimersByTime(tournamentDelayMs - 1);
+    expect(casting.binaryFrames()).toContainEqual(castOnlyTail);
+    expect(ws.binaryFrames()).toEqual([firstTail]);
+    expect(ws.frameTypes()).not.toContain("catchupBegin");
+    expect(statuses(ws).at(-1)?.streamDelayMs).toBe(tournamentDelayMs);
+
+    vi.advanceTimersByTime(1);
+    expect(catchup(ws).epoch).toBe(3);
+  });
+
+  it("drains the next map for ordinary and CastGenius viewers after a terminal disconnect", () => {
+    const { manager, connections, ws, session } = startCastSession(true);
+    const casting = new FakeWebSocket();
+    manager.watch(casting as unknown as WebSocket, address, undefined, true);
+    connections[0].emit("packet", castMission("CTFGame"), true);
+    vi.advanceTimersByTime(tournamentDelayMs + 32);
+    expect(catchup(ws).epoch).toBe(1);
+    expect(catchup(casting).epoch).toBe(1);
+    ws.sent = [];
+    casting.sent = [];
+
+    const tournamentTail = serverPacket(2);
+    connections[0].emit("packet", tournamentTail, true);
+    cycle(connections, session, false);
+    const normalMissionDurationMs = 11_000;
+    connections[1].emit("packet", castMission("CTFGame"), true);
+    vi.advanceTimersByTime(normalMissionDurationMs);
+    const normalTail = serverPacket(2, { events: [gravityEvent(3, -20)] });
+    connections[1].emit("packet", normalTail, true);
+    const reason = "You have been kicked";
+    connections[1].setStatus("disconnected", reason);
+
+    const remainingTournamentTailMs =
+      tournamentDelayMs - 5_000 - normalMissionDurationMs;
+    vi.advanceTimersByTime(remainingTournamentTailMs - 1);
+    expect(ws.binaryFrames()).toEqual([]);
+    expect(casting.frameTypes()).not.toContain("catchupBegin");
+    expect(statuses(ws).some(({ status }) => status === "ended")).toBe(false);
+
+    vi.advanceTimersByTime(1);
+    expect(ws.binaryFrames()[0]).toEqual(tournamentTail);
+    expect(catchup(ws).epoch).toBe(2);
+    expect(catchup(casting).epoch).toBe(2);
+    for (const viewer of [ws, casting]) {
+      expect(viewer.binaryFrames()).not.toContainEqual(normalTail);
+      expect(statuses(viewer).some(({ status }) => status === "ended")).toBe(
+        false,
+      );
+    }
+
+    const channelId = statuses(ws).at(-1)?.channelId;
+    manager.detachSocket(ws as unknown as WebSocket);
+    const resumed = new FakeWebSocket();
+    manager.watch(resumed as unknown as WebSocket, address, channelId);
+    expect(catchup(resumed).epoch).toBe(2);
+    expect(statuses(resumed).at(-1)?.channelId).toBe(channelId);
+
+    vi.advanceTimersByTime(castDelayMs - remainingTournamentTailMs);
+    for (const viewer of [resumed, casting]) {
+      expect(viewer.binaryFrames().at(-1)).toEqual(normalTail);
+      expect(statuses(viewer).at(-1)).toMatchObject({
+        status: "ended",
+        message: reason,
+      });
+    }
+  });
+
+  it("lets both audiences join a playing tournament while the next tournament is embargoed", () => {
+    const { manager, connections, ws, session } = startCastSession(true);
+    connections[0].emit("packet", castMission("CTFGame"), true);
+    vi.advanceTimersByTime(tournamentDelayMs + 32);
+    const previous = catchup(ws).gamePresentation.id;
+    cycle(connections, session, true);
+    connections[1].emit("packet", castMission("CTFGame"), true);
+
+    for (const liveCast of [false, true]) {
+      const joining = new FakeWebSocket();
+      manager.watch(
+        joining as unknown as WebSocket,
+        address,
+        undefined,
+        liveCast,
+      );
+      expect(catchup(joining)).toMatchObject({
+        epoch: 1,
+        gamePresentation: { id: previous },
+      });
+      expect(statuses(joining).at(-1)?.streamDelayMs).toBe(tournamentDelayMs);
+    }
+  });
+
+  it("starts a CastGenius feed for each watch session regardless of viewer count", () => {
+    const createLiveCast = vi.fn(() => ({
+      hydrate: vi.fn(),
+      tick: vi.fn(),
+      close: vi.fn(),
+    }));
+    const { manager, connections } = createManager({
+      createLiveCast,
+      liveCastDelayMs: 100,
+    });
+    managers.push(manager);
+    const viewers = [
+      address,
+      address,
+      "192.0.2.1:28000",
+      "192.0.2.2:28000",
+    ].map((server) => {
+      const viewer = new FakeWebSocket();
+      manager.watch(viewer as unknown as WebSocket, server, undefined, true);
+      return viewer;
+    });
+    expect(connections).toHaveLength(3);
+    for (const connection of connections) {
+      connection.setStatus("connected");
+      connection.emit("packet", castMission("CTFGame"), true);
+    }
+    vi.advanceTimersByTime(200);
+    expect(createLiveCast).toHaveBeenCalledTimes(3);
+    for (const viewer of viewers) {
+      expect(statuses(viewer).at(-1)).toMatchObject({
+        streamDelayMs: 100,
+        status: "live",
+        liveCastAvailable: true,
+      });
+    }
+  });
+
+  it("seeds the countdown without viewers and delivers the kickoff packet on its source tick", () => {
+    const hydrate = vi.fn();
+    const tick = vi.fn();
+    const createLiveCast = vi.fn(() => ({
+      hydrate,
+      tick,
+      close: vi.fn(),
+    }));
+    const { manager, connections } = createManager({ createLiveCast });
+    managers.push(manager);
+    manager.warmStart(address);
+    const conn = connections[0];
+    conn.setStatus("connected");
+    conn.emit(
+      "packet",
+      castMission("CTFGame", "Match starts in 10 seconds."),
+      true,
+    );
+    vi.advanceTimersByTime(32);
+    expect(createLiveCast).toHaveBeenCalledOnce();
+    expect(hydrate.mock.calls[0][1]).toBe(1);
+    expect(hydrate.mock.calls[0][0].hudState.matchPhase).toEqual({
+      kind: "countdown",
+      startSec: expect.closeTo(9.968, 3),
+    });
+    const kickoff = serverPacket(2, {
+      events: [command(3, 1, "MsgMissionStart", "Match started!")],
+    });
+    conn.emit("packet", kickoff, true);
+    vi.advanceTimersByTime(32);
+    expect(createLiveCast).toHaveBeenCalledOnce();
+    expect(tick).toHaveBeenLastCalledWith(
+      expect.objectContaining({ tick: 2, packets: [kickoff] }),
+    );
+    vi.advanceTimersByTime(32);
+    expect(tick.mock.lastCall?.[0].packets).toEqual([]);
+    expect(manager.getSession(address)?.watcherCount).toBe(0);
+  });
+
+  it("keeps zero-delay watch packets immediate and clocks only subscribers", () => {
+    const hydrate = vi.fn();
+    const tick = vi.fn();
+    const close = vi.fn();
+    const { manager, connections } = createManager({
+      createLiveCast: () => ({ hydrate, tick, close }),
+    });
+    managers.push(manager);
+    const viewer = new FakeWebSocket();
+    manager.watch(viewer as unknown as WebSocket, address);
+    const conn = connections[0];
+    conn.setStatus("connected");
+    const mission = castMission("CTFGame");
+    conn.emit("packet", mission, true);
+    vi.advanceTimersByTime(32);
+    const { epoch, gamePresentation } = catchup(viewer);
+    const gameId = gamePresentation.id;
+    expect(hydrate.mock.calls[0].slice(1)).toEqual([1, gameId]);
+
+    const packet = serverPacket(2);
+    viewer.sent = [];
+    conn.emit("packet", packet, true);
+    const joining = new FakeWebSocket();
+    manager.watch(joining as unknown as WebSocket, address);
+    expect(joining.frameTypes()).toContain("catchupBegin");
+    expect(viewer.binaryFrames()).toEqual([packet]);
+    expect(
+      viewer.frameTypes().filter((type) => type !== "watcherCount"),
+    ).toEqual(["<binary>"]);
+    manager.setLiveCast(viewer as unknown as WebSocket, true);
+    expect(
+      viewer.jsonMessages().filter(({ type }) => type === "liveCastTick"),
+    ).toEqual([{ type: "liveCastTick", gameId, epoch, tick: 1 }]);
+    expect(catchup(joining).gamePresentation.id).toBe(gameId);
+    vi.advanceTimersByTime(32);
+    expect(tick).toHaveBeenCalledExactlyOnceWith({
+      gameId,
+      epoch,
+      tick: 2,
+      packets: [packet],
+    });
+    manager.setLiveCast(viewer as unknown as WebSocket, false);
+    const next = serverPacket(3);
+    conn.emit("packet", next, true);
+    expect(viewer.binaryFrames()).toEqual([packet, next]);
+  });
+
+  it("reports unsupported game modes without starting a CastGenius planner", () => {
+    const createLiveCast = vi.fn();
+    const { manager, connections } = createManager({ createLiveCast });
+    managers.push(manager);
+    const viewer = new FakeWebSocket();
+    manager.watch(viewer as unknown as WebSocket, address);
+    const conn = connections[0];
+    conn.setStatus("connected");
+    conn.emit("packet", castMission("RabbitGame"), true);
+    vi.advanceTimersByTime(64);
+    expect(statuses(viewer).at(-1)?.liveCastAvailable).toBe(false);
+    expect(createLiveCast).not.toHaveBeenCalled();
+  });
+
+  it("closes the CastGenius worker with its final packets without delaying ordinary end", () => {
+    const finished = new Promise<void>(() => {});
+    const tick = vi.fn();
+    const close = vi.fn(() => finished);
+    const { manager, connections } = createManager({
+      createLiveCast: () => ({ hydrate: vi.fn(), tick, close }),
+    });
+    managers.push(manager);
+    const viewer = new FakeWebSocket();
+    manager.watch(viewer as unknown as WebSocket, address);
+    manager.setLiveCast(viewer as unknown as WebSocket, true);
+    const ordinary = new FakeWebSocket();
+    manager.watch(ordinary as unknown as WebSocket, address);
+    const conn = connections[0];
+    conn.setStatus("connected");
+    conn.emit("packet", castMission("CTFGame"), true);
+    vi.advanceTimersByTime(32);
+    const packet = serverPacket(2);
+    conn.emit("packet", packet, true);
+    conn.setStatus("disconnected", "You have been kicked");
+    expect(tick.mock.lastCall?.[0].packets).toEqual([packet]);
+    expect(close).toHaveBeenCalledOnce();
+    expect(conn.status).toBe("disconnected");
+    expect(statuses(ordinary).at(-1)?.status).toBe("ended");
+    expect(statuses(viewer).at(-1)?.status).toBe("ended");
+  });
+
+  it("delivers shots ahead of the cut only after hydrating the matching delayed picture", () => {
+    const hydrate = vi.fn();
+    const tick = vi.fn();
+    const close = vi.fn();
+    let publish!: (batch: LiveCastPlanBatch) => void;
+    const createLiveCast = vi.fn((emit: typeof publish) => {
+      publish = emit;
+      return { hydrate, tick, close };
+    });
+    const { manager, connections } = createManager({
+      tourneyDelayMs: delayMs,
+      liveCastDelayMs: castDelayMs,
+      liveCastDeliveryMs: 2 * MOVE_TICK_MS,
+      createLiveCast,
+    });
+    managers.push(manager);
+    const legacy = new FakeWebSocket();
+    const viewer = new FakeWebSocket();
+    manager.watch(legacy as unknown as WebSocket, address);
+    manager.watch(viewer as unknown as WebSocket, address);
+    manager.setLiveCast(viewer as unknown as WebSocket, true);
+    const session = manager.getSession(address)!;
+    const conn = connections[0];
+    conn.setStatus("connected");
+    session.setTournamentMode(true);
+    conn.emit("packet", castMission("CTFGame"), true);
+    vi.advanceTimersByTime(32);
+    expect(createLiveCast).toHaveBeenCalledTimes(1);
+    const [payload, startTick, gameId] = hydrate.mock.calls[0];
+    const epoch = payload.epoch;
+    expect(startTick).toBe(1);
+    const next = {
+      startTick: startTick + 3,
+      shot: {
+        kind: "fixedOrbit" as const,
+        center: [0, 0, 0] as [number, number, number],
+        radius: 10,
+        startSec: (4 * MOVE_TICK_MS) / 1000,
+        endSec: 1,
+        transitionIn: "cut" as const,
+      },
+    };
+    publish({
+      gameId,
+      epoch,
+      plannedThroughTick: next.startTick,
+      shots: [next],
+    });
+    vi.advanceTimersByTime(2 * MOVE_TICK_MS);
+    const beforeCut = serverPacket(2, { events: [gravityEvent(3, -20)] });
+    conn.emit("packet", beforeCut, true);
+    expect(viewer.frameTypes()).not.toContain("liveCastShots");
+
+    vi.advanceTimersByTime(delayMs - 3 * MOVE_TICK_MS);
+    expect(catchup(viewer)).toMatchObject({
+      epoch,
+      gamePresentation: { id: gameId },
+    });
+    expect(catchup(legacy).gamePresentation.id).toBe(gameId);
+    expect(statuses(viewer).at(-1)?.liveCastAvailable).toBe(true);
+    vi.advanceTimersByTime(32);
+    expect(statuses(viewer).at(-1)?.liveCastAvailable).toBe(true);
+    expect(
+      viewer
+        .jsonMessages()
+        .filter((message) => message.type === "liveCastShots"),
+    ).toEqual([
+      {
+        type: "liveCastShots",
+        gameId,
+        epoch,
+        plannedThroughTick: 0,
+        shots: [],
+      },
+    ]);
+    vi.advanceTimersByTime(32);
+    expect(viewer.jsonMessages().slice(-2)).toEqual([
+      { type: "liveCastTick", gameId, epoch, tick: next.startTick - 2 },
+      {
+        type: "liveCastShots",
+        gameId,
+        epoch,
+        plannedThroughTick: next.startTick,
+        shots: [next],
+      },
+    ]);
+    expect(legacy.binaryFrames()).not.toContainEqual(beforeCut);
+    expect(viewer.binaryFrames()).not.toContainEqual(beforeCut);
+    vi.advanceTimersByTime(2 * MOVE_TICK_MS);
+    expect(viewer.jsonMessages().at(-1)).toEqual({
+      type: "liveCastTick",
+      gameId,
+      epoch,
+      tick: next.startTick,
+    });
+    expect(legacy.frameTypes()).not.toContain("liveCastTick");
+    expect(legacy.frameTypes()).not.toContain("liveCastShots");
+    expect(legacy.binaryFrames().at(-1)).toEqual(beforeCut);
+    expect(viewer.binaryFrames().at(-1)).toEqual(beforeCut);
+    manager.setLiveCast(legacy as unknown as WebSocket, true);
+    expect(legacy.jsonMessages().at(-1)).toEqual({
+      type: "liveCastShots",
+      gameId,
+      epoch,
+      plannedThroughTick: next.startTick,
+      shots: [next],
+      initial: true,
+    });
+
+    const anchorTick = next.startTick + 8;
+    vi.advanceTimersByTime(8 * 32);
+    expect(viewer.jsonMessages().at(-1)).toEqual({
+      type: "liveCastTick",
+      gameId,
+      epoch,
+      tick: anchorTick,
+    });
+    publish({ gameId, epoch, plannedThroughTick: anchorTick, shots: [] });
+    expect(viewer.jsonMessages().at(-1)).toEqual({
+      type: "liveCastShots",
+      gameId,
+      epoch,
+      plannedThroughTick: anchorTick,
+      shots: [],
+    });
+
+    const finalPacket = serverPacket(3);
+    conn.emit("packet", finalPacket, true);
+    conn.setStatus("disconnected", missionCyclingReason);
+    const finalTick = tick.mock.lastCall![0].tick;
+    expect(tick.mock.lastCall?.[0].packets).toEqual([finalPacket]);
+    expect(close).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(5_000);
+    expect(connections).toHaveLength(2);
+    // The old worker can finish after the relay has begun a new epoch.
+    publish({
+      gameId,
+      epoch,
+      plannedThroughTick: finalTick,
+      shots: [],
+      ended: true,
+    });
+    const castMessages = () =>
+      viewer
+        .jsonMessages()
+        .filter(
+          ({ type }) => type === "liveCastShots" || type === "liveCastTick",
+        );
+    expect(castMessages().some((message) => "ended" in message)).toBe(false);
+    vi.advanceTimersByTime(delayMs - 5_000);
+    expect(castMessages().at(-1)).toEqual({
+      type: "liveCastShots",
+      gameId,
+      epoch,
+      plannedThroughTick: finalTick,
+      shots: [],
+      ended: true,
+    });
+    expect(viewer.binaryFrames().at(-1)).toEqual(finalPacket);
+    manager.shutdown();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds delayed CastGenius coverage across a worker failure and re-seeds at the live source tick", () => {
+    const createLiveCast = vi.fn(
+      (
+        _publish: (batch: LiveCastPlanBatch) => void,
+        _failure: (err: Error) => void,
+      ) => ({ hydrate: vi.fn(), tick: vi.fn(), close: vi.fn() }),
+    );
+    const { manager, connections } = createManager({
+      tourneyDelayMs: tournamentDelayMs,
+      liveCastDelayMs: castDelayMs,
+      createLiveCast,
+    });
+    managers.push(manager);
+    const viewer = new FakeWebSocket();
+    manager.watch(viewer as unknown as WebSocket, address, undefined, true);
+    connections[0].setStatus("connected");
+    manager.getSession(address)!.setTournamentMode(true);
+    connections[0].emit("packet", castMission("CTFGame"), true);
+    const faultTick = 6;
+    vi.advanceTimersByTime(faultTick * MOVE_TICK_MS);
+    const worker = createLiveCast.mock.results[0].value;
+    const [publish, fail] = createLiveCast.mock.calls[0];
+    const [payload, startTick, gameId] = worker.hydrate.mock.calls[0];
+    const identity = { gameId, epoch: payload.epoch };
+    const shot: LiveCastPlanBatch["shots"][number]["shot"] = {
+      kind: "fixedOrbit",
+      center: [0, 0, 0],
+      radius: 10,
+      startSec: 0,
+      endSec: 1,
+      transitionIn: "cut",
+    };
+    const next = { startTick: startTick + 2, shot: { ...shot, radius: 20 } };
+    publish({
+      ...identity,
+      plannedThroughTick: faultTick,
+      shots: [{ startTick, shot }, next],
+    });
+    fail(new Error("planner failed"));
+    expect(worker.close).toHaveBeenCalledOnce();
+    const packet = serverPacket(2);
+    connections[0].emit("packet", packet, true);
+
+    const plans = () =>
+      viewer
+        .jsonMessages()
+        .filter((message) => message.type === "liveCastShots");
+    vi.advanceTimersByTime(2_999);
+    expect(createLiveCast).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(tournamentDelayMs - 2_999);
+    expect(plans()).toContainEqual({
+      type: "liveCastShots",
+      ...identity,
+      plannedThroughTick: next.startTick,
+      shots: [next],
+    });
+    expect(viewer.binaryFrames().at(-1)).toEqual(packet);
+    expect(createLiveCast).toHaveBeenCalledTimes(2);
+    const replacement = createLiveCast.mock.results[1].value;
+    const [replacementPayload, resumeTick, resumedGame] =
+      replacement.hydrate.mock.calls[0];
+    expect(replacementPayload.epoch).toBe(identity.epoch);
+    expect(resumedGame).toBe(gameId);
+    expect(replacementPayload.hudState.matchPhase).toEqual({
+      kind: "running",
+      startSec: expect.closeTo((-resumeTick * MOVE_TICK_MS) / 1000, 3),
+    });
+    expect(resumeTick).toBeGreaterThan(faultTick);
+    const [publishReplacement] = createLiveCast.mock.calls[1];
+    const resumed = { startTick: resumeTick, shot: { ...shot, radius: 30 } };
+    // A late callback from the failed worker can neither end the new cast
+    // nor discard its feed.
+    fail(new Error("late failure callback"));
+    publish({
+      ...identity,
+      plannedThroughTick: resumeTick,
+      shots: [],
+      ended: true,
+    });
+    publishReplacement({
+      ...identity,
+      plannedThroughTick: resumeTick,
+      shots: [resumed],
+    });
+
+    const releasedShots = () => plans().flatMap((plan) => plan.shots);
+    vi.advanceTimersByTime((resumeTick - faultTick) * MOVE_TICK_MS - 1);
+    expect(releasedShots()).toEqual([{ startTick, shot }, next]);
+    vi.advanceTimersByTime(1);
+    expect(releasedShots()).toEqual([{ startTick, shot }, next, resumed]);
+    expect(plans().some((plan) => plan.ended)).toBe(false);
+    expect(
+      viewer.frameTypes().filter((type) => type === "catchupBegin"),
+    ).toHaveLength(1);
+    expect(
+      statuses(viewer).some((status) => status.liveCastAvailable === false),
+    ).toBe(false);
+    expect(replacement.close).not.toHaveBeenCalled();
+  });
+
+  it("retries when seeding a CastGenius worker throws", () => {
+    const error = new Error("failed to seed");
+    const hydrate = vi.fn().mockImplementationOnce(() => {
+      throw error;
+    });
+    const close = vi.fn();
+    const createLiveCast = vi.fn(() => ({ hydrate, tick: vi.fn(), close }));
+    const { manager, connections } = createManager({ createLiveCast });
+    managers.push(manager);
+    manager.warmStart(address);
+    connections[0].setStatus("connected");
+    connections[0].emit("packet", castMission("CTFGame"), true);
+    vi.advanceTimersByTime(MOVE_TICK_MS);
+    expect(close).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(3_100);
+    expect(createLiveCast).toHaveBeenCalledTimes(2);
+    expect(hydrate).toHaveBeenCalledTimes(2);
+    expect(hydrate.mock.calls[1][0].epoch).toBe(hydrate.mock.calls[0][0].epoch);
+  });
+
+  it("keeps subscribers tuned through startup failures and backs off until a worker publishes a shot", () => {
+    const createLiveCast = vi.fn(
+      (
+        _publish: (batch: LiveCastPlanBatch) => void,
+        _fail: (err: Error) => void,
+      ) => ({ hydrate: vi.fn(), tick() {}, close: vi.fn() }),
+    );
+    const { manager, connections } = createManager({ createLiveCast });
+    managers.push(manager);
+    const viewer = new FakeWebSocket();
+    manager.watch(viewer as unknown as WebSocket, address, undefined, true);
+    const conn = connections[0];
+    conn.setStatus("connected");
+    conn.emit("packet", castMission("CTFGame"), true);
+    vi.advanceTimersByTime(MOVE_TICK_MS);
+
+    function failAndAwaitRetry(delayMs: number) {
+      const count = createLiveCast.mock.calls.length;
+      const [, fail] = createLiveCast.mock.calls[count - 1];
+      fail(new Error("planner fault"));
+      vi.advanceTimersByTime(
+        Math.ceil(delayMs / MOVE_TICK_MS) * MOVE_TICK_MS - 1,
+      );
+      expect(createLiveCast).toHaveBeenCalledTimes(count);
+      vi.advanceTimersByTime(1);
+      expect(createLiveCast).toHaveBeenCalledTimes(count + 1);
+    }
+
+    for (const delay of [
+      3_000, 6_000, 12_000, 24_000, 48_000, 60_000, 60_000,
+    ]) {
+      failAndAwaitRetry(delay);
+    }
+    expect(statuses(viewer).map((s) => s.liveCastAvailable)).toContain(null);
+    expect(statuses(viewer).some((s) => s.liveCastAvailable === false)).toBe(
+      false,
+    );
+    const [publish] = createLiveCast.mock.calls.at(-1)!;
+    const [payload, tick, gameId] =
+      createLiveCast.mock.results.at(-1)!.value.hydrate.mock.calls[0];
+    expect(payload.hudState.matchPhase).toEqual({
+      kind: "running",
+      startSec: expect.closeTo((-tick * MOVE_TICK_MS) / 1000, 3),
+    });
+    publish({
+      epoch: payload.epoch,
+      gameId,
+      plannedThroughTick: tick,
+      shots: [
+        {
+          startTick: tick,
+          shot: {
+            kind: "followFlag",
+            slot: 1,
+            startSec: tick * 0.032,
+            endSec: tick * 0.032 + 3,
+            transitionIn: "cut",
+          },
+        },
+      ],
+    });
+    expect(viewer.jsonMessages().at(-1)?.type).toBe("liveCastShots");
+    failAndAwaitRetry(3_000);
+    expect(
+      viewer.frameTypes().filter((type) => type === "catchupBegin"),
+    ).toHaveLength(1);
+  });
+
+  it("ends the cast normally when the match ends during a planner outage", () => {
+    const hydrate = vi.fn();
+    const createLiveCast = vi.fn(
+      (
+        _publish: (batch: LiveCastPlanBatch) => void,
+        _failure: (err: Error) => void,
+      ) => ({ hydrate, tick: vi.fn(), close: vi.fn() }),
+    );
+    const { manager, connections } = createManager({ createLiveCast });
+    managers.push(manager);
+    const viewer = new FakeWebSocket();
+    manager.watch(viewer as unknown as WebSocket, address, undefined, true);
+    const conn = connections[0];
+    conn.setStatus("connected");
+    conn.emit("packet", castMission("CTFGame"), true);
+    vi.advanceTimersByTime(MOVE_TICK_MS);
+    const [payload, , gameId] = hydrate.mock.calls[0];
+    const [, fail] = createLiveCast.mock.calls[0];
+    fail(new Error("planner failed"));
+    conn.emit(
+      "packet",
+      serverPacket(2, {
+        events: [netString(3, 2, "MissionEnd"), command(4, 2)],
+      }),
+      true,
+    );
+    vi.advanceTimersByTime(3_100);
+    expect(createLiveCast).toHaveBeenCalledOnce();
+    expect(statuses(viewer).at(-1)?.status).toBe("live");
+    expect(
+      viewer
+        .jsonMessages()
+        .filter((message) => message.type === "liveCastShots"),
+    ).toEqual([
+      {
+        type: "liveCastShots",
+        gameId,
+        epoch: payload.epoch,
+        plannedThroughTick: 2,
+        shots: [],
+        ended: true,
+      },
+    ]);
+  });
+
   it("updates a delayed game's labels immediately without exposing the new live game's labels", () => {
     const { manager, connections, session, ws } = start();
     const oldGame = catchup(ws).gamePresentation;
@@ -3144,7 +4425,8 @@ describe("WatchSession delayed transitions", () => {
     const { connections, ws, session } = start();
     type Source = ReturnType<(typeof session)["liveSource"]>;
     const live = session["liveSource"]();
-    const delayed = session["catchupSource"](ws as unknown as WebSocket)!;
+    const channel = session["channels"].get(ws as unknown as WebSocket);
+    const delayed = session["resolveViewerPicture"](channel).source!;
     expect(delayed.kind).toBe("delayed");
     // Seed parsed datablocks as the parser does on a dispatched update.
     const seed = (source: Source, label: string) => {
@@ -3453,33 +4735,48 @@ describe("WatchSession delayed transitions", () => {
     expect(statuses(returned).at(-1)?.streamDelayMs).toBe(0);
   });
 
-  it("keeps the original countdown when a tournament mission ends before its first delayed frame", () => {
-    const { manager, connections } = createManager({ tourneyDelayMs: delayMs });
-    managers.push(manager);
-    const ws = new FakeWebSocket();
-    manager.watch(ws as unknown as WebSocket, address);
-    const session = manager.getSession(address)!;
-    connections[0].setStatus("connected");
-    session.setTournamentMode(true);
-    const channelId = statuses(ws).at(-1)!.channelId;
-    cycle(connections, session, false);
-    connections[1].setMapName("FutureMap");
-    manager.detachSocket(ws as unknown as WebSocket);
-    const resumed = new FakeWebSocket();
-    manager.watch(resumed as unknown as WebSocket, address, channelId);
-    expect(statuses(resumed).at(-1)).toMatchObject({
-      streamDelayMs: delayMs,
-      streamDelayReadyInMs: delayMs - 5_000,
-    });
-    expect(statuses(resumed).at(-1)!.mapName).not.toBe("FutureMap");
-    vi.advanceTimersByTime(delayMs - 5_000);
-    expect(catchup(resumed).epoch).toBe(1);
-    vi.advanceTimersByTime(5_000);
-    expect(statuses(resumed).at(-1)).toMatchObject({
-      streamDelayMs: 0,
-      status: "live",
-    });
-  });
+  it.each([false, true])(
+    "keeps the first delayed tournament picture through a rollover (CastGenius=%s)",
+    (cast) => {
+      const { manager, connections } = createManager({
+        tourneyDelayMs: delayMs,
+        ...(cast && {
+          liveCastDelayMs: castDelayMs,
+          createLiveCast: () => ({
+            hydrate: vi.fn(),
+            tick: vi.fn(),
+            close: vi.fn(),
+          }),
+        }),
+      });
+      managers.push(manager);
+      const ws = new FakeWebSocket();
+      manager.watch(ws as unknown as WebSocket, address);
+      const session = manager.getSession(address)!;
+      connections[0].setStatus("connected");
+      session.setTournamentMode(true);
+      connections[0].emit("packet", castMission("CTFGame"), true);
+      const channelId = statuses(ws).at(-1)!.channelId;
+      cycle(connections, session, false);
+      connections[1].setMapName("FutureMap");
+      connections[1].emit("packet", castMission("CTFGame"), true);
+      manager.detachSocket(ws as unknown as WebSocket);
+      const resumed = new FakeWebSocket();
+      manager.watch(resumed as unknown as WebSocket, address, channelId);
+      expect(statuses(resumed).at(-1)).toMatchObject({
+        streamDelayMs: delayMs,
+        streamDelayReadyInMs: delayMs - 5_000,
+      });
+      expect(statuses(resumed).at(-1)!.mapName).not.toBe("FutureMap");
+      vi.advanceTimersByTime(delayMs - 5_000);
+      expect(catchup(resumed).epoch).toBe(1);
+      vi.advanceTimersByTime(5_000);
+      expect(statuses(resumed).at(-1)).toMatchObject({
+        streamDelayMs: 0,
+        status: "live",
+      });
+    },
+  );
 
   it("does not replay old tournament packets or leak new ones during a rapid tournament-normal-tournament switch", () => {
     const { manager, connections, ws, session } = start();
@@ -3809,7 +5106,10 @@ describe("WatchSession demo recording", () => {
   const flushImmediate = () => new Promise((r) => setImmediate(r));
 
   async function createRecordingManager(
-    overrides: { minPlayers?: number; initialMissionControls?: unknown } = {},
+    overrides: { minPlayers?: number } & Pick<
+      WatchSessionManagerOptions,
+      "initialMissionControls" | "isRecordingExcluded"
+    > = {},
   ) {
     const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "watch-demo-"));
     const finalized: string[] = [];
@@ -3829,6 +5129,7 @@ describe("WatchSession demo recording", () => {
       gameBasePath: "/nonexistent",
       getCachedServer: () => undefined,
       demoCoordinator: coordinator,
+      isRecordingExcluded: overrides.isRecordingExcluded,
       adminVotePolicies: singleAdminPolicies,
       initialMissionControls: overrides.initialMissionControls,
       createConnection: (address, options) => {
@@ -3884,6 +5185,51 @@ describe("WatchSession demo recording", () => {
       ghostCount: 0,
     });
   }
+
+  it.each(["address", "late name", "rename while recording"])(
+    "keeps live watch running and saves no demo when excluded by %s",
+    async (identification) => {
+      const address = "1.2.3.4:28000";
+      const known = identification === "address";
+      const { manager, connections, coordinator, finalized, dir } =
+        await createRecordingManager({
+          isRecordingExcluded: (key, name) =>
+            (known && key === address) || name === "Blair Lag Project",
+        });
+      try {
+        const ws = new FakeWebSocket();
+        manager.watch(ws as unknown as WebSocket, address);
+        const session = getSession(manager);
+        const conn = connections[0];
+        conn.setStatus("connected");
+        firePhase1(session, "Katabatic");
+        expect(coordinator.getStats().started).toBe(known ? 0 : 1);
+        if (identification === "rename while recording") {
+          fireDropInfo(session, conn);
+          expect(session.recorder.state).toBe("recording");
+          session.watchState.matchStarted = true;
+        }
+        ws.sent = [];
+        fireDropInfo(session, conn, "Katabatic", "Blair Lag Project");
+        expect(ws.binaryFrames()).toContainEqual(new Uint8Array([9, 9, 9]));
+        expect(session.recording).toBe(false);
+        expect(session.recorder).toBeNull();
+        expect(session.watchStatus).toBe("live");
+        expect(session.watcherCount).toBe(1);
+
+        conn.setStatus("disconnected", "You have been kicked");
+        await coordinator.shutdown(5_000);
+        expect(finalized).toEqual([]);
+        expect(await fsp.readdir(dir)).toEqual(known ? [] : ["pending"]);
+        if (!known)
+          expect(await fsp.readdir(path.join(dir, "pending"))).toEqual([]);
+      } finally {
+        manager.shutdown();
+        await coordinator.shutdown(5_000);
+        await fsp.rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("restores the previous mission's journal before settling stale watch state on a new map", async () => {
     const address = "1.2.3.4:28000";

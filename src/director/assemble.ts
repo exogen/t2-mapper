@@ -124,35 +124,86 @@ export function mergeRedundantCuts(shots: Shot[]): Shot[] {
   return out;
 }
 
-/** Whether two consecutive shots would look near enough identical that
- *  cutting between them is pure churn. */
+function samePoint(
+  a?: DirectorVec3,
+  b?: DirectorVec3,
+  tolerance = 0.01,
+): boolean {
+  return a && b ? dist(a, b) <= tolerance : a === b;
+}
+
+function sameBearing(a?: number, b?: number): boolean {
+  if (a == null || b == null) return a === b;
+  return (
+    Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b))) <=
+    DIRECTOR_REDUNDANT_AIM_RADIANS
+  );
+}
+
+/** Compare the camera and subject, using the solved placement when available. */
 export function framesTheSame(a: Shot, b: Shot): boolean {
-  if (a.kind !== b.kind) return false;
   if (a.kind === "fixedOrbit" && b.kind === "fixedOrbit") {
-    // A deliberate bearing change on the same anchor is NOT redundant —
-    // it is how a long watch varies the eye without leaving the story.
-    const swung =
-      a.startAngle != null &&
-      b.startAngle != null &&
-      Math.abs(
-        ((((a.startAngle - b.startAngle) % (Math.PI * 2)) + Math.PI * 3) %
-          (Math.PI * 2)) -
-          Math.PI,
-      ) > DIRECTOR_REDUNDANT_AIM_RADIANS;
+    const tolerance =
+      a.staged || b.staged ? 0.01 : DIRECTOR_REDUNDANT_CUT_RANGE;
     return (
-      !swung &&
-      dist(a.center, b.center) <= DIRECTOR_REDUNDANT_CUT_RANGE &&
-      Math.abs(a.radius - b.radius) <= DIRECTOR_REDUNDANT_CUT_RANGE &&
+      sameBearing(
+        a.staged?.angle ?? a.startAngle,
+        b.staged?.angle ?? b.startAngle,
+      ) &&
+      samePoint(
+        a.staged?.anchor ?? a.center,
+        b.staged?.anchor ?? b.center,
+        tolerance,
+      ) &&
+      Math.abs(
+        (a.staged?.radius ?? a.radius) - (b.staged?.radius ?? b.radius),
+      ) <= tolerance &&
+      (a.angularSpeed ?? 0) === (b.angularSpeed ?? 0) &&
+      (a.staged?.liftFactor ?? a.heightFactor) ===
+        (b.staged?.liftFactor ?? b.heightFactor) &&
+      a.lookLift === b.lookLift &&
+      !!a.trackSubject === !!b.trackSubject &&
+      samePoint(a.doorwayOf, b.doorwayOf) &&
       sameSubject(a.lookSubject, b.lookSubject)
     );
   }
-  if (a.kind === "followFlag" && b.kind === "followFlag") {
-    // Same flag, near enough the same framing: a grab or drop alone is
-    // not a reason to re-frame.
+  if (
+    (a.kind === "followFlag" && b.kind === "followFlag" && a.slot === b.slot) ||
+    (a.kind === "followPlayer" &&
+      b.kind === "followPlayer" &&
+      a.targetId === b.targetId)
+  ) {
     return (
-      a.slot === b.slot &&
+      (a.kind === "followPlayer" && !!a.firstPerson) ===
+        (b.kind === "followPlayer" && !!b.firstPerson) &&
       Math.abs((a.distance ?? 0) - (b.distance ?? 0)) <= 4 &&
+      a.minDistance === b.minDistance &&
+      a.pitch === b.pitch &&
       sameAim(a.aim, b.aim)
+    );
+  }
+  if (a.kind === "dolly" && b.kind === "dolly") {
+    return (
+      sameSubject(a.subject, b.subject) &&
+      a.distance === b.distance &&
+      a.height === b.height &&
+      a.side === b.side &&
+      a.sideAngle === b.sideAngle &&
+      samePoint(a.awayFrom, b.awayFrom)
+    );
+  }
+  if (a.kind === "sweep" && b.kind === "sweep") {
+    return (
+      samePoint(a.from, b.from) &&
+      samePoint(a.to, b.to) &&
+      samePoint(a.target, b.target) &&
+      samePoint(a.targetTo, b.targetTo) &&
+      (a.via?.length ?? 0) === (b.via?.length ?? 0) &&
+      (a.via?.every((p, i) => samePoint(p, b.via?.[i])) ?? true) &&
+      a.moveSec === b.moveSec &&
+      a.easing === b.easing &&
+      a.maxPitch === b.maxPitch &&
+      !!a.aimIsHeading === !!b.aimIsHeading
     );
   }
   return false;
@@ -172,7 +223,7 @@ export function sameAim(a?: ShotAim, b?: ShotAim): boolean {
     return dist(a.target, b.target) <= DIRECTOR_REDUNDANT_CUT_RANGE;
   }
   if (a.mode === "hold" && b.mode === "hold") {
-    return Math.abs(a.yaw - b.yaw) <= DIRECTOR_REDUNDANT_AIM_RADIANS;
+    return sameBearing(a.yaw, b.yaw);
   }
   return true;
 }

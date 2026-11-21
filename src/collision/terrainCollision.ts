@@ -122,6 +122,15 @@ function cornerHeight(data: TerrainCollisionData, col: number, row: number) {
   return terrainHeightToWorld(data.heightMap[index]);
 }
 
+/** Whether the terrain square has no collision surface at this point. */
+export function terrainHoleAt(x: number, y: number): boolean {
+  const data = collisionState().terrain;
+  if (!data?.holes) return false;
+  const col = Math.floor(x / data.squareSize + HALF_SIZE);
+  const row = Math.floor(y / data.squareSize + HALF_SIZE);
+  return data.holes[(row & 0xff) * TERRAIN_SIZE + (col & 0xff)] === 1;
+}
+
 /**
  * The height MAP at a Torque-space point — the surface the heightfield
  * describes, holes included, interpolated on the same Split45

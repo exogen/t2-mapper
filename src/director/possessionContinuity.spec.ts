@@ -17,6 +17,7 @@ type Scenario =
   | "capture"
   | "new-carrier"
   | "unchanged"
+  | "midfield-exchange"
   | "remote-exchange"
   | "no-messages";
 
@@ -39,7 +40,7 @@ function fixture(scenario: Scenario): DirectorDataset {
   ];
   if (scenario !== "no-messages")
     events.push(event(grabSec, "flag-grab", "Storm"));
-  if (scenario === "remote-exchange")
+  if (scenario === "remote-exchange" || scenario === "midfield-exchange")
     events.push(
       event(60, "flag-drop", "Inferno"),
       event(65, "flag-return", "Inferno"),
@@ -86,7 +87,10 @@ function fixture(scenario: Scenario): DirectorDataset {
     if (scenario === "return" || scenario === "no-messages") {
       if (t >= 60) status = t < 62 || t >= 63 ? "field" : "held";
       if (t >= 65) status = "home";
-    } else if (scenario === "remote-exchange" && t >= 60) {
+    } else if (
+      (scenario === "remote-exchange" || scenario === "midfield-exchange") &&
+      t >= 60
+    ) {
       status = t >= 65 ? "home" : "field";
     } else if (
       ["repeated", "resolved-opponent", "dropped-opponent", "capture"].includes(
@@ -110,7 +114,13 @@ function fixture(scenario: Scenario): DirectorDataset {
         status === "home"
           ? [800, 0, 100]
           : [
-              (scenario === "remote-exchange" ? 500 : 70) - (t - 55) * 2,
+              (scenario === "remote-exchange" && t >= 60
+                ? 650
+                : scenario === "remote-exchange" ||
+                    scenario === "midfield-exchange"
+                  ? 500
+                  : 70) -
+                (t - 55) * 2,
               40,
               100,
             ],
@@ -132,6 +142,106 @@ function concerns(shot: Shot | undefined, slot: number): boolean {
   );
 }
 
+it("shows a scoring return while the carrier waits within the approach to their stand", () => {
+  const ds = directorDataset({
+    durationSec: 80,
+    events: [
+      { timeSec: 0, type: "match-start", description: "Match started" },
+      {
+        timeSec: 50,
+        type: "flag-grab",
+        flagTeamName: "Inferno",
+        description: "Grab",
+      },
+      {
+        timeSec: 60,
+        type: "flag-drop",
+        flagTeamName: "Storm",
+        description: "Drop",
+      },
+      {
+        timeSec: 65,
+        type: "flag-return",
+        flagTeamName: "Storm",
+        actor: "Defender",
+        description: "Return",
+      },
+      {
+        timeSec: 72,
+        type: "flag-cap",
+        flagTeamName: "Inferno",
+        description: "Capture",
+      },
+    ],
+  });
+  for (let t = 0; t <= ds.durationSec; t += 0.5) {
+    const field = t >= 60 && t < 65;
+    ds.flagSamples.push({
+      timeSec: t,
+      slot: 1,
+      status: field ? "field" : "home",
+      pos: field ? [500, 0, 100] : [0, 0, 100],
+      carrierTargetId: null,
+    });
+    const held = t >= 50 && t < 72;
+    ds.flagSamples.push({
+      timeSec: t,
+      slot: 2,
+      status: held ? "held" : "home",
+      pos: held ? [170, 0, 100] : [800, 0, 100],
+      carrierTargetId: held ? 5 : null,
+    });
+  }
+  const shots = runSwitcher(new CausalView(ds, 6));
+  const at = (t: number) =>
+    shots.find((shot) => shot.startSec <= t && shot.endSec > t);
+  expect(concerns(at(64.5), 1)).toBe(true);
+  expect(concerns(at(71.5), 2)).toBe(true);
+});
+
+it.each([false, true])(
+  "gives nearby dogfighting aircraft a turn only during a quiet carry (moving=%s)",
+  (moving) => {
+    const ds = directorDataset({
+      durationSec: 75,
+      events: [
+        { timeSec: 0, type: "match-start", description: "Match started" },
+      ],
+      vehicles: [62, 63, 64, 65, 66].flatMap((timeSec) =>
+        [1, 2].map((teamId) => ({
+          timeSec,
+          key: String(teamId),
+          kind: "shrike",
+          teamId,
+          pos: [350 + (timeSec - 62) * 8, 200 + teamId * 6, 115],
+          passengers: 1,
+        })),
+      ),
+    });
+    for (let t = 0; t <= ds.durationSec; t += 0.5) {
+      ds.flagSamples.push({
+        timeSec: t,
+        slot: 1,
+        status: "home",
+        pos: [0, 0, 100],
+        carrierTargetId: null,
+      });
+      ds.flagSamples.push({
+        timeSec: t,
+        slot: 2,
+        status: t < 50 ? "home" : "held",
+        pos:
+          t < 50 ? [800, 0, 100] : [moving ? 650 - (t - 50) * 10 : 450, 0, 100],
+        carrierTargetId: t < 50 ? null : 5,
+      });
+    }
+    const shots = runSwitcher(new CausalView(ds, 6));
+    expect(
+      shots.some((shot) => shot.reason === "Dogfight — opposing aircraft"),
+    ).toBe(!moving);
+  },
+);
+
 describe.each([0, 2])(
   "possession continuity with %s seconds lookahead",
   (lookahead) => {
@@ -143,6 +253,7 @@ describe.each([0, 2])(
       "capture",
       "new-carrier",
       "unchanged",
+      "midfield-exchange",
       "remote-exchange",
       "no-messages",
     ] as const)(
@@ -158,11 +269,11 @@ describe.each([0, 2])(
             expect(concerns(at(t), 2), `at ${t}`).toBe(true);
           expect(concerns(at(65), 1)).toBe(true);
         } else if (scenario === "repeated") {
-          // Each pickup/drop renews local interest, but never resets the maximum
-          // delay counted from the first request for the competing flag.
+          // The competing carry gets a turn even as the exchange renews.
+          // Lookahead allows one extra second to finish the visible beat.
           const deadline = Math.max(60, 61 - lookahead) + 6;
           expect(concerns(at(deadline - 0.5), 2)).toBe(true);
-          expect(concerns(at(deadline), 1)).toBe(true);
+          expect(concerns(at(deadline + (lookahead ? 1 : 0)), 1)).toBe(true);
           expect(concerns(at(deadline + 2), 1)).toBe(true);
         } else if (
           scenario === "resolved-opponent" ||
@@ -179,6 +290,11 @@ describe.each([0, 2])(
           expect(concerns(at(lookahead ? 64.5 : 65), 1)).toBe(true);
         } else if (scenario === "remote-exchange") {
           expect(concerns(at(lookahead ? 60 : 61), 1)).toBe(true);
+        } else if (scenario === "midfield-exchange") {
+          // Carry the camera through the drop, even far from either stand.
+          expect(at(60)).toBe(at(59.5));
+          expect(at(61)).toBe(at(59.5));
+          expect(concerns(at(65), 1)).toBe(true);
         } else {
           // An unchanged carry is not permanently protected from a fresh grab.
           expect(concerns(at(65 - lookahead), 1)).toBe(true);

@@ -160,6 +160,8 @@ export const STATIC_PAN_DEADBAND_STOP = 0.09;
  */
 
 const OCCLUSION_TARGET_MARGIN = 2.5;
+/** Room shots must see the player or flag even when it hugs a wall. */
+export const ROOM_SUBJECT_MARGIN = 0.1;
 /**
  * Candidate angle offsets, smallest first: the planner's bearing already
  * sits on the broadcast side of the axis of action (the 180-degree
@@ -493,7 +495,10 @@ export function sweepClock(
   t: number,
 ): number {
   const span = Math.max(0.001, shot.moveSec ?? shot.endSec - shot.startSec);
-  return Math.min(1, Math.max(0, (t - shot.startSec) / span));
+  return Math.min(
+    1,
+    Math.max(0, (t - shot.startSec + (shot.moveOffsetSec ?? 0)) / span),
+  );
 }
 
 /**
@@ -506,12 +511,7 @@ export function sweepProgress(
   shot: Extract<Shot, { kind: "sweep" }>,
   t: number,
 ): number {
-  const pacing =
-    shot.easing ??
-    (shot.role === "rosterWide" || shot.role === "rosterCloseUp"
-      ? "hold"
-      : "settle");
-  switch (pacing) {
+  switch (sweepEasing(shot)) {
     // A TRACKING SHOT runs at one speed. Film cuts into a pan already
     // moving and out of it still moving; ramping either end gives the
     // move a beginning and an end it is not supposed to have.
@@ -524,6 +524,15 @@ export function sweepProgress(
     case "settle":
       return easeInSettle(t);
   }
+}
+
+export function sweepEasing(shot: Extract<Shot, { kind: "sweep" }>) {
+  return (
+    shot.easing ??
+    (shot.role === "rosterWide" || shot.role === "rosterCloseUp"
+      ? "hold"
+      : "settle")
+  );
 }
 
 /**
@@ -565,11 +574,15 @@ export const AIM_SPRING_RATE = 2.2;
  * surroundings (the floor they stand on, a teammate beside them) do not
  * count as blocking them.
  */
-export function viewBlocked(from: Vector3, to: Vector3): boolean {
+export function viewBlocked(
+  from: Vector3,
+  to: Vector3,
+  targetMargin = OCCLUSION_TARGET_MARGIN,
+): boolean {
   _rayDir.subVectors(to, from);
   const distance = _rayDir.length();
-  if (distance <= OCCLUSION_TARGET_MARGIN) return false;
-  const shorten = OCCLUSION_TARGET_MARGIN / distance;
+  if (distance <= targetMargin) return false;
+  const shorten = targetMargin / distance;
   // Three (x, y, z) → Torque (z, x, y).
   const startTorque = threeToTorque(from);
   const endTorque: [number, number, number] = [
@@ -614,16 +627,20 @@ const _probePoint = new Vector3();
  * centre ray threading a crack reads "clear" while the viewer sees
  * wall — majority-clear keeps most of the frame on the subject.
  */
-export function subjectViewBlocked(from: Vector3, to: Vector3): boolean {
-  if (viewBlocked(from, to)) return true;
+export function subjectViewBlocked(
+  from: Vector3,
+  to: Vector3,
+  targetMargin?: number,
+): boolean {
+  if (viewBlocked(from, to, targetMargin)) return true;
   _probeRight.set(to.z - from.z, 0, -(to.x - from.x));
   if (_probeRight.lengthSq() < 1e-6) return false;
   _probeRight.normalize();
   _probePoint.copy(to).addScaledVector(_probeRight, VIEW_PROBE_SPREAD);
-  const leftClear = !viewBlocked(from, _probePoint);
+  const leftClear = !viewBlocked(from, _probePoint, targetMargin);
   if (leftClear) return false;
   _probePoint.copy(to).addScaledVector(_probeRight, -VIEW_PROBE_SPREAD);
-  return viewBlocked(from, _probePoint);
+  return viewBlocked(from, _probePoint, targetMargin);
 }
 
 const _standoffRight = new Vector3();

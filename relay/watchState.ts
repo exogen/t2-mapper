@@ -209,6 +209,10 @@ export class WatchStateAccumulator {
     this.state.matchStarted = started;
   }
 
+  get matchEnded(): boolean {
+    return this.state.matchEnded;
+  }
+
   /**
    * Stream-authoritative server name (MsgMissionDropInfo, or Classic's
    * mod-info MsgLoadInfo), when known.
@@ -223,6 +227,10 @@ export class WatchStateAccumulator {
    */
   get missionType(): string | undefined {
     return this.state.missionTypeDisplayName ?? undefined;
+  }
+
+  get gameClassName(): string | undefined {
+    return this.state.gameClassName ?? undefined;
   }
 
   /**
@@ -355,11 +363,9 @@ export class WatchStateAccumulator {
         } else if (isServerMessageCommand(funcName) && args.length >= 1) {
           this.handleServerMessage(args, onRosterChange);
         } else if (funcName === "BottomPrint" && args.length >= 1) {
-          if (
-            /Server is Running in Tournament Mode/i.test(
-              this.resolveNetString(args[0]),
-            )
-          ) {
+          const message = this.resolveNetString(args[0]);
+          this.state.observeBottomPrint(message);
+          if (/Server is Running in Tournament Mode/i.test(message)) {
             this.tournamentMode = true;
           }
         }
@@ -417,6 +423,7 @@ export class WatchStateAccumulator {
     onRosterChange?: () => void,
   ): void {
     const effects = this.state.applyServerMessage(args);
+    const msgType = this.resolveNetString(args[0]);
     if (effects) {
       if (effects.joinedClientId != null) {
         this.identifySelf(effects.joinedClientId, args);
@@ -434,7 +441,6 @@ export class WatchStateAccumulator {
       return;
     }
 
-    const msgType = this.resolveNetString(args[0]);
     if (msgType === "MsgVoteItem" && args.length >= 4) {
       // Wire: args[2] echoes the query key (ordinary menus use numbers).
       // The offered mode switch identifies the current mode, regardless of key.

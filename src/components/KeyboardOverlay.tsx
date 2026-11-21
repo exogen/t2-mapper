@@ -15,8 +15,7 @@ import {
   streamPlaybackStore,
 } from "../state/streamPlaybackStore";
 import { useCameraTour } from "../state/cameraTourStore";
-import { useDirector } from "../state/demoDirectorStore";
-import { useCommandCircuit } from "../state/commandCircuitStore";
+import { useCameraOwner } from "../state/cameraOwner";
 import { useIsWatchSpectator } from "./useIsWatchSpectator";
 import { QUICK_CAM_SLOTS, useCaster } from "../state/casterStore";
 import { useFlagCameras } from "./useFlagCameras";
@@ -670,18 +669,20 @@ function TourOverlay() {
   );
 }
 
-function DirectorOverlay() {
+function DirectorOverlay({ canPause }: { canPause: boolean }) {
   return (
     <div className={styles.Column} data-height="compact">
-      <div className={styles.Row}>
-        <Key
-          action="playPause"
-          label="Pause"
-          input="Space"
-          labelPosition="right"
-          inputSize="auto"
-        />
-      </div>
+      {canPause && (
+        <div className={styles.Row}>
+          <Key
+            action="playPause"
+            label="Pause"
+            input="Space"
+            labelPosition="right"
+            inputSize="auto"
+          />
+        </div>
+      )}
       <div className={styles.Row}>
         <Key
           action="directorInterrupt"
@@ -756,9 +757,8 @@ export function KeyboardOverlay() {
   const recording = useRecording();
   const inputMode = useInputMode();
 
-  const isTourActive = useCameraTour((s) => s.animation !== null);
-  const isDirecting = useDirector((s) => s.status === "playing");
-  const isCommandCircuit = useCommandCircuit((s) => s.active);
+  const cameraOwner = useCameraOwner();
+  const isCommandCircuit = cameraOwner === "commandCircuit";
   // Watch mode: client-only free-fly, no server-observer controls.
   const isWatcher = useIsWatchSpectator();
   const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
@@ -790,7 +790,7 @@ export function KeyboardOverlay() {
 
   // An active tour owns all input — only its overlay shows, matching
   // ActiveInputBindings (only TOUR_MODE_INPUT is mounted).
-  if (isTourActive) {
+  if (cameraOwner === "tour") {
     return (
       <div className={styles.Root}>
         <TourOverlay />
@@ -800,10 +800,10 @@ export function KeyboardOverlay() {
 
   // The auto-director owns all input likewise — F or Escape is the one
   // interrupt (matching ActiveInputBindings' DIRECTOR_MODE_INPUT branch).
-  if (isDirecting) {
+  if (cameraOwner === "director") {
     return (
       <div className={styles.Root}>
-        <DirectorOverlay />
+        <DirectorOverlay canPause={isDemo} />
       </div>
     );
   }

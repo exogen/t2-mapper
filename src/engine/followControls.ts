@@ -1,4 +1,5 @@
 import { createLogger } from "../logger";
+import { resolveCameraOwner } from "../state/cameraOwner";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { subscribeAction } from "../state/inputControls";
 import {
@@ -54,7 +55,8 @@ export function syncFollowCameraMode(): boolean {
     streamPlaybackStore.getState();
   if (projectileFollow?.kind === "tracking") return true;
   if (!followEntityId && !followPlayer) return false;
-  const target = resolveWatchFollowTarget();
+  const followRespawns = resolveCameraOwner() !== "director";
+  const target = resolveWatchFollowTarget(followRespawns);
   if (target) {
     const wanted = streamPlaybackStore.getState().followCameraMode;
     if (streamPlaybackStore.getState().cameraMode !== wanted) {
@@ -62,9 +64,8 @@ export function syncFollowCameraMode(): boolean {
       streamPlaybackStore.setState({ cameraMode: wanted });
     }
   } else if (streamPlaybackStore.getState().cameraMode !== "freeFly") {
-    // Followed player has no body this instant (dead, corpse faded,
-    // respawn pending) — hold in free-fly with follow still armed; it
-    // re-locks onto their new body when it appears.
+    // Hold the view if the body disappears. Only manual follows can
+    // re-lock onto a replacement before the next shot.
     camlog.info("cameraMode -> freeFly (follow target unresolved)");
     streamPlaybackStore.setState({ cameraMode: "freeFly" });
   }

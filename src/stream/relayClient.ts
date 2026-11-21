@@ -17,12 +17,17 @@ import type {
   ReplayServerMessage,
 } from "../../relay/replayTypes";
 import type {
+  LiveCastMetricsMessage,
+  LiveCastServerMessage,
+} from "../../relay/liveCastTypes";
+import type {
   ClientMessage,
   ClientMove,
   ServerMessage,
   ServerInfo,
   ConnectionStatus,
   WatchCatchupPayload,
+  WatchDelayReason,
   WatchStatus,
   WatchEndReason,
 } from "../../relay/types";
@@ -45,6 +50,8 @@ type ReplayUploadProgressMessage = Extract<
 >;
 
 export type RelayEventHandler = {
+  onLiveCastMessage?: (message: LiveCastServerMessage) => void;
+  onLiveCastMetrics?: (message: LiveCastMetricsMessage) => void;
   onReplayState?: (state: ReplayState) => void;
   onReplayTick?: (message: ReplayTickMessage) => void;
   onReplayInfo?: (message: ReplayInfoMessage) => void;
@@ -81,8 +88,11 @@ export type RelayEventHandler = {
       chatEnabled?: boolean;
       /** Watcher-facing stream delay in ms (0 = live). */
       streamDelayMs?: number;
+      streamDelayReason?: WatchDelayReason;
       /** Rough ms until a still-buffering delayed stream begins. */
       streamDelayReadyInMs?: number;
+      /** Null while support or worker admission is pending. False ends a subscription. */
+      liveCastAvailable?: boolean | null;
     },
     watcherCount: number,
   ) => void;
@@ -165,6 +175,7 @@ export class RelayClient {
     | Uint8Array
     | SessionStatusMessage
     | GamePresentationMessage
+    | LiveCastServerMessage
     | ReplayServerMessage
   > = [];
   private bufferedBytes = 0;
@@ -376,6 +387,19 @@ export class RelayClient {
         this.handlers.onWsPing?.(Math.round(this.smoothedWsPing));
         break;
       }
+      case "liveCastTick":
+      case "liveCastShots":
+        if (!this.watchAddress || this.catchupMode === "waiting") break;
+        if (
+          this.catchupMode === "collecting" ||
+          this.catchupMode === "finalizing"
+        )
+          this.bufferFrame(message);
+        else this.handlers.onLiveCastMessage?.(message);
+        break;
+      case "liveCastMetrics":
+        this.handlers.onLiveCastMetrics?.(message);
+        break;
       case "sessionStatus":
         if (normalizeAddress(message.address) !== this.watchAddress) break;
         if (message.status === "ended") {
@@ -401,7 +425,9 @@ export class RelayClient {
             recording: message.recording,
             chatEnabled: message.chatEnabled,
             streamDelayMs: message.streamDelayMs,
+            streamDelayReason: message.streamDelayReason,
             streamDelayReadyInMs: message.streamDelayReadyInMs,
+            liveCastAvailable: message.liveCastAvailable,
           },
           message.watcherCount,
         );
@@ -536,6 +562,7 @@ export class RelayClient {
       | Uint8Array
       | SessionStatusMessage
       | GamePresentationMessage
+      | LiveCastServerMessage
       | ReplayServerMessage,
   ): void {
     const bytes =
@@ -609,7 +636,7 @@ export class RelayClient {
   }
 
   /** Attach to a shared watch session for a game server (spectator). */
-  watchServer(address: string, channelId?: string): void {
+  watchServer(address: string, channelId?: string, liveCast?: boolean): void {
     this.replayUpload = null;
     log.info("Watching server: %s", address);
     this.resetSessionFraming("waiting");
@@ -618,7 +645,11 @@ export class RelayClient {
     this.replayCreating = false;
     this.replayEpoch = null;
     this.replayRevision = -1;
-    this.send({ type: "watchServer", address, channelId });
+    this.send({ type: "watchServer", address, channelId, liveCast });
+  }
+
+  setLiveCast(enabled: boolean): void {
+    this.send({ type: "setLiveCast", enabled });
   }
 
   /** Detach from the current watch session; the socket stays open. */

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSwitcherStream, planShotsCausal, runSwitcher } from "./switcher";
 import { createFreeSpaceBuild } from "./freeSpace";
 import { CausalView } from "./causalView";
-import { DIRECTOR_LOOKAHEAD_SEC } from "./tunables";
+import { DIRECTOR_LOOKAHEAD_SEC, SCORE_CARRIED } from "./tunables";
 import * as variety from "./variety";
 import { directorDataset, STAND_1, STAND_2 } from "./directorTestFixtures";
 import type {
@@ -283,7 +283,7 @@ describe("capture reaction fallback", () => {
     expect(aired?.endSec).toBe(68);
   });
 
-  it("can resolve an initially unidentified capture and uses the observed scoring location", () => {
+  it("can resolve an initially unidentified capture and frames the scorer with the stand", () => {
     const ds = fixture();
     const scoringPos: DirectorVec3 = [23, 5, 100];
     ds.flagSamples = ds.flagSamples.map((s) =>
@@ -307,7 +307,7 @@ describe("capture reaction fallback", () => {
     const aftermaths = stream.shots.filter((s) => s.topic === "aftermath");
     expect(aftermaths).toHaveLength(1);
     expect(aftermaths[0]).toMatchObject({
-      center: scoringPos,
+      center: [11.5, 2.5, 100],
       startSec: 68,
       endSec: 70.6,
     });
@@ -337,6 +337,121 @@ describe("capture reaction fallback", () => {
 });
 
 describe("planShotsCausal", () => {
+  it.each(["quiet", "pressured", "can score", "looping"] as const)(
+    "releases a stationary carry only during a lull (%s)",
+    (context) => {
+      const ds = dataset();
+      const carrier: DirectorVec3 = [45, 0, 100];
+      ds.events = ds.events.filter((event) => event.type !== "flag-cap");
+      for (const sample of ds.flagSamples) {
+        if (sample.timeSec < 45 || sample.timeSec >= 90) continue;
+        if (sample.slot === 2)
+          sample.pos =
+            context === "looping" && sample.timeSec >= 57 && sample.timeSec < 60
+              ? [120, 0, 100]
+              : carrier;
+        else if (context !== "can score") {
+          sample.pos = [750, 0, 100];
+          sample.status = "held";
+          sample.carrierTargetId = 12;
+        }
+      }
+      for (const player of ds.playerSamples) {
+        if (player.timeSec >= 45 && player.targetId === 5) player.pos = carrier;
+      }
+      for (let t = 45; t <= 90; t++) {
+        ds.playerSamples.push({
+          timeSec: t,
+          targetId: 12,
+          teamId: 2,
+          pos: [750, 0, 100],
+        });
+        if (context === "pressured" || (context === "quiet" && t >= 64))
+          ds.playerSamples.push({
+            timeSec: t,
+            targetId: 13,
+            teamId: 2,
+            pos: [80, 0, 100],
+          });
+      }
+      const pick = vi
+        .spyOn(variety, "pickVarietyShot")
+        .mockImplementation((_view, t, _mem, _ctx, _length, interest) =>
+          t === 62 && interest < SCORE_CARRIED
+            ? {
+                family: "destruction",
+                shot: {
+                  kind: "fixedOrbit",
+                  center: [400, 400, 100],
+                  radius: 30,
+                  startSec: t,
+                  endSec: t + 9,
+                  transitionIn: "cut",
+                  reason: "Raid cutaway",
+                },
+              }
+            : null,
+        );
+      try {
+        const view = new CausalView(ds, 2);
+        const shots = runSwitcher(view);
+        const cutaway = shots.find((s) => s.reason === "Raid cutaway");
+        if (context === "quiet") {
+          expect(cutaway).toMatchObject({ startSec: 62, endSec: 64 });
+          expect(concernsFlag(shots[shots.indexOf(cutaway!) + 1], 2)).toBe(
+            true,
+          );
+        } else expect(cutaway).toBeUndefined();
+        expect(view.maxQueriedAhead).toBeLessThanOrEqual(2);
+      } finally {
+        pick.mockRestore();
+      }
+    },
+  );
+
+  it.each(["manual", "automatic", "carrier far away", "capture"] as const)(
+    "prioritizes a manual return that opens a scoring chance (%s)",
+    (context) => {
+      const ds = dataset();
+      ds.events = ds.events.filter((event) => event.type !== "flag-cap");
+      ds.events.push({
+        timeSec: 65,
+        type: "flag-return",
+        description: "Storm flag returned",
+        actor: context === "automatic" ? undefined : "Guard",
+        flagTeamName: "Storm",
+      });
+      if (context === "capture")
+        ds.events.push({
+          timeSec: 65,
+          type: "flag-cap",
+          description: "Slayer captured the Inferno flag",
+          capturer: "Slayer",
+          flagTeamName: "Inferno",
+        });
+      for (const sample of ds.flagSamples) {
+        if (sample.slot === 1 && sample.timeSec >= 59 && sample.timeSec < 65) {
+          sample.status = "field";
+          sample.pos = [400, 0, 100];
+        }
+        if (sample.slot === 2 && sample.timeSec >= 60 && sample.timeSec < 90)
+          sample.pos = [context === "carrier far away" ? 250 : 60, 0, 100];
+      }
+      const view = new CausalView(ds, 2);
+      const shots = runSwitcher(view);
+      const at = (time: number) =>
+        shots.find((shot) => shot.startSec <= time && time < shot.endSec)!;
+      expect(concernsFlag(at(62.5), 2)).toBe(true);
+      expect(concernsFlag(at(63), context === "manual" ? 1 : 2)).toBe(true);
+      if (context === "manual")
+        expect(at(63)).toMatchObject({
+          kind: "fixedOrbit",
+          center: [400, 0, 100],
+        });
+      expect(view.maxQueriedAhead).toBeLessThanOrEqual(2);
+    },
+  );
+
   it.each([
     { eventType: "flag-grab" as const, lookahead: 0 },
     { eventType: "flag-grab" as const, lookahead: 2 },
@@ -587,16 +702,18 @@ describe("planShotsCausal", () => {
             "stopped",
           ].includes(outcome);
           // Stopping at 61 is established by a complete three-second window
-          // below the continuation speed at 63. Death/state changes act at 64,
-          // never at 62 just because they are visible inside the planning peek.
+          // below the continuation speed at 63. A death holds the shot for
+          // two more seconds, and other state changes still act at 64.
           const end =
             outcome === "early-death"
-              ? 61
-              : outcome === "stopped"
-                ? 63
-                : interrupted
-                  ? 64
-                  : 69;
+              ? 63
+              : outcome === "dead"
+                ? 66
+                : outcome === "stopped"
+                  ? 63
+                  : interrupted
+                    ? 64
+                    : 69;
           expect(cutaway!.endSec, outcome).toBe(end);
           if (
             outcome === "held" ||
@@ -624,6 +741,66 @@ describe("planShotsCausal", () => {
         } finally {
           pick.mockRestore();
         }
+      }
+    },
+  );
+
+  it.each(["flag-grab", "flag-cap"] as const)(
+    "holds a kill reaction through a routine grab and lets a capture preempt it (%s)",
+    (type) => {
+      const ds = directorDataset({
+        durationSec: 80,
+        events: [
+          { timeSec: 0, type: "match-start", description: "Match started" },
+          {
+            timeSec: 63,
+            type,
+            flagTeamName: "Inferno",
+            description: "Flag play",
+          },
+        ],
+        deaths: [
+          {
+            timeSec: 62,
+            targetId: 9,
+            teamId: 1,
+            pos: [400, 0, 100],
+            killerTargetId: null,
+          },
+        ],
+        flagSamples: [1, 2].map((slot) => ({
+          timeSec: 60,
+          slot,
+          status: "home",
+          pos: slot === 1 ? STAND_1 : STAND_2,
+          carrierTargetId: null,
+        })),
+      });
+      const pick = vi
+        .spyOn(variety, "pickVarietyShot")
+        .mockImplementation((_view, t) =>
+          t === 60
+            ? {
+                family: "killCutIn",
+                shot: {
+                  kind: "fixedOrbit",
+                  center: [400, 0, 100],
+                  radius: 30,
+                  lookSubject: { type: "player", targetId: 9 },
+                  startSec: 60,
+                  endSec: 65.5,
+                  transitionIn: "cut",
+                  reason: "Kill cutaway",
+                },
+              }
+            : null,
+        );
+      try {
+        const shots = runSwitcher(new CausalView(ds, 0));
+        const kill = shots.find((shot) => shot.reason === "Kill cutaway");
+        expect(kill?.endSec).toBe(type === "flag-cap" ? 63 : 64);
+      } finally {
+        pick.mockRestore();
       }
     },
   );
@@ -666,6 +843,65 @@ describe("planShotsCausal", () => {
         s.kind === "sweep" && s.startSec < 20.3 && /Pre-match/.test(s.reason),
     );
     expect(sweeps.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("uses a hydrated countdown for the line-up even when the announcement is missing", () => {
+    const ds = dataset();
+    ds.events = [];
+    ds.matchPhases = [
+      { timeSec: 2, phase: { kind: "countdown", startSec: 20.3 } },
+      { timeSec: 20.3, phase: { kind: "running", startSec: 20.3 } },
+    ];
+    const stream = createSwitcherStream(new CausalView(ds), { startSec: 5 });
+    stream.advanceTo(30, ds);
+    expect(
+      stream.shots.some(
+        (s) => s.role === "rosterWide" && s.startSec >= 5 && s.startSec < 20.3,
+      ),
+    ).toBe(true);
+    expect(
+      stream.shots.some((s) => s.role === "rosterWide" && s.startSec > 20.3),
+    ).toBe(false);
+  });
+
+  it("widens an ongoing flag chase to show a nearby mortar salvo", () => {
+    const ds = dataset();
+    const timeSec = 74;
+    const flag = ds.flagSamples.find(
+      (sample) => sample.slot === 2 && sample.timeSec === timeSec,
+    )!;
+    ds.deaths = [0, 24].map((offset, i) => ({
+      timeSec,
+      targetId: i + 10,
+      teamId: 2,
+      pos: [flag.pos[0], flag.pos[1] + offset, flag.pos[2]],
+      killerTargetId: null,
+      weapon: "mortar",
+    }));
+    const shots = runSwitcher(new CausalView(ds));
+    expect(
+      shots.find((shot) => shot.reason === "Mortar fire around the flag"),
+    ).toMatchObject({ kind: "fixedOrbit", startSec: 73, endSec: 78 });
+    expect(
+      shots.some((shot) => shot.topic === "aftermath" && shot.startSec === 90),
+    ).toBe(true);
+  });
+
+  it("covers the next round's countdown after joining the previous round in play", () => {
+    const ds = dataset();
+    ds.events = [];
+    ds.matchPhases = [
+      { timeSec: 0, phase: { kind: "running", startSec: -200 } },
+      { timeSec: 12, phase: { kind: "countdown", startSec: 35 } },
+      { timeSec: 35, phase: { kind: "running", startSec: 35 } },
+    ];
+    const stream = createSwitcherStream(new CausalView(ds));
+    stream.advanceTo(45, ds);
+    const lineups = stream.shots.filter((shot) => shot.role === "rosterWide");
+    expect(lineups.length).toBeGreaterThan(0);
+    expect(
+      lineups.every((shot) => shot.startSec >= 12 && shot.startSec < 35),
+    ).toBe(true);
   });
 
   it("opens a full roster intro once team-picking settles", () => {
@@ -1082,6 +1318,23 @@ describe("shot roles", () => {
 });
 
 describe("createSwitcherStream", () => {
+  it("makes in-match decisions after an explicit kickoff without a match-start message", () => {
+    const ds = directorDataset({
+      events: [],
+      matchPhases: [{ timeSec: 60, phase: { kind: "running", startSec: 10 } }],
+    });
+    const pick = vi.spyOn(variety, "pickVarietyShot");
+    try {
+      const stream = createSwitcherStream(new CausalView(ds, 0), {
+        startSec: 60,
+      });
+      stream.advanceTo(60.5, ds);
+      expect(pick).toHaveBeenCalled();
+    } finally {
+      pick.mockRestore();
+    }
+  });
+
   /** A shot's full identity, so a comparison cannot pass on timing alone. */
   const key = (s: Shot): string =>
     `${s.startSec.toFixed(2)}-${s.endSec.toFixed(2)} ${s.kind} ${s.reason}`;
@@ -1110,7 +1363,7 @@ describe("createSwitcherStream", () => {
     // rest as it arrives, or it is quietly reading the whole demo.
     const view = new CausalView(truncated(ds, DIRECTOR_LOOKAHEAD_SEC));
     const s = createSwitcherStream(view);
-    for (let t = slice; t <= ds.durationSec; t += slice) {
+    for (let t = slice; s.plannedToSec < ds.durationSec; t += slice) {
       const to = Math.min(t, ds.durationSec);
       // A slice is planned only once the scan is a lookahead past it.
       s.advanceTo(to, truncated(ds, to + DIRECTOR_LOOKAHEAD_SEC));

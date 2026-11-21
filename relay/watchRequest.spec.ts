@@ -42,23 +42,38 @@ describe("watch navigation during server probes", () => {
     const { request, options, finish } = setup();
     const pending = request.watch("old");
     await vi.waitFor(() => expect(options.probe).toHaveBeenCalledOnce());
-    await request.watch("known", "channel");
+    await request.watch("known", "channel", true);
     finish(true);
     await pending;
-    expect(options.attach.mock.calls).toEqual([["known", "channel"]]);
+    expect(options.attach.mock.calls).toEqual([["known", "channel", true]]);
   });
 
   it("serializes probes and skips superseded selections", async () => {
     const { request, options, finish } = setup();
     const first = request.watch("first");
     await vi.waitFor(() => expect(options.probe).toHaveBeenCalledOnce());
-    const second = request.watch("second");
+    const second = request.watch("second", "cast-channel", true);
     const third = request.watch("third");
     finish(true);
     await vi.waitFor(() => expect(options.probe).toHaveBeenCalledTimes(2));
     expect(options.probe.mock.calls).toEqual([["first"], ["third"]]);
     finish(true);
     await Promise.all([first, second, third]);
-    expect(options.attach.mock.calls).toEqual([["third", undefined]]);
+    expect(options.attach.mock.calls).toEqual([
+      ["third", undefined, undefined],
+    ]);
+  });
+
+  it("carries an explicit watch preference through a delayed probe", async () => {
+    const { request, options, finish } = setup();
+    const pending = request.watch("unlisted", "channel", false);
+    await vi.waitFor(() => expect(options.probe).toHaveBeenCalledOnce());
+    finish(true);
+    await pending;
+    expect(options.attach).toHaveBeenCalledExactlyOnceWith(
+      "unlisted",
+      "channel",
+      false,
+    );
   });
 });

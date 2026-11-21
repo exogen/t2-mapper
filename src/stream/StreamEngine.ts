@@ -184,6 +184,9 @@ import type {
   StreamCamera,
   StreamEntity,
   StreamSnapshot,
+  DirectorEntity,
+  StreamOrdnanceImpact,
+  DirectorSnapshot,
   StreamingPlayback,
   ProjectileLifecycleEvent,
   PreloadAsset,
@@ -262,6 +265,16 @@ export type { Vec3 };
  * object literal of this type can't leave a field out.
  */
 type EveryField<T> = { [K in keyof Required<T>]: T[K] };
+
+/** Cosmetic ghosts have no role in planning or constructing its world. */
+const PRESENTATION_GHOSTS = new Set([
+  "AudioEmitter",
+  "Explosion",
+  "Lightning",
+  "ParticleEmissionDummy",
+  "Precipitation",
+  "Splash",
+]);
 
 /** StreamEntity fields that buildEntityList derives rather than copies. */
 type DerivedEntityField =
@@ -452,6 +465,15 @@ interface PendingExplosion {
   normal: [number, number, number];
 }
 
+function snapshotEntityPosition(entity: MutableEntity): Point3 | undefined {
+  const { position } = entity;
+  return position &&
+    (entity.simulatedVelocity ||
+      (entity.itemPhysics && !entity.itemPhysics.atRest))
+    ? [...position]
+    : position;
+}
+
 /**
  * Shared engine that processes parsed packet data (events, ghosts, control
  * object state) and maintains all game state. Subclasses provide the data
@@ -465,6 +487,8 @@ export abstract class StreamEngine implements StreamingPlayback {
   );
   readonly lightningHistory = new LightningHistory();
   private _worldGeneration = 0;
+  private readonly directorImpacts: StreamOrdnanceImpact[] = [];
+  protected captureDirectorImpacts = false;
   private readonly projectileListeners = new Set<
     (event: ProjectileLifecycleEvent) => void
   >();
@@ -698,6 +722,8 @@ export abstract class StreamEngine implements StreamingPlayback {
   // ── Tick / time ──
   protected tickCount = 0;
   protected groundEffectsEnabled = true;
+  /** Headless consumers can skip render-only effects and their histories. */
+  protected presentationEffectsEnabled = true;
   protected pendingPlayerMoves: {
     id: number;
     move: PlayerMove;
@@ -807,18 +833,17 @@ export abstract class StreamEngine implements StreamingPlayback {
   private _hudCache: {
     weaponsHudGen: number;
     inventoryHudGen: number;
-    teamScoresGen: number;
-    rosterGen: number;
     backpackPackIndex: number;
     backpackActive: boolean;
     backpackText: string;
     weaponsHud: { slots: WeaponsHudSlot[]; activeIndex: number };
     inventoryHud: { slots: InventoryHudSlot[]; activeSlot: number };
     backpackHud: BackpackHudState | null;
-    teamScores: TeamScore[];
-    flagTargets: FlagTargetInfo[];
-    playerTargets: PlayerRecord[];
-    playerRoster: PlayerRosterEntry[];
+  } | null = null;
+  private _matchSnapshotCache: {
+    teamScoresGen: number;
+    rosterGen: number;
+    state: ReturnType<StreamEngine["buildTeamScoresAndRoster"]>;
   } | null = null;
 
   // ── Mission info (from server messages) ──
@@ -883,6 +908,10 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (!this.conn.endMatch()) return;
     // Keep receiving protocol/HUD updates, but preserve the final world even
     // if late ghost updates or deletes arrive during the debrief.
+    this.freezeMatchEndEntities();
+  }
+
+  protected freezeMatchEndEntities(): void {
     // Histories can be thousands of links deep. Share their immutable data,
     // just as checkpoints do, and detach only the mutable scene fields.
     const entities = this.buildEntityList().map(splitEntityData);
@@ -1248,6 +1277,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     checkpoint: ReturnType<StreamEngine["captureSimulationState"]>,
   ): void {
     this.resetMissileLockInference();
+    this.directorImpacts.length = 0;
     const {
       conn,
       latestControl: { missileLock, ...latestControl },
@@ -1484,6 +1514,7 @@ export abstract class StreamEngine implements StreamingPlayback {
    *  stale entity collisions in the render store after seeks. */
   protected clearAllEntities(): void {
     this._worldGeneration++;
+    this.directorImpacts.length = 0;
     if (this.projectileGhostBatch) this.projectileGhostBatch.finish = undefined;
     this.conn.flagDroppedAtSec = {};
     this.endedEntities = null;
@@ -1510,7 +1541,7 @@ export abstract class StreamEngine implements StreamingPlayback {
   }
 
   protected resetSharedState(): void {
-    this._hudCache = null;
+    this.invalidateHudCache();
     this.conn.reset();
     this.clearAllEntities();
     this.missionReadySec = 0;
@@ -2029,6 +2060,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     // storm and optional target ghosts. No strike is invented from its rate
     // during playback: these events are the authoritative strike moments.
     if (type === "LightningStrikeEvent") {
+      if (!this.presentationEffectsEnabled) return;
       if (
         typeof data.sourceGhost !== "number" ||
         typeof data.startX !== "number" ||
@@ -2148,7 +2180,9 @@ export abstract class StreamEngine implements StreamingPlayback {
       const args = evt.args;
       const timeSec = this.getTimeSec();
 
-      if (funcName === "MissionEnd") {
+      if (funcName === "BottomPrint" && args.length) {
+        this.conn.observeBottomPrint(this.resolveNetString(args[0]));
+      } else if (funcName === "MissionEnd") {
         this.endMatch();
       } else if (funcName === "ChatMessage" && args.length >= 4) {
         // Preserve per-segment color: format the template + args WITHOUT
@@ -2258,10 +2292,11 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
 
     if (
-      type === "Sim3DAudioEvent" ||
-      type === "Sim2DAudioEvent" ||
-      eventName === "Sim3DAudioEvent" ||
-      eventName === "Sim2DAudioEvent"
+      this.presentationEffectsEnabled &&
+      (type === "Sim3DAudioEvent" ||
+        type === "Sim2DAudioEvent" ||
+        eventName === "Sim3DAudioEvent" ||
+        eventName === "Sim2DAudioEvent")
     ) {
       const is3D =
         type === "Sim3DAudioEvent" || eventName === "Sim3DAudioEvent";
@@ -2780,9 +2815,11 @@ export abstract class StreamEngine implements StreamingPlayback {
     // The viewer holds the final scene at MissionEnd while transport keeps
     // consuming the debrief and next mission. This is a viewer pause policy.
     if (this.matchEnded) return;
-    this.debrisHistory.prune(this.getTimeSec());
-    this.projectileTrailHistory.prune(this.tickCount);
-    this.lightningHistory.prune(this.getTimeSec());
+    if (this.presentationEffectsEnabled) {
+      this.debrisHistory.prune(this.getTimeSec());
+      this.projectileTrailHistory.prune(this.tickCount);
+      this.lightningHistory.prune(this.getTimeSec());
+    }
     this.advanceItems();
     this.advanceControlVehicle();
     this.advancePlayers();
@@ -2792,7 +2829,8 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.advanceShapeAnimations();
     this.advanceForceFields();
     this.advanceControlEnergy();
-    if (this.groundEffectsEnabled) this.recordGroundEffects();
+    if (this.presentationEffectsEnabled && this.groundEffectsEnabled)
+      this.recordGroundEffects();
     this.updateCameraAndHud();
   }
 
@@ -4034,7 +4072,10 @@ export abstract class StreamEngine implements StreamingPlayback {
 
     // Persistent map emitters carry their emitter datablock separately from
     // the GameBase datablock, which only controls the emission clock.
-    if (entity.className === "ParticleEmissionDummy") {
+    if (
+      this.presentationEffectsEnabled &&
+      entity.className === "ParticleEmissionDummy"
+    ) {
       if (dataBlockId != null) {
         const multiple = this.getDataBlockData(dataBlockId)?.timeMultiple;
         entity.timeMultiple =
@@ -4055,8 +4096,8 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
 
     if (
-      entity.className === "Precipitation" ||
-      entity.className === "Lightning"
+      this.presentationEffectsEnabled &&
+      (entity.className === "Precipitation" || entity.className === "Lightning")
     ) {
       (entity.pendingWeather ??= []).push({
         time: this.getTimeSec(),
@@ -4156,6 +4197,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     const block = this.getDataBlockData(dataBlockId);
     if (!block) return;
     source.splashPlayed = true;
+    if (!this.presentationEffectsEnabled) return;
     // Splash::advanceTime emits immediately. Splash::processTick rounds
     // the sampled lifetime to the next tick before stopping new rings.
     const random = timelineRandom(dataBlockId, this.tickCount, ...position);
@@ -4199,7 +4241,13 @@ export abstract class StreamEngine implements StreamingPlayback {
     normal: [number, number, number] = [0, 0, 1],
     hiddenLinearGhost = false,
   ): void {
+    if (this.captureDirectorImpacts)
+      this.recordDirectorImpact(projectile, position);
     projectile.hasExploded = true;
+    if (!this.presentationEffectsEnabled) {
+      this.endProjectileFlight(projectile, position);
+      return;
+    }
     let explosionId = projectile.explosionDataBlockId;
     // An already-exploded initial ghost uses the regular effect via
     // LinearProjectile::onAdd (Tribes2.exe 0x62d630).
@@ -4226,6 +4274,31 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
 
     this.endProjectileFlight(projectile, position);
+  }
+
+  private recordDirectorImpact(projectile: MutableEntity, pos: Point3): void {
+    if (projectile.hasExploded || this.projectileGhostBatch?.hydrating) return;
+    const kind = /mortar_projectile/i.test(projectile.dataBlock ?? "")
+      ? "mortar"
+      : /missile_projectile/i.test(projectile.dataBlock ?? "")
+        ? "missile"
+        : null;
+    if (!kind) return;
+    const timeSec = this.getTimeSec();
+    const source = this.projectileSource(
+      projectile.sourceGhostIndex,
+      projectile.seekerLaunch?.sourceId ??
+        projectile.linearExclusions?.sourceId,
+    );
+    const impacts = this.directorImpacts;
+    while (impacts.length && impacts[0].timeSec < timeSec - 2) impacts.shift();
+    impacts.push({
+      id: projectile.id,
+      kind,
+      pos: [...pos],
+      timeSec,
+      teamId: source?.sensorGroup,
+    });
   }
 
   private endProjectileFlight(
@@ -4260,7 +4333,12 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity: MutableEntity,
     normal: [number, number, number] = [0, 0, 1],
   ): void {
-    if (!entity.position || entity.dataBlockId == null) return;
+    if (
+      !this.presentationEffectsEnabled ||
+      !entity.position ||
+      entity.dataBlockId == null
+    )
+      return;
     const blockData = this.getDataBlockData(entity.dataBlockId);
     if (!blockData) return;
     let [x, y, z] = entity.position;
@@ -4312,6 +4390,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     addTick: number,
     normal: [number, number, number] = [0, 0, 1],
   ): void {
+    if (!this.presentationEffectsEnabled) return;
     const block = this.getDataBlockData(explosionDataBlockId);
     if (!block) return;
     const shape = (block.dtsFileName as string | undefined) || undefined;
@@ -4589,7 +4668,12 @@ export abstract class StreamEngine implements StreamingPlayback {
       puffPosition: puffEmitterId != null ? position : undefined,
     };
     const casing = block.casingDebris;
-    if (casing == null || !this.getDataBlockData(casing)) return;
+    if (
+      !this.presentationEffectsEnabled ||
+      casing == null ||
+      !this.getDataBlockData(casing)
+    )
+      return;
     const random = timelineRandom(casing, this.tickCount, ...next);
     const expires =
       time + debrisRetention(casing, (id) => this.getDataBlockData(id));
@@ -4966,6 +5050,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     to: Point3,
     velocity: Point3,
   ): void {
+    if (!this.presentationEffectsEnabled) return;
     const block =
       entity.dataBlockId == null
         ? undefined
@@ -6085,6 +6170,7 @@ export abstract class StreamEngine implements StreamingPlayback {
 
     return {
       timeSec,
+      ordnanceImpacts: this.snapshotDirectorImpacts(timeSec),
       gravity: this.gravity,
       ghostAlwaysDoneSec: this.ghostAlwaysDoneSec,
       missionReadySec: this.missionReadySec,
@@ -6118,11 +6204,86 @@ export abstract class StreamEngine implements StreamingPlayback {
       playerRoster,
       connectedClientId: this.connectedClientId,
       matchClockMs: this.computeMatchClockMs(timeSec),
+      matchPhase: this.conn.matchPhase,
       matchEnded: this.matchEnded,
       matchEndedAtSec: this.matchEndedAtSec,
       matchStarted: this.matchStarted,
       loadInfo: this.serverLoadInfo,
     };
+  }
+
+  /** Project only the fields read by the director and headless collision world. */
+  protected buildDirectorEntities(): DirectorEntity[] {
+    const entities: DirectorEntity[] = [];
+    for (const entity of this.entities.values()) {
+      if (PRESENTATION_GHOSTS.has(entity.className)) continue;
+      entities.push({
+        id: entity.id,
+        type: entity.type,
+        className: entity.className,
+        dataBlock: entity.dataBlock,
+        shapeHint: entity.shapeHint,
+        ghostIndex: entity.ghostIndex,
+        sourceGhostIndex: entity.sourceGhostIndex,
+        mountObjectId: this.resolveMountParent(entity)?.id,
+        position: snapshotEntityPosition(entity),
+        rotation: entity.rotation,
+        scale: entity.scale,
+        targetId: entity.targetId,
+        targetGeneration: entity.targetGeneration,
+        targetRenderFlags: entity.targetRenderFlags,
+        teamId: entity.sensorGroup,
+        playerName: entity.playerName,
+        playerRawName: entity.playerRawName,
+        skinName: entity.skinName,
+        skinPrefName: entity.skinPrefName,
+        health: entity.health,
+        damageState: entity.damageState,
+        sceneData: entity.sceneData,
+        forceFieldData: entity.forceFieldData && {
+          dimensions: entity.forceFieldData.dimensions,
+        },
+        forceFieldState: entity.forceFieldState,
+        imageSlots: entity.imageSlots?.map(
+          (slot) =>
+            slot && { shapeName: slot.shapeName, skinName: slot.skinName },
+        ),
+        threads: entity.threads?.map(({ index, state, atEnd }) => ({
+          index,
+          state,
+          atEnd,
+        })),
+      });
+    }
+    return entities;
+  }
+
+  protected buildDirectorSnapshot(
+    entities = this.buildDirectorEntities(),
+  ): DirectorSnapshot {
+    const timeSec = this.getTimeSec();
+    const { playerRoster, teamScores } = this.buildCachedMatchState();
+    return {
+      ...this.snapshotMessages(),
+      entities,
+      timeSec,
+      ordnanceImpacts: this.snapshotDirectorImpacts(timeSec),
+      ghostAlwaysDoneSec: this.ghostAlwaysDoneSec,
+      playerRoster,
+      teamScores,
+      matchClockMs: this.computeMatchClockMs(timeSec),
+      matchPhase: this.conn.matchPhase,
+      matchStarted: this.matchStarted,
+      matchEnded: this.matchEnded,
+    };
+  }
+
+  private snapshotDirectorImpacts(timeSec: number) {
+    if (this.directorImpacts.length === 0) return undefined;
+    const recent = this.directorImpacts.filter(
+      (impact) => impact.timeSec >= timeSec - 2 && impact.timeSec <= timeSec,
+    );
+    return recent.length ? recent : undefined;
   }
 
   /** Build entity list, holding the final world throughout the debrief. */
@@ -6196,12 +6357,7 @@ export abstract class StreamEngine implements StreamingPlayback {
           entity.sensorGroup != null
             ? this.resolveIffColor(entity.sensorGroup)
             : undefined,
-        position:
-          entity.position &&
-          (entity.simulatedVelocity ||
-            (entity.itemPhysics && !entity.itemPhysics.atRest))
-            ? ([...entity.position] as [number, number, number])
-            : entity.position,
+        position: snapshotEntityPosition(entity),
         rotation: entity.rotation,
         playerDelta: entity.playerDelta,
         linearTickStart: entity.linearTickStart,
@@ -6410,6 +6566,26 @@ export abstract class StreamEngine implements StreamingPlayback {
    *  mission change, alongside the outer snapshot cache reset). */
   protected invalidateHudCache(): void {
     this._hudCache = null;
+    this._matchSnapshotCache = null;
+  }
+
+  private buildCachedMatchState(): ReturnType<
+    StreamEngine["buildTeamScoresAndRoster"]
+  > {
+    const prev = this._matchSnapshotCache;
+    if (
+      prev &&
+      prev.teamScoresGen === this._teamScoresGen &&
+      prev.rosterGen === this._rosterGen
+    )
+      return prev.state;
+    const state = this.buildTeamScoresAndRoster();
+    this._matchSnapshotCache = {
+      teamScoresGen: this._teamScoresGen,
+      rosterGen: this._rosterGen,
+      state,
+    };
+    return state;
   }
 
   /**
@@ -6442,57 +6618,25 @@ export abstract class StreamEngine implements StreamingPlayback {
       prev.backpackText === this.backpackHud.text
         ? prev.backpackHud
         : this.buildBackpackHud();
-    let teamScores: TeamScore[];
-    let flagTargets: FlagTargetInfo[];
-    let playerTargets: PlayerRecord[];
-    let playerRoster: PlayerRosterEntry[];
-    if (
-      prev &&
-      prev.teamScoresGen === this._teamScoresGen &&
-      prev.rosterGen === this._rosterGen
-    ) {
-      teamScores = prev.teamScores;
-      flagTargets = prev.flagTargets;
-      playerTargets = prev.playerTargets;
-      playerRoster = prev.playerRoster;
-    } else {
-      ({ teamScores, flagTargets, playerTargets, playerRoster } =
-        this.buildTeamScoresAndRoster());
-    }
-
     this._hudCache = {
       weaponsHudGen: this._weaponsHudGen,
       inventoryHudGen: this._inventoryHudGen,
-      teamScoresGen: this._teamScoresGen,
-      rosterGen: this._rosterGen,
       backpackPackIndex: this.backpackHud.packIndex,
       backpackActive: this.backpackHud.active,
       backpackText: this.backpackHud.text,
       weaponsHud,
       inventoryHud,
       backpackHud,
-      teamScores,
-      flagTargets,
-      playerTargets,
-      playerRoster,
     };
     return {
       weaponsHud,
       inventoryHud,
       backpackHud,
-      teamScores,
-      flagTargets,
-      playerTargets,
-      playerRoster,
+      ...this.buildCachedMatchState(),
     };
   }
 
-  /** Build filtered chat and audio event arrays for the current time. */
-  protected buildTimeFilteredEvents(timeSec: number): {
-    chatMessages: ChatMessage[];
-    serverEvents: ServerMessageEvent[];
-    audioEvents: PendingAudioEvent[];
-  } {
+  private snapshotMessages() {
     if (this._chatSnapshotGen !== this._chatGen) {
       this._chatSnapshot = this.chatMessages.slice();
       this._chatSnapshotGen = this._chatGen;
@@ -6501,11 +6645,21 @@ export abstract class StreamEngine implements StreamingPlayback {
       this._serverEventsSnapshot = this.serverEvents.slice();
       this._serverEventsSnapshotGen = this._serverEventsGen;
     }
-    const chatMessages = this._chatSnapshot;
-    const serverEvents = this._serverEventsSnapshot;
+    return {
+      chatMessages: this._chatSnapshot,
+      serverEvents: this._serverEventsSnapshot,
+    };
+  }
+
+  /** Build event arrays for playback, including one-shot audio for this frame. */
+  protected buildTimeFilteredEvents(timeSec: number): {
+    chatMessages: ChatMessage[];
+    serverEvents: ServerMessageEvent[];
+    audioEvents: PendingAudioEvent[];
+  } {
     const audioEvents = this.audioEvents.filter(
       (e) => e.timeSec > timeSec - 0.5 && e.timeSec <= timeSec,
     );
-    return { chatMessages, serverEvents, audioEvents };
+    return { ...this.snapshotMessages(), audioEvents };
   }
 }

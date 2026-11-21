@@ -83,6 +83,39 @@ function flagSlot(shot: Shot | undefined): number | null {
         : null;
 }
 
+describe("first-person grab coverage", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([Math.PI / 2, -Math.PI / 2])(
+    "only cuts into the confirmed capper's eye view when they face the stand (%s)",
+    (heading) => {
+      const ds = fixture(true, false);
+      ds.events.find((e) => e.type === "flag-grab")!.actor = "Predicted";
+      ds.flagSamples.forEach((s) => {
+        if (s.slot === 2 && s.status === "held") s.carrierTargetId = 9;
+      });
+      for (let t = 55; t <= 61; t++) {
+        ds.playerSamples.push({
+          timeSec: t,
+          targetId: 9,
+          teamId: 1,
+          heading,
+          pos: [600 + (t - 55) * 25, 0, 100],
+        });
+      }
+      const shots = runSwitcher(new CausalView(ds, 6));
+      const pov = shots.find((s) => s.kind === "followPlayer" && s.firstPerson);
+      if (heading < 0) {
+        expect(pov).toBeUndefined();
+      } else {
+        expect(pov).toMatchObject({ targetId: 9, topic: "flag-stand" });
+        expect(pov!.startSec).toBeLessThan(60.4);
+        expect(pov!.endSec - pov!.startSec).toBeLessThanOrEqual(3.5);
+      }
+    },
+  );
+});
+
 describe.each([0, 2])(
   "approach supersession at %s seconds lookahead",
   (lookahead) => {
@@ -113,13 +146,13 @@ describe.each([0, 2])(
         expect(view.maxQueriedAhead).toBeLessThanOrEqual(lookahead);
       },
     );
-    it("keeps a brief confirmed carry when the flag is dropped immediately", () => {
+    it("keeps the grab and immediate drop in the same view", () => {
       const ds = fixture(false, true);
       const shots = runSwitcher(new CausalView(ds, lookahead));
       const shot = shots.find((s) => s.startSec <= 60.5 && s.endSec > 60.5);
       expect(flagSlot(shot)).toBe(2);
       expect(shot?.startSec).toBe(60.5);
-      expect(shot?.endSec).toBe(61.5);
+      expect(shot?.endSec).toBeGreaterThan(61.5);
     });
     it("keeps the correction moving with the flag when a crowd reaches the stand", () => {
       const ds = fixture(true, false);

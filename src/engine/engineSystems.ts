@@ -37,6 +37,7 @@ function startPlaybackSession(
   engine: GameEngine,
   recording: StreamRecording,
 ): () => void {
+  const stopDirectorCamera = installDirectorCamera(engine);
   let session: { dispose(): void } | null = null;
   let stopped = false;
   // Loaded on demand: map mode never streams.
@@ -46,6 +47,7 @@ function startPlaybackSession(
   return () => {
     stopped = true;
     session?.dispose();
+    stopDirectorCamera();
   };
 }
 
@@ -53,7 +55,6 @@ function startPlaybackSession(
 function startDemoSystems(engine: GameEngine): () => void {
   return combineCleanups(
     installDemoCameraSelection(engine),
-    installDirectorCamera(engine),
     installCameraWatchdog(engine),
     reaction(
       settingsStore,

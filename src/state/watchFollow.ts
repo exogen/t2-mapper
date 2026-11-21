@@ -410,9 +410,14 @@ export function exitWatchFollow(): void {
  * has no body at all (corpse faded, respawn pending) — follow stays
  * armed and re-locks when they spawn. Call once per frame while
  * followEntityId is set or a quick cam is waiting for its player.
+ * Director shots follow the selected body for the duration of the shot.
  */
-export function resolveWatchFollowTarget(): string | null {
+export function resolveWatchFollowTarget(followRespawns = true): string | null {
   const state = streamPlaybackStore.getState();
+  if (!followRespawns && state.followFlagSlot == null) {
+    const id = state.followEntityId;
+    return id && gameEntityStore.getState().streamEntities.has(id) ? id : null;
+  }
   if (state.followPlayer && state.followFlagSlot == null) {
     const player = getPlayerResolver().refresh(state.followPlayer);
     if (player !== state.followPlayer)

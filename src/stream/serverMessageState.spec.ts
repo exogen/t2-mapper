@@ -21,6 +21,10 @@ class MessageStream extends TestLiveStream {
     return this.buildTimeFilteredEvents(this.getTimeSec());
   }
 
+  directorSnapshot() {
+    return this.buildDirectorSnapshot();
+  }
+
   setString(id: number, value: string): void {
     this.conn.netStrings.set(id, value);
   }
@@ -121,7 +125,7 @@ function sharedState(conn: ConnectionState) {
 
 function fixture() {
   const browser = new MessageStream();
-  const relay = new WatchStateAccumulator();
+  const relay = new WatchStateAccumulator(undefined, { now: () => 0 });
   const relayState = (relay as unknown as { state: ConnectionState }).state;
   // A watcher hydrated from the relay shares its identity scope.
   browser.connection().playerIdentity.scope = relayState.playerIdentity.scope;
@@ -171,6 +175,73 @@ function fixture() {
 }
 
 describe("browser and relay server-message state", () => {
+  it("builds a small director snapshot with shared match data and stable simulation samples", () => {
+    const { browser, send } = fixture();
+    send(join("Alice"), joinTeam("Alice"));
+    const player = browser.addEntity({
+      id: "player",
+      ghostIndex: 2,
+      type: "Player",
+      className: "Player",
+      targetId: 32,
+      targetGeneration: 3,
+      position: [4, 5, 6],
+      simulatedVelocity: [1, 0, 0],
+      sensorGroup: 1,
+      mountObjectGhostIndex: 3,
+      imageSlots: [
+        undefined,
+        undefined,
+        {
+          shapeName: "pack_energy.dts",
+          dataBlockId: 9,
+          mountPoint: 2,
+        },
+      ],
+    });
+    browser.addEntity({
+      id: "vehicle",
+      ghostIndex: 3,
+      type: "Vehicle",
+      className: "FlyingVehicle",
+      position: [7, 8, 9],
+    });
+    browser.addEntity({
+      id: "emitter",
+      ghostIndex: 4,
+      type: "ParticleEmissionDummy",
+      className: "ParticleEmissionDummy",
+    });
+    browser.event({ type: "Sim2DAudioEvent", profileId: 7 });
+
+    const snapshot = browser.directorSnapshot();
+    const playback = browser.getSnapshot();
+    expect(snapshot.teamScores).toBe(playback.teamScores);
+    expect(snapshot.playerRoster).toBe(playback.playerRoster);
+    expect(snapshot.serverEvents).toBe(playback.serverEvents);
+    expect(snapshot.entities.map((entity) => entity.id)).toEqual([
+      "player",
+      "vehicle",
+    ]);
+    expect(snapshot.entities[0]).toMatchObject({
+      targetId: 32,
+      targetGeneration: 3,
+      teamId: 1,
+      mountObjectId: "vehicle",
+      position: [4, 5, 6],
+      imageSlots: [undefined, undefined, { shapeName: "pack_energy.dts" }],
+    });
+    expect(snapshot.entities[0].imageSlots?.[2]).not.toHaveProperty(
+      "dataBlockId",
+    );
+    expect(snapshot).not.toHaveProperty("audioEvents");
+    expect(snapshot).not.toHaveProperty("weaponsHud");
+    expect(playback.audioEvents).toHaveLength(1);
+    player.position![0] = 10;
+    expect(snapshot.entities[0].position).toEqual([4, 5, 6]);
+    expect(browser.directorSnapshot().entities[0].position).toEqual([10, 5, 6]);
+  });
+
   it("keeps live server names current across later server messages", () => {
     const stream = new MessageStream();
     stream.message(

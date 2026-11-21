@@ -19,6 +19,7 @@ import { stripTaggedStringMarkup } from "../stream/streamHelpers";
 import {
   hasGameOverAnnouncement,
   isRealMatchStart,
+  matchCountdownSeconds,
 } from "../stream/matchEvents";
 import type { DirectorEvent } from "./types";
 import {
@@ -149,18 +150,8 @@ export function scanDirectorEvent(event: ServerMessageEvent): DirectorEvent[] {
     if (isRealMatchStart(body)) {
       return [{ timeSec, type: "match-start", description: "Match started" }];
     }
-    // The pre-kickoff countdown shares this message type: "Match
-    // starts in N seconds." — the broadcast's natural cue to run the
-    // roster line-ups. It arrives BOTH ways on real servers: the long
-    // ticks as a template ("Match starts in %1 seconds." + the number
-    // in args[2]), the final ticks pre-substituted.
-    const direct = /match starts in (\d+) second/i.exec(body);
-    const secondsUntil = direct
-      ? parseInt(direct[1], 10)
-      : /match starts in %1 second/i.test(body)
-        ? parseInt(clean(args[2]), 10)
-        : NaN;
-    if (Number.isFinite(secondsUntil)) {
+    const secondsUntil = matchCountdownSeconds(body, clean(args[2]));
+    if (secondsUntil != null) {
       return [
         {
           timeSec,

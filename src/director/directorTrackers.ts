@@ -26,6 +26,7 @@ import type {
   DirectorEvent,
   DirectorFlagSample,
   DirectorFlagStand,
+  DirectorOrdnanceImpact,
   DirectorPlayerSample,
   DirectorVec3,
   DirectorDeath,
@@ -48,8 +49,8 @@ import {
 } from "../stream/streamHelpers";
 import type {
   PlayerRosterEntry,
-  StreamEntity,
-  StreamSnapshot,
+  DirectorEntity,
+  DirectorSnapshot,
 } from "../stream/types";
 
 /** Flag track cadence — carriers move ~70 u/s, so ≥2 Hz. */
@@ -110,6 +111,7 @@ const ACTIVATE_THREAD_SLOT = 2;
 /** Inventory stations — where players suit up (verified from demos:
  *  station_inv_human.dts, plus deployable inventories). */
 const STATION_DATABLOCK = /station_inv_human|deploy_inventory/i;
+const VEHICLE_PAD_DATABLOCK = /^vehicle_pad(?:\.dts)?$/i;
 /** Generators, the other fixture that only ever sits inside a base
  *  (verified from demos: station_generator_large.dts). */
 const GENERATOR_DATABLOCK = /station_generator|generator_large/i;
@@ -190,7 +192,7 @@ function packName(shapeName: string | undefined): string | undefined {
   return m ? (PACK_NAMES[m[1].toLowerCase()] ?? m[1]) : undefined;
 }
 
-function isAlive(entity: StreamEntity): boolean {
+function isAlive(entity: DirectorEntity): boolean {
   return (entity.damageState ?? 0) === 0;
 }
 
@@ -204,8 +206,8 @@ function copyPos(pos: [number, number, number]): DirectorVec3 {
  * like StreamPlaybackSession's resolveCameraTarget.
  */
 function resolvePosition(
-  entity: StreamEntity,
-  byId: Map<string, StreamEntity>,
+  entity: DirectorEntity,
+  byId: Map<string, DirectorEntity>,
 ): DirectorVec3 | null {
   let current = entity;
   for (let hops = 0; hops < 4 && current.mountObjectId; hops++) {
@@ -223,8 +225,8 @@ function resolvePosition(
  * flag image's team skin.
  */
 function flagTeamId(
-  entity: StreamEntity,
-  snapshot: StreamSnapshot,
+  entity: DirectorEntity,
+  snapshot: DirectorSnapshot,
 ): number | null {
   if (entity.type === "Player") {
     const slot = entity.imageSlots?.find((s) =>
@@ -277,7 +279,7 @@ function officialNameParts(
 }
 
 interface FlagCandidate {
-  entity: StreamEntity;
+  entity: DirectorEntity;
   teamId: number | null;
   targetId: number;
   ghostIndex: number;
@@ -288,7 +290,7 @@ interface FlagCandidate {
  * order watchFollow's flagEntities uses, so slot numbers line up with
  * the flag-follow keys.
  */
-function collectFlagCandidates(snapshot: StreamSnapshot): FlagCandidate[] {
+function collectFlagCandidates(snapshot: DirectorSnapshot): FlagCandidate[] {
   const flags: FlagCandidate[] = [];
   for (const entity of snapshot.entities) {
     if (((entity.targetRenderFlags ?? 0) & 0x2) === 0 || !isAlive(entity)) {
@@ -353,6 +355,8 @@ export class DirectorTrackers {
   private readonly flagSamples: DirectorFlagSample[] = [];
   private readonly playerSamples: DirectorPlayerSample[] = [];
   private readonly vehicleSamples: DirectorVehicleSample[] = [];
+  private readonly seenOrdnanceImpacts = new Set<string>();
+  private readonly ordnanceImpacts: DirectorOrdnanceImpact[] = [];
   private readonly structures: StructureTransition[] = [];
   private readonly flagStands = new Map<number, DirectorFlagStand>();
   private readonly nameToTarget = new Map<string, number>();
@@ -380,6 +384,8 @@ export class DirectorTrackers {
   private readonly structureInventory: DirectorDataset["structureInventory"] =
     [];
   private readonly factsClock: { timeSec: number; clockMs: number }[] = [];
+  private readonly matchPhases: NonNullable<DirectorDataset["matchPhases"]> =
+    [];
   private matchSeenRunningSec: number | null = null;
   private readonly factsRoster: MatchFacts["roster"] = [];
   private factsRosterCount = -1;
@@ -441,15 +447,34 @@ export class DirectorTrackers {
   private dropCursor = 0;
 
   // ── Live scene facts refreshed each step ──
-  private lastTeamScores: StreamSnapshot["teamScores"] = [];
+  private lastTeamScores: DirectorSnapshot["teamScores"] = [];
   private visibility: DirectorDataset["visibility"];
   private stepCount = 0;
 
   /** When the server said the world was fully ghosted in. */
   worldCompleteSec: number | null = null;
 
+  observeMatchPhase(
+    phase: DirectorSnapshot["matchPhase"],
+    timeSec: number,
+  ): void {
+    if (!phase) return;
+    const last = this.matchPhases.at(-1);
+    if (
+      last &&
+      (timeSec < last.timeSec ||
+        last.phase === phase ||
+        (last.phase.kind === phase.kind &&
+          last.phase.startSec === phase.startSec))
+    )
+      return;
+    this.matchPhases.push({ timeSec, phase });
+    if (phase.kind === "running") this.matchSeenRunningSec ??= timeSec;
+  }
+
   /** Feed one stepped snapshot. `timeSec` must be non-decreasing. */
-  step(snapshot: StreamSnapshot, timeSec: number): void {
+  step(snapshot: DirectorSnapshot, timeSec: number): void {
+    this.observeMatchPhase(snapshot.matchPhase, snapshot.timeSec);
     if (snapshot.ghostAlwaysDoneSec != null && this.worldCompleteSec == null) {
       this.worldCompleteSec = snapshot.ghostAlwaysDoneSec;
     }
@@ -494,6 +519,11 @@ export class DirectorTrackers {
       this.grenadeShots,
     );
     this.sampleStations(snapshot, timeSec);
+    for (const { id, ...impact } of snapshot.ordnanceImpacts ?? []) {
+      if (this.seenOrdnanceImpacts.has(id)) continue;
+      this.seenOrdnanceImpacts.add(id);
+      this.ordnanceImpacts.push(impact);
+    }
     this.sampleDeaths(snapshot, timeSec);
     this.sampleSkillShotMessages(snapshot, timeSec);
     this.sampleVoiceBinds(snapshot);
@@ -515,7 +545,7 @@ export class DirectorTrackers {
    *  landing between the last grid step and the very end (a
    *  buzzer-beater cap at the final tick) still belong to the match. */
   ingestServerEvents(
-    snapshot: StreamSnapshot,
+    snapshot: DirectorSnapshot,
     availableAtSec = snapshot.timeSec,
   ): void {
     for (const raw of snapshot.serverEvents ?? []) {
@@ -744,7 +774,7 @@ export class DirectorTrackers {
     if (pass) event.dropKind = "pass";
   }
 
-  private sampleFlags(snapshot: StreamSnapshot, timeSec: number): void {
+  private sampleFlags(snapshot: DirectorSnapshot, timeSec: number): void {
     const candidates = collectFlagCandidates(snapshot);
     if (candidates.length === 0) return;
     const byId = new Map(snapshot.entities.map((e) => [e.id, e]));
@@ -793,7 +823,7 @@ export class DirectorTrackers {
     }
   }
 
-  private samplePlayers(snapshot: StreamSnapshot, timeSec: number): void {
+  private samplePlayers(snapshot: DirectorSnapshot, timeSec: number): void {
     const byId = new Map(snapshot.entities.map((e) => [e.id, e]));
     const rosterByTarget = new Map<number, PlayerRosterEntry>();
     for (const entry of snapshot.playerRoster ?? []) {
@@ -816,6 +846,11 @@ export class DirectorTrackers {
       const sample: DirectorPlayerSample = {
         timeSec,
         targetId,
+        vehicleId:
+          entity.mountObjectId &&
+          byId.get(entity.mountObjectId)?.type === "Vehicle"
+            ? entity.mountObjectId
+            : undefined,
         teamId:
           entity.teamId != null && entity.teamId > 0 ? entity.teamId : null,
         pos,
@@ -863,7 +898,7 @@ export class DirectorTrackers {
    */
   private noteIdentity(
     targetId: number,
-    entity: StreamEntity,
+    entity: DirectorEntity,
     clientId: number | null,
     timeSec: number,
   ): void {
@@ -904,7 +939,7 @@ export class DirectorTrackers {
     }
   }
 
-  private sampleVehicles(snapshot: StreamSnapshot, timeSec: number): void {
+  private sampleVehicles(snapshot: DirectorSnapshot, timeSec: number): void {
     // Riders per mount: players report the entity id they are mounted
     // on, so one pass over the players counts every vehicle's crew.
     let riders: Map<string, number> | null = null;
@@ -932,7 +967,7 @@ export class DirectorTrackers {
     }
   }
 
-  private sampleFacts(snapshot: StreamSnapshot, timeSec: number): void {
+  private sampleFacts(snapshot: DirectorSnapshot, timeSec: number): void {
     let anyScoreChanged = false;
     for (const team of snapshot.teamScores) {
       if (team.teamId <= 0) continue;
@@ -995,20 +1030,17 @@ export class DirectorTrackers {
         this.factsClock.push({ timeSec, clockMs });
       }
     }
-    if (this.matchSeenRunningSec == null && snapshot.matchStarted) {
-      this.matchSeenRunningSec = timeSec;
-    }
   }
 
   private sampleOrdnance(
-    snapshot: StreamSnapshot,
+    snapshot: DirectorSnapshot,
     timeSec: number,
     match: RegExp,
     inFlight: Map<string, MortarShot>,
     landed: MortarShot[],
   ): void {
     const alive = new Set<string>();
-    let byGhostIndex: Map<number, StreamEntity> | null = null;
+    let byGhostIndex: Map<number, DirectorEntity> | null = null;
     // The packet names the shooter: sourceObject is the firing ghost.
     const resolveShooter = (entity: {
       sourceGhostIndex?: number;
@@ -1055,7 +1087,8 @@ export class DirectorTrackers {
         });
       }
     }
-    // A round that vanished has landed — retire it to the shot list.
+    // Retain the last sighting as flight evidence. Only ordnanceImpacts
+    // certifies an explosion, since a ghost can also leave scope.
     for (const [id, shot] of inFlight) {
       if (!alive.has(id)) {
         landed.push(shot);
@@ -1064,22 +1097,28 @@ export class DirectorTrackers {
     }
   }
 
-  private sampleStations(snapshot: StreamSnapshot, timeSec: number): void {
+  private sampleStations(snapshot: DirectorSnapshot, timeSec: number): void {
     for (const entity of snapshot.entities) {
       if (!entity.dataBlock || !entity.position) continue;
       const isStation = STATION_DATABLOCK.test(entity.dataBlock);
+      const isPad = VEHICLE_PAD_DATABLOCK.test(entity.dataBlock);
       const isGenerator =
-        !isStation && GENERATOR_DATABLOCK.test(entity.dataBlock);
-      if (!isStation && !isGenerator) continue;
+        !isStation && !isPad && GENERATOR_DATABLOCK.test(entity.dataBlock);
+      if (!isStation && !isGenerator && !isPad) continue;
       // Keyed by rounded position, not entity id: station ghosts are
       // recreated as they come in and out of scope, and one physical
       // station must not become dozens of camera anchors.
-      const key = entity.position.map((n) => Math.round(n / 5)).join(",");
+      const kind = isPad
+        ? "vehiclePad"
+        : isGenerator
+          ? "generator"
+          : "inventory";
+      const key = `${kind}:${entity.position.map((n) => Math.round(n / 5)).join(",")}`;
       let station = this.stations.get(key);
       if (!station) {
         station = {
           pos: copyPos(entity.position),
-          kind: isGenerator ? "generator" : "inventory",
+          kind,
           deployed: /deploy/i.test(entity.dataBlock),
           activations: [],
         };
@@ -1107,7 +1146,7 @@ export class DirectorTrackers {
 
   /** Catch alive → dead transitions; the killer is attributed by the
    *  lagged kill-message cursor, never inferred from proximity. */
-  private sampleDeaths(snapshot: StreamSnapshot, timeSec: number): void {
+  private sampleDeaths(snapshot: DirectorSnapshot, timeSec: number): void {
     const byId = new Map(snapshot.entities.map((e) => [e.id, e]));
     const seen = new Map<
       number,
@@ -1188,7 +1227,7 @@ export class DirectorTrackers {
     }
   }
 
-  private sampleStructures(snapshot: StreamSnapshot, timeSec: number): void {
+  private sampleStructures(snapshot: DirectorSnapshot, timeSec: number): void {
     for (const entity of snapshot.entities) {
       if (
         entity.type === "Player" ||
@@ -1229,7 +1268,7 @@ export class DirectorTrackers {
   }
 
   private sampleSkillShotMessages(
-    snapshot: StreamSnapshot,
+    snapshot: DirectorSnapshot,
     availableAtSec: number,
   ): void {
     for (const msg of snapshot.chatMessages ?? []) {
@@ -1263,7 +1302,7 @@ export class DirectorTrackers {
    * the key sequence as the first segment ("[VGTA] "), which is the
    * only thing that tells a bind from typed chat.
    */
-  private sampleVoiceBinds(snapshot: StreamSnapshot): void {
+  private sampleVoiceBinds(snapshot: DirectorSnapshot): void {
     for (const msg of snapshot.chatMessages ?? []) {
       if (this.seenVoiceIds.has(msg.id) || msg.kind !== "chat") continue;
       const keys = VOICE_BIND_KEYS.exec(msg.segments?.[0]?.text ?? "")?.[1];
@@ -1319,6 +1358,7 @@ export class DirectorTrackers {
       worldCompleteSec: this.worldCompleteSec,
     };
     const dataset: DirectorDataset = {
+      matchPhases: this.matchPhases,
       durationSec: meta.durationSec,
       matchFacts,
       visibility: this.visibility,
@@ -1338,6 +1378,7 @@ export class DirectorTrackers {
       mortarShots: [...this.mortarShots, ...this.mortarsInFlight.values()].sort(
         (a, b) => a.timeSec - b.timeSec,
       ),
+      ordnanceImpacts: this.ordnanceImpacts,
       discShots: [...this.discShots, ...this.discsInFlight.values()].sort(
         (a, b) => a.timeSec - b.timeSec,
       ),

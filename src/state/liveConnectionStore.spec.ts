@@ -3,6 +3,11 @@ import type { RelayEventHandler } from "../stream/relayClient";
 import type { ServerInfo } from "../../relay/types";
 import type { LiveStreamAdapter } from "../stream/liveStreaming";
 import { testCatchupPayload } from "../../relay/serverPacketFixtures";
+import {
+  LIVE_CAST_METRICS_INTERVAL_MS,
+  type LiveCastMetricsMessage,
+  type LiveCastPlanBatch,
+} from "../../relay/liveCastTypes";
 
 vi.mock("../logger", () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
@@ -19,6 +24,7 @@ vi.mock("../stream/relayClient", () => ({
       this.connected = false;
     }
     watchServer = vi.fn();
+    setLiveCast = vi.fn();
     joinServer = vi.fn();
     sendCommand = vi.fn();
     listServers = vi.fn();
@@ -30,6 +36,9 @@ vi.mock("../stream/liveStreaming", () => ({
   LiveStreamAdapter: class {
     hydrate = vi.fn();
     feedPacket = vi.fn();
+    get simulationTimeSec() {
+      return streamClock.time;
+    }
   },
 }));
 
@@ -39,6 +48,13 @@ import {
 } from "./liveConnectionStore";
 import { casterStore } from "./casterStore";
 import { gameEntityStore } from "./gameEntityStore";
+import {
+  exitLiveDirector,
+  liveDirectorStore,
+  liveDirectorTimeAt,
+  startLiveDirector,
+} from "./liveDirectorStore";
+import { streamClock } from "./streamPlaybackStore";
 
 describe("watch connection metadata", () => {
   const address = "test:28000";
@@ -64,6 +80,7 @@ describe("watch connection metadata", () => {
         recording: true,
         chatEnabled: true,
         streamDelayMs: 60_000,
+        streamDelayReason: "tournament",
         channelId: "session:delayed-channel",
       },
       2,
@@ -85,6 +102,7 @@ describe("watch connection metadata", () => {
     expect(state()).toMatchObject({
       recording: true,
       streamDelayMs: 60_000,
+      streamDelayReason: "tournament",
       mapName: "DelayedMap",
       watchChannelId: "session:delayed-channel",
     });
@@ -94,8 +112,343 @@ describe("watch connection metadata", () => {
       { address, recording: false, streamDelayMs: 0 },
       2,
     );
-    expect(state()).toMatchObject({ recording: false, streamDelayMs: 0 });
+    expect(state()).toMatchObject({
+      recording: false,
+      streamDelayMs: 0,
+      streamDelayReason: null,
+    });
   });
+
+  it("replaces an earlier countdown with the current channel's CastGenius wait", () => {
+    handlers().onSessionStatus!(
+      "syncing",
+      undefined,
+      {
+        address,
+        streamDelayMs: 8_000,
+        streamDelayReason: "castGenius",
+        streamDelayReadyInMs: 4_000,
+      },
+      2,
+    );
+    expect(state()).toMatchObject({
+      streamDelayMs: 8_000,
+      streamDelayReason: "castGenius",
+      streamDelayReadyAt: Date.now() + 4_000,
+    });
+    handlers().onSessionStatus!(
+      "live",
+      undefined,
+      { address, streamDelayMs: 8_000, streamDelayReason: "castGenius" },
+      2,
+    );
+    expect(state().streamDelayReadyAt).toBeNull();
+  });
+
+  it("joins and holds a tournament shot until fresh camera directions arrive", () => {
+    const adapter = state().adapter!;
+    const game = { id: "cast-game", revision: 0, presentation: {} };
+    handlers().onCatchup!({
+      ...testCatchupPayload(),
+      epoch: 1,
+      gamePresentation: game,
+    });
+    const relay = state()._relay!;
+    liveConnectionStore.setState({ liveReady: true, liveCastAvailable: true });
+    streamClock.time = 3.456;
+    startLiveDirector();
+    expect(relay.setLiveCast).toHaveBeenLastCalledWith(true);
+    const packet = new Uint8Array([1]);
+    handlers().onGamePacket!(packet);
+    expect(adapter.feedPacket).toHaveBeenCalledExactlyOnceWith(packet);
+    // Admission can be temporarily lost before the worker delivers its first shot.
+    handlers().onSessionStatus!(
+      "live",
+      undefined,
+      { address, liveCastAvailable: null },
+      1,
+    );
+    expect(liveDirectorStore.getState().status).toBe("loading");
+    expect(relay.setLiveCast).toHaveBeenCalledExactlyOnceWith(true);
+    const plan: LiveCastPlanBatch = {
+      gameId: game.id,
+      epoch: 1,
+      plannedThroughTick: 200,
+      shots: [
+        {
+          startTick: 190,
+          shot: {
+            kind: "fixedOrbit",
+            center: [0, 0, 0],
+            radius: 10,
+            startSec: 6.08,
+            endSec: 12,
+            transitionIn: "cut",
+          },
+        },
+      ],
+    };
+    handlers().onLiveCastMessage!({ type: "liveCastShots", ...plan, epoch: 2 });
+    expect(liveDirectorStore.getState().status).toBe("loading");
+    handlers().onLiveCastMessage!({
+      type: "liveCastShots",
+      ...plan,
+      plannedThroughTick: 199,
+    });
+    expect(liveDirectorStore.getState().status).toBe("loading");
+    handlers().onLiveCastMessage!({
+      type: "liveCastTick",
+      gameId: game.id,
+      epoch: 1,
+      tick: 200,
+    });
+    expect(liveDirectorStore.getState().status).toBe("playing");
+    handlers().onLiveCastMessage!({
+      type: "liveCastShots",
+      ...plan,
+      shots: [],
+    });
+    expect(liveDirectorStore.getState().status).toBe("playing");
+    const { shots } = liveDirectorStore.getState();
+    // Picture packets outlive the planner's last committed coverage.
+    handlers().onGamePacket!(packet);
+    handlers().onLiveCastMessage!({
+      type: "liveCastTick",
+      gameId: game.id,
+      epoch: 1,
+      tick: 300,
+    });
+    expect(liveDirectorStore.getState().status).toBe("playing");
+    expect(liveDirectorStore.getState().shots).toBe(shots);
+    expect(relay.setLiveCast).toHaveBeenCalledExactlyOnceWith(true);
+
+    // Recovered plans use the same picture clock and retain the old shot.
+    handlers().onLiveCastMessage!({
+      type: "liveCastShots",
+      ...plan,
+      plannedThroughTick: 300,
+      shots: [{ ...plan.shots[0], startTick: 300 }],
+    });
+    expect(liveDirectorStore.getState().status).toBe("playing");
+    expect(liveDirectorStore.getState().shots).toHaveLength(2);
+    expect(liveDirectorStore.getState().shots[0]).toBe(shots[0]);
+    expect(adapter.feedPacket).toHaveBeenCalledTimes(2);
+    exitLiveDirector();
+    expect(relay.setLiveCast).toHaveBeenLastCalledWith(false);
+    expect(relay.watchServer).toHaveBeenCalledExactlyOnceWith(
+      address,
+      undefined,
+      false,
+    );
+    expect(adapter.hydrate).toHaveBeenCalledOnce();
+    expect(state().adapter).toBe(adapter);
+    expect(streamClock.time).toBe(3.456);
+    streamClock.time = 0;
+  });
+
+  it("keeps a CastGenius subscription during a server-driven picture switch", () => {
+    const adapter = state().adapter!;
+    const relay = state()._relay!;
+    const game = { id: "cast-game", revision: 0, presentation: {} };
+    const catchup = { ...testCatchupPayload(), gamePresentation: game };
+    handlers().onCatchup!(catchup);
+    startLiveDirector();
+    handlers().onSessionStatus!("syncing", undefined, { address }, 1);
+    handlers().onCatchup!(catchup);
+    expect(state().adapter).toBe(adapter);
+    expect(adapter.hydrate).toHaveBeenCalledTimes(2);
+    expect(relay.setLiveCast).toHaveBeenCalledExactlyOnceWith(true);
+    expect(relay.watchServer).toHaveBeenCalledOnce();
+    expect(liveDirectorStore.getState().status).toBe("loading");
+    handlers().onLiveCastMessage!({
+      type: "liveCastShots",
+      gameId: "old-game",
+      epoch: 1,
+      plannedThroughTick: 100,
+      shots: [],
+      ended: true,
+    });
+    expect(liveDirectorStore.getState().status).toBe("loading");
+    liveConnectionStore.setState({ liveReady: true });
+    streamClock.time = 25;
+    vi.spyOn(adapter, "simulationTimeSec", "get").mockReturnValue(0);
+    handlers().onLiveCastMessage!({
+      type: "liveCastTick",
+      gameId: game.id,
+      epoch: catchup.epoch,
+      tick: 100,
+    });
+    handlers().onLiveCastMessage!({
+      type: "liveCastShots",
+      gameId: game.id,
+      epoch: catchup.epoch,
+      plannedThroughTick: 100,
+      shots: [
+        {
+          startTick: 100,
+          shot: {
+            kind: "followFlag",
+            slot: 1,
+            startSec: 3.2,
+            endSec: 8,
+            transitionIn: "cut",
+          },
+        },
+      ],
+    });
+    expect(liveDirectorStore.getState().status).toBe("loading");
+    handlers().onSessionStatus!("live", undefined, { address }, 1);
+    expect(liveDirectorStore.getState().status).toBe("playing");
+    expect(liveDirectorTimeAt(0.25)).toBeCloseTo(3.45);
+    exitLiveDirector();
+    handlers().onSessionStatus!("syncing", undefined, { address }, 1);
+    handlers().onCatchup!(catchup);
+    expect(relay.setLiveCast).toHaveBeenCalledTimes(2);
+    expect(relay.setLiveCast).toHaveBeenLastCalledWith(false);
+    expect(adapter.hydrate).toHaveBeenCalledTimes(3);
+    expect(liveDirectorStore.getState().status).toBe("idle");
+    streamClock.time = 0;
+  });
+
+  it("measures shot delivery against the released game tick and skips the attached shot", () => {
+    const game = { id: "cast-game", revision: 0, presentation: {} };
+    const catchup = { ...testCatchupPayload(), gamePresentation: game };
+    const identity = { gameId: game.id, epoch: catchup.epoch };
+    handlers().onCatchup!(catchup);
+    startLiveDirector();
+
+    function anchor(tick: number) {
+      handlers().onLiveCastMessage!({
+        type: "liveCastTick",
+        ...identity,
+        tick,
+      });
+    }
+    function shot(startTick: number, initial?: true) {
+      handlers().onLiveCastMessage!({
+        type: "liveCastShots",
+        ...identity,
+        initial,
+        plannedThroughTick: startTick,
+        shots: [
+          {
+            startTick,
+            shot: {
+              kind: "followFlag",
+              slot: 1,
+              startSec: startTick * 0.032,
+              endSec: startTick * 0.032 + 1,
+              transitionIn: "cut",
+            },
+          },
+        ],
+      });
+    }
+
+    anchor(100);
+    shot(70, true);
+    expect(state().castShotLeadMs).toBeNull();
+    shot(110);
+    expect(state().castShotLeadMs).toBe(320);
+    anchor(124);
+    shot(110);
+    expect(state().castShotLeadMs).toBe(320);
+    shot(120);
+    expect(state().castShotLeadMs).toBe(-128);
+    shot(124);
+    expect(state().castShotLeadMs).toBe(0);
+    handlers().onCatchup!(catchup);
+    expect(state().castShotLeadMs).toBeNull();
+  });
+
+  it("pairs planner coverage with the current picture and expires stale metrics", () => {
+    const game = { id: "cast-game", revision: 0, presentation: {} };
+    const catchup = { ...testCatchupPayload(), gamePresentation: game };
+    const identity = { gameId: game.id, epoch: catchup.epoch };
+    handlers().onCatchup!(catchup);
+    startLiveDirector();
+    handlers().onLiveCastMessage!({
+      type: "liveCastTick",
+      ...identity,
+      tick: 100,
+    });
+    const worker = {
+      ...identity,
+      cpuPercent: 25,
+      rssBytes: 1024,
+      sampledAtMs: Date.now(),
+      sourceTick: 365,
+      processedThroughTick: 360,
+      plannedThroughTick: 160,
+      pendingTicks: 5,
+    };
+    const metrics: LiveCastMetricsMessage = {
+      type: "liveCastMetrics",
+      activeWorkers: 2,
+      workers: [{ ...worker, epoch: identity.epoch + 1 }, worker],
+    };
+    handlers().onLiveCastMetrics!(metrics);
+    expect(state().castMetrics).toBe(metrics);
+    expect(state().castCoverageLeadMs).toBe(1_920);
+    exitLiveDirector();
+    expect(state().castCoverageLeadMs).toBeNull();
+    expect(state().castMetrics).toBe(metrics);
+    vi.advanceTimersByTime(LIVE_CAST_METRICS_INTERVAL_MS * 3);
+    expect(state().castMetrics).toBeNull();
+  });
+
+  it("uses the requested CastGenius picture on the first catch-up after reconnect", () => {
+    startLiveDirector();
+    handlers().onClose!();
+    vi.advanceTimersByTime(2_000);
+    handlers().onOpen!();
+    const relay = state()._relay!;
+    expect(relay.watchServer).toHaveBeenCalledExactlyOnceWith(
+      address,
+      "session:delayed-channel",
+      true,
+    );
+    handlers().onCatchup!({
+      ...testCatchupPayload(),
+      gamePresentation: { id: "new-game", revision: 0, presentation: {} },
+    });
+    expect(relay.setLiveCast).not.toHaveBeenCalled();
+    expect(liveDirectorStore.getState().status).toBe("loading");
+  });
+
+  it.each(["while tuning", "after reconnect"])(
+    "retunes to the ordinary picture when the CastGenius picture fails %s",
+    (phase) => {
+      startLiveDirector();
+      if (phase === "after reconnect") {
+        handlers().onClose!();
+        vi.advanceTimersByTime(2_000);
+        handlers().onOpen!();
+      }
+      const relay = state()._relay!;
+      const adapter = state().adapter!;
+      vi.mocked(relay.setLiveCast).mockClear();
+      expect(liveDirectorStore.getState().status).toBe("loading");
+
+      const unavailable = { address, liveCastAvailable: false };
+      handlers().onSessionStatus!("syncing", undefined, unavailable, 1);
+      handlers().onSessionStatus!("syncing", undefined, unavailable, 1);
+      expect(relay.setLiveCast).toHaveBeenCalledExactlyOnceWith(false);
+      expect(relay.watchServer).toHaveBeenCalledOnce();
+      expect(liveDirectorStore.getState()).toMatchObject({
+        status: "error",
+        error: "CastGenius is unavailable for this match.",
+      });
+
+      handlers().onCatchup!(testCatchupPayload());
+      handlers().onSessionStatus!("live", undefined, unavailable, 1);
+      exitLiveDirector();
+      expect(relay.setLiveCast).toHaveBeenCalledExactlyOnceWith(false);
+      expect(state().adapter).toBe(adapter);
+      expect(adapter.hydrate).toHaveBeenCalledOnce();
+      expect(state().watchStatus).toBe("live");
+    },
+  );
 
   it("uses the watched mission for caster settings and ignores superseded adapters", () => {
     const adapter = state().adapter!;
@@ -277,6 +630,7 @@ describe("watch connection metadata", () => {
     expect(state()._relay!.watchServer).toHaveBeenLastCalledWith(
       address,
       "session:delayed-channel",
+      false,
     );
     expect(state()).toMatchObject({
       serverAddress: address,
@@ -296,6 +650,7 @@ describe("watch connection metadata", () => {
     expect(state()._relay!.watchServer).toHaveBeenLastCalledWith(
       address,
       "session:delayed-channel",
+      false,
     );
     expect(state()).toMatchObject({
       mapName: "DelayedMap",
@@ -309,6 +664,7 @@ describe("watch connection metadata", () => {
     expect(state()._relay!.watchServer).toHaveBeenLastCalledWith(
       "other:28000",
       undefined,
+      false,
     );
     expect(state()).toMatchObject({
       serverAddress: "other:28000",
@@ -615,12 +971,14 @@ describe("watch connection metadata", () => {
     expect(state()._relay!.watchServer).toHaveBeenLastCalledWith(
       address,
       "session:live",
+      false,
     );
     state().leaveServer();
     state().watchServer(address);
     expect(state()._relay!.watchServer).toHaveBeenLastCalledWith(
       address,
       undefined,
+      false,
     );
   });
 
@@ -653,6 +1011,7 @@ describe("watch connection metadata", () => {
     expect(relay.watchServer).toHaveBeenCalledExactlyOnceWith(
       "second:28000",
       undefined,
+      false,
     );
   });
 
@@ -736,9 +1095,14 @@ describe("session adapter callbacks", () => {
 
     state().watchServer(address);
     const watched = state().adapter!;
+    startLiveDirector();
     vi.mocked(relay.watchServer).mockClear();
     watched.onParseFault!(fault);
-    expect(relay.watchServer).toHaveBeenCalledOnce();
+    expect(relay.watchServer).toHaveBeenCalledExactlyOnceWith(
+      address,
+      undefined,
+      true,
+    );
     expect(state().adapter).not.toBe(watched);
   });
 });

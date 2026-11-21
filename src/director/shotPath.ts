@@ -249,7 +249,11 @@ export function cameraBuried(eye: DirectorVec3): boolean {
  * A buried camera sees NOTHING, however clear its rays come back — the
  * rays come back clear precisely because it is inside a solid.
  */
-export function subjectVisible(eye: DirectorVec3, aim: DirectorVec3): boolean {
+export function subjectVisible(
+  eye: DirectorVec3,
+  aim: DirectorVec3,
+  targetMargin?: number,
+): boolean {
   if (cameraBuried(eye)) return false;
   // THE SAME TEST THE RUNTIME USES, not a second opinion. These were
   // separate implementations whose tolerances ran in different
@@ -258,7 +262,7 @@ export function subjectVisible(eye: DirectorVec3, aim: DirectorVec3): boolean {
   // the shot, and the viewer saw the camera correct itself.
   torqueVecToThree(eye, _fromThree);
   torqueVecToThree(aim, _toThree);
-  return !subjectViewBlocked(_fromThree, _toThree);
+  return !subjectViewBlocked(_fromThree, _toThree, targetMargin);
 }
 const _fromThree = new Vector3();
 const _toThree = new Vector3();

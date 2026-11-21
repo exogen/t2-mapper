@@ -8,6 +8,7 @@ import {
   ReactNode,
   // ViewTransition,
 } from "react";
+import { useStore } from "zustand";
 import type { GameEngine } from "../engine/gameEngine";
 import { InspectorControls } from "./InspectorControls";
 import { AccountControls } from "./AccountControls";
@@ -64,6 +65,7 @@ import {
 } from "../state/gameEntityStore";
 import { useCameraTour } from "../state/cameraTourStore";
 import { useCameraOwner } from "../state/cameraOwner";
+import { liveDirectorStore } from "../state/liveDirectorStore";
 import { useMediaQuery } from "./useMediaQuery";
 import { useTouchDevice } from "./useTouchDevice";
 import { GameDialogSpinner } from "./GameDialogSpinner";
@@ -228,10 +230,12 @@ export function MapInspector() {
   );
   const watchEndReason = useLiveSelector((s) => s.watchEndReason);
   const catchupProgress = useLiveSelector((s) => s.catchupProgress);
-  // The stream-delay notice owns the screen during tournament buffering;
-  // its own spinner-free banner replaces the loading indicator (they clash).
-  const streamDelayNoticeUp = useLiveSelector(
+  const hasStreamDelayCountdown = useLiveSelector(
     (s) => s.streamDelayMs > 0 && s.streamDelayReadyAt != null,
+  );
+  const castLoading = useStore(
+    liveDirectorStore,
+    (s) => s.status === "loading",
   );
   const watchServer = useLiveSelector((s) => s.watchServer);
   const relayConnected = useLiveSelector((s) => s.relayConnected);
@@ -482,7 +486,9 @@ export function MapInspector() {
           ? missionLoadingProgress < 1
           : false;
 
-  const loadingIndicatorUp = showLoadingIndicator && !streamDelayNoticeUp;
+  const watchNoticeUp =
+    catchupProgress == null && (hasStreamDelayCountdown || castLoading);
+  const loadingIndicatorUp = showLoadingIndicator && !watchNoticeUp;
 
   // Keep the loading indicator visible briefly after reaching 100%
   useEffect(() => {
@@ -692,6 +698,7 @@ export function MapInspector() {
         </Activity>
         <div className={styles.Content}>
           <ClipLoader />
+          <StreamDelayNotice />
           {showJoinScreen ? (
             autoJoin === "pending" ? (
               <LoadingIndicator isLoading progress={null} />
@@ -803,7 +810,6 @@ export function MapInspector() {
                   progress={loadingProgress}
                 />
               )}
-              <StreamDelayNotice />
               {hasStreamData &&
               (recording?.source === "demo" || isWatcher) &&
               !mapInfoOpen &&

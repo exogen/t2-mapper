@@ -11,6 +11,7 @@ import {
   clearWorldColliders,
   firstInteriorFace,
   pointInsideInterior,
+  pointObstructed,
   registerForceFieldCollider,
   registerInteriorCollider,
   setForceFieldEnabled,
@@ -74,6 +75,35 @@ describe("terrainHeightAt", () => {
       const hit = castTerrainRay([x, y, 500], [x, y, -100])!;
       expect(terrainHeightAt(x, y)).toBeCloseTo(hit.point[2], 2);
     }
+  });
+});
+
+describe("camera clearance below terrain", () => {
+  it("keeps a terrain hole open while retaining clearance from the rim", () => {
+    setTerrainCollisionData({
+      heightMap: flatHeightMap(100),
+      squareSize: 8,
+      emptySquareRuns: [(1 << 16) | (128 << 8) | 128],
+    });
+    expect(pointObstructed([4, 4, 70], 2)).toBe(false);
+    expect(pointObstructed([0.5, 4, 99.5], 2)).toBe(true);
+    expect(pointObstructed([12, 4, 70], 2)).toBe(true);
+  });
+
+  it("keeps a room below intact terrain open and rejects its solid floor", () => {
+    setTerrainCollisionData({
+      heightMap: flatHeightMap(100),
+      squareSize: 8,
+    });
+    const floor = new Mesh(new BoxGeometry(20, 2, 20));
+    floor.position.y = 60;
+    floor.updateMatrixWorld(true);
+    const ceiling = new Mesh(new BoxGeometry(20, 2, 20));
+    ceiling.position.y = 85;
+    ceiling.updateMatrixWorld(true);
+    registerInteriorCollider("basement", [floor, ceiling]);
+    expect(pointObstructed([0, 0, 70], 2)).toBe(false);
+    expect(pointObstructed([0, 0, 60], 2)).toBe(true);
   });
 });
 

@@ -514,6 +514,19 @@ describe("describeScenes", () => {
     const later = shotAt(70);
     describeScenes(later, ds);
     expect(later.shots[0].scene!.clockRemainingSec).toBeCloseTo(1790, 6);
+
+    // A missed whistle leaves the timing to the packet-derived phase.
+    ds.matchFacts.matchStartSec = null;
+    ds.matchPhases = [
+      { timeSec: 20, phase: { kind: "countdown", startSec: 40 } },
+      { timeSec: 60, phase: { kind: "running", startSec: 40 } },
+    ];
+    const countdown = shotAt(35);
+    describeScenes(countdown, ds);
+    expect(countdown.shots[0].scene!.clockRemainingSec).toBeNull();
+    const running = shotAt(70);
+    describeScenes(running, ds);
+    expect(running.shots[0].scene!.clockRemainingSec).toBeCloseTo(1790, 6);
   });
 
   it("marks the picked player as a pick-up's focus", () => {

@@ -13,6 +13,7 @@ import { directorStartSec } from "./directorStart";
 import { demoLoadStore } from "./demoLoadStore";
 import { DIRECTOR_ORBIT_TARGET_DAMPING } from "../director/cameraRig";
 import { exitToFreeFly } from "./watchFollow";
+import { exitLiveDirector } from "./liveDirectorStore";
 import type { DirectorDataset, ShotPlan } from "../director/types";
 import { planFromSidecar } from "../director/castSidecar";
 import { sidecarUrl } from "../stream/demoIndex";
@@ -154,6 +155,7 @@ export function setCommentaryPreload(
  */
 export function exitDirector(): void {
   cancelDirectorStart();
+  exitLiveDirector();
   if (demoDirectorStore.getState().status !== "playing") return;
   demoDirectorStore.setState({ status: "ready" });
   streamPlaybackStore.setState({ orbitTargetDamping: null });

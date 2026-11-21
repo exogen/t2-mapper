@@ -8,7 +8,7 @@ export class WatchRequest {
     probe(address: string): Promise<boolean>;
     checking(address: string): void;
     rejected(address: string): void;
-    attach(address: string, channelId?: string): void;
+    attach(address: string, channelId?: string, liveCast?: boolean): void;
     detach(): void;
   };
 
@@ -21,7 +21,11 @@ export class WatchRequest {
     this.options.detach();
   }
 
-  async watch(address: string, channelId?: string): Promise<void> {
+  async watch(
+    address: string,
+    channelId?: string,
+    liveCast?: boolean,
+  ): Promise<void> {
     const generation = ++this.generation;
     this.options.detach();
     if (!this.options.isKnown(address)) {
@@ -44,6 +48,7 @@ export class WatchRequest {
         return;
       }
     }
-    if (generation === this.generation) this.options.attach(address, channelId);
+    if (generation === this.generation)
+      this.options.attach(address, channelId, liveCast);
   }
 }

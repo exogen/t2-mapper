@@ -1,5 +1,5 @@
 /** State sampled beside the director, with no consumer callbacks or I/O. */
-import type { StreamSnapshot } from "../stream/types";
+import type { DirectorSnapshot } from "../stream/types";
 import type { DirectorFlagSample, DirectorPlayerSample } from "./types";
 import type { DirectorStateFrame } from "./observationContract";
 
@@ -30,7 +30,7 @@ export class DirectorStateJournal {
   /** Samples must come from this tick, not a final dataset or nearest-future
    * lookup. Called at the existing player sampling cadence (currently 1 Hz). */
   record(
-    snapshot: StreamSnapshot,
+    snapshot: DirectorSnapshot,
     timeSec: number,
     players: DirectorPlayerSample[],
     flags: DirectorFlagSample[],
@@ -83,7 +83,9 @@ export class DirectorStateJournal {
       })),
       match: {
         clockMs: snapshot.matchClockMs,
-        started: snapshot.matchStarted,
+        started: snapshot.matchPhase
+          ? snapshot.matchPhase.kind === "running"
+          : snapshot.matchStarted,
         ended: snapshot.matchEnded,
       },
     };

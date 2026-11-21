@@ -1,6 +1,7 @@
 import { cameraTourStore, useCameraTour } from "./cameraTourStore";
 import { commandCircuitStore, useCommandCircuit } from "./commandCircuitStore";
 import { demoDirectorStore, useDirector } from "./demoDirectorStore";
+import { liveDirectorStore } from "./liveDirectorStore";
 import { streamPlaybackStore } from "./streamPlaybackStore";
 import { isFollowTargetPlayer } from "./watchFollow";
 import { clipStore } from "./clipStore";
@@ -41,7 +42,8 @@ export function resolveCameraOwner(): CameraOwner {
   return ownerOf(
     clipStore.getState().active !== null,
     cameraTourStore.getState().animation !== null,
-    demoDirectorStore.getState().status === "playing",
+    demoDirectorStore.getState().status === "playing" ||
+      liveDirectorStore.getState().status === "playing",
     commandCircuitStore.getState().active,
   );
 }
@@ -51,8 +53,17 @@ export function useCameraOwner(): CameraOwner {
   const clipActive = useStore(clipStore, (state) => state.active !== null);
   const tourActive = useCameraTour((s) => s.animation !== null);
   const directing = useDirector((s) => s.status === "playing");
+  const liveDirecting = useStore(
+    liveDirectorStore,
+    (s) => s.status === "playing",
+  );
   const commandCircuit = useCommandCircuit((s) => s.active);
-  return ownerOf(clipActive, tourActive, directing, commandCircuit);
+  return ownerOf(
+    clipActive,
+    tourActive,
+    directing || liveDirecting,
+    commandCircuit,
+  );
 }
 
 /** Lock local player orbits, including flag carriers; other owners keep control. */

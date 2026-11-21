@@ -26,6 +26,7 @@ export function rosterWide(
   endSec: number,
   squad: { pos: DirectorVec3 }[],
   teamName: string,
+  angle = 0,
 ): Shot {
   const center = centroid(squad.map((p) => p.pos));
   // Fly along the line the squad forms — its widest spread axis — so
@@ -41,6 +42,10 @@ export function rosterWide(
       axis = { x: dx / (d || 1), y: dy / (d || 1) };
     }
   }
+  axis = {
+    x: axis.x * Math.cos(angle) - axis.y * Math.sin(angle),
+    y: axis.x * Math.sin(angle) + axis.y * Math.cos(angle),
+  };
   const outX = -axis.y;
   const outY = axis.x;
   const travel = sweepTravel(
@@ -82,6 +87,8 @@ export function rosterWide(
  * passes work across the squad instead of revisiting the same knot.
  */
 export interface RosterFraming {
+  /** Film the rank from a different bearing. */
+  angle?: number;
   /** Multiplier on the standoff — a pass that cannot fly at the usual
    *  distance may fly closer, or further out. */
   standoffScale?: number;
@@ -135,8 +142,8 @@ export function rosterCloseUp(
     headings.reduce((a, h) => a + Math.cos(h), 0) / headings.length,
   );
   // heading is atan2(dx, dy) over Torque x/y, so forward is (sin, cos).
-  const fx = Math.sin(facing);
-  const fy = Math.cos(facing);
+  const fx = Math.sin(facing + (framing.angle ?? 0));
+  const fy = Math.cos(facing + (framing.angle ?? 0));
   // Along the rank is perpendicular to their facing.
   const ax = -fy;
   const ay = fx;

@@ -51,6 +51,7 @@ function describeFraming(shot: Shot): string {
         `, ${describeAim(shot.aim)}`
       );
     case "followPlayer":
+      if (shot.firstPerson) return `first person on player #${shot.targetId}`;
       return (
         `following player #${shot.targetId}` +
         (shot.distance != null ? ` @${shot.distance.toFixed(0)}m` : "") +

@@ -88,8 +88,8 @@ export function StreamingMissionInfo({
     ? dateString.split(" ")
     : [null, null];
   const recording = useRecording();
-  const liveWatcher = useLiveSelector((s) => s.role === "watcher");
-  const isWatcher = liveWatcher || replay !== null;
+  const isWatcher =
+    useLiveSelector((s) => s.role === "watcher") || replay !== null;
   const liveWatcherCount = useLiveSelector((s) => s.watcherCount);
   const watcherCount = replay?.watcherCount ?? liveWatcherCount;
   const relayRecording = useLiveSelector((s) => s.recording);
@@ -257,7 +257,7 @@ export function StreamingMissionInfo({
             {isLive && isLiveConnected && streamDelayMs > 0 ? (
               <span
                 className={styles.DelayBadge}
-                title="Tournament mode – this stream is delayed"
+                title="This stream is delayed"
               >
                 <LuClock className={styles.DelayIcon} aria-hidden />{" "}
                 {formatDelay(streamDelayMs)} DELAY

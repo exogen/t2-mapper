@@ -15,7 +15,6 @@ import type { StreamSnapshot } from "./types";
 /** Live packet rendering with authoritative pause/seek snapshots and recorded inputs. */
 export class ReplayStreamAdapter extends LiveStreamAdapter {
   readonly localSpectator = true;
-  playbackRevision = 0;
   sourceTick = 0;
   private sessionId: string | null = null;
   private epoch = -1;
@@ -51,7 +50,6 @@ export class ReplayStreamAdapter extends LiveStreamAdapter {
       );
     this.updateCameraAndHud();
     this.invalidateSnapshot();
-    this.playbackRevision++;
   }
 
   override getSnapshot(): StreamSnapshot {

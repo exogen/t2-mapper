@@ -46,9 +46,12 @@ const waterPlane = {
   sizeY: 2048,
 };
 
-function linearWaterStream(projectile: ParsedData, liquidType = 0) {
+function linearWaterStream(
+  projectile: ParsedData,
+  liquidType = 0,
+  stream = new TestLiveStream("play", "LinearProjectile"),
+) {
   setWaterInfo({ ...waterPlane, liquidType });
-  const stream = new TestLiveStream("play", "LinearProjectile");
   const dataBlocks = new Map<number, ParsedData>([
     [
       1,
@@ -593,6 +596,36 @@ it.each(["terrain", "water"] as const)(
   },
 );
 
+it("keeps the water impact and projectile lifetime when presentation effects are disabled", () => {
+  class HeadlessStream extends TestLiveStream {
+    protected override presentationEffectsEnabled = false;
+  }
+  const stream = linearWaterStream(
+    { explodeOnWaterImpact: true, splash: 4, emitter: 5 },
+    0,
+    new HeadlessStream("watch", "LinearProjectile"),
+  );
+  const event = vi.fn<(event: ProjectileLifecycleEvent) => void>();
+  stream.subscribeProjectileLifecycle(event);
+  stream.createGhost(4, 1, {
+    dataBlockId: 1,
+    initialPosition: { x: 4, y: 6, z: 25 },
+    direction: { x: 0, y: 0, z: -1 },
+  });
+  const snapshot = stream.stepToTime(0.32);
+  expect(snapshot.entities.map(({ type }) => type)).toEqual(["Projectile"]);
+  expect(stream.entityAt(4)).toMatchObject({
+    hasExploded: true,
+    position: undefined,
+  });
+  expect(event.mock.lastCall?.[0]).toMatchObject({
+    type: "end",
+    position: [4, 6, 20],
+  });
+  expect(stream.projectileTrailHistory.events).toHaveLength(0);
+  expect(stream.groundEffectHistory.oldestTimeSec).toBe(Infinity);
+});
+
 it("advances a slowed round through water and explodes at the lake bed", () => {
   const stream = linearWaterStream({ explodeOnWaterImpact: false });
   setTerrainCollisionData({
@@ -1039,6 +1072,37 @@ it("retains the original shooter name on checkpoint restore without replaying sp
   stream.roundTripCheckpoint();
   expect(stream.entityAt(4)?.projectileSourceName).toBe("Roof turret");
   expect(received).not.toHaveBeenCalled();
+});
+
+it("records mortar and missile explosions for the director without treating scope loss as an impact", () => {
+  class CastStream extends TestLiveStream {
+    protected override captureDirectorImpacts = true;
+    protected override presentationEffectsEnabled = false;
+
+    impact(entity: MutableEntity) {
+      this.spawnExplosion(entity, [1, 2, 3]);
+    }
+  }
+  const stream = new CastStream("watch");
+  const add = (ghostIndex: number, dataBlock: string) =>
+    stream.addEntity({
+      id: String(ghostIndex),
+      ghostIndex,
+      type: "Projectile",
+      className: "GrenadeProjectile",
+      position: [4, 5, 6],
+      dataBlock,
+    });
+  const mortar = add(3, "mortar_projectile.dts");
+  stream.impact(mortar);
+  stream.impact(mortar);
+  stream.impact(add(4, "weapon_missile_projectile.dts"));
+  add(5, "mortar_projectile.dts");
+  stream.ghost({ index: 5, type: "delete" });
+  expect(stream.getSnapshot().ordnanceImpacts).toEqual([
+    { id: "3", timeSec: 0, kind: "mortar", pos: [1, 2, 3] },
+    { id: "4", timeSec: 0, kind: "missile", pos: [1, 2, 3] },
+  ]);
 });
 
 it("does not treat projectiles already in a live catch-up baseline as new shots", () => {

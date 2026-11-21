@@ -42,6 +42,8 @@ const log = createLogger("liveStreaming");
  * StreamingPlayback interface used by the existing rendering pipeline.
  */
 export class LiveStreamAdapter extends StreamEngine {
+  /** Replaces the playback clock's snapshots when the relay rehydrates this adapter. */
+  playbackRevision = 0;
   private packetParser: PacketParser;
   relay: RelayClient;
 
@@ -189,6 +191,10 @@ export class LiveStreamAdapter extends StreamEngine {
     return this._serverUpdateId;
   }
 
+  get simulationTimeSec(): number {
+    return this.getTimeSec();
+  }
+
   // ── StreamingPlayback interface ──
 
   reset(): void {
@@ -229,6 +235,14 @@ export class LiveStreamAdapter extends StreamEngine {
     const targetTick = Number.isFinite(targetTimeSec)
       ? streamTimeToTick(Math.max(0, targetTimeSec))
       : this.tickCount;
+    this.advanceToTick(targetTick, maxMoveTicks);
+    return this.getSnapshot();
+  }
+
+  protected advanceToTick(
+    targetTick: number,
+    maxMoveTicks = Number.POSITIVE_INFINITY,
+  ): void {
     // Live simulation cannot wait for a missing asset. Start its shared
     // load and let any shot in this tick use the packet fallback.
     if (this.tickCount < targetTick) this.prepareProjectileAssets();
@@ -238,7 +252,6 @@ export class LiveStreamAdapter extends StreamEngine {
       ticks++
     )
       this.processTick();
-    return this.getSnapshot();
   }
 
   /** Watchers' local camera input must not drive the relay's control object. */
@@ -417,6 +430,7 @@ export class LiveStreamAdapter extends StreamEngine {
       );
     }
     this.onMissionInfoChange?.();
+    this.playbackRevision++;
     log.info(
       "hydrated epoch %d: %d entities, %d datablocks, %d net strings",
       payload.epoch,

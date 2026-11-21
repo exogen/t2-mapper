@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useStore } from "zustand";
-import { LuLoaderCircle } from "react-icons/lu";
 import { clipStore } from "../state/clipStore";
 import { useDemoLoad } from "../state/demoLoadStore";
 import { useEngineSelector, engineStore } from "../state/engineStore";
@@ -12,6 +11,7 @@ import { startClipPlayback } from "../stream/clipPlayback";
 import { navigationMode, useNavigationQueryState } from "./useQueryParams";
 import { useAppNavigation } from "./useAppNavigation";
 import { useClipQuery } from "./useClipQuery";
+import { PlaybackNotice } from "./PlaybackNotice";
 import styles from "./ClipControls.module.css";
 
 /** A clip owns the initial seek; ordinary moment links must wait outside this path. */
@@ -178,8 +178,7 @@ export function ClipLoader() {
               : "";
   if (!message) return null;
   return (
-    <div className={styles.Loading} role={failed ? "alert" : "status"}>
-      {!failed && <LuLoaderCircle className={styles.Spinner} aria-hidden />}
+    <PlaybackNotice failed={!!failed}>
       <span>{message}</span>
       {failed && (
         <>
@@ -209,6 +208,6 @@ export function ClipLoader() {
           </button>
         </>
       )}
-    </div>
+    </PlaybackNotice>
   );
 }
