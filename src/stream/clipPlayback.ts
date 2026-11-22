@@ -7,6 +7,7 @@ import { demoLoadStore } from "../state/demoLoadStore";
 import { exitDirector } from "../state/demoDirectorStore";
 import { publishedDemoFilename } from "../state/editableGame";
 import { readDemoCheckpoints } from "./demoCheckpoints";
+import { streamTimeToTick } from "./streamHelpers";
 import type { StreamRecording } from "./types";
 
 let startGeneration = 0;
@@ -64,10 +65,23 @@ export async function startClipPlayback(
         ensureCurrent();
         if (
           !recording.streamingPlayback.importCheckpoints ||
-          !checkpoints.length
+          checkpoints.length !== 1 ||
+          checkpoints[0].cursor.moveTicks !==
+            streamTimeToTick(first.demoTimeSec)
         )
           throw new Error("The clip's starting checkpoint is unavailable.");
-        recording.streamingPlayback.importCheckpoints(checkpoints);
+        recording.streamingPlayback.importCheckpoints(
+          checkpoints,
+          recoverCheckpoint &&
+            ((error) => {
+              void recoverCheckpoint(error).catch((reportError) =>
+                log.warn(
+                  "Could not report checkpoint restore failure: %o",
+                  reportError,
+                ),
+              );
+            }),
+        );
       } catch (error) {
         ensureCurrent();
         if (!recoverCheckpoint) throw error;

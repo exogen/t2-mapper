@@ -49,7 +49,6 @@ export function ClipLoader() {
   } | null>(null);
   const clip = useClipQuery(id);
   const view = clip.data;
-  const refetch = clip.refetch;
 
   useEffect(() => {
     setPrepared(null);
@@ -122,27 +121,19 @@ export function ClipLoader() {
     setError(null);
     void (async () => {
       try {
-        const checkpoint = await readClipCheckpoint(view, signal);
+        const checkpoint = await readClipCheckpoint(view, buffer, signal);
         signal.throwIfAborted();
         await startClipPlayback(
           view.timeline!,
           recording,
           signal,
-          checkpoint.text,
-          (error) =>
-            recoverClipCheckpoint(view, buffer, checkpoint.etag, signal, error),
+          checkpoint?.text,
+          checkpoint
+            ? () => recoverClipCheckpoint(view, buffer, checkpoint.etag, signal)
+            : undefined,
         );
         setPrepared({ id, recording });
       } catch (cause) {
-        if (
-          !abort.signal.aborted &&
-          cause instanceof ClipApiError &&
-          cause.status === 409
-        ) {
-          await refetch();
-          if (!abort.signal.aborted) setRetry((value) => value + 1);
-          return;
-        }
         if (!abort.signal.aborted)
           setError(
             cause instanceof Error
@@ -164,7 +155,6 @@ export function ClipLoader() {
     source,
     retry,
     prepared,
-    refetch,
   ]);
 
   if (!id) return null;

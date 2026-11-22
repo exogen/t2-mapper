@@ -926,6 +926,7 @@ export interface StreamingPlayback {
   readonly checkpointTicks?: readonly number[];
   importCheckpoints?(
     checkpoints: readonly import("./demoStreaming").DemoSeekCheckpoint[],
+    onRestoreError?: (error: unknown) => void,
   ): void;
   /** The initial pass preceded collision loading and can now be reconstructed. */
   readonly needsReplay?: boolean;

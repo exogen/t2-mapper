@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
@@ -7,13 +8,21 @@ import { pipeline } from "node:stream/promises";
 import {
   GetObjectCommand,
   HeadObjectCommand,
+  PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
 import { isPublishedDemoKey } from "./demoKeys.js";
 import type { DemoUploadConfig } from "./demoUpload.js";
 import type { DemoCheckpointGenerationResult } from "./demoCheckpointGenerator.js";
 import { runDemoWorker } from "./demoWorkerProcess.js";
-import { TICK_DURATION_MS } from "../src/stream/streamHelpers";
+import {
+  DEMO_CHECKPOINT_VERSION,
+  isSupportedDemoCheckpointVersion,
+} from "../src/stream/demoCheckpoints";
+import {
+  streamTimeToTick,
+  TICK_DURATION_MS,
+} from "../src/stream/streamHelpers";
 
 export const MAX_CLIP_SOURCE_BYTES = 256 * 1024 * 1024;
 export const MAX_CLIP_CHECKPOINT_BYTES = 32 * 1024 * 1024;
@@ -33,6 +42,66 @@ export interface PrepareClipCheckpointOptions {
   assetRoot: string;
   signal?: AbortSignal;
   client?: S3Client;
+}
+
+export { streamTimeToTick as clipStartTick };
+
+/** A backfill can publish directly to R2 while the relay's SQLite row still has the old version. */
+export function clipCheckpointVersion(
+  metadata: Record<string, string> | undefined,
+  sourceETag: string,
+  startSec: number,
+  sourceSha256?: string,
+): number | undefined {
+  const version = Number(metadata?.["checkpoint-version"]);
+  if (
+    metadata &&
+    isSupportedDemoCheckpointVersion(version) &&
+    metadata["demo-etag"] === sourceETag &&
+    /^[a-f0-9]{64}$/.test(metadata["demo-sha256"] ?? "") &&
+    (!sourceSha256 || metadata["demo-sha256"] === sourceSha256) &&
+    metadata["clip-start-tick"] === String(streamTimeToTick(startSec))
+  )
+    return version;
+}
+
+export function putClipCheckpoint(
+  client: S3Client,
+  config: DemoUploadConfig,
+  key: string,
+  result: PreparedClipCheckpoint,
+  sourceETag: string,
+  startSec: number,
+  options: {
+    signal?: AbortSignal;
+    repaired?: boolean;
+    replaceETag?: string | null;
+  } = {},
+) {
+  return client.send(
+    new PutObjectCommand({
+      Bucket: config.bucket,
+      Key: key,
+      Body: result.text,
+      ContentType: "application/json",
+      CacheControl: "no-store",
+      Metadata: {
+        "checkpoint-version": String(DEMO_CHECKPOINT_VERSION),
+        "demo-etag": sourceETag,
+        "demo-sha256": result.sourceSha256,
+        "clip-start-tick": String(streamTimeToTick(startSec)),
+        "checkpoint-sha256": createHash("sha256")
+          .update(result.text)
+          .digest("hex"),
+        ...(options.repaired && {
+          "repaired-version": String(DEMO_CHECKPOINT_VERSION),
+        }),
+      },
+      IfMatch: options.replaceETag ?? undefined,
+      IfNoneMatch: options.replaceETag === null ? "*" : undefined,
+    }),
+    { abortSignal: options.signal ?? AbortSignal.timeout(60_000) },
+  );
 }
 
 /** Generate one exact-start checkpoint without replaying on the relay thread. */
@@ -93,7 +162,7 @@ export async function prepareClipCheckpoint({
     },
   }),
 }: PrepareClipCheckpointOptions): Promise<PreparedClipCheckpoint> {
-  const tick = Math.floor((startSec * 1000) / TICK_DURATION_MS + 1e-7);
+  const tick = streamTimeToTick(startSec);
   const endTick =
     endSec === undefined
       ? undefined

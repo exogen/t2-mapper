@@ -1020,6 +1020,24 @@ it("rejects an invalid import without retaining any partial checkpoints", async 
   expect(restored.checkpointTicks).toEqual([]);
 });
 
+it("replays from the recording when an imported checkpoint fails during restore", async () => {
+  const blocks = Array.from({ length: 10 }, move);
+  const source = demo(blocks) as DemoStreamAdapter;
+  const first = await source.captureCheckpointAt(3, async () => {});
+  const invalid = await source.captureCheckpointAt(8, async () => {});
+  Object.assign(invalid.simulation.groundEffects, { frames: null });
+  const restored = demo(blocks) as DemoStreamAdapter;
+  const onRestoreError = vi.fn();
+  restored.importCheckpoints([first, invalid], onRestoreError);
+
+  expect(restored.stepToTime(atTick(9)).timeSec).toBe(9 * 0.032);
+  expect(onRestoreError).toHaveBeenCalledExactlyOnceWith(expect.any(Error));
+  restored.reset();
+  expect(restored.checkpointTicks).toEqual([3]);
+  expect(restored.stepToTime(atTick(9)).timeSec).toBe(9 * 0.032);
+  expect(onRestoreError).toHaveBeenCalledOnce();
+});
+
 type CheckpointConn = Record<string, unknown> & {
   targets: Record<string, unknown>;
 };

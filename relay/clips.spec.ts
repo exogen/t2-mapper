@@ -268,7 +268,7 @@ function clipRowSeeder(database: Database.Database) {
       time,
       etag: SOURCE_ETAG,
       sha: "a".repeat(64),
-      version: DEMO_CHECKPOINT_VERSION,
+      version: state === "ready" ? DEMO_CHECKPOINT_VERSION : null,
     });
     return id;
   };
@@ -956,7 +956,7 @@ it.each(["timeline", "checkpoint", "summary"])(
 );
 
 it.each(["timeline", "checkpoint"])(
-  "does not serve a stale %s when checkpoint rebuilding begins during its read",
+  "keeps the timeline available when repair starts during a %s read",
   async (asset) => {
     const f = await fixture();
     const clip = await save(f);
@@ -992,16 +992,16 @@ it.each(["timeline", "checkpoint"])(
     f.objects.delete(`demos/clips/${clip.id}/checkpoint.json`);
     expect(
       (await f.request("GET", `/api/clips/${clip.id}/checkpoint`)).status,
-    ).toBe(409);
+    ).toBe(204);
     await preparing.promise;
     releaseRead.resolve();
     const response = await request;
-    if (asset === "checkpoint") expect(response.status).toBe(409);
+    if (asset === "checkpoint") expect(response.status).toBe(204);
     else {
       expect(response.status).toBe(200);
       const current = (await response.json()) as ClipView;
-      expect(current.state).toBe("processing");
-      expect(current.timeline).toBeUndefined();
+      expect(current.state).toBe("ready");
+      expect(current.timeline).toMatchObject({ sourceDemo: clip.sourceDemo });
     }
     releasePrepare.resolve();
     await f.service.idle();
@@ -1174,25 +1174,52 @@ it("rebuilds obsolete or missing checkpoint artifacts", async () => {
     "UPDATE clip SET checkpointVersion=? WHERE id=?",
   );
   setVersion.run(DEMO_CHECKPOINT_VERSION, clip.id);
-  expect(
-    (
-      (await (
-        await f.request("GET", `/api/clips/${clip.id}`)
-      ).json()) as ClipView
-    ).state,
-  ).toBe("ready");
+  expect((await f.request("GET", clip.checkpointUrl)).status).toBe(200);
   expect(f.prepare).toHaveBeenCalledOnce();
   setVersion.run(23, clip.id);
-  const rebuilding = await f.request("GET", `/api/clips/${clip.id}`);
-  expect(((await rebuilding.json()) as ClipView).state).toBe("processing");
+  expect((await f.request("GET", clip.checkpointUrl)).status).toBe(200);
+  expect(f.rows()[0].checkpointVersion).toBe(DEMO_CHECKPOINT_VERSION);
+  expect(f.prepare).toHaveBeenCalledOnce();
+
+  setVersion.run(23, clip.id);
+  f.objects.get(`demos/clips/${clip.id}/checkpoint.json`)!.metadata![
+    "checkpoint-version"
+  ] = "23";
+  expect((await f.request("GET", clip.checkpointUrl)).status).toBe(204);
   await f.service.idle();
   expect(f.prepare).toHaveBeenCalledTimes(2);
   f.objects.delete(`demos/clips/${clip.id}/checkpoint.json`);
   expect(
     (await f.request("GET", `/api/clips/${clip.id}/checkpoint`)).status,
-  ).toBe(409);
+  ).toBe(204);
   await f.service.idle();
   expect(f.prepare).toHaveBeenCalledTimes(3);
+});
+
+it("keeps a published clip playable after exhausting checkpoint repairs", async () => {
+  const f = await fixture();
+  const clip = await save(f);
+  f.objects.delete(`demos/clips/${clip.id}/checkpoint.json`);
+  f.prepare.mockRejectedValue(new Error("Cannot rebuild checkpoint"));
+  expect((await f.request("GET", clip.checkpointUrl)).status).toBe(204);
+  await f.service.idle();
+  for (let attempt = 1; attempt < 3; attempt++) {
+    f.advance(30_001);
+    await f.restart();
+  }
+  expect(f.rows()[0]).toMatchObject({ state: "failed", attempts: 3 });
+  const response = await f.request("GET", `/api/clips/${clip.id}`);
+  expect(await response.json()).toMatchObject({
+    state: "ready",
+    timeline: { sourceDemo: clip.sourceDemo },
+    sourceSha256: "a".repeat(64),
+  });
+  expect(await (await f.request("GET", "/api/clips")).json()).toMatchObject({
+    clips: [{ id: clip.id, state: "ready" }],
+  });
+  expect((await f.request("GET", clip.checkpointUrl)).status).toBe(204);
+  await f.service.idle();
+  expect(f.prepare).toHaveBeenCalledTimes(4);
 });
 
 it("repairs the reported cached checkpoint once, even if the rebuilt bytes have the same ETag", async () => {

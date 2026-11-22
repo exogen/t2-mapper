@@ -113,16 +113,34 @@ export async function deleteClip(
   }).then(readResponse<{ deleted: boolean }>);
 }
 
-export async function readClipCheckpoint(clip: ClipView, signal: AbortSignal) {
-  const response = await fetch(new URL(clip.checkpointUrl, appApiBaseUrl), {
-    signal,
-    credentials: "omit",
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    await readResponse(response);
+export async function readClipCheckpoint(
+  clip: ClipView,
+  buffer: ArrayBuffer,
+  signal: AbortSignal,
+): Promise<{ text: string; etag: string | null } | null> {
+  try {
+    const response = await fetch(new URL(clip.checkpointUrl, appApiBaseUrl), {
+      signal: AbortSignal.any([signal, AbortSignal.timeout(12_000)]),
+      credentials: "omit",
+      cache: "no-store",
+    });
+    if (!response.ok) await readResponse(response);
+    if (response.status !== 204)
+      return {
+        text: await response.text(),
+        etag: response.headers.get("ETag"),
+      };
+  } catch (cause) {
+    signal.throwIfAborted();
+    if (
+      cause instanceof ClipApiError &&
+      cause.status < 500 &&
+      cause.status !== 409
+    )
+      throw cause;
   }
-  return { text: await response.text(), etag: response.headers.get("ETag") };
+  await recoverClipCheckpoint(clip, buffer, null, signal);
+  return null;
 }
 
 const log = createLogger("clipApi");
@@ -133,9 +151,11 @@ export async function recoverClipCheckpoint(
   buffer: ArrayBuffer,
   etag: string | null,
   signal: AbortSignal,
-  cause: unknown,
 ): Promise<void> {
-  if (!clip.sourceSha256) throw cause;
+  if (!clip.sourceSha256)
+    throw new Error(
+      "Could not verify the clip’s source recording. Please try again.",
+    );
   if ((await demoSha256(buffer)) !== clip.sourceSha256)
     throw new Error("The downloaded recording does not match this clip.");
   signal.throwIfAborted();

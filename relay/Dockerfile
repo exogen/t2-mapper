@@ -31,6 +31,7 @@ COPY scripts/backfill-demo-checkpoints.ts \
      scripts/merge-demo-guids.ts \
      scripts/player-loadouts.ts scripts/
 COPY scripts/lib/r2.ts \
+     scripts/lib/backfillClipCheckpoint.ts \
      scripts/lib/demoDeletion.ts \
      scripts/lib/demoDeletionCleanup.ts \
      scripts/lib/demoDeletionProfiles.ts scripts/lib/

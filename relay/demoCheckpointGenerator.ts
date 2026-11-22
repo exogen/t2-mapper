@@ -288,8 +288,10 @@ export async function generateDemoCheckpoints(
     throw new Error("Generated checkpoint data exceeds the output size limit");
   if (targetTicks !== undefined) {
     // Check the exact bytes a clip viewer will receive before marking it ready.
-    const reader = new DemoStreamAdapter(parser, { checkpoints: false });
-    reader.importCheckpoints(await readDemoCheckpoints(serialized, buffer));
+    DemoStreamAdapter.verifyCheckpointRestoration(
+      parser,
+      await readDemoCheckpoints(serialized, buffer),
+    );
   }
   await fs.writeFile(temporary, serialized);
   await fs.rename(temporary, output);

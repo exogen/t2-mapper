@@ -74,6 +74,7 @@ const take = {
   sourceDemo: "test.rec",
   samples: [{ demoTimeSec: 100 }],
 } as ClipTake;
+const checkpoint = { cursor: { moveTicks: 3125 } };
 let recording: StreamRecording;
 let imported: ReturnType<typeof vi.fn>;
 beforeEach(() => {
@@ -100,7 +101,7 @@ beforeEach(() => {
       demoBuffer: new ArrayBuffer(4),
     },
   };
-  fixture.read.mockResolvedValue([{}]);
+  fixture.read.mockResolvedValue([checkpoint]);
   fixture.seek.mockImplementation(() => {
     fixture.events.push("seek");
     fixture.state.playback.status = "seeking";
@@ -131,7 +132,7 @@ it("imports the clip checkpoint before seeking and waits for the target scene be
   );
   await vi.waitFor(() => expect(fixture.seek).toHaveBeenCalledWith(100));
   expect(hold).toHaveBeenCalledWith(RETAIL_PLAYER_INTERPOLATION);
-  expect(imported).toHaveBeenCalledWith(expect.any(Array));
+  expect(imported).toHaveBeenCalledWith([checkpoint], undefined);
   expect(fixture.exitDirector).toHaveBeenCalledOnce();
   expect(fixture.events).toEqual(["import", "seek"]);
   expect(fixture.play).not.toHaveBeenCalled();
@@ -181,7 +182,7 @@ it("holds the creator's interpolation through checkpoint restore and playback", 
     "checkpoint",
   );
   await vi.waitFor(() => expect(fixture.seek).toHaveBeenCalledWith(100));
-  expect(imported).toHaveBeenCalledWith(expect.any(Array));
+  expect(imported).toHaveBeenCalledWith([checkpoint], undefined);
   expect(fixture.events).toEqual(["creator", "import", "seek"]);
   settle();
   await task;
@@ -207,7 +208,7 @@ it("does not seek or start a replaced demo after asynchronous checkpoint validat
   );
   expect(fixture.exitDirector).toHaveBeenCalledOnce();
   fixture.state.playback.recording = { source: "demo" };
-  finish([{}]);
+  finish([checkpoint]);
   await expect(task).rejects.toThrow(/demo changed/);
   expect(imported).not.toHaveBeenCalled();
   expect(fixture.seek).not.toHaveBeenCalled();
@@ -240,7 +241,7 @@ it("does not overwrite a manual seek made while the checkpoint is being validate
   );
   fixture.state.playback.seekNonce++;
   fixture.state.playback.seekIntentNonce++;
-  finish([{}]);
+  finish([checkpoint]);
   await expect(task).rejects.toThrow(/interrupted/);
   expect(imported).not.toHaveBeenCalled();
   expect(fixture.seek).not.toHaveBeenCalled();
@@ -262,7 +263,7 @@ it("tolerates cold asset reconstruction during checkpoint validation and the sta
     "checkpoint",
   );
   fixture.state.playback.seekNonce++;
-  finish([{}]);
+  finish([checkpoint]);
   await vi.waitFor(() => expect(fixture.seek).toHaveBeenCalledWith(100));
   fixture.state.playback.seekNonce++;
   settle();
@@ -292,7 +293,7 @@ it("lets a newer start replace an earlier request still validating its checkpoin
   );
   settle();
   await latest;
-  finish([{}]);
+  finish([checkpoint]);
   await expect(previous).rejects.toThrow(/interrupted/);
   expect(fixture.play).toHaveBeenCalledOnce();
   expect(imported).not.toHaveBeenCalled();

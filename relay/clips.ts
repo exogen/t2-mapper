@@ -35,7 +35,11 @@ import {
   isSupportedDemoCheckpointVersion,
 } from "../src/stream/demoCheckpoints.js";
 import type { DemoUploadConfig } from "./demoUpload.js";
-import type { prepareClipCheckpoint } from "./clipCheckpoint.js";
+import {
+  clipCheckpointVersion,
+  putClipCheckpoint,
+  type prepareClipCheckpoint,
+} from "./clipCheckpoint.js";
 import { isMissingObject } from "./privateDemoStore.js";
 import { demoLog as log } from "./logger.js";
 import { demoGameIndexAt, readDemoGames } from "./demoMetadata.js";
@@ -74,6 +78,19 @@ interface ClipRow {
   retryAt: number;
   checkpointVersion: number | null;
   error: string | null;
+}
+
+/** A published camera timeline can play while its optional checkpoint is repaired. */
+const PLAYABLE_CLIP = `(state='ready' OR (state IN ('processing','failed')
+  AND checkpointVersion IS NOT NULL AND error IS NOT '${SOURCE_UNAVAILABLE}'))`;
+
+function canPlayClip(row: ClipRow): boolean {
+  return (
+    row.state === "ready" ||
+    ((row.state === "processing" || row.state === "failed") &&
+      row.checkpointVersion !== null &&
+      row.error !== SOURCE_UNAVAILABLE)
+  );
 }
 
 export interface ClipsOptions {
@@ -184,6 +201,7 @@ export class Clips {
     return `${this.options.config.prefix}clips/${id}/${suffix}`;
   }
   private view(row: ClipRow, timeline?: ClipTake): ClipView {
+    const playable = canPlayClip(row);
     return {
       id: row.id,
       title: row.title,
@@ -193,13 +211,12 @@ export class Clips {
       ownerDiscordId: row.ownerDiscordId,
       ...(row.creatorName && { creatorName: row.creatorName }),
       createdAt: row.createdAt,
-      state:
-        row.state === "ready"
-          ? "ready"
-          : row.state === "failed"
-            ? "failed"
-            : "processing",
-      ...(row.error && { error: row.error }),
+      state: playable
+        ? "ready"
+        : row.state === "failed"
+          ? "failed"
+          : "processing",
+      ...(!playable && row.error && { error: row.error }),
       ...(timeline && { timeline, sourceSha256: row.sourceSha256 }),
       checkpointUrl: `/api/clips/${row.id}/checkpoint`,
     };
@@ -214,13 +231,13 @@ export class Clips {
     manage: boolean,
     pageSize: number,
   ): ClipPage {
-    const visible = manage ? "state!='deleting'" : "state='ready'";
+    const visible = manage ? "state!='deleting'" : PLAYABLE_CLIP;
     return this.db.transaction(() => {
       const counts =
         owner === null
           ? {
               total: this.db
-                .prepare("SELECT count(*) FROM clip WHERE state='ready'")
+                .prepare(`SELECT count(*) FROM clip WHERE ${PLAYABLE_CLIP}`)
                 .pluck()
                 .get() as number,
               pending: 0,
@@ -228,7 +245,7 @@ export class Clips {
           : (this.db
               .prepare(
                 `SELECT coalesce(sum(${visible}),0) AS total,
-            coalesce(sum(state IN ('receiving','processing') OR
+            coalesce(sum((state IN ('receiving','processing') AND checkpointVersion IS NULL) OR
               (state='ready' AND durationMs IS NULL AND attempts<3)),0) AS pending
            FROM clip WHERE ownerDiscordId=?`,
               )
@@ -282,7 +299,7 @@ export class Clips {
     if (!response.Body) throw new Error("Clip asset has no body");
     const result = await response.Body.transformToString();
     deadline.throwIfAborted();
-    return { text: result, etag: response.ETag };
+    return { text: result, etag: response.ETag, metadata: response.Metadata };
   }
   private async text(key: string, signal?: AbortSignal): Promise<string> {
     return (await this.readAsset(key, signal)).text;
@@ -383,24 +400,45 @@ export class Clips {
         let row = this.visibleRow(match[1]);
         await this.sourceCurrent(row);
         row = this.visibleRow(row.id);
-        if (
-          row.state === "ready" &&
-          !isSupportedDemoCheckpointVersion(row.checkpointVersion ?? 0)
-        ) {
-          this.rebuildCheckpoint(row.id);
-          row = this.visibleRow(row.id);
-        }
         if (match[2]) {
-          if (row.state !== "ready")
-            throw new ClipError(409, "The clip is still being prepared");
+          if (!canPlayClip(row))
+            throw new ClipError(409, "The clip checkpoint is being prepared");
+          if (row.state === "processing") {
+            res.writeHead(204, { "Cache-Control": "no-store" }).end();
+            return true;
+          }
           try {
             const checkpoint = await this.readAsset(
               this.key(row.id, "checkpoint.json"),
             );
             await this.sourceCurrent(row);
             row = this.visibleRow(row.id);
-            if (row.state !== "ready")
-              throw new ClipError(409, "The clip checkpoint is being rebuilt");
+            if (!canPlayClip(row))
+              throw new ClipError(409, "The clip checkpoint is unavailable");
+            if (row.state === "processing") {
+              res.writeHead(204, { "Cache-Control": "no-store" }).end();
+              return true;
+            }
+            if (
+              row.state !== "ready" ||
+              !isSupportedDemoCheckpointVersion(row.checkpointVersion ?? 0)
+            ) {
+              const version = clipCheckpointVersion(
+                checkpoint.metadata,
+                row.sourceETag,
+                row.startSec,
+                row.sourceSha256,
+              );
+              if (version === undefined) {
+                this.rebuildCheckpoint(row.id);
+                res.writeHead(204, { "Cache-Control": "no-store" }).end();
+                return true;
+              }
+              if (row.state === "ready")
+                this.db
+                  .prepare("UPDATE clip SET checkpointVersion=? WHERE id=?")
+                  .run(version, row.id);
+            }
             res.writeHead(200, {
               "Content-Type": "application/json; charset=utf-8",
               "Cache-Control": "no-store",
@@ -412,14 +450,11 @@ export class Clips {
           } catch (error) {
             if (!isMissingObject(error)) throw error;
             this.rebuildCheckpoint(row.id);
-            throw new ClipError(409, "The clip checkpoint is being rebuilt");
+            res.writeHead(204, { "Cache-Control": "no-store" }).end();
           }
         } else {
           let take: ClipTake | undefined;
-          if (
-            row.state === "ready" &&
-            url.searchParams.get("summary") !== "1"
-          ) {
+          if (canPlayClip(row) && url.searchParams.get("summary") !== "1") {
             try {
               take = readClipTake(
                 JSON.parse(await this.text(this.key(row.id, "timeline.json"))),
@@ -437,11 +472,7 @@ export class Clips {
             }
           }
           row = this.visibleRow(row.id);
-          json(
-            res,
-            200,
-            this.view(row, row.state === "ready" ? take : undefined),
-          );
+          json(res, 200, this.view(row, canPlayClip(row) ? take : undefined));
         }
       } else if (req.method === "POST" && match?.[2]) {
         if (!UUID.test(match[1])) throw new ClipError(404, "Clip not found");
@@ -614,6 +645,10 @@ export class Clips {
                 new PutObjectCommand({
                   Bucket: this.options.config.bucket,
                   Key: this.key(id, "timeline.json"),
+                  Metadata: {
+                    "demo-etag": row.sourceETag,
+                    "demo-sha256": row.sourceSha256,
+                  },
                   Body: payload,
                   ContentType: "application/json",
                   CacheControl: "no-store",
@@ -815,19 +850,16 @@ export class Clips {
             "The clip was recorded from a different source version",
           );
         controller.signal.throwIfAborted();
-        await this.client.send(
-          new PutObjectCommand({
-            Bucket: this.options.config.bucket,
-            Key: this.key(row.id, "checkpoint.json"),
-            Body: result.text,
-            ...(row.checkpointVersion === DEMO_CHECKPOINT_VERSION && {
-              Metadata: { "repaired-version": String(DEMO_CHECKPOINT_VERSION) },
-            }),
-            ContentType: "application/json",
-            CacheControl: "no-store",
-          }),
+        await putClipCheckpoint(
+          this.client,
+          this.options.config,
+          this.key(row.id, "checkpoint.json"),
+          result,
+          row.sourceETag,
+          row.startSec,
           {
-            abortSignal: this.signal(controller.signal),
+            signal: this.signal(controller.signal),
+            repaired: row.checkpointVersion === DEMO_CHECKPOINT_VERSION,
           },
         );
         controller.signal.throwIfAborted();

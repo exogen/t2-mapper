@@ -1,10 +1,11 @@
-/** Generate missing or incompatible seek sidecars for demos already in R2. */
+/** Backfill demo seek sidecars and saved clips’ exact-start checkpoints in R2. */
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { DemoCheckpointPublisher } from "../relay/demoCheckpointPublisher.js";
 import { loadDemoCheckpointPlan } from "../relay/demoCheckpointConfig.js";
 import { isUserDemoKey } from "../relay/demoKeys.js";
 import type { DemoCheckpointPlan } from "../src/stream/demoCheckpoints";
+import { backfillClipCheckpoint } from "./lib/backfillClipCheckpoint.js";
 import { listAllObjects, r2Client } from "./lib/r2.js";
 import { ASSET_BASE_DIR } from "../src/resourcePaths";
 
@@ -30,8 +31,8 @@ if (values.help) {
       "  --interval=MINUTES     Minutes between checkpoints (DEMO_CHECKPOINT_INTERVAL_MINUTES, or 12)",
       "  --filter=TEXT          Case-sensitive substring of the full R2 key, including the demo filename",
       "                         Example: --filter=stonehengelt matches demos/server_stonehengelt_id.rec",
-      "                         Server/map names match only when that text appears in the key",
-      "  --dry-run              List demos needing checkpoints without writing anything",
+      "                         Clips match by clip key/ID or source demo key",
+      "  --dry-run              List demos and clips needing checkpoints without writing anything",
       "  --force                Regenerate even compatible sidecars",
       "  --concurrency=N        Parallel replay workers (default: 1)",
       `  --asset-root=PATH      Collision asset folder (GAME_BASE_PATH, or ${ASSET_BASE_DIR})`,
@@ -57,24 +58,50 @@ try {
   process.exit(1);
 }
 const { client, config } = r2Client("npm run demos:backfill-checkpoints");
-const demos = (await listAllObjects(client, config)).filter(
+const objects = await listAllObjects(client, config);
+const demos = objects.filter(
   ({ key }) =>
     key.endsWith(".rec") && (!values.filter || key.includes(values.filter)),
 );
+const timelines = objects.filter(
+  ({ key }) =>
+    /^clips\/[^/]+\/timeline\.json$/.test(key.slice(config.prefix.length)) &&
+    (!values.filter ||
+      demos.length > 0 ||
+      key.includes(values.filter) ||
+      key
+        .replace(/timeline\.json$/, "checkpoint.json")
+        .includes(values.filter)),
+);
+const jobs = [...demos, ...timelines];
+const assetRoot = path.resolve(values["asset-root"]);
+let clips = 0;
 const counts = { published: 0, current: 0, failed: 0, planned: 0 };
 let next = 0;
 await Promise.all(
-  Array.from({ length: Math.min(concurrency, demos.length) }, async () => {
+  Array.from({ length: Math.min(concurrency, jobs.length) }, async () => {
     // Each publisher serializes its jobs. Separate instances give backfills
     // a bounded pool without changing the live relay's single-worker queue.
-    const publisher = new DemoCheckpointPublisher(
-      config,
-      path.resolve(values["asset-root"]),
-      plan,
-    );
-    while (next < demos.length) {
-      const { key } = demos[next++];
+    const publisher = new DemoCheckpointPublisher(config, assetRoot, plan);
+    while (next < jobs.length) {
+      const { key } = jobs[next++];
       try {
+        if (!key.endsWith(".rec")) {
+          const result = await backfillClipCheckpoint({
+            client,
+            config,
+            timelineKey: key,
+            assetRoot,
+            filter: values.filter,
+            force: values.force,
+            dryRun: values["dry-run"],
+          });
+          if (result === "filtered") continue;
+          clips++;
+          counts[result]++;
+          console.log(JSON.stringify({ key, result }));
+          continue;
+        }
         if (values["dry-run"]) {
           if (!values.force && (await publisher.isCurrent(key))) {
             counts.current++;
@@ -93,11 +120,12 @@ await Promise.all(
           console.log(JSON.stringify({ key, result }));
         }
       } catch (error) {
+        if (!key.endsWith(".rec")) clips++;
         counts.failed++;
         console.error(key, error);
       }
     }
   }),
 );
-console.log(JSON.stringify({ demos: demos.length, ...counts }));
+console.log(JSON.stringify({ demos: demos.length, clips, ...counts }));
 if (counts.failed) process.exitCode = 1;

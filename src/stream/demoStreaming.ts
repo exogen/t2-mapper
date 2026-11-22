@@ -12,6 +12,7 @@ import {
 } from "t2-demo-parser";
 import type { ParsedData } from "t2-demo-parser";
 import { clamp } from "../mathUtils";
+import { createLogger } from "../logger";
 import {
   advancePlayerCameraBlend,
   PLAYER_CAMERA_SPEED,
@@ -465,6 +466,13 @@ export type DemoSeekCheckpoint = ReturnType<
   DemoStreamAdapter["captureCheckpoint"]
 >;
 
+const log = createLogger("demoStreaming");
+
+interface ImportedCheckpoint {
+  checkpoint: DemoSeekCheckpoint;
+  onRestoreError?: (error: unknown) => void;
+}
+
 export class DemoStreamAdapter extends StreamEngine {
   lastStepStartTimeSec = 0;
   private readonly checkpointsEnabled: boolean;
@@ -477,7 +485,7 @@ export class DemoStreamAdapter extends StreamEngine {
     number,
     ReturnType<DemoStreamAdapter["captureCheckpoint"]>
   >();
-  private readonly persistedCheckpoints = new Map<number, DemoSeekCheckpoint>();
+  private readonly persistedCheckpoints = new Map<number, ImportedCheckpoint>();
   private predictionModeChanged = false;
   private preferredInterpolation = DEFAULT_PLAYER_INTERPOLATION;
   private readonly interpolationOverrides = new Map<
@@ -541,7 +549,7 @@ export class DemoStreamAdapter extends StreamEngine {
   private clearSessionCheckpoints(): void {
     this.checkpoints.clear();
     if (this.playerPredictionEnabled) {
-      for (const [tick, checkpoint] of this.persistedCheckpoints)
+      for (const [tick, { checkpoint }] of this.persistedCheckpoints)
         this.checkpoints.set(tick, checkpoint);
     }
   }
@@ -666,8 +674,22 @@ export class DemoStreamAdapter extends StreamEngine {
     };
   }
 
+  /** Exercise restoration in an offline reader before trusting a saved artifact. */
+  static verifyCheckpointRestoration(
+    parser: DemoParser,
+    checkpoints: readonly DemoSeekCheckpoint[],
+  ): void {
+    const reader = new DemoStreamAdapter(parser, { checkpoints: false });
+    reader.importCheckpoints(checkpoints);
+    for (const { checkpoint } of reader.persistedCheckpoints.values())
+      reader.restoreCheckpoint(checkpoint);
+  }
+
   /** Import already validated, collision-correct checkpoints for this recording. */
-  importCheckpoints(checkpoints: readonly DemoSeekCheckpoint[]): void {
+  importCheckpoints(
+    checkpoints: readonly DemoSeekCheckpoint[],
+    onRestoreError?: (error: unknown) => void,
+  ): void {
     const owner = this.parser.createCheckpoint().owner;
     const current = this.captureSimulationState().state;
     const imported = new Map<number, DemoSeekCheckpoint>();
@@ -713,7 +735,7 @@ export class DemoStreamAdapter extends StreamEngine {
       });
     }
     for (const [tick, checkpoint] of imported) {
-      this.persistedCheckpoints.set(tick, checkpoint);
+      this.persistedCheckpoints.set(tick, { checkpoint, onRestoreError });
       if (this.playerPredictionEnabled) this.checkpoints.set(tick, checkpoint);
     }
   }
@@ -1578,16 +1600,38 @@ export class DemoStreamAdapter extends StreamEngine {
             ? undefined
             : this.checkpoints.get(checkpointTick);
         const imported =
-          checkpointTick !== undefined &&
-          this.playerPredictionEnabled &&
-          this.persistedCheckpoints.has(checkpointTick);
+          checkpointTick === undefined
+            ? undefined
+            : this.persistedCheckpoints.get(checkpointTick);
         const previousCollision = imported
           ? this.captureCollisionWorld()
           : null;
-        if (checkpoint) this.restoreCheckpoint(checkpoint);
-        else this.resetToStart();
+        let restored = false;
+        if (checkpoint) {
+          try {
+            this.restoreCheckpoint(checkpoint);
+            restored = true;
+          } catch (error) {
+            if (!imported || checkpointTick === undefined) throw error;
+            this.checkpoints.delete(checkpointTick);
+            this.persistedCheckpoints.delete(checkpointTick);
+            log.warn(
+              { err: error, tick: checkpointTick },
+              "Skipping unusable demo checkpoint",
+            );
+            try {
+              imported.onRestoreError?.(error);
+            } catch (reportError) {
+              log.warn(
+                { err: reportError },
+                "Could not report unusable demo checkpoint",
+              );
+            }
+          }
+        }
+        if (!restored) this.resetToStart();
         didReset = true;
-        if (imported) {
+        if (restored && imported) {
           this.collisionReplayComplete = false;
           this.pendingCheckpointCollision = previousCollision;
           if (

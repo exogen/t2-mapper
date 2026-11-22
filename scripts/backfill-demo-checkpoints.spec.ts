@@ -5,9 +5,13 @@ import { DEFAULT_CHECKPOINT_INTERVAL_TICKS } from "../src/stream/demoCheckpoints
 const mocks = vi.hoisted(() => ({
   r2Client: vi.fn(),
   list: vi.fn(),
+  clip: vi.fn(),
   construct: vi.fn(),
   publish: vi.fn(),
   isCurrent: vi.fn(),
+}));
+vi.mock("./lib/backfillClipCheckpoint", () => ({
+  backfillClipCheckpoint: mocks.clip,
 }));
 vi.mock("./lib/r2", () => ({
   r2Client: mocks.r2Client,
@@ -92,6 +96,7 @@ it.each([1, 2, 8])(
     expect(mocks.publish.mock.calls.map(([, key]) => key).sort()).toEqual(keys);
     expect(summary()).toEqual({
       demos: 4,
+      clips: 0,
       published: 4,
       current: 0,
       failed: 0,
@@ -110,6 +115,23 @@ it.each([
   expect(mocks.construct.mock.calls[0][2]).toBe(expected);
 });
 
+it("discovers clip timelines and includes a missing checkpoint in a filtered dry run", async () => {
+  const timelineKey = "demos/clips/clip-one/timeline.json";
+  mocks.list.mockResolvedValue([
+    { key: timelineKey },
+    { key: keys[0] },
+    { key: "demos/clips/other/timeline.json" },
+  ]);
+  process.argv.push("--dry-run", "--filter=clip-one");
+  mocks.clip.mockResolvedValue("planned");
+  await import("./backfill-demo-checkpoints");
+  expect(mocks.publish).not.toHaveBeenCalled();
+  expect(mocks.clip).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ timelineKey, dryRun: true, force: false }),
+  );
+  expect(summary()).toMatchObject({ clips: 1, demos: 0, planned: 1 });
+});
+
 it("finishes other jobs and reports both worker and upload failures", async () => {
   process.argv.push("--concurrency=2");
   mocks.publish
@@ -120,6 +142,7 @@ it("finishes other jobs and reports both worker and upload failures", async () =
   expect(mocks.publish).toHaveBeenCalledTimes(4);
   expect(summary()).toEqual({
     demos: 4,
+    clips: 0,
     published: 1,
     current: 1,
     failed: 2,
@@ -219,6 +242,7 @@ it("honors the demo filter in dry-run mode without publishing", async () => {
   expect(mocks.publish).not.toHaveBeenCalled();
   expect(summary()).toEqual({
     demos: 1,
+    clips: 0,
     published: 0,
     current: 0,
     failed: 0,
