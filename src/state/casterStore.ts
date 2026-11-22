@@ -51,7 +51,12 @@ interface CasterState {
   fov: number | null;
   /** Transient feedback for saves and recalls; a fresh object retriggers the flash. */
   lastCameraAction: { slot: QuickCamSlot } | null;
-  activate(server: string, sequence: string, map: string): void;
+  activate(
+    server: string,
+    sequence: string,
+    map: string,
+    publishedGame?: PublishedGame | null,
+  ): void;
   suspend(): void;
   setPublishedGame(game: PublishedGame | null): void;
   renameTeam(teamId: number, name: string): void;
@@ -303,7 +308,7 @@ export const casterStore = createStore<CasterState>((set, get) => {
     teamNames: {},
     fov: null,
     lastCameraAction: null,
-    activate(server, sequence, map) {
+    activate(server, sequence, map, publishedGame = null) {
       const mission = JSON.stringify([
         sequence,
         map
@@ -331,8 +336,11 @@ export const casterStore = createStore<CasterState>((set, get) => {
       set({
         context,
         settings,
-        publishedGame: null,
-        teamNames: settings.teamNames,
+        publishedGame,
+        teamNames: {
+          ...publishedGame?.presentation.teamNames,
+          ...settings.teamNames,
+        },
         fov: null,
         lastCameraAction: null,
       });

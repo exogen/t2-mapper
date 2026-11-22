@@ -128,6 +128,8 @@ export interface ClipView {
   state: "processing" | "ready" | "failed";
   error?: string;
   timeline?: ClipTake;
+  /** Included with the timeline so a viewer can seek the verified source directly. */
+  sourceSha256?: string;
   checkpointUrl: string;
 }
 

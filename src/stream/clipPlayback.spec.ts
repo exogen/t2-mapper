@@ -141,6 +141,26 @@ it("imports the clip checkpoint before seeking and waits for the target scene be
   expect(fixture.listeners.size).toBe(0);
 });
 
+it("seeks the verified demo normally when the engine rejects the clip checkpoint", async () => {
+  imported.mockImplementation(() => {
+    throw new Error("Invalid seek checkpoint");
+  });
+  const recover = vi.fn().mockResolvedValue(undefined);
+  const task = startClipPlayback(
+    take,
+    recording,
+    new AbortController().signal,
+    "checkpoint",
+    recover,
+  );
+  await vi.waitFor(() => expect(fixture.seek).toHaveBeenCalledWith(100));
+  expect(fixture.play).not.toHaveBeenCalled();
+  settle();
+  await task;
+  expect(fixture.play).toHaveBeenCalledWith(take);
+  expect(recover).toHaveBeenCalledOnce();
+});
+
 it("holds the creator's interpolation through checkpoint restore and playback", async () => {
   const settings = {
     maxLatencyTicks: 0,

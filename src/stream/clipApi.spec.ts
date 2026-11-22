@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
-import type { ClipCreateRequest } from "../../relay/clipTypes";
+import { demoSha256 } from "./demoCheckpoints";
+import type { ClipCreateRequest, ClipView } from "../../relay/clipTypes";
 vi.mock("../account/authClient", () => ({
   appApiBaseUrl: "https://api.example.com",
 }));
@@ -8,6 +9,7 @@ import {
   readClip,
   readClipCheckpoint,
   readClipStatus,
+  recoverClipCheckpoint,
   readPublicClips,
   readUserClips,
   clipRefetchInterval,
@@ -190,6 +192,30 @@ it("distinguishes a checkpoint being regenerated from a permanent source error",
       message: "Preparing checkpoint",
     }),
   );
+});
+
+it("reports the rejected object only when the downloaded demo matches the clip", async () => {
+  const fetch = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+  vi.stubGlobal("fetch", fetch);
+  const buffer = new ArrayBuffer(1);
+  const clip = {
+    checkpointUrl: "/api/clips/clip/checkpoint",
+    sourceSha256: await demoSha256(buffer),
+  } as ClipView;
+  const signal = new AbortController().signal;
+  await expect(
+    recoverClipCheckpoint(
+      clip,
+      new ArrayBuffer(2),
+      '"old"',
+      signal,
+      new Error(),
+    ),
+  ).rejects.toThrow("does not match");
+  expect(fetch).not.toHaveBeenCalled();
+  await recoverClipCheckpoint(clip, buffer, '"old"', signal, new Error());
+  expect(fetch.mock.calls[0][0].searchParams.get("rejected")).toBe('"old"');
+  expect(fetch.mock.calls[0][1].method).toBe("POST");
 });
 
 it("includes credentials only when requesting the owner's management list", async () => {

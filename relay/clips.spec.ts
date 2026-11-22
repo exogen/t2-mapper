@@ -91,7 +91,10 @@ async function fixture() {
     'CREATE TABLE "user" ("id" TEXT PRIMARY KEY, "name" TEXT NOT NULL); CREATE TABLE "account" ("userId" TEXT, "providerId" TEXT, "accountId" TEXT);',
   );
   database.transaction(() => migrateAccountSchema(database))();
-  const objects = new Map<string, { body: string; etag: string }>([
+  const objects = new Map<
+    string,
+    { body: string; etag: string; metadata?: Record<string, string> }
+  >([
     ["demos/match.rec", { body: "recording", etag: SOURCE_ETAG }],
     [
       "demos/match.rec.json",
@@ -127,7 +130,11 @@ async function fixture() {
       options?.abortSignal?.throwIfAborted();
       if (command instanceof PutObjectCommand) {
         const { Key, Body } = command.input;
-        objects.set(Key!, { body: String(Body), etag: '"asset"' });
+        objects.set(Key!, {
+          body: String(Body),
+          etag: '"asset"',
+          metadata: command.input.Metadata,
+        });
         return {};
       }
       if (command instanceof DeleteObjectCommand) {
@@ -143,6 +150,7 @@ async function fixture() {
           throw Object.assign(new Error("Missing"), { name: "NoSuchKey" });
         return {
           ETag: object.etag,
+          Metadata: object.metadata,
           ContentLength: object.body.length,
           Body: { transformToString: async () => object.body },
         };
@@ -1185,6 +1193,32 @@ it("rebuilds obsolete or missing checkpoint artifacts", async () => {
   ).toBe(409);
   await f.service.idle();
   expect(f.prepare).toHaveBeenCalledTimes(3);
+});
+
+it("repairs the reported cached checkpoint once, even if the rebuilt bytes have the same ETag", async () => {
+  const f = await fixture();
+  const clip = await save(f);
+  const path = clip.checkpointUrl;
+  const cached = await f.request("GET", path);
+  const report = (etag: string, version = DEMO_CHECKPOINT_VERSION) =>
+    f.request(
+      "POST",
+      path +
+        "?" +
+        new URLSearchParams({ rejected: etag, version: String(version) }),
+    );
+  const etag = cached.headers.get("etag")!;
+  expect(etag).toBe('"asset"');
+  await report('"old"');
+  await report(etag, DEMO_CHECKPOINT_VERSION - 1);
+  expect(f.prepare).toHaveBeenCalledOnce();
+  await Promise.all([report(etag), report(etag)]);
+  await f.service.idle();
+  expect(f.prepare).toHaveBeenCalledTimes(2);
+  await report(etag);
+  await f.service.idle();
+  expect(f.prepare).toHaveBeenCalledTimes(2);
+  expect((await f.request("GET", path)).status).toBe(200);
 });
 
 it("does not rebuild a missing checkpoint after its clip was deleted", async () => {

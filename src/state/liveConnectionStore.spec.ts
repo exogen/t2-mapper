@@ -473,6 +473,37 @@ describe("watch connection metadata", () => {
     expect(casterStore.getState().context).toBeNull();
   });
 
+  it("keeps receiving shared edits when the mission is identified after catch-up", () => {
+    const adapter = state().adapter!;
+    // A viewer can stay connected from the previous map into this new game.
+    adapter.onMissionIdentity!("3", "PreviousMap");
+    const game = { id: "new-game", revision: 0, presentation: {} };
+    handlers().onCatchup!({ ...testCatchupPayload(), gamePresentation: game });
+    const firstEdit = {
+      ...game,
+      revision: 1,
+      presentation: { title: "Final", teamNames: { 1: "Knights" } },
+    };
+    handlers().onGamePresentation!(firstEdit);
+    adapter.onMissionIdentity!("4", "DelayedMap");
+    expect(casterStore.getState().publishedGame).toEqual(firstEdit);
+    expect(casterStore.getState().teamNames).toEqual({ 1: "Knights" });
+
+    const secondEdit = {
+      ...game,
+      revision: 2,
+      presentation: { title: "Grand final", teamNames: { 2: "Dragons" } },
+    };
+    handlers().onGamePresentation!(secondEdit);
+    expect(casterStore.getState().publishedGame).toEqual(secondEdit);
+    expect(casterStore.getState().teamNames).toEqual({ 2: "Dragons" });
+
+    adapter.onMissionIdentity!("5", "DelayedMap");
+    handlers().onGamePresentation!({ ...secondEdit, revision: 3 });
+    expect(casterStore.getState().publishedGame).toBeNull();
+    expect(casterStore.getState().teamNames).toEqual({});
+  });
+
   it("applies saved labels after hydration and only accepts updates for the displayed game", () => {
     const adapter = state().adapter!;
     vi.mocked(adapter.hydrate).mockImplementation((payload) => {
@@ -490,6 +521,7 @@ describe("watch connection metadata", () => {
       ...testCatchupPayload(),
       missionName: "DelayedMap",
       missionSequence: "4",
+      displayedMission: { name: "DelayedMap", sequence: "4" },
       gamePresentation: game,
     });
     expect(casterStore.getState().publishedGame).toEqual(game);
@@ -516,6 +548,31 @@ describe("watch connection metadata", () => {
     expect(casterStore.getState().publishedGame).toBeNull();
     handlers().onGamePresentation!({ ...updated, revision: 4 });
     expect(casterStore.getState().publishedGame).toBeNull();
+  });
+
+  it("drops the debrief game's labels when the already-loading mission becomes visible", () => {
+    const adapter = state().adapter!;
+    vi.mocked(adapter.hydrate).mockImplementation((payload) => {
+      const mission = payload.displayedMission!;
+      adapter.onMissionIdentity!(mission.sequence!, mission.name);
+    });
+    const game = {
+      id: "finished-game",
+      revision: 2,
+      presentation: { title: "Semifinal", teamNames: { 1: "Knights" } },
+    };
+    handlers().onCatchup!({
+      ...testCatchupPayload(),
+      missionName: "Katabatic",
+      missionSequence: "8",
+      displayedMission: { name: "Katabatic", sequence: "7" },
+      gamePresentation: game,
+    });
+    expect(casterStore.getState().publishedGame).toEqual(game);
+    adapter.onMissionIdentity!("8", "Katabatic");
+    handlers().onGamePresentation!({ ...game, revision: 3 });
+    expect(casterStore.getState().publishedGame).toBeNull();
+    expect(casterStore.getState().teamNames).toEqual({});
   });
 
   it("blocks outgoing chat until the relay enables it and resets it across reconnects", () => {

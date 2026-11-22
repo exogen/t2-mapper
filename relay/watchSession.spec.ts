@@ -303,35 +303,59 @@ describe("watch mission controls", () => {
     },
   );
 
-  it("restores saved labels from a matching recording journal after relay restart", () => {
-    const coordinator = policyCoordinator();
-    coordinator.getSavedGamePresentation = vi.fn(() => ({
-      title: "Restored final",
-      teamNames: { 1: "Knights" },
-    }));
-    const { manager, connections } = createManager({
-      demoCoordinator: coordinator,
-    });
-    const viewer = new FakeWebSocket();
-    manager.watch(viewer as unknown as WebSocket, "1.2.3.4:28000");
-    const session = manager.getSession("1.2.3.4:28000")!;
-    session["handleResponderEvent"](
-      remoteCommandEvent("MissionStartPhase1", "7", "Katabatic"),
-    );
-    connections[0].setStatus("connected");
-    expect(
-      JSON.parse(gunzipSync(Buffer.concat(viewer.binaryFrames())).toString())
-        .gamePresentation,
-    ).toMatchObject({
-      revision: 1,
-      presentation: { title: "Restored final", teamNames: { 1: "Knights" } },
-    });
-    expect(coordinator.getSavedGamePresentation).toHaveBeenCalledWith(
-      "1.2.3.4:28000",
-      ["7", "Katabatic"],
-    );
-    manager.shutdown();
-  });
+  it.each([false, true])(
+    "fills missing labels from a matching recording journal after restart (already edited: %s)",
+    (edited) => {
+      const coordinator = policyCoordinator();
+      coordinator.getSavedGamePresentation = vi.fn(() => ({
+        title: "Restored final",
+        teamNames: { 1: "Knights" },
+      }));
+      const { manager, connections } = createManager({
+        demoCoordinator: coordinator,
+      });
+      const viewer = new FakeWebSocket();
+      manager.watch(viewer as unknown as WebSocket, "1.2.3.4:28000");
+      const session = manager.getSession("1.2.3.4:28000")!;
+      connections[0].setStatus("connected");
+      const initial = JSON.parse(
+        gunzipSync(Buffer.concat(viewer.binaryFrames())).toString(),
+      ).gamePresentation;
+      const earlyEdit = {
+        ...initial,
+        revision: 2,
+        presentation: { title: "New final" },
+      };
+      if (edited) manager.updateGame(earlyEdit);
+      session["handleResponderEvent"](
+        remoteCommandEvent("MissionStartPhase1", "7", "Katabatic"),
+      );
+      const restored = {
+        ...initial,
+        revision: 1,
+        presentation: { title: "Restored final", teamNames: { 1: "Knights" } },
+      };
+      if (!edited)
+        expect(coordinator.getSavedGamePresentation).toHaveBeenCalledWith(
+          "1.2.3.4:28000",
+          ["7", "Katabatic"],
+        );
+      const expected = edited ? earlyEdit : restored;
+      expect(manager.getGame(initial.id)).toEqual(expected);
+      expect(
+        viewer
+          .jsonMessages()
+          .filter((message) => message.type === "gamePresentation"),
+      ).toEqual([
+        {
+          type: "gamePresentation",
+          address: "1.2.3.4:28000",
+          game: expected,
+        },
+      ]);
+      manager.shutdown();
+    },
+  );
 
   it("keeps an accepted vote when a roster refresh hides its GUID, while rejecting new votes without that GUID", () => {
     manager.shutdown();
@@ -2364,7 +2388,7 @@ describe("WatchSessionManager", () => {
       ).gamePresentation;
       const saved = {
         ...first,
-        revision: 1,
+        revision: 4,
         presentation: { title: "Final", teamNames: { 1: "Knights" } },
       };
       manager.updateGame(saved);
@@ -2379,6 +2403,7 @@ describe("WatchSessionManager", () => {
       ).gamePresentation;
       expect(next.id).not.toBe(first.id);
       expect(next.presentation).toEqual(preserved ? saved.presentation : {});
+      expect(next.revision).toBe(preserved ? 1 : 0);
       manager.shutdown();
     },
   );

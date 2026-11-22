@@ -200,7 +200,7 @@ export class Clips {
             ? "failed"
             : "processing",
       ...(row.error && { error: row.error }),
-      ...(timeline && { timeline }),
+      ...(timeline && { timeline, sourceSha256: row.sourceSha256 }),
       checkpointUrl: `/api/clips/${row.id}/checkpoint`,
     };
   }
@@ -273,7 +273,7 @@ export class Clips {
       { abortSignal: this.signal(signal) },
     );
   }
-  private async text(key: string, signal?: AbortSignal): Promise<string> {
+  private async readAsset(key: string, signal?: AbortSignal) {
     const deadline = this.signal(signal);
     const response = await this.client.send(
       new GetObjectCommand({ Bucket: this.options.config.bucket, Key: key }),
@@ -282,7 +282,19 @@ export class Clips {
     if (!response.Body) throw new Error("Clip asset has no body");
     const result = await response.Body.transformToString();
     deadline.throwIfAborted();
-    return result;
+    return { text: result, etag: response.ETag };
+  }
+  private async text(key: string, signal?: AbortSignal): Promise<string> {
+    return (await this.readAsset(key, signal)).text;
+  }
+  private rebuildCheckpoint(id: string): void {
+    this.db
+      .prepare(
+        "UPDATE clip SET state='processing', retryAt=0, attempts=0 WHERE id=? AND state='ready'",
+      )
+      .run(id);
+    this.visibleRow(id);
+    this.kick();
   }
   private async sourceCurrent(
     row: ClipRow,
@@ -375,19 +387,14 @@ export class Clips {
           row.state === "ready" &&
           !isSupportedDemoCheckpointVersion(row.checkpointVersion ?? 0)
         ) {
-          this.db
-            .prepare(
-              "UPDATE clip SET state='processing', retryAt=0, attempts=0 WHERE id=? AND state='ready'",
-            )
-            .run(row.id);
+          this.rebuildCheckpoint(row.id);
           row = this.visibleRow(row.id);
-          this.kick();
         }
         if (match[2]) {
           if (row.state !== "ready")
             throw new ClipError(409, "The clip is still being prepared");
           try {
-            const checkpoint = await this.text(
+            const checkpoint = await this.readAsset(
               this.key(row.id, "checkpoint.json"),
             );
             await this.sourceCurrent(row);
@@ -398,21 +405,13 @@ export class Clips {
               "Content-Type": "application/json; charset=utf-8",
               "Cache-Control": "no-store",
               "X-Content-Type-Options": "nosniff",
+              "Access-Control-Expose-Headers": "ETag",
+              ...(checkpoint.etag && { ETag: checkpoint.etag }),
             });
-            res.end(checkpoint);
+            res.end(checkpoint.text);
           } catch (error) {
             if (!isMissingObject(error)) throw error;
-            const changed = this.db
-              .prepare(
-                "UPDATE clip SET state='processing', retryAt=0, attempts=0 WHERE id=? AND state='ready'",
-              )
-              .run(row.id).changes;
-            if (!changed) {
-              const current = this.row(row.id);
-              if (!current || current.state === "deleting")
-                throw new ClipError(404, "Clip not found");
-            }
-            this.kick();
+            this.rebuildCheckpoint(row.id);
             throw new ClipError(409, "The clip checkpoint is being rebuilt");
           }
         } else {
@@ -444,6 +443,33 @@ export class Clips {
             this.view(row, row.state === "ready" ? take : undefined),
           );
         }
+      } else if (req.method === "POST" && match?.[2]) {
+        if (!UUID.test(match[1])) throw new ClipError(404, "Clip not found");
+        const row = this.visibleRow(match[1]);
+        // A viewer can report only the exact cached object it received. A
+        // rebuilt object gets at most one attempt per format, even across restarts.
+        if (
+          row.state === "ready" &&
+          url.searchParams.get("version") === String(DEMO_CHECKPOINT_VERSION) &&
+          row.checkpointVersion === DEMO_CHECKPOINT_VERSION
+        ) {
+          const asset = await this.head(
+            this.key(row.id, "checkpoint.json"),
+          ).catch((error) => {
+            if (!isMissingObject(error)) throw error;
+            return null;
+          });
+          if (
+            !asset ||
+            (asset.ETag &&
+              asset.ETag === url.searchParams.get("rejected") &&
+              asset.Metadata?.["repaired-version"] !==
+                String(DEMO_CHECKPOINT_VERSION))
+          )
+            this.rebuildCheckpoint(row.id);
+        }
+        res.writeHead(204);
+        res.end();
       } else if (req.method === "POST" && url.pathname === "/api/clips") {
         const user = await this.options.getAccount(req.headers);
         if (!user) throw new ClipError(401, "Sign in to record clips");
@@ -794,6 +820,9 @@ export class Clips {
             Bucket: this.options.config.bucket,
             Key: this.key(row.id, "checkpoint.json"),
             Body: result.text,
+            ...(row.checkpointVersion === DEMO_CHECKPOINT_VERSION && {
+              Metadata: { "repaired-version": String(DEMO_CHECKPOINT_VERSION) },
+            }),
             ContentType: "application/json",
             CacheControl: "no-store",
           }),

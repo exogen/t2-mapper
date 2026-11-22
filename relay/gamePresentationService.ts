@@ -3,6 +3,7 @@ import type { WatchSessionManager } from "./watchSession.js";
 import type { DemoUploader } from "./demoUpload.js";
 import {
   GamePresentationError,
+  RESTORED_GAME_REVISION,
   type GamePresentationUpdate,
   type PublishedGame,
 } from "./gamePresentation.js";
@@ -50,7 +51,7 @@ export function createGamePresentationUpdater(
           );
         const game: PublishedGame = {
           id: target.game.id,
-          revision: target.game.revision + 1,
+          revision: Math.max(target.game.revision, RESTORED_GAME_REVISION) + 1,
           presentation: update.presentation,
         };
         if (target.recorder)

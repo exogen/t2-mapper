@@ -6,7 +6,11 @@ import { useEngineSelector, engineStore } from "../state/engineStore";
 import { publishedDemoFilename } from "../state/editableGame";
 import { graphicsEffectsStore } from "../state/graphicsEffectsStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
-import { ClipApiError, readClipCheckpoint } from "../stream/clipApi";
+import {
+  ClipApiError,
+  readClipCheckpoint,
+  recoverClipCheckpoint,
+} from "../stream/clipApi";
 import { startClipPlayback } from "../stream/clipPlayback";
 import { navigationMode, useNavigationQueryState } from "./useQueryParams";
 import { useAppNavigation } from "./useAppNavigation";
@@ -120,7 +124,14 @@ export function ClipLoader() {
       try {
         const checkpoint = await readClipCheckpoint(view, signal);
         signal.throwIfAborted();
-        await startClipPlayback(view.timeline!, recording, signal, checkpoint);
+        await startClipPlayback(
+          view.timeline!,
+          recording,
+          signal,
+          checkpoint.text,
+          (error) =>
+            recoverClipCheckpoint(view, buffer, checkpoint.etag, signal, error),
+        );
         setPrepared({ id, recording });
       } catch (cause) {
         if (

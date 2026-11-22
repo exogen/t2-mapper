@@ -17,6 +17,7 @@ import {
   demoSha256,
   demoCheckpointTargets,
   validateDemoCheckpoints,
+  readDemoCheckpoints,
   type DemoCheckpointPlan,
   type DemoCheckpointSidecar,
 } from "../src/stream/demoCheckpoints";
@@ -285,6 +286,11 @@ export async function generateDemoCheckpoints(
   const serialized = JSON.stringify(sidecar);
   if (Buffer.byteLength(serialized) > maxOutputBytes)
     throw new Error("Generated checkpoint data exceeds the output size limit");
+  if (targetTicks !== undefined) {
+    // Check the exact bytes a clip viewer will receive before marking it ready.
+    const reader = new DemoStreamAdapter(parser, { checkpoints: false });
+    reader.importCheckpoints(await readDemoCheckpoints(serialized, buffer));
+  }
   await fs.writeFile(temporary, serialized);
   await fs.rename(temporary, output);
   return {

@@ -53,7 +53,10 @@ import type {
   RecordingDecisionReason,
 } from "./demoCoordinator.js";
 import type { DemoRecorder } from "./demoRecorder.js";
-import type { PublishedGame } from "./gamePresentation.js";
+import {
+  RESTORED_GAME_REVISION,
+  type PublishedGame,
+} from "./gamePresentation.js";
 import {
   LIVE_CAST_ANCHOR_TICKS,
   LIVE_CAST_LOOKAHEAD_MS,
@@ -974,7 +977,7 @@ export class WatchSession {
   updateGame(game: PublishedGame): boolean {
     for (const [epoch, holder] of this.games) {
       if (holder.current.id !== game.id) continue;
-      if (game.revision < holder.current.revision) return false;
+      if (game.revision <= holder.current.revision) return false;
       holder.current = game;
       this.cachedPayload = null;
       for (const [ws, viewedEpoch] of this.viewerEpochs) {
@@ -1009,26 +1012,21 @@ export class WatchSession {
     holder.mission = [sequence, name];
     const previous = holder.previous;
     delete holder.previous;
-    if (previous?.mission?.[0] === sequence && previous.mission[1] === name) {
-      // Re-syncing the connection makes another recording, but it needn't
-      // discard the labels of a mission that the server says is unchanged.
+    if (holder.current.revision > 0) return;
+    const sameMission =
+      previous?.mission?.[0] === sequence && previous.mission[1] === name;
+    const saved = sameMission
+      ? previous.current.revision > 0 && previous.current.presentation
+      : this.options.demoCoordinator?.getSavedGamePresentation?.(this.key, [
+          sequence,
+          name,
+        ]);
+    if (saved)
       this.updateGame({
         ...holder.current,
-        revision: previous.current.revision,
-        presentation: structuredClone(previous.current.presentation),
+        revision: RESTORED_GAME_REVISION,
+        presentation: saved,
       });
-    } else {
-      const saved = this.options.demoCoordinator?.getSavedGamePresentation?.(
-        this.key,
-        [sequence, name],
-      );
-      if (saved)
-        this.updateGame({
-          ...holder.current,
-          revision: 1,
-          presentation: saved,
-        });
-    }
   }
 
   getChannelId(ws: WebSocket): string | undefined {

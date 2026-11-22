@@ -4,6 +4,8 @@ import {
   type ClipPage,
   type ClipView,
 } from "../../relay/clipTypes";
+import { DEMO_CHECKPOINT_VERSION, demoSha256 } from "./demoCheckpoints";
+import { createLogger } from "../logger";
 import { appApiBaseUrl } from "../account/authClient";
 
 export class ClipApiError extends Error {
@@ -111,10 +113,7 @@ export async function deleteClip(
   }).then(readResponse<{ deleted: boolean }>);
 }
 
-export async function readClipCheckpoint(
-  clip: ClipView,
-  signal: AbortSignal,
-): Promise<string> {
+export async function readClipCheckpoint(clip: ClipView, signal: AbortSignal) {
   const response = await fetch(new URL(clip.checkpointUrl, appApiBaseUrl), {
     signal,
     credentials: "omit",
@@ -123,7 +122,43 @@ export async function readClipCheckpoint(
   if (!response.ok) {
     await readResponse(response);
   }
-  return response.text();
+  return { text: await response.text(), etag: response.headers.get("ETag") };
+}
+
+const log = createLogger("clipApi");
+
+/** Allow a normal seek only after checking the recording independently of the bad sidecar. */
+export async function recoverClipCheckpoint(
+  clip: ClipView,
+  buffer: ArrayBuffer,
+  etag: string | null,
+  signal: AbortSignal,
+  cause: unknown,
+): Promise<void> {
+  if (!clip.sourceSha256) throw cause;
+  if ((await demoSha256(buffer)) !== clip.sourceSha256)
+    throw new Error("The downloaded recording does not match this clip.");
+  signal.throwIfAborted();
+  if (!etag) return;
+  const url = new URL(clip.checkpointUrl, appApiBaseUrl);
+  url.searchParams.set("rejected", etag);
+  url.searchParams.set("version", String(DEMO_CHECKPOINT_VERSION));
+  // The viewer can seek immediately while the relay repairs its shared cache.
+  void fetch(url, {
+    method: "POST",
+    credentials: "omit",
+    signal: AbortSignal.timeout(10_000),
+  })
+    .then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    })
+    .catch((error) =>
+      log.warn(
+        "Could not report the checkpoint for clip %s: %o",
+        clip.id,
+        error,
+      ),
+    );
 }
 
 export function clipShareUrl(

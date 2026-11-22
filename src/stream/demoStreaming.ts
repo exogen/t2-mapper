@@ -423,17 +423,21 @@ export function parseDemoValues(demoValues: string[]): ParsedDemoValues {
 /** Checkpoint cadence in recorded simulation ticks; each tick is 32 ms. */
 export const DEMO_CHECKPOINT_TICKS = 1_000;
 
-/**
- * Whether a decoded checkpoint object has exactly the current fields.
- */
-function sameKeys(value: object | undefined, current: object): boolean {
-  if (!value) return false;
-  const keys = Object.keys(value);
-  const expected = Object.keys(current);
-  return (
-    keys.length === expected.length &&
-    keys.every((key) => expected.includes(key))
-  );
+function checkCheckpointFields<T extends object>(
+  section: string,
+  saved: T | undefined,
+  current: T,
+  optional?: keyof T,
+): void {
+  if (!saved) throw new Error(`Invalid seek checkpoint: missing ${section}`);
+  for (const key of Object.keys(current)) {
+    if (key !== optional && !Object.hasOwn(saved, key))
+      throw new Error(`Invalid seek checkpoint: missing ${section}.${key}`);
+  }
+  for (const key of Object.keys(saved)) {
+    if (!Object.hasOwn(current, key))
+      throw new Error(`Invalid seek checkpoint: unexpected ${section}.${key}`);
+  }
 }
 
 // Optional metadata must not turn startup into a scan of the recording.
@@ -691,12 +695,18 @@ export class DemoStreamAdapter extends StreamEngine {
         !(checkpoint.simulation.shared instanceof Map) ||
         !(checkpoint.simulation.players instanceof Map) ||
         !(checkpoint.simulation.images instanceof Map) ||
-        !(checkpoint.parser.ghosts instanceof Map) ||
-        !sameKeys(state, current) ||
-        !sameKeys(state.conn, current.conn) ||
-        !sameKeys(state.conn?.targets, current.conn.targets)
+        !(checkpoint.parser.ghosts instanceof Map)
       )
         throw new Error("Invalid seek checkpoint");
+      checkCheckpointFields("state", state, current);
+      // Earlier v24 writers omit matchPhase. ConnectionState.restore derives it
+      // from the scoreboard when absent.
+      checkCheckpointFields("conn", state.conn, current.conn, "matchPhase");
+      checkCheckpointFields(
+        "targets",
+        state.conn.targets,
+        current.conn.targets,
+      );
       imported.set(tick, {
         ...checkpoint,
         parser: { ...checkpoint.parser, owner },

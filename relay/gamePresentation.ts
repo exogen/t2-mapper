@@ -40,6 +40,8 @@ export type GamePresentationUpdate =
 export const MAX_GAME_TITLE_LENGTH = 128;
 export const MAX_TEAM_NAME_LENGTH = 64;
 export const GAME_PRESENTATION_PATH = "/api/admin/game-presentation";
+/** A new live game ID may recover labels after its first admin save has begun. */
+export const RESTORED_GAME_REVISION = 1;
 
 export class GamePresentationError extends Error {
   readonly status: 404 | 409 | 503;

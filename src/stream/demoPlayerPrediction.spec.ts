@@ -1023,6 +1023,23 @@ it("rejects an invalid import without retaining any partial checkpoints", async 
 type CheckpointConn = Record<string, unknown> & {
   targets: Record<string, unknown>;
 };
+it("restores a v24 checkpoint written before CastGenius saved the match phase", async () => {
+  const blocks = Array.from({ length: 10 }, move);
+  const saved = await (demo(blocks) as DemoStreamAdapter).captureCheckpointAt(
+    8,
+    async () => {},
+  );
+  const conn = saved.simulation.state.conn;
+  Reflect.deleteProperty(conn, "matchPhase");
+  conn.gameClassName = "CTFGame";
+  conn.teamScores = [{ teamId: 1, name: "Storm", score: 2 }];
+  const viewer = demo(blocks) as DemoStreamAdapter;
+  viewer.importCheckpoints([saved]);
+  const snapshot = viewer.stepToTime(atTick(8), 0);
+  expect(snapshot.timeSec).toBe(8 * 0.032);
+  expect(snapshot.matchPhase).toEqual({ kind: "running", startSec: null });
+});
+
 it.each<[string, (state: { conn?: CheckpointConn }) => void]>([
   ["no connection state", (state) => delete state.conn],
   ["an unknown connection field", (state) => (state.conn!.extra = 1)],

@@ -705,7 +705,9 @@ describe("user demo publication and ownership", () => {
         ) +
         2,
     );
-    expect(await fs.readdir(f.directory)).toEqual([]);
+    await vi.waitFor(async () =>
+      expect(await fs.readdir(f.directory)).toEqual([]),
+    );
   });
 
   it("returns the user's identical file without processing or charging it twice", async () => {

@@ -133,6 +133,8 @@ let restartPending = false;
 let resumeAddress: string | null = null;
 let watchRequest = 0;
 let castRequested = false;
+// A watch snapshot can identify the game before its first mission packet.
+const watchGameSequences = new WeakMap<LiveStreamAdapter, string | null>();
 
 const emptyCastTiming = { castShotLeadMs: null, castCoverageLeadMs: null };
 
@@ -559,10 +561,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           )
             return;
           const caster = casterStore.getState();
-          if (
-            caster.publishedGame?.id === game.id &&
-            game.revision >= caster.publishedGame.revision
-          )
+          if (caster.publishedGame?.id === game.id)
             caster.setPublishedGame(game);
         },
         onCatchupProgress(receivedBytes, totalBytes) {
@@ -597,7 +596,15 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           }
           set({ liveReady: false, ...emptyCastTiming });
           a.hydrate(payload);
-          if (watching) casterStore.getState().setPublishedGame(game);
+          if (watching) {
+            watchGameSequences.set(
+              a,
+              payload.displayedMission === undefined
+                ? (payload.missionSequence ?? null)
+                : (payload.displayedMission?.sequence ?? null),
+            );
+            casterStore.getState().setPublishedGame(game);
+          }
         },
         onError(message, requestType) {
           if (get()._relay !== relay) return;
@@ -875,7 +882,17 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
       const cachedServer = s.servers.find((sv) => sv.address === address);
       const newAdapter = createSessionAdapter(s._relay, "watch", {
         onMissionIdentity: (sequence, missionName) => {
-          casterStore.getState().activate(address, sequence, missionName);
+          const caster = casterStore.getState();
+          const previous = watchGameSequences.get(newAdapter);
+          watchGameSequences.set(newAdapter, sequence);
+          caster.activate(
+            address,
+            sequence,
+            missionName,
+            previous === null || previous === sequence
+              ? caster.publishedGame
+              : null,
+          );
         },
         onParseFault: (fault) => {
           // Re-attach for a fresh catch-up: the relay's own parser is fine

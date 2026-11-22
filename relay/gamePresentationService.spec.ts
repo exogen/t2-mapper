@@ -68,7 +68,7 @@ it("waits for a durable recording save before changing or broadcasting the game"
   f.recordings.saveGamePresentation.mockReturnValueOnce(disk.promise);
   const saved = {
     id: f.game.id,
-    revision: 1,
+    revision: 2,
     presentation: request.presentation,
   };
   const result = f.update(request);
@@ -111,6 +111,26 @@ it("lets only one concurrent request with the same expected revision commit", as
   );
 });
 
+it("keeps an in-flight first edit newer than labels restored during the recording save", async () => {
+  const f = fixture();
+  const disk = deferred();
+  f.recordings.saveGamePresentation.mockReturnValueOnce(disk.promise);
+  const editing = f.update(request);
+  await vi.waitFor(() =>
+    expect(f.recordings.saveGamePresentation).toHaveBeenCalledOnce(),
+  );
+  const restored = {
+    ...f.game,
+    revision: 1,
+    presentation: { title: "Previous title" },
+  };
+  f.sessions.updateGame(restored);
+  disk.resolve();
+  const saved = await editing;
+  expect(saved.revision).toBeGreaterThan(restored.revision);
+  expect(f.targets.get(f.game.id)?.game).toEqual(saved);
+});
+
 it("does not push a failed save and allows a queued retry at the same revision", async () => {
   const f = fixture();
   const disk = deferred();
@@ -123,7 +143,7 @@ it("does not push a failed save and allows a queued retry at the same revision",
   expect(f.sessions.updateGame).not.toHaveBeenCalled();
   disk.reject(new Error("Disk full"));
   await first;
-  await expect(retry).resolves.toMatchObject({ id: f.game.id, revision: 1 });
+  await expect(retry).resolves.toMatchObject({ id: f.game.id, revision: 2 });
   expect(f.recordings.saveGamePresentation).toHaveBeenCalledTimes(2);
   expect(f.sessions.updateGame).toHaveBeenCalledOnce();
 });
@@ -157,11 +177,11 @@ it("keeps a committed recording edit when its live target expires during the sav
   };
   f.targets.set(next.game.id, next);
   disk.resolve();
-  await expect(result).resolves.toMatchObject({ id: f.game.id, revision: 1 });
+  await expect(result).resolves.toMatchObject({ id: f.game.id, revision: 2 });
   expect(f.recordings.saveGamePresentation.mock.calls[0][0]).toBe(f.recorder);
   expect(f.sessions.updateGame).toHaveBeenCalledExactlyOnceWith({
     id: f.game.id,
-    revision: 1,
+    revision: 2,
     presentation: request.presentation,
   });
   expect(f.targets.get(next.game.id)).toEqual(next);
@@ -182,9 +202,9 @@ it("does not block a different game's updates behind a slow recording save", asy
   const first = f.update(request);
   await expect(
     f.update({ ...request, gameId: "game-two" }),
-  ).resolves.toMatchObject({ id: "game-two", revision: 1 });
+  ).resolves.toMatchObject({ id: "game-two", revision: 2 });
   expect(f.targets.get(f.game.id)?.game.revision).toBe(0);
-  expect(f.targets.get("game-two")?.game.revision).toBe(1);
+  expect(f.targets.get("game-two")?.game.revision).toBe(2);
   disk.resolve();
   await first;
 });
@@ -194,7 +214,7 @@ it("can publish live-only details without inventing a recording", async () => {
   f.targets.set(f.game.id, { game: f.game, recorder: null });
   await expect(f.update(request)).resolves.toMatchObject({
     id: f.game.id,
-    revision: 1,
+    revision: 2,
   });
   expect(f.recordings.saveGamePresentation).not.toHaveBeenCalled();
   expect(f.sessions.updateGame).toHaveBeenCalledOnce();

@@ -1,4 +1,5 @@
 import type { ClipTake } from "../../relay/clipTypes";
+import { createLogger } from "../logger";
 import { RETAIL_PLAYER_INTERPOLATION } from "./playerInterpolation";
 import { clipStore, seekClipSource } from "../state/clipStore";
 import { engineStore } from "../state/engineStore";
@@ -9,13 +10,15 @@ import { readDemoCheckpoints } from "./demoCheckpoints";
 import type { StreamRecording } from "./types";
 
 let startGeneration = 0;
+const log = createLogger("clipPlayback");
 
-/** Restore before seeking so the clip never replays the recording's long prefix. */
+/** Restore the cached start before seeking, when available. */
 export async function startClipPlayback(
   take: ClipTake,
   recording: StreamRecording,
   signal: AbortSignal,
   checkpointText?: string,
+  recoverCheckpoint?: (error: unknown) => Promise<void>,
 ): Promise<void> {
   const interpolation = take.playerInterpolation ?? RETAIL_PLAYER_INTERPOLATION;
   const generation = ++startGeneration;
@@ -42,25 +45,41 @@ export async function startClipPlayback(
   exitDirector();
   clipStore.getState().stopPlayback();
   engineStore.getState().setPlaybackStatus("paused");
-  let checkpoints: Awaited<ReturnType<typeof readDemoCheckpoints>> | undefined;
-  if (checkpointText !== undefined) {
-    const buffer = engineStore.getState().playback.demoBuffer;
-    if (!buffer || !engineStore.getState().playback.downloadComplete)
-      throw new Error("Wait for the source demo to finish downloading.");
-    checkpoints = await readDemoCheckpoints(checkpointText, buffer, signal);
-    ensureCurrent();
-    if (!recording.streamingPlayback.importCheckpoints || !checkpoints.length)
-      throw new Error("The clip's starting checkpoint is unavailable.");
-  }
-  ensureCurrent();
   const first = take.samples[0];
   if (!first) throw new Error("The clip has no camera recording.");
   const releaseInterpolation =
     recording.streamingPlayback.holdPlayerInterpolation?.(interpolation);
   let holdingForPlayback = false;
   try {
-    if (checkpoints)
-      recording.streamingPlayback.importCheckpoints?.(checkpoints);
+    if (checkpointText !== undefined) {
+      const { demoBuffer, downloadComplete } = engineStore.getState().playback;
+      if (!demoBuffer || !downloadComplete)
+        throw new Error("Wait for the source demo to finish downloading.");
+      try {
+        const checkpoints = await readDemoCheckpoints(
+          checkpointText,
+          demoBuffer,
+          signal,
+        );
+        ensureCurrent();
+        if (
+          !recording.streamingPlayback.importCheckpoints ||
+          !checkpoints.length
+        )
+          throw new Error("The clip's starting checkpoint is unavailable.");
+        recording.streamingPlayback.importCheckpoints(checkpoints);
+      } catch (error) {
+        ensureCurrent();
+        if (!recoverCheckpoint) throw error;
+        await recoverCheckpoint(error);
+        ensureCurrent();
+        log.warn(
+          "Seeking %s without the clip checkpoint: %o",
+          take.sourceDemo,
+          error,
+        );
+      }
+    }
     if (!seekClipSource(first.demoTimeSec))
       throw new Error("Clip playback was canceled.");
     expectedSeekIntent = engineStore.getState().playback.seekIntentNonce;
