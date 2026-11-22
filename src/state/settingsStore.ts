@@ -125,6 +125,7 @@ export interface Preferences {
    *  one at the other's position turns the other off. */
   hudPreferences: { score: HudPreference; quickCam: HudPreference };
   quickCamHideUnassignedSlots: boolean;
+  quickCamDetachOnRecall: boolean;
   scoreHudStyle: HudStyle;
   showReticle: boolean;
   showCompass: boolean;
@@ -198,6 +199,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
     quickCam: { enabled: false, position: "left" },
   },
   quickCamHideUnassignedSlots: false,
+  quickCamDetachOnRecall: false,
   scoreHudStyle: "solid",
   showReticle: true,
   showCompass: true,
@@ -339,6 +341,7 @@ export function restorePreferences(
     },
   };
   copy("quickCamHideUnassignedSlots", isBoolean);
+  copy("quickCamDetachOnRecall", isBoolean);
   copy("showReticle");
   copy("showCompass");
   copy("showIffs", (value) => IFF_VISIBILITY_VALUES.includes(value));

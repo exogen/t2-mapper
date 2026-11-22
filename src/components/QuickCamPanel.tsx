@@ -24,6 +24,8 @@ export function QuickCamPanel({ watching }: { watching: boolean }) {
     setQuickCamHudPosition,
     quickCamHideUnassignedSlots,
     setQuickCamHideUnassignedSlots,
+    quickCamDetachOnRecall,
+    setQuickCamDetachOnRecall,
   } = useSettings();
   return (
     <>
@@ -66,6 +68,25 @@ export function QuickCamPanel({ watching }: { watching: boolean }) {
         >
           Hide unassigned slots
         </label>
+      </div>
+      <div className={styles.CheckboxField}>
+        <Checkbox
+          id="quickCamDetachOnRecallInput"
+          aria-describedby="quickCamDetachOnRecall-description"
+          checked={quickCamDetachOnRecall}
+          disabled={clipPlaybackActive}
+          onChange={(event) => setQuickCamDetachOnRecall(event.target.checked)}
+        />
+        <label className={styles.Label} htmlFor="quickCamDetachOnRecallInput">
+          Press again to enter free-fly
+        </label>
+        <p
+          id="quickCamDetachOnRecall-description"
+          className={styles.Description}
+        >
+          When recalling a camera that's already active, stop following and
+          switch to free-fly mode.
+        </p>
       </div>
       <CameraBindings watching={watching} />
     </>

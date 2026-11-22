@@ -19,7 +19,6 @@ import {
   useRecording,
   SPEED_OPTIONS,
 } from "./usePlayback";
-import { GrPauseFill, GrPlayFill } from "react-icons/gr";
 import { RiMovieAiLine } from "react-icons/ri";
 import {
   exitDirector,
@@ -33,7 +32,7 @@ import {
   useDemoTimeline,
 } from "../state/demoTimelineStore";
 import { formatPlayheadTime, formatPlayheadTimeAligned } from "./demoFormat";
-import { LoadingIndicator } from "./LoadingIndicator";
+import { PlayPauseIcon } from "./PlayPauseIcon";
 import { useSettings } from "./SettingsProvider";
 import { timelineFlagColor } from "./demoTimelineColors";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
@@ -365,15 +364,7 @@ export function DemoPlaybackControls() {
           aria-label={clipPlaying ? "Pause clip" : "Play clip"}
           title={clipPlaying ? "Pause clip (Space)" : "Play clip (Space)"}
         >
-          {isSeeking ? (
-            <span className={playbackStyles.PlaySpinner}>
-              <LoadingIndicator isLoading inline />
-            </span>
-          ) : clipPlaying ? (
-            <GrPauseFill />
-          ) : (
-            <GrPlayFill />
-          )}
+          <PlayPauseIcon seeking={isSeeking} playing={clipPlaying} />
         </button>
         <span className={`${playbackStyles.Time} ${styles.ClipTime}`}>
           {formatPlayheadTimeAligned(selectedTime, selectedDuration)}
@@ -419,13 +410,7 @@ export function DemoPlaybackControls() {
           aria-label={label}
           title={`${label} (Space)`}
         >
-          {isSeeking ? (
-            <LoadingIndicator isLoading inline />
-          ) : clipPlaying ? (
-            <GrPauseFill />
-          ) : (
-            <GrPlayFill />
-          )}
+          <PlayPauseIcon seeking={isSeeking} playing={clipPlaying} />
         </button>
         <span className={playbackStyles.Time}>
           {formatPlayheadTimeAligned(clipHeadMs / 1000, duration)}
@@ -473,14 +458,8 @@ export function DemoPlaybackControls() {
       >
         {pendingSeekProgress != null ? (
           <ScanProgressPie progress={pendingSeekProgress} />
-        ) : isSeeking ? (
-          <span className={playbackStyles.PlaySpinner}>
-            <LoadingIndicator isLoading inline />
-          </span>
-        ) : isPlaying ? (
-          <GrPauseFill />
         ) : (
-          <GrPlayFill />
+          <PlayPauseIcon seeking={isSeeking} playing={isPlaying} />
         )}
       </button>
       <button

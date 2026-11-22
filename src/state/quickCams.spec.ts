@@ -3,6 +3,7 @@ import { OrthographicCamera, PerspectiveCamera } from "three";
 import { casterStore } from "./casterStore";
 import { saveQuickCam, restoreQuickCam } from "./quickCams";
 import { cameraRegistry } from "./cameraRegistry";
+import { settingsStore } from "./settingsStore";
 import { clipStore } from "./clipStore";
 import type { ClipTake } from "../../relay/clipTypes";
 import { liveConnectionStore } from "./liveConnectionStore";
@@ -70,6 +71,7 @@ beforeEach(() => {
   exitToFreeFly();
 });
 afterEach(() => {
+  settingsStore.setState({ quickCamDetachOnRecall: false });
   clipStore.getState().discard();
   replayConnectionStore.getState().leave();
   casterStore.getState().suspend();
@@ -83,6 +85,80 @@ afterEach(() => {
   cameraTourStore.getState().cancel();
   demoDirectorStore.setState({ status: "idle" });
   vi.unstubAllGlobals();
+});
+
+it.each(["orbitOverride", "firstPersonOverride"] as const)(
+  "detaches from a re-recalled %s Quick Cam in place",
+  (mode) => {
+    body("player", 30);
+    streamPlaybackStore.setState({ followCameraMode: mode });
+    enterWatchFollow("player");
+    saveQuickCam(3, true);
+    const saved = casterStore.getState().settings?.quickCams[3];
+
+    // Disabled by default, so pressing again still recalls the saved view.
+    expect(restoreQuickCam(3)).toBe(saved);
+    expect(streamPlaybackStore.getState().cameraMode).toBe(mode);
+    settingsStore.setState({ quickCamDetachOnRecall: true });
+    const otherMode =
+      mode === "orbitOverride" ? "firstPersonOverride" : "orbitOverride";
+    streamPlaybackStore.setState({ cameraMode: otherMode });
+    expect(restoreQuickCam(3)).toBe(saved);
+    expect(streamPlaybackStore.getState().cameraMode).toBe(mode);
+
+    const camera = cameraRegistry.perspective!;
+    camera.position.set(20, 30, 40);
+    camera.rotateY(0.25);
+    const pose = camera.quaternion.clone();
+    const { quickCamRecallNonce } = streamPlaybackStore.getState();
+    casterStore.setState({ fov: 100 });
+    expect(restoreQuickCam(3)).toBeUndefined();
+    expect(streamPlaybackStore.getState()).toMatchObject({
+      cameraMode: "freeFly",
+      followEntityId: null,
+      followPlayer: null,
+      quickCamRecallNonce,
+    });
+    expect(camera.position.toArray()).toEqual([20, 30, 40]);
+    expect(camera.quaternion.equals(pose)).toBe(true);
+    expect(casterStore.getState().fov).toBe(100);
+    expect(casterStore.getState().settings?.quickCams[3]).toBe(saved);
+
+    expect(restoreQuickCam(3)).toBe(saved);
+    expect(streamPlaybackStore.getState().cameraMode).toBe(mode);
+  },
+);
+
+it("detaches from a default flag Quick Cam after it hands off to a carrier", () => {
+  settingsStore.setState({ quickCamDetachOnRecall: true });
+  gameEntityStore.getState().setAllStreamEntities([
+    {
+      id: "flag",
+      teamId: 1,
+      targetRenderFlags: 2,
+      className: "Item",
+      renderType: "Shape",
+    },
+  ]);
+  restoreQuickCam(1);
+  gameEntityStore.getState().setAllStreamEntities([
+    streamEntityToGameEntity({
+      id: "carrier",
+      type: "Player",
+      className: "Player",
+      targetRenderFlags: 2,
+      playerName: "Carrier",
+      teamId: 2,
+      imageSlots: [{ shapeName: "flag", mountPoint: 0, dataBlockId: 1 }],
+    }),
+  ]);
+  expect(resolveWatchFollowTarget()).toBe("carrier");
+  restoreQuickCam(1);
+  expect(streamPlaybackStore.getState()).toMatchObject({
+    cameraMode: "freeFly",
+    followFlagSlot: null,
+    followEntityId: null,
+  });
 });
 
 it("keeps quick cameras available while recording a clip", () => {

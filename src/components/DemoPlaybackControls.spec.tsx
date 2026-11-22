@@ -5,6 +5,7 @@ import { IFF_PALETTE, rgbString, type TeamColorScheme } from "../iffTheme";
 import type { ClipSample, ClipTake } from "../../relay/clipTypes";
 import { ClipControlsContext } from "./clipControlsContext";
 import { DemoPlaybackControls } from "./DemoPlaybackControls";
+import playbackStyles from "./PlaybackControls.module.css";
 
 const green = rgbString(IFF_PALETTE.green);
 const red = rgbString(IFF_PALETTE.red);
@@ -59,7 +60,7 @@ vi.mock("./ClipControls", () => ({
 vi.mock("./usePlayback", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./usePlayback")>()),
   useRecording: () => state.recording,
-  useIsSeeking: () => false,
+  useIsSeeking: () => state.playback.status === "seeking",
   useCurrentTime: () => 0,
   useDuration: () => state.recording.duration,
   useSpeed: () => 1,
@@ -214,6 +215,21 @@ it("uses clip time and duration for saved clips and offers replay at the end", (
   expect(markup).toContain("0:05 / 0:05");
   expect(markup).not.toContain('aria-label="CastGenius"');
   expect(markup).not.toContain("Another map");
+});
+
+it("uses the same centered seek spinner in demo playback, clip playback and trimming", () => {
+  state.playback.status = "seeking";
+  const renderPlayIcon = () =>
+    renderToStaticMarkup(<DemoPlaybackControls />).match(
+      /<button[^>]*>([\s\S]*?)<\/button>/,
+    )?.[1];
+  const demoIcon = renderPlayIcon();
+  expect(demoIcon).toContain(playbackStyles.PlaySpinner);
+
+  editingDraft();
+  expect(renderPlayIcon()).toBe(demoIcon);
+  state.clip.draft = null;
+  expect(renderPlayIcon()).toBe(demoIcon);
 });
 
 it("prevents starting CastGenius while a saved clip is being prepared", () => {

@@ -16,6 +16,7 @@ import { resolveCameraOwner } from "./cameraOwner";
 import { commandCircuitStore } from "./commandCircuitStore";
 import { referencePlayerEntity, lookupPlayerBody } from "./playerResolver";
 import { exitToFreeFly, followFlag, resolveFlagEntityId } from "./watchFollow";
+import { settingsStore } from "./settingsStore";
 
 function ready() {
   if (clipStore.getState().active) return false;
@@ -127,12 +128,8 @@ export function restoreQuickCam(slot: QuickCamSlot): SavedCamera | undefined {
   let targetId: number | null = null;
   let pending = false;
   let ghostIndex: number | null = null;
-  if (flagSlot != null) {
-    entityId = resolveFlagEntityId(flagSlot);
-    if (!entityId) return;
-  } else if (!saved) {
-    return;
-  } else if (saved.kind === "player") {
+  if (flagSlot == null && !saved) return;
+  if (saved?.kind === "player") {
     const match = lookupPlayerBody(saved.player);
     if (match.status === "ambiguous") return;
     const entity = match.body;
@@ -147,6 +144,31 @@ export function restoreQuickCam(slot: QuickCamSlot): SavedCamera | undefined {
       targetId = entity.targetId;
   }
   if (!cameraRegistry.perspective) return;
+  const mode =
+    saved?.kind === "player" && saved.mode === "firstPerson"
+      ? "firstPersonOverride"
+      : "orbitOverride";
+  const stream = streamPlaybackStore.getState();
+  if (
+    settingsStore.getState().quickCamDetachOnRecall &&
+    !saved?.commandCircuit &&
+    resolveCameraOwner() === "input" &&
+    stream.cameraMode === mode &&
+    stream.projectileFollow?.kind !== "tracking" &&
+    (flagSlot != null
+      ? stream.followFlagSlot === flagSlot
+      : saved?.kind === "player" &&
+        stream.followFlagSlot == null &&
+        stream.followEntityId != null &&
+        stream.followEntityId ===
+          (entityId ?? lookupPlayerBody(saved.player, false).body?.id))
+  ) {
+    // A detach keeps the rendered pose and isn't a jump in a clip recording.
+    exitToFreeFly();
+    casterStore.setState({ lastCameraAction: { slot } });
+    return;
+  }
+  if (flagSlot != null && !resolveFlagEntityId(flagSlot)) return;
   cameraTourStore.getState().cancel();
   exitDirector();
   commandCircuitStore.getState().deactivate();
@@ -170,8 +192,6 @@ export function restoreQuickCam(slot: QuickCamSlot): SavedCamera | undefined {
     cameraRegistry.perspective.position.fromArray(saved.position);
     cameraRegistry.perspective.quaternion.fromArray(saved.quaternion);
   } else if (saved?.kind === "player") {
-    const mode =
-      saved.mode === "firstPerson" ? "firstPersonOverride" : "orbitOverride";
     streamPlaybackStore.setState({
       cameraMode: pending ? "freeFly" : mode,
       followCameraMode: mode,

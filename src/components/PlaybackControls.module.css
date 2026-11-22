@@ -27,9 +27,15 @@
 }
 
 .PlaySpinner {
+  composes: Spinner from "./LoadingIndicator.module.css";
+}
+
+.PlayPause > .PlaySpinner {
   width: 16px;
   height: 16px;
   flex: 0 0 16px;
+  border-width: 2px;
+  opacity: 0.8;
 }
 
 @media (pointer: coarse) {

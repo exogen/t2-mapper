@@ -113,6 +113,8 @@ type SettingsContextType = {
   setQuickCamHudPosition: (position: HudPosition) => void;
   quickCamHideUnassignedSlots: boolean;
   setQuickCamHideUnassignedSlots: StateSetter<boolean>;
+  quickCamDetachOnRecall: boolean;
+  setQuickCamDetachOnRecall: StateSetter<boolean>;
   scoreHudStyle: HudStyle;
   setScoreHudStyle: StateSetter<HudStyle>;
   showReticle: boolean;
@@ -217,6 +219,7 @@ const settingsActions = {
   setQuickCamHudPosition: (position: HudPosition) =>
     updateHudPreference("quickCam", { position }),
   setQuickCamHideUnassignedSlots: setter("quickCamHideUnassignedSlots"),
+  setQuickCamDetachOnRecall: setter("quickCamDetachOnRecall"),
   setScoreHudStyle: setter("scoreHudStyle"),
   setShowReticle: setter("showReticle"),
   setShowCompass: setter("showCompass"),
@@ -262,6 +265,7 @@ function selectSettings(
     showQuickCamHud: state.hudPreferences.quickCam.enabled,
     quickCamHudPosition: state.hudPreferences.quickCam.position,
     quickCamHideUnassignedSlots: state.quickCamHideUnassignedSlots,
+    quickCamDetachOnRecall: state.quickCamDetachOnRecall,
     scoreHudStyle: state.scoreHudStyle,
     showReticle: state.showReticle,
     showCompass: state.showCompass,

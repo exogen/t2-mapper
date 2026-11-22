@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isPlaybackControl } from "../keyboard";
-import { GrPauseFill, GrPlayFill } from "react-icons/gr";
+import { PlayPauseIcon } from "./PlayPauseIcon";
 import {
   replayConnectionStore,
   selectCanControlReplay,
@@ -203,15 +203,7 @@ export function ReplayControls() {
           aria-label={playing ? "Pause" : "Play"}
           title={playTitle}
         >
-          {busy ? (
-            <span className={playbackStyles.PlaySpinner}>
-              <LoadingIndicator isLoading inline />
-            </span>
-          ) : playing ? (
-            <GrPauseFill />
-          ) : (
-            <GrPlayFill />
-          )}
+          <PlayPauseIcon seeking={busy} playing={playing} />
         </button>
         <span className={playbackStyles.Time}>
           {formatPlayheadTimeAligned(time, duration)}

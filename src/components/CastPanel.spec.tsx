@@ -75,6 +75,8 @@ vi.mock("./SettingsProvider", () => ({
     setQuickCamHudPosition: vi.fn(),
     quickCamHideUnassignedSlots: fixture.quickCamHideUnassignedSlots,
     setQuickCamHideUnassignedSlots: vi.fn(),
+    quickCamDetachOnRecall: false,
+    setQuickCamDetachOnRecall: vi.fn(),
   }),
 }));
 vi.mock("./InputControls", () => ({
@@ -155,6 +157,7 @@ it("shows ten quick cams and their HUD setting without team or commentary contro
   expect(html).not.toContain('<option value="off"');
   expect(html).toContain('id="quickCamHideUnassignedSlotsInput"');
   expect(html).toContain("Hide unassigned slots");
+  expect(html).toContain("Press again to enter free-fly");
   expect(html).toContain("Storm Flag");
   expect(html).toContain("Inferno Flag");
   expect(html).not.toContain("Rename team");
@@ -171,6 +174,7 @@ it.each([false, true])(
       "showQuickCamHudInput",
       "quickCamHudPositionInput",
       "quickCamHideUnassignedSlotsInput",
+      "quickCamDetachOnRecallInput",
     ]) {
       const control = html.match(new RegExp(`<[^>]*id="${id}"[^>]*>`))?.[0];
       expect(control).toBeDefined();

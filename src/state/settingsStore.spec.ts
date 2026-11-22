@@ -320,6 +320,15 @@ it("leaves the sidebar closed until the touch check restores it", () => {
   expect(createSettingsStore().getState().sidebarOpen).toBe(false);
 });
 
+it("defaults to normal Quick Cam recall and remembers detaching on repeat", () => {
+  const store = createSettingsStore();
+  expect(store.getState().quickCamDetachOnRecall).toBe(false);
+  setPreference("quickCamDetachOnRecall", true, store);
+  vi.advanceTimersByTime(500);
+  stubSaved(lastSaved());
+  expect(createSettingsStore().getState().quickCamDetachOnRecall).toBe(true);
+});
+
 it("defaults to showing unassigned quick cam slots and persists hiding them", () => {
   const store = createSettingsStore();
   expect(store.getState().quickCamHideUnassignedSlots).toBe(false);

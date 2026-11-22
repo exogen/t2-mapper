@@ -23,7 +23,7 @@ export type ProjectileFollow =
 /** Default follow orbit distance, and the scroll-zoom clamp range. */
 export const DEFAULT_ORBIT_DISTANCE = 8;
 export const MIN_ORBIT_DISTANCE = 2;
-export const MAX_ORBIT_DISTANCE = 45;
+export const MAX_ORBIT_DISTANCE = 60;
 
 /**
  * Store for mutable streaming playback state that needs to be shared between
