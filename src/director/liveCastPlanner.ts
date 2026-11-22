@@ -19,6 +19,7 @@ import { stageShot } from "./stage";
 import { ROOM_SUBJECT_MARGIN, sweepEasing } from "./cameraRig";
 import { shotPoseAt, subjectVisible } from "./shotPath";
 import { createSwitcherStream, type SwitcherStream } from "./switcher";
+import { visibleOpeningPlayers } from "./suitUp";
 import { DIRECTOR_EVENT_LEAD_SEC, DIRECTOR_TICK_SEC } from "./tunables";
 import type { DirectorVec3, Shot, ShotAim, ShotSubject } from "./types";
 
@@ -245,7 +246,7 @@ export function createLiveCastPlanner(options: LiveCastPlannerOptions) {
       horizonSec,
     );
     const horizonTick = streamTimeToTick(horizonSec);
-    if (!switcher) {
+    if (!switcher || !view) {
       const ctf =
         supportsLiveCastMode(metadata.gameClassName, metadata.gameType) ??
         detectMode(dataset) === "ctf";
@@ -312,11 +313,14 @@ export function createLiveCastPlanner(options: LiveCastPlannerOptions) {
 
     const kickoff =
       source.topic === "suit-up" && lastPublished?.source.topic !== "suit-up";
+    const leavingEmptySetup =
+      lastPublished?.source.topic === "suit-up" &&
+      !visibleOpeningPlayers(lastPublished.source, view.playersAt(atSec));
     const importantCut =
       priority === "capture" ||
       (priority === "flagPlay" && lastPublished?.priority === "ordinary");
     const cutAfterTick =
-      leftRoom || kickoff || importantCut
+      leftRoom || kickoff || leavingEmptySetup || importantCut
         ? holdUntilTick
         : (lastPublished?.startTick ?? -Infinity) + LIVE_CAST_NORMAL_HOLD_TICKS;
     if (decisionTick < cutAfterTick && !canScheduleAhead) return;
@@ -329,6 +333,11 @@ export function createLiveCastPlanner(options: LiveCastPlannerOptions) {
     // The original event deadline governs entry. Once a shot has
     // aired, leaving a room must still allow a sightline repair.
     if (!leftRoom && startSec > (latestStartSec ?? Infinity)) return;
+    if (
+      source.topic === "suit-up" &&
+      !visibleOpeningPlayers(source, view.playersAt(startSec))
+    )
+      return;
     // Reserve the preferred lead-in for a known score. The score can
     // still air in its shorter window if it arrives during a hold.
     const pendingCapture = switcher.pendingCaptureSec;

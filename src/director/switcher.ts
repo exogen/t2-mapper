@@ -22,6 +22,7 @@ import type {
   DirectorDataset,
   DirectorEvent,
   DirectorFlagSample,
+  DirectorPlayerSample,
   DirectorVec3,
   Shot,
   ShotPlan,
@@ -34,6 +35,7 @@ import {
   DIRECTOR_STATION_CAM_HEIGHT,
   DIRECTOR_STATION_CAM_RADIUS,
   DIRECTOR_SUITUP_KICKOFF_SEC,
+  DIRECTOR_SUITUP_SPAWN_GRACE_SEC,
   DIRECTOR_CLUSTER_CAM_HEIGHT,
   DIRECTOR_CLUSTER_CAM_RADIUS,
   DIRECTOR_BOMBARDMENT_CAM_HEIGHT,
@@ -48,6 +50,7 @@ import {
   DIRECTOR_CROWD_ORBIT_RADIUS,
   DIRECTOR_DEATH_REACTION_SEC,
   DIRECTOR_DIST_STAND_WIDE,
+  DIRECTOR_DIST_CHASE,
   DIRECTOR_GRAB_ALONGSIDE_DIST,
   DIRECTOR_GRAB_ALONGSIDE_HEIGHT,
   DIRECTOR_GRAB_CHASE_DIST,
@@ -112,7 +115,12 @@ import {
   returnConverging,
 } from "./predictors";
 import { buildSubjects, type Subject } from "./interest";
-import { busiestCluster, busiestInventory } from "./analysis";
+import {
+  busiestCluster,
+  busiestInventory,
+  busiestPlayerCluster,
+  playerMotion,
+} from "./analysis";
 import { bearingYaw, boundingSpread, centroid, dist } from "./geometry";
 import {
   distanceForSpeed,
@@ -156,6 +164,8 @@ import {
 import { publishFreeSpace } from "./freeSpaceRegistry";
 import { isRoofed } from "./cameraRig";
 import { inspectShot, shotCameraPath, shotSubjectOf } from "./shotPath";
+import { stageShot } from "./stage";
+import { visibleOpeningPlayers } from "./suitUp";
 import { PLAYER_AIM_LIFT, PLAYER_STANDOFF } from "./humanScale";
 import { assetBoxCenter, castWorldRay } from "../collision/worldCollision";
 import {
@@ -855,6 +865,7 @@ function markKickoff(state: SwitcherState, timeSec: number | null): void {
   // Once play starts, show players at inventory stations gearing up.
   state.lineupUntil = -Infinity;
   state.suitUpUntil = (timeSec ?? -Infinity) + DIRECTOR_SUITUP_KICKOFF_SEC;
+  state.suitUpLastPos = null;
 }
 
 /** A missed live cut must release both its camera and its hold. */
@@ -1315,6 +1326,8 @@ function tick(state: SwitcherState, t: number): void {
     return;
   }
   if (t < state.suitUpUntil) {
+    // Legacy demos can report the start inside the lookahead window.
+    if (t < (state.kickoffSec ?? -Infinity)) return;
     // The ceremony yields to real drama BEFORE it lands — the whole
     // point of the lookahead is seeing the first grab, not its
     // aftermath: a grab inside the peek, or an attacker seconds out
@@ -1328,9 +1341,10 @@ function tick(state: SwitcherState, t: number): void {
           view.peekFlagEvents(slot, ["flag-grab"]).length > 0 ||
           (approachEta(view, slot) ?? Infinity) <= DIRECTOR_GRAB_IMMINENT_SEC,
       );
-    const flagOut = view
-      .flagSlots()
-      .some((slot) => view.flagAt(slot)?.status !== "home");
+    const flagOut = view.flagSlots().some((slot) => {
+      const flag = view.flagAt(slot);
+      return flag != null && flag.status !== "home";
+    });
     if (imminentSlot != null || flagOut) {
       state.suitUpUntil = t;
       if (imminentSlot != null) {
@@ -1344,9 +1358,36 @@ function tick(state: SwitcherState, t: number): void {
       }
       // Fall through to normal scoring for the flag-out case.
     } else {
-      state.lastNonFlagSec = t;
-      if (t >= state.rotateAt) emitSuitUpPass(state, t);
-      return;
+      const setup = state.shots.at(-1);
+      const players = view.playersAt(t).filter((player) => player.health !== 0);
+      const occupied =
+        setup?.topic === "suit-up" &&
+        (visibleOpeningPlayers(setup, players) > 0 ||
+          visibleOpeningPlayers(
+            setup,
+            view.playersAt(Math.max(setup.startSec, t - 1)),
+          ) > 0);
+      if (
+        (occupied && t < state.rotateAt) ||
+        emitSuitUpPass(state, t, players)
+      ) {
+        state.lastNonFlagSec = t;
+        return;
+      }
+      // Player samples may arrive one at a time just after kickoff.
+      if (
+        setup?.topic !== "suit-up" &&
+        (players.length === 0 ||
+          t < (state.kickoffSec ?? t) + DIRECTOR_SUITUP_SPAWN_GRACE_SEC)
+      )
+        return;
+      state.suitUpUntil = t;
+      state.rotateAt = t;
+      if (
+        setup?.topic === "suit-up" &&
+        emitOpeningPush(state, setup, t, players)
+      )
+        return;
     }
   }
 
@@ -2758,16 +2799,24 @@ function emitLineupPass(state: SwitcherState, t: number): void {
  * or — in the very first seconds while everyone is still flying home —
  * the spawn wave itself. Never an empty mid-map wide.
  */
-function emitSuitUpPass(state: SwitcherState, t: number): void {
+function emitSuitUpPass(
+  state: SwitcherState,
+  t: number,
+  players: readonly DirectorPlayerSample[],
+): boolean {
   const view = state.view;
   const end = Math.min(t + 9, state.suitUpUntil);
-  let shot: Shot | null = null;
+  const stageVisible = (shot: Shot) => {
+    const staged = stageOpeningView(state, shot, players);
+    if (!staged) return false;
+    pushShot(state, staged, t, end);
+    return true;
+  };
   const invo =
     busiestInventory(view, t, { minimum: 2, awayFrom: state.suitUpLastPos }) ??
     busiestInventory(view, t, { minimum: 2 });
   if (invo) {
-    state.suitUpLastPos = invo.pos;
-    shot = orbitShot({
+    const shot = orbitShot({
       center: invo.pos,
       radius: DIRECTOR_STATION_CAM_RADIUS,
       heightFactor: DIRECTOR_STATION_CAM_HEIGHT,
@@ -2778,27 +2827,105 @@ function emitSuitUpPass(state: SwitcherState, t: number): void {
       reason: `${invo.count} players suiting up at the inventory`,
       topic: "suit-up",
     });
-  } else {
-    const cluster = busiestCluster(Math.max(0, t - 3), t, view.playersAtSec);
-    if (cluster) {
-      shot = orbitShot({
-        center: cluster.center,
-        radius: DIRECTOR_CLUSTER_CAM_RADIUS,
-        heightFactor: DIRECTOR_CLUSTER_CAM_HEIGHT,
-        still: true,
-        framing: { dataset: view.dataset, variety: state.variety },
-        startSec: t,
-        endSec: end,
-        reason: `Suiting up — spawn wave (${cluster.count})`,
-        topic: "suit-up",
-      });
+    if (stageVisible(shot)) {
+      state.suitUpLastPos = invo.pos;
+      return true;
     }
   }
+
+  // Once we have shown a station, let the departing players lead the
+  // next shot instead of returning to another static view of their base.
+  if (state.shots.at(-1)?.topic === "suit-up") return false;
+  const cluster = busiestPlayerCluster(players);
+  if (!cluster) return false;
+  return stageVisible(
+    orbitShot({
+      center: cluster.center,
+      radius: DIRECTOR_CLUSTER_CAM_RADIUS,
+      heightFactor: DIRECTOR_CLUSTER_CAM_HEIGHT,
+      still: true,
+      framing: { dataset: view.dataset, variety: state.variety },
+      startSec: t,
+      endSec: end,
+      reason: `Suiting up — spawn wave (${cluster.count})`,
+      topic: "suit-up",
+    }),
+  );
+}
+
+function stageOpeningView(
+  state: SwitcherState,
+  shot: Shot,
+  players: readonly DirectorPlayerSample[],
+): Shot | null {
+  const staged = stageShot(shot, state.view.dataset, state.freeSpace, {
+    endSec: shot.startSec,
+    roomAudience: players,
+  }).shot;
+  if (!visibleOpeningPlayers(staged, players)) return null;
+  staged.endSec = shot.endSec;
+  return staged;
+}
+
+function emitOpeningPush(
+  state: SwitcherState,
+  setup: Shot,
+  t: number,
+  players: readonly DirectorPlayerSample[],
+): boolean {
+  const { view } = state;
+  const wave = offensiveWaveShot(view, t, state.varietyMem);
+  let shot = wave?.shot;
+  if (wave) state.varietyChoices.set(wave.shot, wave.cooldownKey);
   if (!shot) {
-    state.rotateAt = t + 2;
-    return;
+    const departure = playerMotion(view, t, 2).find(
+      ({ player, before, speed }) =>
+        player.health !== 0 &&
+        speed >= 4 &&
+        visibleOpeningPlayers(setup, [before]) > 0 &&
+        visibleOpeningPlayers(setup, [player]) === 0,
+    );
+    const cluster = departure ? null : busiestPlayerCluster(players);
+    const endSec = t + DIRECTOR_MIN_SHOT_SEC;
+    if (cluster) {
+      shot =
+        stageOpeningView(
+          state,
+          orbitShot({
+            center: cluster.center,
+            radius: DIRECTOR_CLUSTER_CAM_RADIUS,
+            heightFactor: DIRECTOR_CLUSTER_CAM_HEIGHT,
+            framing: { dataset: view.dataset, variety: state.variety },
+            still: true,
+            startSec: t,
+            endSec,
+            reason: `Opening setup — ${cluster.count} players`,
+            topic: "suit-up",
+          }),
+          players,
+        ) ?? undefined;
+    }
+    if (!shot) {
+      const player = departure?.player ?? players[0];
+      if (!player) return false;
+      const targetId = player.targetId;
+      shot = {
+        kind: "followPlayer",
+        targetId,
+        distance: DIRECTOR_DIST_CHASE,
+        pitch: DIRECTOR_PITCH_CHASE,
+        aim: { mode: "forward" },
+        topic: "action",
+        reason: `Opening setup — ${playerName(targetId, view.dataset, t) ?? "following a player"}`,
+        startSec: t,
+        endSec,
+        transitionIn: "cut",
+      };
+    }
   }
-  pushShot(state, shot, t, end);
+  pushShot(state, shot, t, shot.endSec);
+  state.directive = { kind: "filler", shot, atSec: t, untilSec: shot.endSec };
+  return true;
 }
 
 // ── Causal scoring (the oracle's scoreSubjects, future terms swapped

@@ -25,6 +25,7 @@ import { cloneData } from "../cloneData";
 import { framesTheSame } from "./assemble";
 import type {
   DirectorDataset,
+  DirectorPlayerSample,
   DirectorVec3,
   Shot,
   ShotPlan,
@@ -77,6 +78,7 @@ import {
 } from "./tunables";
 import { orbitPullbackDir } from "../stream/streamHelpers";
 import { cameraSpotsFor, type FreeSpaceGrid } from "./freeSpace";
+import { visibleOpeningPlayers } from "./suitUp";
 import { torqueVecToThree, threeToTorque } from "../scene/coordinates";
 
 /** How often along a shot the subject's visibility is sampled. */
@@ -195,6 +197,7 @@ function openStageContext(
   dataset: DirectorDataset,
   tracks: Map<number, FlagTrack>,
   freeSpace?: FreeSpaceGrid | null,
+  roomAudience?: readonly DirectorPlayerSample[],
 ): void {
   const vehiclesBySec = new Map<number, Vector3[]>();
   for (const v of dataset.vehicles ?? []) {
@@ -205,6 +208,7 @@ function openStageContext(
   }
   _stageCtx = {
     freeSpace,
+    roomAudience,
     playersAtSec: playersAtSecFor(dataset),
     tracks,
     standsThree: dataset.flagStands.map((st) =>
@@ -283,7 +287,10 @@ export function stageShot(
     startSec = source.startSec,
     endSec = source.endSec,
     transitionIn = source.transitionIn,
-  }: Partial<Pick<Shot, "startSec" | "endSec" | "transitionIn">> = {},
+    roomAudience,
+  }: Partial<Pick<Shot, "startSec" | "endSec" | "transitionIn">> & {
+    roomAudience?: readonly DirectorPlayerSample[];
+  } = {},
 ): { shot: Shot; report: StageReport } {
   const candidate = cloneData(source);
   if (candidate.kind === "sweep" && startSec > candidate.startSec) {
@@ -294,7 +301,7 @@ export function stageShot(
   candidate.endSec = Math.min(endSec, dataset.durationSec);
   candidate.transitionIn = transitionIn;
   const shots = [candidate];
-  const report = stageShots(shots, dataset, freeSpace);
+  const report = stageShots(shots, dataset, freeSpace, roomAudience);
   return { shot: shots[0], report };
 }
 
@@ -306,11 +313,12 @@ export function stageShots(
   shots: Shot[],
   dataset: DirectorDataset,
   freeSpace?: FreeSpaceGrid | null,
+  roomAudience?: readonly DirectorPlayerSample[],
 ): StageReport {
   const report = emptyReport();
   const plan = { shots };
   const tracks = buildFlagTracks(dataset);
-  openStageContext(dataset, tracks, freeSpace);
+  openStageContext(dataset, tracks, freeSpace, roomAudience);
   try {
     for (let i = 0; i < shots.length; i++)
       stageSweepShot(plan, i, tracks, dataset, report);
@@ -945,9 +953,13 @@ function placeFixedFromGrid(
   const subject = path[0]?.pos;
   if (!subject) return false;
   const anchor = shot.center;
+  const players = _stageCtx?.roomAudience;
+  let roomView: Extract<Shot, { kind: "fixedOrbit" }> | undefined;
+  let audience = 0;
   torqueVecToThree(anchor, _anchorThree);
   for (const spot of cameraSpotsFor(grid, threeToTorque(subject), {
-    wantDist,
+    wantDist: players ? ROOM_SHOT_RANGE : wantDist,
+    ...(players ? { maxDist: ROOM_SHOT_RANGE } : {}),
     bearing: shot.startAngle,
   })) {
     const dx = spot[0] - anchor[0];
@@ -977,12 +989,17 @@ function placeFixedFromGrid(
     };
     // Check the rig's actual pose too (including its fixed aim lift).
     if (inspectShot(candidate)?.ok === false) continue;
-    shot.angularSpeed = 0;
-    shot.heightFactor = candidate.heightFactor;
-    shot.staged = candidate.staged;
-    return true;
+    const seen = players ? visibleOpeningPlayers(candidate, players) : 1;
+    if (seen <= audience) continue;
+    roomView = candidate;
+    audience = seen;
+    if (!players || audience === players.length) break;
   }
-  return false;
+  if (!roomView) return false;
+  shot.angularSpeed = roomView.angularSpeed;
+  shot.heightFactor = roomView.heightFactor;
+  shot.staged = roomView.staged;
+  return true;
 }
 
 /**
@@ -1567,6 +1584,7 @@ function stageFog(): number | undefined {
 
 interface StageCtx {
   freeSpace?: FreeSpaceGrid | null;
+  roomAudience?: readonly DirectorPlayerSample[];
   playersAtSec: PlayersAtSec;
   tracks: Map<number, FlagTrack>;
   standsThree: Vector3[];

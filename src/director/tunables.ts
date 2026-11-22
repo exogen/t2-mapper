@@ -446,6 +446,8 @@ export const DIRECTOR_STATION_RANGE = 18;
  * new monotony it was meant to break.
  */
 export const DIRECTOR_SUITUP_KICKOFF_SEC = 45;
+/** Allow the opening cast to collect a group across staggered spawn samples. */
+export const DIRECTOR_SUITUP_SPAWN_GRACE_SEC = 3;
 export const DIRECTOR_STATION_CAM_RADIUS = 14;
 export const DIRECTOR_STATION_CAM_HEIGHT = 0.35;
 /** Framing for the two bombardment shots: the impacts, and the crew. */

@@ -1150,6 +1150,51 @@ describe("planShotsCausal", () => {
     ).toBe(false);
   });
 
+  it("leaves the inventory for players setting up after the room clears", () => {
+    const ds = directorDataset({
+      durationSec: 15,
+      matchPhases: [{ timeSec: 0, phase: { kind: "running", startSec: 0 } }],
+      stations: [{ kind: "inventory", pos: STAND_1, deployed: false }],
+    });
+    for (let t = 0; t <= ds.durationSec; t++) {
+      ds.flagSamples.push(
+        {
+          timeSec: t,
+          slot: 1,
+          pos: STAND_1,
+          status: "home",
+          carrierTargetId: null,
+        },
+        {
+          timeSec: t,
+          slot: 2,
+          pos: STAND_2,
+          status: "home",
+          carrierTargetId: null,
+        },
+      );
+      const distance = t <= 2 ? 0 : 100 + 10 * t;
+      ds.playerSamples.push(
+        { timeSec: t, targetId: 1, teamId: 1, pos: [distance, -2, 100] },
+        { timeSec: t, targetId: 2, teamId: 1, pos: [distance, 2, 100] },
+        { timeSec: t, targetId: 3, teamId: 1, pos: STAND_1, health: 0 },
+      );
+    }
+    const plan = planShotsCausal(ds);
+    const index = plan.shots.findIndex((s) =>
+      s.reason.includes("at the inventory"),
+    );
+    const inventory = plan.shots[index];
+    expect(inventory?.endSec).toBeGreaterThanOrEqual(3);
+    expect(inventory?.endSec).toBeLessThanOrEqual(5);
+    expect(plan.shots[index + 1]).toMatchObject({
+      kind: "followPlayer",
+      targetId: 1,
+      topic: "action",
+      startSec: inventory.endSec,
+    });
+  });
+
   it("cuts to the stand BEFORE the first grab, ending the suit-up", () => {
     // The grab lands at 30, ten seconds into the post-whistle suit-up
     // ceremony. The peek sees it two seconds out — the camera must be

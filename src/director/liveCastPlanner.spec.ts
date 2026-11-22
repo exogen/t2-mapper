@@ -110,6 +110,41 @@ async function planCtfShots(
   return shots;
 }
 
+const openingInventory: DirectorVec3 = [100, 100, 100];
+
+async function planOpening(
+  playersAt: (timeSec: number) => DirectorSnapshot["entities"],
+): Promise<LiveCastPlannerShot[]> {
+  const planner = createLiveCastPlanner({ startTick: 0, metadata });
+  const station = {
+    id: "opening-inventory",
+    type: "StaticShape",
+    dataBlock: "Station_inv_human",
+    position: openingInventory,
+  };
+  const shots: LiveCastPlannerShot[] = [];
+  for (let tick = 0; tick <= 480; tick++) {
+    const t = (tick * TICK_DURATION_MS) / 1000;
+    shots.push(
+      ...(await planner.pushFrame(
+        frame(tick, {
+          entities: [station, ...playersAt(t)],
+          matchPhase: { kind: "running", startSec: 0 },
+        }),
+      )),
+    );
+  }
+  return shots;
+}
+
+function inventoryShot({ shot }: LiveCastPlannerShot): boolean {
+  return (
+    shot.kind === "fixedOrbit" &&
+    shot.center.every((value, index) => value === openingInventory[index]) &&
+    shot.radius === 14
+  );
+}
+
 describe("authoritative live cast planner", () => {
   it("cuts away from a quiet flag contest to a sustained grab elsewhere", async () => {
     const looseFlag: DirectorVec3 = [580, 0, 100];
@@ -417,6 +452,48 @@ describe("authoritative live cast planner", () => {
       }),
     );
     expect(shot.startTick).toBe(15);
+  });
+
+  it("cuts from the empty inventory as soon as the live minimum hold allows", async () => {
+    const shots = await planOpening((t) => {
+      const x = t < 4.2 ? 100 : 200 + 10 * t;
+      return [player(1, 1, [x, 98, 100]), player(2, 1, [x, 102, 100])];
+    });
+    const index = shots.findIndex(inventoryShot);
+    expect(index).toBeGreaterThanOrEqual(0);
+    const next = shots[index + 1]?.shot;
+    expect(next).toMatchObject({ kind: "followPlayer", targetId: 1 });
+    const hold = next.startSec - shots[index].shot.startSec;
+    expect(hold).toBeGreaterThanOrEqual(3);
+    expect(hold).toBeLessThan(5);
+  });
+
+  it("finds an inventory group even when players spawn on different samples", async () => {
+    const shots = await planOpening((t) =>
+      t < 2
+        ? [player(1, 1, openingInventory)]
+        : [
+            player(1, 1, openingInventory),
+            player(2, 1, [100, 102, 100]),
+            player(3, 1, [100, 98, 100]),
+          ],
+    );
+    const kickoff = shots.find(inventoryShot);
+    expect(kickoff?.shot.startSec).toBeLessThan(5);
+  });
+
+  it("cuts to current players when departing inventory users leave scope", async () => {
+    const shots = await planOpening((t) =>
+      t < 5
+        ? [1, 2, 3, 4].map((id) => player(id, 1, [100, 100 + id, 100]))
+        : [player(5, 1, [280, 102, 100]), player(6, 1, [280, 104, 100])],
+    );
+    const index = shots.findIndex(inventoryShot);
+    expect(index).toBeGreaterThanOrEqual(0);
+    expect(shots[index + 1]?.shot).toMatchObject({
+      kind: "fixedOrbit",
+      center: [280, 103, 100],
+    });
   });
 
   it.each([

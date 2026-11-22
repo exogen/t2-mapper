@@ -232,6 +232,39 @@ function indoorFollow(): Extract<Shot, { kind: "followFlag" }> {
 }
 
 describe("staging with the director's free-space grid", () => {
+  it("ranks kickoff room angles using the audience available at the cut", () => {
+    enclose();
+    const grid: FreeSpaceGrid = {
+      ...gridAt([-3, 0, 3]),
+      nx: 2,
+      free: new Uint8Array([1, 1]),
+      tested: new Uint8Array([1, 1]),
+    };
+    const shot = fixedShot({
+      center: [0, 0, 0],
+      startAngle: Math.PI / 2,
+      angularSpeed: 0,
+      topic: "suit-up",
+      lookSubject: undefined,
+      startSec: 0.16,
+    });
+    const audience: DirectorDataset["playerSamples"] = [
+      { timeSec: 0.14, targetId: 1, teamId: 1, pos: [1.5, -1.8, 0] },
+      { timeSec: 0.14, targetId: 2, teamId: 1, pos: [1.5, 1.8, 0] },
+    ];
+    const ds = directorDataset({
+      playerSamples: [
+        ...audience,
+        { timeSec: 0.4, targetId: 1, teamId: 1, pos: [-1.5, -1.8, 0] },
+        { timeSec: 0.4, targetId: 2, teamId: 1, pos: [-1.5, 1.8, 0] },
+        { timeSec: 0.4, targetId: 3, teamId: 1, pos: [-1.5, 0, 0] },
+      ],
+    });
+    const staged = stageShot(shot, ds, grid, { roomAudience: audience });
+    expect(staged.report.gridFixed).toBe(1);
+    expect(staged.shot).toMatchObject({ staged: { angle: -Math.PI / 2 } });
+  });
+
   it.each([0.6, 0, -0.2])(
     "uses a room cell below a fixed subject (planned lift %s)",
     (heightFactor) => {

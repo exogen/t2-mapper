@@ -67,21 +67,25 @@ export function busiestCluster(
 ): { center: DirectorVec3; count: number } | null {
   let best: { center: DirectorVec3; count: number } | null = null;
   for (let sec = Math.ceil(startSec); sec < endSec; sec++) {
-    const players = playersAtSec.get(sec);
-    if (!players || players.length === 0) continue;
-    for (const anchor of players) {
-      const group = dominantFloor(
-        players.filter((p) => dist(p.pos, anchor.pos) <= DIRECTOR_CROWD_RADIUS),
-      );
-      if (group.length > (best?.count ?? 1)) {
-        best = {
-          center: floorCentroid(group.map((p) => p.pos)),
-          count: group.length,
-        };
-      }
-    }
+    const cluster = busiestPlayerCluster(playersAtSec.get(sec) ?? []);
+    if (cluster && cluster.count > (best?.count ?? 1)) best = cluster;
   }
   return best;
+}
+
+export function busiestPlayerCluster(
+  players: readonly { pos: DirectorVec3 }[],
+): { center: DirectorVec3; count: number } | null {
+  let best: { pos: DirectorVec3 }[] = [];
+  for (const anchor of players) {
+    const group = dominantFloor(
+      players.filter((p) => dist(p.pos, anchor.pos) <= DIRECTOR_CROWD_RADIUS),
+    );
+    if (group.length > best.length) best = group;
+  }
+  return best.length > 1
+    ? { center: floorCentroid(best.map((p) => p.pos)), count: best.length }
+    : null;
 }
 
 const motionCache = new WeakMap<
@@ -158,7 +162,8 @@ export function busiestInventory(
     );
     if (requireActive && !active) continue;
     const count = players.filter(
-      (p) => dist(p.pos, station.pos) <= DIRECTOR_STATION_RANGE,
+      (p) =>
+        p.health !== 0 && dist(p.pos, station.pos) <= DIRECTOR_STATION_RANGE,
     ).length;
     if (count < minimum) continue;
     const score = count + (active ? 2 : 0);
