@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Vector3 } from "three";
-import { frameScore, type FrameContext } from "./frameScore";
+import { frameScore, paddedFrameWeight, type FrameContext } from "./frameScore";
 
 function ctx(overrides: Partial<FrameContext>): FrameContext {
   return {
@@ -54,11 +54,55 @@ describe("frameScore", () => {
     const result = frameScore(
       ctx({ stands: [new Vector3(1200, 30, 40)], fogDistance: 150 }),
     );
-    expect(result.parts.anchor).toBe(1);
+    expect(result.parts.anchor).toBeGreaterThan(0.5);
     const off = frameScore(
       ctx({ stands: [new Vector3(-1200, 30, 40)], fogDistance: 150 }),
     );
     expect(off.parts.anchor).toBe(0);
+  });
+
+  it("prefers landmarks inside the frame margin to those near its edge", () => {
+    const eye = new Vector3();
+    const aim = new Vector3(1, 0, 0);
+    expect(paddedFrameWeight(eye, aim, new Vector3(10, 0, 7))).toBe(1);
+    expect(paddedFrameWeight(eye, aim, new Vector3(10, 0, 9))).toBeCloseTo(0.4);
+    expect(paddedFrameWeight(eye, aim, new Vector3(10, 6, 0))).toBe(0);
+    const landmarks = [
+      { pos: new Vector3(50, 0, 0), weight: 0.55 },
+      { pos: new Vector3(80, 0, 10), weight: 0.3 },
+      { pos: new Vector3(200, 0, 0), weight: 0.55 },
+    ];
+    const result = frameScore(
+      ctx({
+        eye,
+        aim,
+        landmarks,
+        landmarkVisible: (_, landmark) => landmark !== landmarks[0],
+        fogDistance: 100,
+      }),
+    );
+    expect(result.parts.anchor).toBe(0.3);
+  });
+
+  it("credits a visible landmark behind stronger contenders within four sightline checks", () => {
+    const landmarks = [0.3, 0.2, 0.1, 0.55, 0.5].map((weight) => ({
+      pos: new Vector3(50, 0, 0),
+      weight,
+    }));
+    const checked: number[] = [];
+    const result = frameScore(
+      ctx({
+        eye: new Vector3(),
+        aim: new Vector3(1, 0, 0),
+        landmarks,
+        landmarkVisible: (_, landmark) => {
+          checked.push(landmark.weight);
+          return landmark === landmarks[0] || landmark === landmarks[2];
+        },
+      }),
+    );
+    expect(result.parts.anchor).toBe(0.3);
+    expect(checked).toEqual([0.55, 0.5, 0.3, 0.2]);
   });
 
   it("peaks sizeFit at the intended subject size", () => {

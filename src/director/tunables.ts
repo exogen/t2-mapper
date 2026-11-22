@@ -131,6 +131,8 @@ export const DIRECTOR_TICK_SEC = 0.5;
 export const DIRECTOR_DEATH_REACTION_SEC = 2;
 /** A shot normally holds at least this long before switching subjects. */
 export const DIRECTOR_MIN_SHOT_SEC = 5;
+/** Minimum airtime before publishing another camera. */
+export const DIRECTOR_ON_AIR_MIN_SHOT_SEC = 3;
 /** Tier-1 preemption (a flag pickup elsewhere) may cut in after this. */
 export const DIRECTOR_HARD_FLOOR_SEC = 2.5;
 /** Switch subjects only when the challenger beats the current by this. */

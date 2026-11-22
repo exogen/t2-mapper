@@ -61,6 +61,24 @@
   font-size: 16px;
 }
 
+.FlagFollowPending {
+  filter: drop-shadow(
+    0 0 3px color-mix(in srgb, currentColor 50%, transparent)
+  );
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .FlagFollowPending {
+    animation: flagFollowBlink 300ms step-end infinite;
+  }
+}
+
+@keyframes flagFollowBlink {
+  50% {
+    opacity: 0;
+  }
+}
+
 .LabelGroup {
   display: flex;
   flex-direction: column;

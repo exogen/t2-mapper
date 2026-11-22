@@ -64,8 +64,10 @@ import {
   DOLLY_DEFAULT_HEIGHT,
   DOLLY_LOOK_LIFT,
   DOLLY_SIDE_ANGLE,
+  fixedOrbitTrackingWeight,
   FOLLOW_YAW_DRIFT,
   GROUND_MIN_CLEARANCE,
+  holdsFixedFlagFraming,
   ORBIT_HEIGHT_FACTOR,
   orbitLiftFactor,
   smoothedGroundHeightAt,
@@ -171,17 +173,23 @@ function doorwaysNear(holdTorque: DirectorVec3Tuple): Doorway[] {
   return doors;
 }
 
+function currentFlagStatus(slot: number) {
+  return streamSnapshotStore
+    .getState()
+    .snapshot?.flags?.find((flag) => flag.teamId === slot)?.status;
+}
+
 function flagReturnedHome(position: Vector3, slot: number): boolean {
-  if (liveDirectorStore.getState().status === "playing") {
-    return (
-      streamSnapshotStore
-        .getState()
-        .snapshot?.flags?.some(
-          (flag) => flag.teamId === slot && flag.status === "home",
-        ) ?? false
-    );
-  }
-  return nearFlagStand(position, slot);
+  return liveDirectorStore.getState().status === "playing"
+    ? currentFlagStatus(slot) === "home"
+    : nearFlagStand(position, slot);
+}
+
+function holdingGrabFraming(shot: Extract<Shot, { kind: "fixedOrbit" }>) {
+  return (
+    shot.lookSubject?.type === "flag" &&
+    holdsFixedFlagFraming(shot, currentFlagStatus(shot.lookSubject.slot))
+  );
 }
 /**
  * The tripod pan's per-shot state, bundled so a shot boundary resets it
@@ -242,8 +250,7 @@ function driveSubjectPan(
   // Coverage gate for PLAYER subjects: a player only leaves a
   // fixed shot's coverage by dying and respawning — the body that
   // reappears across the map is a different scene, not this
-  // shot's subject moving. (Flags slide continuously, and the
-  // strayed rail re-anchors on them — logged — so they stay.)
+  // shot's subject moving. The rail can re-anchor on a sliding flag.
   let state: "visible" | "gone" | "respawned elsewhere" | "returned home" =
     "visible";
   if (!subjectGroup) {
@@ -312,9 +319,7 @@ function driveSubjectPan(
       subjectGroup.position.x - cx,
       subjectGroup.position.z - cz,
     );
-    const track = shot.trackSubject
-      ? 1
-      : Math.min(1, Math.max(0, fromAnchor / Math.max(1, shot.radius) - 1));
+    const track = fixedOrbitTrackingWeight(shot, fromAnchor);
     panTarget = _staticLook
       .copy(subjectGroup.position)
       .sub(_panAnchor.set(cx, cy, cz))
@@ -749,6 +754,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
      * of the picture with the base behind him in the middle.
      */
     aim?: Vector3,
+    holdFraming = false,
   ) => {
     const aimedFromY = camera.position.y;
     // ── Never below the terrain — and smoothly above it ──
@@ -857,7 +863,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
     // travel from mid-air and read as the camera unable to make up its
     // mind (Raindance 5:58, two flights and two 40+ rad/s spikes in a
     // second). The destination was validated; judge it on arrival.
-    if (travelState !== "idle") {
+    if (holdFraming || travelState !== "idle") {
       visibilityStrikes = 0;
       return;
     }
@@ -920,7 +926,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
         // that JUMPED to its home stand didn't slide — it was returned
         // or capped, and warping the camera home after it is the most
         // anti-climactic move a broadcast can make: the story stays at
-        // the scene (the aftermath shot owns what happens next).
+        // the scene.
         if (
           subject?.type === "flag" &&
           !flagReturnedHome(_subjectPos, subject.slot)
@@ -1398,9 +1404,10 @@ export function installDirectorCamera(engine: GameEngine): () => void {
           Math.round(lifted[2] - shot.center[2]),
         );
       }
-      const subject = shot.lookSubject
-        ? currentSubjectGroup(shot.lookSubject)
-        : null;
+      const subject =
+        shot.lookSubject && !holdingGrabFraming(shot)
+          ? currentSubjectGroup(shot.lookSubject)
+          : null;
       if (subject) {
         _subjectPos.copy(subject.position);
         const strayed =
@@ -1536,11 +1543,20 @@ export function installDirectorCamera(engine: GameEngine): () => void {
       anchor,
     })!;
     placeCamera(camera, pose.eye);
-    // Locked-off but panning: aim at the subject's live position when
-    // the shot names one (a dropped flag slides after landing), eased
-    // so the pan is gentle. Otherwise just look at the center point.
+    // Loose flags can drift within a fixed shot. Once a player takes
+    // possession, keep the established framing until the director cuts
+    // to the runner. Room shots and archive cut-ins author their own pan.
+    const holdGrab = holdingGrabFraming(shot);
     let fixedAim: Vector3 | undefined;
-    if (shot.lookSubject) {
+    if (holdGrab) {
+      if (!dollySeeded) torqueVecToThree(pose.aim, dollyAim);
+      dollySeeded = true;
+      resetPanState(panState);
+      directorCamDebug.panState = "held";
+      directorCamDebug.panActive = false;
+      camera.lookAt(dollyAim);
+      fixedAim = dollyAim;
+    } else if (shot.lookSubject) {
       const seedAim = !dollySeeded;
       dollySeeded = true;
       driveSubjectPan(
@@ -1564,7 +1580,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
       fixedAim = _orbitAim;
     }
     applyTravel(camera, demoDelta);
-    enforceCameraSanity(camera, shot, demoDelta, fixedAim);
+    enforceCameraSanity(camera, shot, demoDelta, fixedAim, holdGrab);
     return;
   };
 

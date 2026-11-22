@@ -245,24 +245,6 @@ export class CausalView {
     return travelled / (prev.timeSec - first.timeSec);
   }
 
-  /** The flag's mean velocity over the trailing window (Torque x/y,
-   *  u/s) — which way it is HEADED, for framing that lets it move
-   *  into the shot instead of out of it. */
-  trailingFlagVelocity(
-    slot: number,
-    windowSec: number,
-  ): { x: number; y: number } | null {
-    const before = this.flagAt(slot, this._now - windowSec);
-    const current = this.flagAt(slot);
-    if (!before || !current) return null;
-    const span = current.timeSec - before.timeSec;
-    if (span <= 0) return null;
-    return {
-      x: (current.pos[0] - before.pos[0]) / span,
-      y: (current.pos[1] - before.pos[1]) / span,
-    };
-  }
-
   /** Require a whole window of local movement. A run that loops back to
    *  its starting point is still a run. */
   flagStayedNear(slot: number, windowSec: number, radius: number): boolean {

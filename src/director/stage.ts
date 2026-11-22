@@ -25,6 +25,7 @@ import { cloneData } from "../cloneData";
 import { framesTheSame } from "./assemble";
 import type {
   DirectorDataset,
+  DirectorFlagSample,
   DirectorPlayerSample,
   DirectorVec3,
   Shot,
@@ -39,8 +40,16 @@ import {
   type PlayersAtSec,
   playerTracksFor,
 } from "./dataset";
-import { frameScore, type SalientEntity } from "./frameScore";
-import { castWorldRay } from "../collision/worldCollision";
+import {
+  frameScore,
+  paddedFrameWeight,
+  type FramingLandmark,
+  type SalientEntity,
+} from "./frameScore";
+import { castWorldRay, interiorBoundsById } from "../collision/worldCollision";
+import { landmarksFor } from "./preMatch";
+import { carrierFramingFor } from "./carrierFraming";
+import { dist } from "./geometry";
 import {
   cameraBuried,
   inspectShot,
@@ -51,6 +60,8 @@ import {
 import {
   AIM_TOWARD_MIN_RANGE,
   clearStandoffWide,
+  fixedOrbitTrackingWeight,
+  holdsFixedFlagFraming,
   isRoofed,
   OCCLUSION_ANGLE_OFFSETS,
   OCCLUSION_HEIGHT_BOOSTS,
@@ -61,6 +72,7 @@ import {
   STANDOFF_MIN,
   STANDOFF_MIN_SCALE,
   subjectViewBlocked,
+  viewBlocked,
   SUBJECT_MAX_RANGE,
   surfaceLiftedAnchor,
   sweepClock,
@@ -151,11 +163,13 @@ export interface StageReport {
 interface PathSample {
   timeSec: number;
   pos: Vector3;
+  flagStatus?: DirectorFlagSample["status"];
 }
 
 const _dir = new Vector3();
 const _eye = new Vector3();
 const _anchorThree = new Vector3();
+const _frameAim = new Vector3();
 
 /** Fold one tally into another, for a plan staged in slices. */
 export function addReports(into: StageReport, from: StageReport): StageReport {
@@ -206,6 +220,27 @@ function openStageContext(
     if (!list) vehiclesBySec.set(sec, (list = []));
     list.push(torqueVecToThree(v.pos, new Vector3()));
   }
+  const assets = landmarksFor(dataset, dataset.durationSec)
+    .filter((landmark) => landmark.kind !== "stand")
+    .map((landmark) => ({
+      pos: new Vector3(
+        landmark.pos[1],
+        landmark.pos[2] + (landmark.aimLift ?? 0),
+        landmark.pos[0],
+      ),
+      weight: 0.3,
+      firstSeenSec: landmark.firstSeenSec ?? 0,
+    }));
+  const buildings: FramingLandmark[] = [];
+  for (const [id, box] of interiorBoundsById()) {
+    const width = Math.max(box.max.x - box.min.x, box.max.z - box.min.z);
+    if (width < 12 || width > 350) continue;
+    buildings.push({
+      pos: box.getCenter(new Vector3()),
+      weight: 0.55,
+      interiorId: id,
+    });
+  }
   _stageCtx = {
     freeSpace,
     roomAudience,
@@ -216,6 +251,9 @@ function openStageContext(
     ),
     vehiclesBySec,
     salientBySec: new Map(),
+    assets,
+    buildings,
+    landmarksBySec: new Map(),
     fog: dataset.visibility?.fogDistance,
   };
 }
@@ -232,46 +270,10 @@ export function stagePlan(
   freeSpace?: FreeSpaceGrid | null,
 ): StageReport {
   const report = stageShots(plan.shots, dataset, freeSpace);
-  // LAST WORD. Every pass above reasons about a placement; this one
-  // walks the camera path each shot will actually fly and throws out
-  // what does not hold up. A shot that spends its duration inside a
-  // wall, or never shows the thing it is a shot OF, does not ship.
-  // Nothing is playing here, so nothing is off limits.
-  addReports(report, auditAhead(plan, dataset, -Infinity));
-  return report;
-}
-
-/**
- * The cross-shot passes, over the part of the plan still ahead.
- *
- * Their VERDICTS never needed the future — whether a camera is inside a
- * wall, or can see the point it aims at, is settled by terrain, by
- * interiors and by a fixed aim, none of which the rest of the match
- * changes. What kept these to the end was the side effect: both close
- * the gap they leave by rewriting a neighbour's timing, and a shot the
- * playhead has reached cannot be rewritten. Hence the floor.
- */
-export function auditAhead(
-  plan: ShotPlan,
-  dataset: DirectorDataset,
-  mutableFromSec: number,
-  /** While the switcher is still running, its LAST shot is still being
-   *  framed — its end time is provisional and it is the element the
-   *  switcher itself is holding. Leave it alone until it closes. */
-  openTail = false,
-): StageReport {
-  const report = emptyReport();
-  const tracks = buildFlagTracks(dataset);
-  openStageContext(dataset, tracks);
-  const tail = openTail ? plan.shots.pop() : undefined;
-  try {
-    mergeConsecutiveDuplicates(plan, report, mutableFromSec);
-    dropUnwatchable(plan, report, mutableFromSec);
-    closeSeams(plan, mutableFromSec);
-  } finally {
-    if (tail) plan.shots.push(tail);
-    _stageCtx = null;
-  }
+  // Audit the finished timeline after staging its individual cameras.
+  mergeConsecutiveDuplicates(plan, report);
+  dropUnwatchable(plan, report);
+  closeSeams(plan);
   return report;
 }
 
@@ -340,25 +342,11 @@ export function stageShots(
  * first pass. Rather than police every caller, collapse them here: one
  * longer shot is what was actually wanted.
  */
-function mergeConsecutiveDuplicates(
-  plan: ShotPlan,
-  report: StageReport,
-  /** Shots starting before this have been handed to the playhead;
-   *  rewriting them is not an option however wrong they are. */
-  mutableFromSec = -Infinity,
-): void {
+function mergeConsecutiveDuplicates(plan: ShotPlan, report: StageReport): void {
   const keep: Shot[] = [];
   for (const shot of plan.shots) {
     const prev = keep[keep.length - 1];
-    // Both halves must still be rewritable: the merge stretches `prev`,
-    // and a shot the playhead has reached is on screen at its planned
-    // length.
-    if (
-      prev &&
-      framesTheSame(prev, shot) &&
-      shot.startSec >= mutableFromSec &&
-      prev.startSec >= mutableFromSec
-    ) {
+    if (prev && framesTheSame(prev, shot)) {
       report.merged++;
       prev.endSec = Math.min(
         Math.max(prev.endSec, shot.endSec),
@@ -368,10 +356,6 @@ function mergeConsecutiveDuplicates(
     }
     keep.push(shot);
   }
-  // IN PLACE, not a reassignment. While streaming, this array is the
-  // switcher's own — handing `plan` a fresh one leaves the switcher
-  // appending to the array nobody is reading, so every audit is
-  // discarded and redone on the next slice.
   plan.shots.length = 0;
   plan.shots.push(...keep);
 }
@@ -391,12 +375,11 @@ function mergeConsecutiveDuplicates(
  * parameterised by fraction, so changing when it starts moves when the
  * camera is somewhere, never where it can be.
  */
-function closeSeams(plan: ShotPlan, mutableFromSec: number): void {
+function closeSeams(plan: ShotPlan): void {
   for (let i = 1; i < plan.shots.length; i++) {
     const prev = plan.shots[i - 1];
     const shot = plan.shots[i];
     if (shot.startSec <= prev.endSec) continue;
-    if (shot.startSec < mutableFromSec) continue;
     shot.startSec = prev.endSec;
   }
 }
@@ -444,22 +427,14 @@ function maxHold(shot: Shot): number {
  * it (or the one after, at the head of the plan) rather than leaving a
  * hole for the runtime to sit through.
  */
-function dropUnwatchable(
-  plan: ShotPlan,
-  report: StageReport,
-  mutableFromSec = -Infinity,
-): void {
+function dropUnwatchable(plan: ShotPlan, report: StageReport): void {
   const keep: Shot[] = [];
   for (let i = 0; i < plan.shots.length; i++) {
     const shot = plan.shots[i];
-    const verdict = shot.startSec >= mutableFromSec ? inspectShot(shot) : null;
+    const verdict = inspectShot(shot);
     if (verdict && !verdict.ok) {
       const prev = keep[keep.length - 1];
-      if (
-        prev &&
-        prev.startSec >= mutableFromSec &&
-        prev.endSec < prev.startSec + maxHold(prev)
-      ) {
+      if (prev && prev.endSec < prev.startSec + maxHold(prev)) {
         // Stretching an orbit swings it further round, which can walk
         // the camera into the wall the shot was avoiding — so put the
         // extension back if it costs the neighbour its own check. And
@@ -490,10 +465,6 @@ function dropUnwatchable(
     }
     keep.push(shot);
   }
-  // IN PLACE, not a reassignment. While streaming, this array is the
-  // switcher's own — handing `plan` a fresh one leaves the switcher
-  // appending to the array nobody is reading, so every audit is
-  // discarded and redone on the next slice.
   plan.shots.length = 0;
   plan.shots.push(...keep);
 }
@@ -909,6 +880,16 @@ function stageFixedShot(
       return;
     }
   }
+  // The flag may be inside the base while the fight is outside it.
+  // If the stand is hidden, keep the action in view from a fixed camera.
+  if (shot.topic === "flag-stand" && shot.lookSubject?.type === "flag") {
+    const fight = stageStandFight(shot, tracks, dataset, grid);
+    if (fight) {
+      plan.shots[i] = fight;
+      report.adjusted++;
+      return;
+    }
+  }
   // A look-subject the orbit cannot see from anywhere: put the follow
   // machinery on it instead — it rides close and pulls in through the
   // runtime's own visibility rail. Timing, reason and scene facts
@@ -944,6 +925,60 @@ function stageFixedShot(
   report.unsolved++;
 }
 
+function stageStandFight(
+  shot: Extract<Shot, { kind: "fixedOrbit" }>,
+  tracks: Map<number, FlagTrack>,
+  dataset: DirectorDataset,
+  grid?: FreeSpaceGrid | null,
+): Extract<Shot, { kind: "fixedOrbit" }> | null {
+  const players = _stageCtx?.playersAtSec.get(Math.round(shot.startSec)) ?? [];
+  const nearby = players
+    .filter(
+      (player) =>
+        player.health !== 0 && player.teamId != null && player.teamId > 0,
+    )
+    .map((player) => ({
+      player,
+      range: dist(player.pos, shot.center),
+    }))
+    .filter(({ range }) => range <= 35)
+    .sort((a, b) => a.range - b.range);
+  for (const { player } of nearby.slice(0, 2)) {
+    const candidate = {
+      ...shot,
+      center: player.pos,
+      subject: shot.lookSubject ?? shot.subject,
+      radius: 20,
+      angularSpeed: 0,
+      trackSubject: false,
+      lookLift: 1,
+      lookSubject: { type: "player" as const, targetId: player.targetId },
+    };
+    const path = subjectPath(candidate, tracks, dataset, player.pos);
+    if (
+      grid &&
+      isRoofed(player.pos) &&
+      placeFixedFromGrid(candidate, path, grid)
+    )
+      return candidate;
+    const staged = solvePlacement(
+      candidate,
+      player.pos,
+      path,
+      candidate.radius,
+      0.25,
+      {
+        targetSubjectFraction: 0.08,
+      },
+    );
+    if (staged && staged.visibility >= STAGE_VISIBILITY_FLOOR) {
+      candidate.staged = staged;
+      return candidate;
+    }
+  }
+  return null;
+}
+
 function placeFixedFromGrid(
   shot: Extract<Shot, { kind: "fixedOrbit" }>,
   path: PathSample[],
@@ -956,6 +991,7 @@ function placeFixedFromGrid(
   const players = _stageCtx?.roomAudience;
   let roomView: Extract<Shot, { kind: "fixedOrbit" }> | undefined;
   let audience = 0;
+  let composition = -Infinity;
   torqueVecToThree(anchor, _anchorThree);
   for (const spot of cameraSpotsFor(grid, threeToTorque(subject), {
     wantDist: players ? ROOM_SHOT_RANGE : wantDist,
@@ -987,13 +1023,18 @@ function placeFixedFromGrid(
       heightFactor: liftFactor,
       staged: { angle, radius, liftFactor, visibility: evaluated.visibility },
     };
-    // Check the rig's actual pose too (including its fixed aim lift).
-    if (inspectShot(candidate)?.ok === false) continue;
     const seen = players ? visibleOpeningPlayers(candidate, players) : 1;
-    if (seen <= audience) continue;
+    if (
+      !seen ||
+      seen < audience ||
+      (seen === audience && evaluated.composition <= composition)
+    )
+      continue;
+    // Inspect the full path only when this placement can win.
+    if (inspectShot(candidate)?.ok === false) continue;
     roomView = candidate;
     audience = seen;
-    if (!players || audience === players.length) break;
+    composition = evaluated.composition;
   }
   if (!roomView) return false;
   shot.angularSpeed = roomView.angularSpeed;
@@ -1043,6 +1084,7 @@ function stageTrackedShot(
   report.followShots++;
   const wanted = shot.distance ?? DIRECTOR_DIST_CHASE;
   const pitch = shot.pitch ?? DIRECTOR_PITCH_CHASE;
+  const carrierFraming = carrierFramingFor(shot, dataset, tracks);
   const clearFrom = (
     sample: PathSample,
     yaw: number,
@@ -1089,61 +1131,73 @@ function stageTrackedShot(
     }
     return null;
   };
-  let seen = 0;
-  for (let idx = 0; idx < path.length; idx++) {
-    const yaw = aimYawAt(idx);
-    if (
-      yaw == null
-        ? anyYawClear(path[idx], wanted)
-        : clearFrom(path[idx], yaw, wanted)
-    ) {
+  const scoreFollow = (distance: number, fixedYaw?: number) => {
+    let seen = 0;
+    let framed = 0;
+    let frameSum = 0;
+    for (let idx = 0; idx < path.length; idx++) {
+      const sample = path[idx];
+      const yaw = fixedYaw ?? aimYawAt(idx);
+      if (yaw == null) {
+        if (anyYawClear(sample, distance)) seen++;
+        continue;
+      }
+      // clearFrom leaves the eye at the verified camera position.
+      if (!clearFrom(sample, yaw, distance)) continue;
       seen++;
+      if (fixedYaw == null && !carrierFraming) continue;
+      framed++;
+      const composition = scoreSubjectFrame(path, idx, sample.pos);
+      if (carrierFraming) {
+        const weight = carrierFraming.hasThrow ? 0.7 : 0.5;
+        frameSum +=
+          (1 - weight) * composition +
+          weight *
+            carrierFraming.scoreAt(
+              sample.timeSec,
+              _eye,
+              sample.pos,
+              secondaryPlayerVisible,
+            );
+      } else {
+        frameSum += composition;
+      }
     }
-  }
-  if (seen / path.length >= STAGE_VISIBILITY_FLOOR) {
+    const visible = seen / path.length;
+    return {
+      visible,
+      score: framed > 0 ? 0.5 * (visible + frameSum / framed) : -Infinity,
+    };
+  };
+  const nominal = scoreFollow(wanted);
+  const nominalClear = nominal.visible >= STAGE_VISIBILITY_FLOOR;
+  // A scoring approach has a destination the audience should see.
+  if (
+    nominalClear &&
+    (!carrierFraming || (shot.topic === "capture" && !carrierFraming.hasThrow))
+  ) {
     report.followClean++;
     return;
   }
-  // One fixed (distance, yaw) that sees the subject through the shot —
-  // largest distance first, the aim rewritten to hold the bearing, and
-  // among the clear yaws the one with the best COMPOSITION wins:
-  // motion crossing the frame and a stand anchoring the background,
-  // not just an unblocked ray.
+  // Compare the intended orbit with clear views of the carrier and
+  // nearby players. Only try shorter distances if no full-length
+  // bearing can see the subject.
   const floor = shot.minDistance ?? STAGE_FOLLOW_MIN_DISTANCE;
+  const angles = [
+    ...(carrierFraming?.candidateYaws ?? []),
+    ...Array.from(
+      { length: STAGE_FOLLOW_YAWS },
+      (_, k) => (k * 2 * Math.PI) / STAGE_FOLLOW_YAWS,
+    ),
+  ];
   for (const fraction of [1, ...STAGE_FOLLOW_PULL_FRACTIONS]) {
     const distance = Math.max(floor, wanted * fraction);
     if (fraction !== 1 && distance >= wanted) continue;
     let bestYaw: number | null = null;
-    let bestScore = -Infinity;
-    for (let k = 0; k < STAGE_FOLLOW_YAWS; k++) {
-      const yaw = (k / STAGE_FOLLOW_YAWS) * Math.PI * 2;
-      const visible =
-        path.filter((sample) => clearFrom(sample, yaw, distance)).length /
-        path.length;
-      if (visible < STAGE_VISIBILITY_FLOOR) continue;
-      let frameSum = 0;
-      for (let idx = 0; idx < path.length; idx++) {
-        const sample = path[idx];
-        orbitPullbackDir(yaw, pitch, _dir);
-        _eye.copy(sample.pos).addScaledVector(_dir, distance);
-        const prev = path[Math.max(0, idx - 1)];
-        const next = path[Math.min(path.length - 1, idx + 1)];
-        const dt = Math.max(0.5, next.timeSec - prev.timeSec);
-        frameSum += frameScore({
-          eye: _eye,
-          aim: sample.pos,
-          subjectPos: sample.pos,
-          subjectVel: {
-            x: (next.pos.x - prev.pos.x) / dt,
-            z: (next.pos.z - prev.pos.z) / dt,
-          },
-          entities: salientAt(sample.timeSec),
-          stands: stageStands(),
-          fogDistance: stageFog(),
-        }).score;
-      }
-      const score = 0.5 * visible + 0.5 * (frameSum / path.length);
-      if (score > bestScore) {
+    let bestScore = nominalClear ? nominal.score + 0.025 : -Infinity;
+    for (const yaw of angles) {
+      const { visible, score } = scoreFollow(distance, yaw);
+      if (visible >= STAGE_VISIBILITY_FLOOR && score > bestScore) {
         bestScore = score;
         bestYaw = yaw;
       }
@@ -1151,7 +1205,12 @@ function stageTrackedShot(
     if (bestYaw != null) {
       if (distance < wanted) shot.distance = distance;
       shot.aim = { mode: "hold", yaw: bestYaw };
-      report.followPulledIn++;
+      if (distance < wanted || !nominalClear) report.followPulledIn++;
+      else report.followClean++;
+      return;
+    }
+    if (nominalClear) {
+      report.followClean++;
       return;
     }
   }
@@ -1321,7 +1380,11 @@ function collectPath(
     for (let t = shot.startSec; t <= shot.endSec; t += STAGE_SAMPLE_SEC) {
       const sample = sampleAt(samples, t);
       if (sample && t - sample.timeSec <= 3 && keep(sample.pos)) {
-        out.push({ timeSec: t, pos: threeLifted(sample.pos) });
+        out.push({
+          timeSec: t,
+          pos: threeLifted(sample.pos),
+          flagStatus: sample.status,
+        });
       }
     }
   } else if (subject?.type === "player") {
@@ -1459,24 +1522,15 @@ function evaluateCandidate(
     // down to the subject really is unobstructed — and the shot was
     // published as solved, then rendered as a faceful of sky.
     const margin = shot.trackSubject ? ROOM_SUBJECT_MARGIN : undefined;
-    if (!eyeBuried(_eye) && !subjectViewBlocked(_eye, sample.pos, margin))
-      seen++;
-    const prev = path[Math.max(0, i - 1)];
-    const next = path[Math.min(path.length - 1, i + 1)];
-    const dt = Math.max(0.5, next.timeSec - prev.timeSec);
-    frameSum += frameScore({
-      eye: _eye,
-      aim: sample.pos,
-      subjectPos: sample.pos,
-      subjectVel: {
-        x: (next.pos.x - prev.pos.x) / dt,
-        z: (next.pos.z - prev.pos.z) / dt,
-      },
-      targetSubjectFraction,
-      entities: salientAt(sample.timeSec),
-      stands: stageStands(),
-      fogDistance: stageFog(),
-    }).score;
+    const aim = fixedFrameAim(shot, anchor, sample);
+    if (
+      paddedFrameWeight(_eye, aim, sample.pos) === 0 ||
+      eyeBuried(_eye) ||
+      subjectViewBlocked(_eye, sample.pos, margin)
+    )
+      continue;
+    seen++;
+    frameSum += scoreSubjectFrame(path, i, aim, targetSubjectFraction);
   }
   const visibility = path.length > 0 ? seen / path.length : 0;
   // Openness once per candidate, at the path's midpoint: a fan of rays
@@ -1484,7 +1538,7 @@ function evaluateCandidate(
   // depth to show, however visible the subject is. Tight shots are
   // exempt in proportion (an interior hero frame is close on purpose).
   const mid = path[Math.floor(path.length / 2)];
-  let composition = path.length > 0 ? frameSum / path.length : 0;
+  let composition = seen > 0 ? frameSum / seen : 0;
   if (mid) {
     const midAt = angle + spin * (mid.timeSec - shot.startSec);
     _eye.set(
@@ -1492,10 +1546,60 @@ function evaluateCandidate(
       anchor[2] + lift * standRadius,
       _anchorThree.z + Math.sin(midAt) * standRadius,
     );
-    const open = openness(_eye, mid.pos, standRadius);
+    const open = openness(_eye, fixedFrameAim(shot, anchor, mid), standRadius);
     composition = 0.7 * composition + 0.3 * open;
   }
   return { visibility, composition };
+}
+
+function scoreSubjectFrame(
+  path: PathSample[],
+  idx: number,
+  aim: Vector3,
+  targetSubjectFraction?: number,
+): number {
+  const sample = path[idx];
+  const prev = path[Math.max(0, idx - 1)];
+  const next = path[Math.min(path.length - 1, idx + 1)];
+  const dt = Math.max(0.5, next.timeSec - prev.timeSec);
+  return frameScore({
+    eye: _eye,
+    aim,
+    subjectPos: sample.pos,
+    subjectVel: {
+      x: (next.pos.x - prev.pos.x) / dt,
+      z: (next.pos.z - prev.pos.z) / dt,
+    },
+    targetSubjectFraction,
+    entities: salientAt(sample.timeSec),
+    stands: stageStands(),
+    landmarks: framingLandmarksAt(sample.timeSec),
+    landmarkVisible,
+    fogDistance: stageFog(),
+  }).score;
+}
+
+function fixedFrameAim(
+  shot: Extract<Shot, { kind: "fixedOrbit" }>,
+  anchor: DirectorVec3,
+  sample: PathSample,
+): Vector3 {
+  _frameAim.set(
+    anchor[1],
+    anchor[2] + (shot.lookLift ?? ORBIT_LOOK_LIFT),
+    anchor[0],
+  );
+  if (!shot.lookSubject || holdsFixedFlagFraming(shot, sample.flagStatus))
+    return _frameAim;
+
+  const dx = sample.pos.x - anchor[1];
+  const dz = sample.pos.z - anchor[0];
+  const weight = fixedOrbitTrackingWeight(shot, Math.hypot(dx, dz));
+  _frameAim.x += dx * weight;
+  // Path samples are lifted a metre for visibility checks.
+  _frameAim.y += (sample.pos.y - 1 - anchor[2]) * weight;
+  _frameAim.z += dz * weight;
+  return _frameAim;
 }
 
 /**
@@ -1556,7 +1660,11 @@ function salientAt(timeSec: number): SalientEntity[] {
   if (cached) return cached;
   cached = [];
   for (const p of ctx.playersAtSec.get(sec) ?? []) {
-    cached.push({ pos: torqueVecToThree(p.pos, new Vector3()), weight: 1 });
+    if (p.health === 0) continue;
+    cached.push({
+      pos: new Vector3(p.pos[1], p.pos[2] + 1, p.pos[0]),
+      weight: 1,
+    });
   }
   for (const track of ctx.tracks.values()) {
     const s = sampleAt(track.samples, sec);
@@ -1582,6 +1690,36 @@ function stageFog(): number | undefined {
   return _stageCtx?.fog;
 }
 
+function framingLandmarksAt(timeSec: number): readonly FramingLandmark[] {
+  const ctx = _stageCtx;
+  if (!ctx) return [];
+  const sec = Math.floor(timeSec);
+  let cached = ctx.landmarksBySec.get(sec);
+  if (!cached) {
+    cached = [
+      ...ctx.buildings,
+      ...ctx.assets.filter((asset) => asset.firstSeenSec <= sec),
+    ];
+    ctx.landmarksBySec.set(sec, cached);
+  }
+  return cached;
+}
+
+function landmarkVisible(eye: Vector3, landmark: FramingLandmark): boolean {
+  const hit = castWorldRay(threeToTorque(eye), threeToTorque(landmark.pos), {
+    includeStatics: true,
+  });
+  return (
+    !hit ||
+    hit.t >= 0.98 ||
+    (hit.source === "interior" && hit.colliderId === landmark.interiorId)
+  );
+}
+
+function secondaryPlayerVisible(eye: Vector3, point: Vector3): boolean {
+  return !viewBlocked(eye, point);
+}
+
 interface StageCtx {
   freeSpace?: FreeSpaceGrid | null;
   roomAudience?: readonly DirectorPlayerSample[];
@@ -1590,6 +1728,9 @@ interface StageCtx {
   standsThree: Vector3[];
   vehiclesBySec: Map<number, Vector3[]>;
   salientBySec: Map<number, SalientEntity[]>;
+  assets: (FramingLandmark & { firstSeenSec: number })[];
+  buildings: FramingLandmark[];
+  landmarksBySec: Map<number, FramingLandmark[]>;
   fog?: number;
 }
 

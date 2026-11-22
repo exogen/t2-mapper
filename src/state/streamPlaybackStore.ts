@@ -136,7 +136,8 @@ export interface StreamPlaybackState {
    * games — see resolveFlagSlot) — the item on its stand / on the
    * ground, or the carrying player while held — so the camera hands off
    * as the flag changes hands. Cleared by any player follow or follow
-   * exit.
+   * exit. During a return hold the slot stays armed in free-fly with no
+   * follow entity.
    */
   followFlagSlot: number | null;
   projectileFollow: ProjectileFollow | null;
@@ -161,6 +162,19 @@ export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
   followFlagSlot: null,
   projectileFollow: null,
 }));
+
+export function isHoldingFlagFollow(state: StreamPlaybackState): boolean {
+  return (
+    state.cameraMode === "freeFly" &&
+    state.followFlagSlot !== null &&
+    state.followEntityId === null
+  );
+}
+
+export function cancelFlagFollowHold(): void {
+  if (isHoldingFlagFollow(streamPlaybackStore.getState()))
+    streamPlaybackStore.setState({ followFlagSlot: null });
+}
 
 /** Reset all streaming playback state. Called when streaming ends. */
 export function resetStreamPlayback(): void {

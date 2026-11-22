@@ -4,6 +4,7 @@ import { createSwitcherStream, runSwitcher } from "./switcher";
 import * as predictors from "./predictors";
 import * as variety from "./variety";
 import * as framing from "./framing";
+import { reportCoverage } from "./assemble";
 import { directorDataset } from "./directorTestFixtures";
 import type { DirectorDataset, Shot } from "./types";
 
@@ -114,6 +115,91 @@ describe("first-person grab coverage", () => {
       }
     },
   );
+});
+
+function fastPickupFixture(status: "home" | "field") {
+  const ds = fixture(true, false);
+  for (const sample of ds.flagSamples) {
+    if (sample.slot !== 2) continue;
+    if (sample.status === "held") {
+      sample.pos = [800 - (sample.timeSec - 60.5) * 90, 0, 100];
+    } else if (sample.timeSec >= 52 && sample.timeSec < 60.5) {
+      sample.status = status;
+    }
+  }
+  for (let timeSec = 55; timeSec <= 69; timeSec++) {
+    ds.playerSamples.push({
+      timeSec,
+      targetId: 5,
+      teamId: 1,
+      heading: Math.PI / 2,
+      pos: [800 - Math.abs(timeSec - 60.4) * 90, 0, 100],
+    });
+    for (let targetId = 20; targetId < 24; targetId++) {
+      ds.playerSamples.push({
+        timeSec,
+        targetId,
+        teamId: 2,
+        pos: [800, targetId, 100],
+      });
+    }
+  }
+  return ds;
+}
+
+describe("fast pickups", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each(["home", "field"] as const)(
+    "follows the known runner before a fast pickup from %s and through the exit",
+    (status) => {
+      const ds = fastPickupFixture(status);
+      const view = new CausalView(ds, 5);
+      const stream = createSwitcherStream(view);
+      stream.advanceTo(64, ds);
+      const at = (t: number) =>
+        stream.shots.find((shot) => shot.startSec <= t && shot.endSec > t);
+      const approach = at(59);
+      expect(approach).toMatchObject({
+        kind: "followPlayer",
+        targetId: 5,
+        subject: { type: "flag", slot: 2 },
+      });
+      expect(stream.cutFor(approach!)).toMatchObject({
+        priority: "flagPlay",
+      });
+      expect(approach!.startSec).toBeLessThanOrEqual(56);
+      expect(at(62)).toBe(approach);
+      expect(reportCoverage([approach!], ds)).toContainEqual(
+        expect.objectContaining({ timeSec: 60.4, covered: true }),
+      );
+    },
+  );
+
+  it("keeps the confirmed pickup and exit together when the other flag draws interest", () => {
+    const ds = fastPickupFixture("home");
+    ds.events.push({
+      timeSec: 64.15,
+      type: "flag-grab",
+      flagTeamName: "Storm",
+      description: "Storm flag was grabbed",
+    });
+    for (const sample of ds.flagSamples) {
+      if (sample.slot === 1 && sample.timeSec >= 64.5) {
+        sample.status = "held";
+        sample.carrierTargetId = 12;
+        sample.pos = [(sample.timeSec - 64.5) * 50, 0, 100];
+      }
+    }
+
+    const shots = runSwitcher(new CausalView(ds, 4));
+    const at = (timeSec: number) =>
+      shots.find((shot) => shot.startSec <= timeSec && shot.endSec > timeSec);
+    const approach = at(59);
+    expect(approach).toMatchObject({ kind: "followPlayer", targetId: 5 });
+    expect(at(60.4)).toBe(approach);
+    expect(at(63)).toBe(approach);
+  });
 });
 
 describe.each([0, 2])(

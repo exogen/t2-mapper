@@ -8,8 +8,8 @@ import {
 import { Checkbox } from "./Checkbox";
 import { RangeSlider } from "./RangeSlider";
 import { Select } from "./Select";
+import { SidebarRadioGroup } from "./SidebarRadioGroup";
 import { useSettings } from "./SettingsProvider";
-import choiceStyles from "./ChoiceInput.module.css";
 import styles from "./InspectorControls.module.css";
 import fieldsetStyles from "./SidebarFieldset.module.css";
 
@@ -125,7 +125,7 @@ export function IffOptions() {
         <span id="observerIffModes-label">
           Force green&thinsp;/&thinsp;red when:
         </span>
-        <ul className={styles.IffChoiceList}>
+        <ul className={styles.ChoiceList}>
           <li className={styles.CheckboxField}>
             <Checkbox
               id="followTeamIffInput"
@@ -148,36 +148,13 @@ export function IffOptions() {
           </li>
         </ul>
       </div>
-      <fieldset className={styles.FlagColorModes}>
-        <legend>Flag colors match:</legend>
-        <div className={styles.IffChoiceList}>
-          {FLAG_COLOR_OPTIONS.map(({ value, label, description }) => (
-            <div className={styles.CheckboxField} key={value}>
-              <input
-                type="radio"
-                name="flagColorMode"
-                id={`flag-color-${value}`}
-                className={choiceStyles.Radio}
-                value={value}
-                checked={flagColorMode === value}
-                onChange={() => setFlagColorMode(value)}
-                aria-describedby={`flag-color-${value}-description`}
-              />
-              <div className={styles.Label}>
-                <span>
-                  <label htmlFor={`flag-color-${value}`}>{label}</label>{" "}
-                  <span
-                    className={styles.Description}
-                    id={`flag-color-${value}-description`}
-                  >
-                    –&nbsp;{description}
-                  </span>
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </fieldset>
+      <SidebarRadioGroup
+        name="flagColorMode"
+        legend="Flag colors match:"
+        value={flagColorMode}
+        onChange={setFlagColorMode}
+        options={FLAG_COLOR_OPTIONS}
+      />
     </fieldset>
   );
 }

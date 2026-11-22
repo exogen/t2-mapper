@@ -1,14 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createCastStream, runCastPipeline } from "./castPipeline";
 import { directorDataset } from "./directorTestFixtures";
+import * as switcher from "./switcher";
 import type { DirectorDataset, Shot } from "./types";
 
 const facts = vi.hoisted(() => ({
+  killAt: 80,
   locatedAt: 84,
   modeKnownAt: 0,
   captureAvailableAt: Infinity,
 }));
 beforeEach(() => {
+  facts.killAt = 80;
   facts.locatedAt = 84;
   facts.modeKnownAt = 0;
   facts.captureAvailableAt = Infinity;
@@ -22,7 +25,7 @@ vi.mock("./demoDirectorScanner", () => ({
     let scanned = 0;
     const durationSec = 100.25;
     const kill = {
-      timeSec: 80,
+      timeSec: facts.killAt,
       type: "kill" as const,
       description: "Runner down",
       victim: "Runner",
@@ -43,7 +46,7 @@ vi.mock("./demoDirectorScanner", () => ({
             scanned >= facts.modeKnownAt ? directorDataset().flagStands : [],
           events: [
             { timeSec: 0, type: "match-start", description: "Match started" },
-            ...(scanned >= 80 ? [kill] : []),
+            ...(scanned >= kill.timeSec ? [kill] : []),
             ...(scanned >= facts.captureAvailableAt
               ? [
                   {
@@ -78,6 +81,79 @@ const cameras = (shots: Shot[]) =>
   shots.map(({ scene: _scene, ...camera }) => camera);
 
 describe("cast pipeline cadence", () => {
+  it("rejects quick-cut proposals during the minimum hold and just before EOF", async () => {
+    const shot = (
+      name: string,
+      targetId: number,
+      startSec: number,
+      quickCut = false,
+    ): Shot => ({
+      kind: "followPlayer",
+      targetId,
+      startSec,
+      endSec: 10,
+      transitionIn: "cut",
+      reason: name,
+      quickCut,
+    });
+    const opening = shot("Opening", 1, 0);
+    const flash = shot("Flash", 2, 0.5, true);
+    const runner = shot("Runner", 3, 1, true);
+    const tail = shot("Last-second cut", 4, 99.5, true);
+    const proposals = [opening, flash, runner, tail];
+    const markAired = vi.fn();
+    let now = 0;
+    const director = vi
+      .spyOn(switcher, "createSwitcherStream")
+      .mockReturnValue({
+        get shots() {
+          return proposals.filter((proposal) => proposal.startSec <= now);
+        },
+        get plannedToSec() {
+          return now;
+        },
+        freeSpace: null,
+        pendingCaptureSec: undefined,
+        markAired,
+        hasAired: vi.fn(),
+        cutFor: (proposal) => ({
+          priority: proposal === runner ? "flagPlay" : "ordinary",
+        }),
+        advanceTo: (atSec) => {
+          now = atSec;
+        },
+        finish: vi.fn(),
+      });
+    try {
+      const stream = await createCastStream(new ArrayBuffer(0));
+      const first = stream.shots[0];
+      expect(stream.shots).toEqual([first]);
+
+      await stream.advanceTo(2);
+      const cut = stream.shots[1];
+      expect(stream.shots).toEqual([
+        expect.objectContaining({
+          reason: "Opening",
+          startSec: 0,
+          endSec: cut?.startSec,
+        }),
+        expect.objectContaining({ reason: "Runner" }),
+      ]);
+      expect(cut.startSec).toBeGreaterThanOrEqual(3);
+      expect(cut.startSec).toBeLessThan(4);
+      expect(stream.shots[0]).toBe(first);
+      const plan = await stream.finish();
+      expect(plan.shots).toEqual([first, cut]);
+      expect(cut.endSec).toBe(stream.durationSec);
+      expect(markAired.mock.calls.map(([source, at]) => [source, at])).toEqual([
+        [opening, 0],
+        [runner, cut.startSec],
+      ]);
+    } finally {
+      director.mockRestore();
+    }
+  });
+
   it("pauses catch-up between ticks and resumes with identical camera decisions", async () => {
     const stream = await createCastStream(new ArrayBuffer(0));
     await stream.advanceTo(90, () => stream.plannedToSec < 10);
@@ -108,15 +184,27 @@ describe("cast pipeline cadence", () => {
     expect(plan.shots.some((s) => s.topic === "kill")).toBe(false);
   });
 
-  it("does not borrow even one extra second of tracker enrichment beyond the horizon", async () => {
-    facts.locatedAt = 81;
-    const { plan } = await runCastPipeline(new ArrayBuffer(0));
-    const kill = plan.shots.find((s) => s.topic === "kill");
-    expect(kill).toBeDefined();
-    // At picture time 79 the two-second horizon reaches availability
-    // time 81. It cannot use that location at picture time 78.
-    expect(kill!.startSec).toBeGreaterThanOrEqual(79);
-  });
+  it.each([81, 81.5])(
+    "honors the shared kill-shot deadline when the location arrives at %s",
+    async (locatedAt) => {
+      facts.killAt = 81;
+      facts.locatedAt = locatedAt;
+      const stream = await createCastStream(new ArrayBuffer(0));
+      await stream.advanceTo(77);
+      expect(stream.dataset?.durationSec).toBe(81);
+      expect(
+        stream.dataset?.events.find((event) => event.type === "kill")?.pos,
+      ).toEqual(locatedAt === 81 ? [400, 0, 100] : undefined);
+      const plan = await stream.finish();
+      const kill = plan.shots.find((s) => s.topic === "kill");
+      if (locatedAt === 81) {
+        expect(kill?.startSec).toBeGreaterThanOrEqual(79);
+        expect(kill?.startSec).toBeLessThan(81);
+      } else {
+        expect(kill).toBeUndefined();
+      }
+    },
+  );
 
   it("produces the same cameras with irregular playback updates and batch input", async () => {
     const dynamic = await createCastStream(new ArrayBuffer(0));

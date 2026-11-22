@@ -190,6 +190,20 @@ it("ignores P while following a loose flag even with a projectile nearby", () =>
   expect(callbacks.size).toBe(0);
 });
 
+it("lets a nearby projectile take over during a flag return hold", () => {
+  followTestFlag(looseFlag);
+  streamPlaybackStore.setState({
+    cameraMode: "freeFly",
+    followEntityId: null,
+  });
+  press();
+  expect(state()).toMatchObject({
+    cameraMode: "orbitOverride",
+    followFlagSlot: null,
+    projectileFollow: { kind: "tracking", projectileId: nearbyShot.id },
+  });
+});
+
 it("does not arm on the last carrier when the flag is out of scope", () => {
   followTestFlag(carrier);
   gameEntityStore.getState().setStreamEntity(player);

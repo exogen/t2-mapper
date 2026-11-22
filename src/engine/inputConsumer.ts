@@ -8,6 +8,7 @@ import { engineStore } from "../state/engineStore";
 import {
   MAX_ORBIT_DISTANCE,
   MIN_ORBIT_DISTANCE,
+  cancelFlagFollowHold,
   streamPlaybackStore,
   type DemoCameraMode,
 } from "../state/streamPlaybackStore";
@@ -531,6 +532,8 @@ export function installInputConsumer(engine: GameEngine): () => void {
         const spState = streamPlaybackStore.getState();
         if (spState.playback) {
           if (spState.cameraMode === "freeFly") {
+            if (dYaw !== 0 || dPitch !== 0 || x !== 0 || y !== 0 || z !== 0)
+              cancelFlagFollowHold();
             applyLocalCamera(camera, dYaw, dPitch, x, y, z, frameDelta);
           } else if (
             spState.cameraMode === "orbitOverride" &&

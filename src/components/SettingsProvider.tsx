@@ -23,6 +23,7 @@ import {
   updateHudPreference,
   type CcPlayerNames,
   type FlagColorMode,
+  type FlagReturnCamera,
   type HudPosition,
   type HudStyle,
   type IffVisibility,
@@ -139,6 +140,8 @@ type SettingsContextType = {
   setCcPlayerNames: StateSetter<CcPlayerNames>;
   followBehindPlayer: boolean;
   setFollowBehindPlayer: StateSetter<boolean>;
+  flagReturnCamera: FlagReturnCamera;
+  setFlagReturnCamera: StateSetter<FlagReturnCamera>;
 };
 
 type DebugContextType = {
@@ -232,6 +235,7 @@ const settingsActions = {
   setFirstPersonTeamIff: setter("firstPersonTeamIff"),
   setCcPlayerNames: setter("ccPlayerNames"),
   setFollowBehindPlayer: setter("followBehindPlayer"),
+  setFlagReturnCamera: setter("flagReturnCamera"),
 };
 
 function selectSettings(
@@ -278,6 +282,7 @@ function selectSettings(
     firstPersonTeamIff: state.firstPersonTeamIff,
     ccPlayerNames: state.ccPlayerNames,
     followBehindPlayer: state.followBehindPlayer,
+    flagReturnCamera: state.flagReturnCamera,
   };
 }
 

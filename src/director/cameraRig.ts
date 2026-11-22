@@ -15,7 +15,7 @@
 import { Vector3 } from "three";
 import { castWorldRay } from "../collision/worldCollision";
 import { castTerrainRay } from "../collision/terrainCollision";
-import type { DirectorVec3, Shot } from "./types";
+import type { DirectorFlagSample, DirectorVec3, Shot } from "./types";
 import { threeToTorque } from "../scene/coordinates";
 
 /** Slow broadcast-style orbit drift for aimless shots (radians/second). */
@@ -58,6 +58,30 @@ export function orbitLiftFactor(radius: number, heightFactor: number): number {
 /** Fixed orbits look slightly above the ground at the center point. */
 
 export const ORBIT_LOOK_LIFT = 2;
+
+/** Keep the area framing on a pickup until the director hands off to the runner. */
+export function holdsFixedFlagFraming(
+  shot: Extract<Shot, { kind: "fixedOrbit" }>,
+  status: DirectorFlagSample["status"] | undefined,
+): boolean {
+  return (
+    status === "held" &&
+    shot.lookSubject?.type === "flag" &&
+    !shot.trackSubject &&
+    !shot.coverageCutIn
+  );
+}
+
+/** Start panning once the subject leaves the anchored framing. */
+export function fixedOrbitTrackingWeight(
+  shot: Extract<Shot, { kind: "fixedOrbit" }>,
+  fromAnchor: number,
+): number {
+  return shot.trackSubject
+    ? 1
+    : Math.min(1, Math.max(0, fromAnchor / Math.max(1, shot.radius) - 1));
+}
+
 /** The lower lift used when VERIFYING a placement's view back onto the
  *  subject: high enough to clear the floor they stand on, low enough
  *  that the roof over their head still counts as blocking. */

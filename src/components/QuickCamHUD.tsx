@@ -3,8 +3,13 @@ import { useEffect, useRef } from "react";
 import { BsShiftFill } from "react-icons/bs";
 import { FaClosedCaptioning } from "react-icons/fa";
 import { LuCircleDashed } from "react-icons/lu";
+import { useStore } from "zustand";
 import { QUICK_CAM_SLOTS, useCaster } from "../state/casterStore";
 import { useDataSource } from "../state/gameEntityStore";
+import {
+  isHoldingFlagFollow,
+  streamPlaybackStore,
+} from "../state/streamPlaybackStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { useIsWatchSpectator } from "./useIsWatchSpectator";
 import { useFlagCameras } from "./useFlagCameras";
@@ -38,6 +43,9 @@ export function QuickCamHUD({
   const seenAction = useRef(lastCameraAction);
   const hudRef = useRef<HTMLElement>(null);
   const flags = useFlagCameras();
+  const pendingFlagSlot = useStore(streamPlaybackStore, (state) =>
+    isHoldingFlagFollow(state) ? state.followFlagSlot : null,
+  );
   const players = useStreamSnapshot(getPlayerResolver);
   const iffView = useIffView();
   const source = useDataSource();
@@ -103,6 +111,11 @@ export function QuickCamHUD({
                   <QuickCamIcon
                     camera={camera}
                     Icon={Icon}
+                    className={
+                      flagSlot != null && flagSlot === pendingFlagSlot
+                        ? styles.FlagFollowPending
+                        : undefined
+                    }
                     flagTeamId={flagTeamId}
                     view={iffView}
                   />

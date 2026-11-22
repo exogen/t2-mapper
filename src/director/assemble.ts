@@ -373,13 +373,14 @@ function coveringShot(
       s.startSec < windowEnd &&
       (slot == null ||
         (s.kind === "followFlag" && s.slot === slot) ||
+        (event.type === "flag-grab" &&
+          s.kind === "followPlayer" &&
+          s.subject?.type === "flag" &&
+          s.subject.slot === slot) ||
         (s.kind === "dolly" &&
           s.subject.type === "flag" &&
           s.subject.slot === slot) ||
-        // A fixed camera that names this flag as its look-subject is
-        // already telling the story: it pans to the flag's live position
-        // and re-anchors on it at runtime, so its planned centre says
-        // nothing about whether the event is on screen.
+        // A fixed flag shot explicitly covers its pickup or local play.
         (s.kind === "fixedOrbit" &&
           s.lookSubject?.type === "flag" &&
           s.lookSubject.slot === slot) ||

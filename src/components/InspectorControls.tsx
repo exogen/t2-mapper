@@ -7,9 +7,13 @@ import { InterpolationControls } from "./InterpolationControls";
 import { Select } from "./Select";
 import { RangeSlider } from "./RangeSlider";
 import { Checkbox } from "./Checkbox";
+import { SidebarRadioGroup, type RadioOption } from "./SidebarRadioGroup";
 import { ChatHudControl, MatchHudControl } from "./HudControls";
 import { useCommentaryTracks } from "../state/commentaryTracksStore";
-import { MAX_PREFERRED_FOV } from "../state/settingsStore";
+import {
+  MAX_PREFERRED_FOV,
+  type FlagReturnCamera,
+} from "../state/settingsStore";
 import { memo } from "react";
 import { BiSolidHelpCircle } from "react-icons/bi";
 import { FaRotateRight } from "react-icons/fa6";
@@ -76,6 +80,26 @@ const DEFAULT_PANELS = [
   "timeline",
   "stats",
   "jiggle",
+];
+
+const FLAG_RETURN_OPTIONS: readonly RadioOption<FlagReturnCamera>[] = [
+  {
+    value: "followHome",
+    label: "Stay on flag",
+    description: "Camera will abruptly jump home with the flag.",
+  },
+  {
+    value: "holdPosition",
+    label: "Stop following",
+    description:
+      "Camera will stay where the flag was, watching the return action.",
+  },
+  {
+    value: "delay",
+    label: "Delayed follow",
+    description:
+      "Camera will briefly watch where the flag was, then resume following.",
+  },
 ];
 
 export const InspectorControls = memo(function InspectorControls({
@@ -183,6 +207,8 @@ export const InspectorControls = memo(function InspectorControls({
     setCcPlayerNames,
     followBehindPlayer,
     setFollowBehindPlayer,
+    flagReturnCamera,
+    setFlagReturnCamera,
   } = useSettings();
   const {
     speedMultiplier,
@@ -491,6 +517,14 @@ export const InspectorControls = memo(function InspectorControls({
                     Keep follow camera behind player
                   </label>
                 </div>
+                <SidebarRadioGroup
+                  name="flagReturnCamera"
+                  legend="When following a returned or capped flag:"
+                  disabled={clipPlaybackActive}
+                  value={flagReturnCamera}
+                  onChange={setFlagReturnCamera}
+                  options={FLAG_RETURN_OPTIONS}
+                />
                 <div className={styles.Field}>
                   <label
                     id="ccPlayerNamesInput-label"

@@ -145,6 +145,23 @@ it("ignores an unknown saved flag color mode", () => {
   expect(createSettingsStore().getState().flagColorMode).toBe("matchTeam");
 });
 
+it.each(["holdPosition", "delay"] as const)(
+  "saves and restores the flag return camera choice %s",
+  (value) => {
+    const store = createSettingsStore();
+    expect(store.getState().flagReturnCamera).toBe("followHome");
+    setPreference("flagReturnCamera", value, store);
+    vi.advanceTimersByTime(500);
+    stubSaved(lastSaved());
+    expect(createSettingsStore().getState().flagReturnCamera).toBe(value);
+  },
+);
+
+it("follows the flag home when its saved camera choice is invalid", () => {
+  stubSaved({ flagReturnCamera: "hold" });
+  expect(createSettingsStore().getState().flagReturnCamera).toBe("followHome");
+});
+
 it("defaults to the existing IFF distance and restores the slider value", () => {
   const store = createSettingsStore();
   expect(store.getState().iffMaxDistance).toBe(150);

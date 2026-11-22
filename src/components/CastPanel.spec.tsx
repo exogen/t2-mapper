@@ -242,6 +242,39 @@ it("shows default flags, saved views and empty slot shortcuts in the quick cam H
   expect(html).toContain('title="Click or press Shift+3 to set camera 3"');
 });
 
+it("flashes only the flag icons for a pending delayed follow", () => {
+  casterStore.getState().saveCamera(4, {
+    kind: "flag",
+    slot: 2,
+    fov: 90,
+    followBehindPlayer: false,
+    yaw: 0,
+    pitch: 0,
+    distance: 10,
+  });
+  const flashingSlots = () =>
+    [
+      ...renderToStaticMarkup(<QuickCamHUD />).matchAll(
+        /<button[^>]*data-slot="(\d)"[^>]*>[\s\S]*?<\/button>/g,
+      ),
+    ]
+      .filter(([button]) =>
+        /<svg[^>]*class="[^"]*FlagFollowPending/.test(button),
+      )
+      .map(([, slot]) => slot);
+
+  streamPlaybackStore.setState({ cameraMode: "freeFly", followFlagSlot: 2 });
+  expect(flashingSlots()).toEqual(["2", "4"]);
+  streamPlaybackStore.setState({ followFlagSlot: null });
+  expect(flashingSlots()).toEqual([]);
+  streamPlaybackStore.setState({
+    cameraMode: "orbitOverride",
+    followFlagSlot: 2,
+    followEntityId: "2",
+  });
+  expect(flashingSlots()).toEqual([]);
+});
+
 it("hides the quick cam HUD after leaving the mission", () => {
   casterStore.getState().suspend();
   expect(renderToStaticMarkup(<QuickCamHUD />)).toBe("");

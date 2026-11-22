@@ -390,9 +390,14 @@ export function exitToFreeFly(): void {
 
 /** Back to free-fly; the camera stays where the orbit left it. */
 export function exitWatchFollow(): void {
-  const { followEntityId, followPlayer, projectileFollow } =
+  const { followEntityId, followPlayer, followFlagSlot, projectileFollow } =
     streamPlaybackStore.getState();
-  if (followEntityId === null && followPlayer === null && !projectileFollow)
+  if (
+    followEntityId === null &&
+    followPlayer === null &&
+    followFlagSlot === null &&
+    !projectileFollow
+  )
     return;
   exitToFreeFly();
 }

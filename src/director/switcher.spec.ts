@@ -191,7 +191,9 @@ describe("capture coverage", () => {
 
   it("keeps a live capture proposal a beat past the preferred lead-in", () => {
     const ds = fixture(20.55);
-    const stream = createSwitcherStream(new CausalView(ds, 6), { live: true });
+    const stream = createSwitcherStream(new CausalView(ds, 6), {
+      trackAired: true,
+    });
     stream.advanceTo(18, ds);
     const shot = stream.shots.at(-1)!;
     expect(stream.cutFor(shot).priority).toBe("capture");

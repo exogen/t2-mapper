@@ -36,7 +36,10 @@ import {
   selectMissionAreaData,
 } from "../state/gameEntityStore";
 import { streamSnapshotStore } from "../state/streamSnapshotStore";
-import { streamPlaybackStore } from "../state/streamPlaybackStore";
+import {
+  cancelFlagFollowHold,
+  streamPlaybackStore,
+} from "../state/streamPlaybackStore";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import { computeCommandCircuitFrame } from "../stats/commandCircuitFrame";
 import { parseViewHash } from "../viewHash";
@@ -754,6 +757,7 @@ function startOrthoRig(engine: GameEngine): () => void {
           }
 
           if (dx !== 0 || dz !== 0) {
+            cancelFlagFollowHold();
             userAdjusted = true;
             endZoom = null;
           }

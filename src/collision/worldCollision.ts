@@ -245,6 +245,26 @@ export function interiorWorldBounds(out = new Box3()): Box3 | null {
   return out.isEmpty() ? null : out;
 }
 
+const interiorBoundsCache = new WeakMap<
+  CollisionState,
+  { version: number; bounds: ReadonlyMap<string, Box3> }
+>();
+
+/** Individual static interior bounds for identifying visible map landmarks. */
+export function interiorBoundsById(): ReadonlyMap<string, Box3> {
+  const state = collisionState();
+  const cached = interiorBoundsCache.get(state);
+  if (cached?.version === interiorVersion) return cached.bounds;
+  const bounds = new Map<string, Box3>();
+  for (const [id, entry] of state.interiors) {
+    const box = new Box3();
+    for (const collider of entry.colliders) box.union(collider.worldBox);
+    if (!box.isEmpty()) bounds.set(id, box);
+  }
+  interiorBoundsCache.set(state, { version: interiorVersion, bounds });
+  return bounds;
+}
+
 /**
  * Register authored DTS collision/LOS meshes as camera occluders.
  * Only queries with `includeStatics` see them. Ordinary meshes retain

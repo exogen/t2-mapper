@@ -10,6 +10,7 @@ import { replayConnectionStore } from "../state/replayConnectionStore";
 import {
   MAX_ORBIT_DISTANCE,
   MIN_ORBIT_DISTANCE,
+  isHoldingFlagFollow,
   streamClock,
   streamPlaybackStore,
   type DemoCameraMode,
@@ -223,7 +224,9 @@ export function installProjectileFollow(engine: GameEngine): () => void {
     )
       return;
 
-    const { followFlagSlot } = state;
+    const followFlagSlot = isHoldingFlagFollow(state)
+      ? null
+      : state.followFlagSlot;
     // Flag follow can keep its last camera target while the flag is out of scope.
     const targetId =
       followFlagSlot === null

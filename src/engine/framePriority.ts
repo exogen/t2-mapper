@@ -92,6 +92,8 @@ export const FramePriority = {
   ClipCamera: -11,
   /** Reads the finished pose to detect discontinuities. */
   CameraWatchdog: -10,
+  /** Commit an expired flag hold after input and clip capture, for next frame. */
+  CameraFlagResume: -9,
   /**
    * Clock-synced audio (the commentary track) follows the frame's demo
    * time, ahead of the mix in PostCamera reading whether it's on air.

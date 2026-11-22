@@ -43,6 +43,7 @@ import {
   orbitCameraClearance,
 } from "../stream/orbitCollision";
 import { FramePriority } from "./framePriority";
+import { FlagReturnFollow } from "./flagReturnFollow";
 import { combineCleanups } from "./storeReaction";
 import type { FrameContext } from "./frameScheduler";
 import type { GameEngine } from "./gameEngine";
@@ -55,6 +56,7 @@ import { DIRECTOR_ORBIT_TARGET_MAX_LAG } from "../director/cameraRig";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import {
   MAX_ORBIT_DISTANCE,
+  isHoldingFlagFollow,
   streamClock,
   streamPlaybackStore,
   resetStreamPlayback,
@@ -409,6 +411,7 @@ export class StreamPlaybackSession {
   private corpseView: { id: string; seekNonce: number; yaw: number } | null =
     null;
   private readonly clock = new PlaybackClock();
+  private readonly flagReturnFollow = new FlagReturnFollow();
   private readonly lockedOrbit = new PlayerOrbitSpring();
   private readonly orbitDistance = new OrbitDistanceSpring();
   private lastOrbitSnapNonce = 0;
@@ -440,6 +443,10 @@ export class StreamPlaybackSession {
       engine.scheduler.add(FramePriority.CameraStream, (ctx) =>
         this.cameraPass(ctx),
       ),
+      engine.scheduler.add(FramePriority.CameraFlagResume, () => {
+        if (isCurrentPlayback(this.recording, this.clock.seekNonce))
+          this.flagReturnFollow.resume();
+      }),
     );
   }
 
@@ -795,6 +802,13 @@ export class StreamPlaybackSession {
 
         this.syncRenderableEntities(renderCurrent);
         if (!isCurrentPlayback(this.recording, playback.seekNonce)) return;
+        this.flagReturnFollow.update(
+          renderCurrent,
+          streamClock.time,
+          playback.seekNonce,
+          stream.worldGeneration,
+          isSeeking,
+        );
 
         // A timestamp link may start in a later mission. Wait for its completed
         // frame so the opening scene and intermediate seek scenes don't reset it.
@@ -1499,7 +1513,8 @@ export class StreamPlaybackSession {
     const localOrbit =
       orbitOverride && (owner === "input" || owner === "director");
     const followOrbit = localOrbit || hasClipOrbitDistance;
-    const { followFlagSlot } = streamPlaybackStore.getState();
+    const followState = streamPlaybackStore.getState();
+    const { followFlagSlot } = followState;
     // Both springs follow the flag across carrier/item hand-offs. A drop also
     // unlocks at the last smoothed view angle instead of restoring old angles.
     const orbitSpringKey =
@@ -1509,7 +1524,7 @@ export class StreamPlaybackSession {
     if (!orbitLocked && lastLockedOrbit.targetId != null) {
       // Unlock in place, once, instead of publishing changing angles every frame.
       if (
-        orbitOverride &&
+        (orbitOverride || isHoldingFlagFollow(followState)) &&
         orbitSpringKey === lastLockedOrbit.targetId &&
         owner === "input"
       ) {

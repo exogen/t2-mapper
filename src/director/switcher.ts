@@ -57,6 +57,7 @@ import {
   DIRECTOR_CAPPER_MIN_LIKELIHOOD,
   DIRECTOR_CAP_APPROACH_RANGE,
   DIRECTOR_CAP_SETUP_SEC,
+  DIRECTOR_EVENT_LEAD_SEC,
   DIRECTOR_LIVE_MIN_EVENT_LEAD_SEC,
   DIRECTOR_EVENT_REACTION_SEC,
   DIRECTOR_DROPPED_FAR,
@@ -68,11 +69,8 @@ import {
   DIRECTOR_FIELD_FLOOR_SCORE,
   DIRECTOR_FIELD_FRESH_SEC,
   DIRECTOR_FIELD_QUIET_RANGE,
-  DIRECTOR_DROPPED_ORBIT_HEIGHT,
-  DIRECTOR_DROPPED_ORBIT_RADIUS,
   DIRECTOR_FAIR_SHARE_SEC,
   DIRECTOR_FIXED_CHUNK_SEC,
-  DIRECTOR_FIXED_MAX_SPEED,
   DIRECTOR_GRAB_IMMINENT_SEC,
   DIRECTOR_GRAB_LOOKAHEAD_SEC,
   DIRECTOR_HARD_FLOOR_SEC,
@@ -124,7 +122,6 @@ import {
 import { bearingYaw, boundingSpread, centroid, dist } from "./geometry";
 import {
   distanceForSpeed,
-  onBroadcastSide,
   newShotVariety,
   orbitShot,
   radiusForSpread,
@@ -133,7 +130,10 @@ import {
 import { flagLabel, playerName, targetIdForName } from "./dataset";
 import {
   createCaptureShot,
-  createFlagFightShot,
+  createLooseFlagShot,
+  createStandFightSweep,
+  flagAreaSubject,
+  flagAreaViewSees,
   holdsFlagFight,
 } from "./flagCoverage";
 import { rosterCloseUp, rosterWide, type RosterFraming } from "./lineup";
@@ -488,12 +488,20 @@ export function assembleCastPlan(
   return plan;
 }
 
-type Cut = {
-  readonly priority: "ordinary" | "flagPlay" | "capture";
+type Cut = (
+  | { readonly priority: "ordinary" | "flagPlay" | "capture" }
+  | { readonly priority: "flagHandoff"; readonly flagSlot: number }
+) & {
   readonly latestStartSec?: number;
 };
 
 const ordinaryCut: Cut = { priority: "ordinary" };
+
+type DeferredFlagPlay = {
+  slot: number;
+  sinceSec: number;
+  grab?: DirectorEvent;
+};
 
 interface SwitcherState {
   view: CausalView;
@@ -539,7 +547,7 @@ interface SwitcherState {
     pos: DirectorVec3;
     holdUntilSec: number;
     canExtend: boolean;
-    deferred: { slot: number; sinceSec: number; grab?: DirectorEvent } | null;
+    deferred: DeferredFlagPlay | null;
   } | null;
   /** When each variety family last aired (freshness rotation). */
   readonly varietyMem: VarietyMemory;
@@ -622,9 +630,10 @@ interface SwitcherState {
   teamedStableSince: number;
   /** Last tick a non-flag subject held the screen (variety fatigue). */
   lastNonFlagSec: number;
-  /** Live cuts have already been sent to viewers and cannot be pruned. */
-  /** Actual live publication times. In a demo the proposal is the picture. */
+  /** Published pictures cannot be pruned. The switcher's open
+   *  proposal may be different from what viewers are watching. */
   airedShots?: WeakMap<Shot, number>;
+  lastAired?: { source: Shot; atSec: number; staged: Shot };
 }
 
 /** Fresh switcher state for a view. Shared by the batch and streaming
@@ -757,8 +766,8 @@ export interface SwitcherStream {
   readonly plannedToSec: number;
   /** A known score that has yet to get its own camera. */
   readonly pendingCaptureSec: number | undefined;
-  /** Record only shots admitted to the live broadcast. */
-  markAired(shot: Shot, atSec: number): void;
+  /** Record only shots admitted to playback. */
+  markAired(shot: Shot, atSec: number, staged?: Shot): void;
   hasAired(shot: Shot): boolean;
   cutFor(shot: Shot): Cut;
   /** Run ticks up to `sec`, against a dataset covering at least that. */
@@ -771,12 +780,12 @@ export function createSwitcherStream(
   view: CausalView,
   options: {
     startSec?: number;
-    live?: boolean;
+    trackAired?: boolean;
   } = {},
 ): SwitcherStream {
   const state = newSwitcherState(view);
   let cursor = options.startSec ?? 0;
-  if (options.live) state.airedShots = new WeakMap();
+  if (options.trackAired) state.airedShots = new WeakMap();
   if (options.startSec !== undefined) {
     view.advanceTo(cursor);
     state.segStartSec = cursor;
@@ -811,8 +820,9 @@ export function createSwitcherStream(
             view.eventSlot(event) != null,
         )?.timeSec;
     },
-    markAired(shot, atSec) {
+    markAired(shot, atSec, staged = shot) {
       state.airedShots?.set(shot, atSec);
+      state.lastAired = { source: shot, atSec, staged };
       markVarietyAired(state, shot, atSec);
     },
     hasAired(shot) {
@@ -868,7 +878,7 @@ function markKickoff(state: SwitcherState, timeSec: number | null): void {
   state.suitUpLastPos = null;
 }
 
-/** A missed live cut must release both its camera and its hold. */
+/** An unaired proposal past its deadline cannot hold the camera. */
 function expireProposal(state: SwitcherState, t: number): void {
   if (!state.airedShots) return;
   const open = state.shots.at(-1);
@@ -1057,7 +1067,10 @@ function tick(state: SwitcherState, t: number): void {
       const resolved = grabEndsBy(view, slot, grab, t);
       const fleeting =
         ownStory != null && grabEndsBy(view, slot, grab, grab.timeSec + 1);
-      if (alreadyOnIt || resolved || fleeting) {
+      if (!resolved && keepOnGrabber(state, grab, slot, t)) {
+        markHandled();
+        return;
+      } else if (alreadyOnIt || resolved || fleeting) {
         markHandled();
       } else if (
         state.directive?.kind !== "capture" &&
@@ -1069,26 +1082,7 @@ function tick(state: SwitcherState, t: number): void {
         (ownStory == null || ownStory > Math.max(t + 1, grab.timeSec))
       ) {
         markHandled();
-        const interruptedDirective = state.directive != null;
-        state.directive = null;
-        state.suitUpUntil = Math.min(state.suitUpUntil, t);
-        switchTo(
-          state,
-          subjects.findIndex((s) => s.kind === "flag" && s.slot === slot),
-          t,
-          interruptedDirective,
-        );
-        // Anticipated grabs open a deliberately short pre-grab beat at
-        // the stand; protect it from the fragment rule.
-        const opened = state.shots[state.shots.length - 1];
-        if (opened && grab.timeSec > t) {
-          opened.quickCut = true;
-          if (opened !== open)
-            state.cuts.set(opened, {
-              priority: "flagPlay",
-              latestStartSec: grab.timeSec - DIRECTOR_LIVE_MIN_EVENT_LEAD_SEC,
-            });
-        }
+        cutToFlagPlay(state, slot, t, grab);
         return;
       }
     }
@@ -1128,6 +1122,7 @@ function tick(state: SwitcherState, t: number): void {
       return;
     }
   }
+  if (coverFlagPickup(state, t)) return;
   if (
     !state.directive &&
     (showGrabPov(state, t) || widenForFlagBombardment(state, t))
@@ -1135,11 +1130,7 @@ function tick(state: SwitcherState, t: number): void {
     return;
   const deferred = takeDeferredPossession(state, t);
   if (deferred != null) {
-    switchTo(
-      state,
-      subjects.findIndex((s) => s.kind === "flag" && s.slot === deferred),
-      t,
-    );
+    cutToFlagPlay(state, deferred.slot, t, deferred.grab);
     // Give the deferred play a readable beat before a new grab asks to
     // switch back. This applies to this handoff, not every fresh carry.
     observePossession(state, t);
@@ -1402,9 +1393,8 @@ function tick(state: SwitcherState, t: number): void {
       status !== state.currentStyleStatus &&
       !holdingExchangeFraming(state, t)
     ) {
-      // A fresh grab plays out IN the stand framing for a beat — the
-      // viewer should see the flag leave the stand, not a cut landing
-      // exactly on the moment. Everything else restyles immediately.
+      // Keep a short local reaction. coverFlagPickup already handed off
+      // an area shot that lost the runner.
       const holdForGrab =
         status === "held" &&
         cur.kind === "flag" &&
@@ -1560,6 +1550,8 @@ function tick(state: SwitcherState, t: number): void {
   maybeRotate(state, t);
 }
 
+const PICKUP_HOLD_SEC = 3;
+
 /** Observe only current state. A cutaway's remembered scoring subject is
  *  not a possession the audience is following. Missing/stale samples cannot
  *  renew commitment, and a resolved flag releases it immediately. */
@@ -1586,12 +1578,27 @@ function observePossession(state: SwitcherState, t: number): void {
     sample.status !== story.status ||
     sample.carrierTargetId !== story.carrierTargetId
   ) {
+    const open = state.shots.at(-1);
+    const aired = state.lastAired;
+    let camera = open;
+    if (state.airedShots)
+      camera = aired && aired.atSec <= t ? aired.staged : undefined;
+    const pickupOnAir =
+      story.status === "home" &&
+      sample.status === "held" &&
+      (tracksFlag(camera, sample.slot) ||
+        (camera?.kind === "followPlayer" &&
+          camera.targetId === sample.carrierTargetId));
     // A nearby drop, pickup or handoff can be covered as one play.
     const sameExchange =
       sample.status !== "home" &&
       tracksFlag(state.shots.at(-1), sample.slot) &&
       dist(story.pos, sample.pos) <= DIRECTOR_THREAT_RANGE;
-    if (
+    if (pickupOnAir) {
+      // Give the grab and exit time to read before showing a separate play.
+      story.holdUntilSec = t + PICKUP_HOLD_SEC;
+      story.canExtend = false;
+    } else if (
       story.status !== "home" &&
       (sameExchange || nearScoringStand(state.view, sample))
     ) {
@@ -1739,7 +1746,7 @@ function grabEndsBy(
 function takeDeferredPossession(
   state: SwitcherState,
   t: number,
-): number | null {
+): DeferredFlagPlay | null {
   const story = state.possession;
   const pending = story?.deferred;
   if (!story || !pending) return null;
@@ -1783,7 +1790,7 @@ function takeDeferredPossession(
   )
     return null;
   story.deferred = null;
-  return pending.slot;
+  return pending;
 }
 
 /** The stand a subject is anchored on, for same-scene detection. */
@@ -1832,6 +1839,7 @@ function switchTo(
   index: number,
   t: number,
   resumeFromDirective = false,
+  shot?: Shot,
 ): void {
   // Returning from a cutaway may select the SAME scoring subject, but it
   // still needs a camera cut. Otherwise the cancelled set piece keeps its
@@ -1842,7 +1850,37 @@ function switchTo(
   state.current = index;
   state.segStartSec = t;
   state.freshSubject = true;
-  openShot(state, t);
+  openShot(state, t, shot);
+}
+
+function cutToFlagPlay(
+  state: SwitcherState,
+  slot: number,
+  t: number,
+  grab?: DirectorEvent,
+): void {
+  const previous = state.shots.at(-1);
+  const interrupted = state.directive != null;
+  const upcoming = grab && grab.timeSec > t ? grab : undefined;
+  const approach = upcoming && followGrabApproach(state.view, slot, upcoming);
+  state.directive = null;
+  state.suitUpUntil = Math.min(state.suitUpUntil, t);
+  switchTo(
+    state,
+    state.subjects.findIndex(
+      (subject) => subject.kind === "flag" && subject.slot === slot,
+    ),
+    t,
+    interrupted,
+    approach ?? undefined,
+  );
+  const opened = state.shots.at(-1);
+  if (upcoming && opened && opened !== previous) {
+    state.cuts.set(opened, {
+      priority: "flagPlay",
+      latestStartSec: upcoming.timeSec - DIRECTOR_LIVE_MIN_EVENT_LEAD_SEC,
+    });
+  }
 }
 
 function maybeRotate(state: SwitcherState, t: number): void {
@@ -1943,6 +1981,13 @@ function syncStyleStatus(state: SwitcherState): void {
  *  the story along. Everything else keeps its cadence. */
 function rotationFor(state: SwitcherState, shot: Shot, t: number): number {
   if (shot.kind === "sweep" && shot.topic === "action") return t + shot.moveSec;
+  if (
+    shot.kind === "sweep" &&
+    (shot.topic === "flag-run" || shot.topic === "flag-stand")
+  )
+    return t + Math.max(7, shot.moveSec);
+  if (shot.kind === "followFlag" && state.currentStyleStatus === "field")
+    return t + DIRECTOR_FIXED_CHUNK_SEC;
   if (shot.kind === "followPlayer" && shot.firstPerson) return t + 3.5;
   const quietHold = shot.kind === "fixedOrbit" && shot.role === "quiet";
   return quietHold
@@ -3161,6 +3206,200 @@ function nextGrabber(view: CausalView, slot: number): number | null {
     : null;
 }
 
+function pickupCamera(t: number, slot: number) {
+  return {
+    distance: DIRECTOR_GRAB_CHASE_DIST,
+    pitch: DIRECTOR_PITCH_CHASE,
+    aim: { mode: "forward" },
+    startSec: t,
+    endSec: t,
+    transitionIn: "cut",
+    subject: { type: "flag", slot },
+    quickCut: true,
+  } as const;
+}
+
+/** Start on the known runner when they are already in scope. */
+function followGrabApproach(
+  view: CausalView,
+  slot: number,
+  grab: DirectorEvent,
+): Extract<Shot, { kind: "followPlayer" }> | null {
+  const t = view.now;
+  if (!grab.actor || grabEndsBy(view, slot, grab, grab.timeSec + 1))
+    return null;
+  const targetId = targetIdForName(grab.actor, view.dataset, grab.timeSec);
+  const runner = targetId == null ? null : view.playerAt(targetId);
+  if (
+    !runner ||
+    t - runner.timeSec > 1.5 ||
+    runner.health === 0 ||
+    runner.vehicleId
+  )
+    return null;
+  return {
+    ...pickupCamera(t, slot),
+    kind: "followPlayer",
+    targetId: runner.targetId,
+    reason: `${grab.actor} approaching the ${flagLabel(slot, view.dataset)}`,
+    topic: view.flagAt(slot)?.status === "field" ? "flag-run" : "flag-stand",
+  };
+}
+
+function showsPlayerFollow(
+  state: SwitcherState,
+  shot: Shot,
+  t: number,
+): boolean {
+  if (!state.airedShots) return shot.kind === "followPlayer";
+  const aired = state.lastAired;
+  return (
+    aired?.source === shot &&
+    aired.atSec <= t &&
+    aired.staged.kind === "followPlayer"
+  );
+}
+
+function takePickupStory(
+  state: SwitcherState,
+  slot: number,
+  t: number,
+): boolean {
+  const index = state.subjects.findIndex(
+    (subject) => subject.kind === "flag" && subject.slot === slot,
+  );
+  if (index < 0) return false;
+  if (index !== state.current) {
+    state.current = index;
+    state.segStartSec = t;
+    state.possession = null;
+  }
+  state.directive = null;
+  return true;
+}
+
+/** An established shot of the grabber can carry the same play right through. */
+function keepOnGrabber(
+  state: SwitcherState,
+  grab: DirectorEvent,
+  slot: number,
+  t: number,
+): boolean {
+  const open = state.shots.at(-1);
+  if (
+    state.directive?.kind === "capture" ||
+    !grab.actor ||
+    open?.kind !== "followPlayer" ||
+    open.firstPerson ||
+    open.targetId !==
+      targetIdForName(grab.actor, state.view.dataset, grab.timeSec) ||
+    !showsPlayerFollow(state, open, t) ||
+    !takePickupStory(state, slot, t)
+  )
+    return false;
+  open.subject = { type: "flag", slot };
+  state.rotateAt = Math.max(
+    state.rotateAt,
+    grab.timeSec + DIRECTOR_EVENT_REACTION_SEC,
+  );
+  syncStyleStatus(state);
+  return true;
+}
+
+/** Stay with a pickup even if its area framing can no longer see the play. */
+function coverFlagPickup(state: SwitcherState, t: number): boolean {
+  const { view } = state;
+  if (state.directive && state.directive.kind !== "filler") return false;
+  const current = state.subjects[state.current];
+  const open = state.shots.at(-1);
+  if (!open) return false;
+
+  if (
+    current.kind === "flag" &&
+    open.kind === "followPlayer" &&
+    open.subject?.type === "flag" &&
+    open.subject.slot === current.slot &&
+    showsPlayerFollow(state, open, t)
+  ) {
+    const sample = view.flagAt(current.slot);
+    if (sample?.status === "held" && open.targetId === sample.carrierTargetId) {
+      // The approach is already a chase. Keep that angle through the pickup.
+      syncStyleStatus(state);
+      return false;
+    }
+  }
+
+  const aired = state.lastAired;
+  const area = aired && aired.atSec <= t ? aired.staged : open;
+  if (area.kind !== "fixedOrbit" && area.kind !== "sweep") return false;
+  const story = flagAreaSubject(area);
+  if (!story) return false;
+  const { slot } = story;
+  const sample = view.flagAt(slot);
+  if (!sample) return false;
+
+  let shot: Shot;
+  let latestStartSec: number | undefined;
+  if (sample.status === "held") {
+    if (
+      t - sample.timeSec > DIRECTOR_EVENT_LEAD_SEC ||
+      flagAreaViewSees(area, sample.pos, t) ||
+      view
+        .peekFlagEvents(slot, ["flag-drop", "flag-return"])
+        .some((event) => event.timeSec <= t + 1)
+    )
+      return false;
+    if (open.kind === "followFlag" && open.slot === slot) {
+      if (state.cuts.get(open)?.priority === "flagHandoff") return false;
+      state.cuts.set(open, { priority: "flagHandoff", flagSlot: slot });
+      open.quickCut = true;
+      return true;
+    }
+    shot = {
+      ...pickupCamera(t, slot),
+      kind: "followFlag",
+      slot,
+      reason: `${flagLabel(slot, view.dataset)} — following the pickup`,
+      topic: "flag-run",
+    };
+  } else {
+    if (state.directive || current.kind !== "flag" || current.slot !== slot)
+      return false;
+    const grab = view.peekFlagEvents(slot, ["flag-grab"])[0];
+    const lead = state.airedShots
+      ? DIRECTOR_LIVE_MIN_EVENT_LEAD_SEC
+      : DIRECTOR_TICK_SEC;
+    if (!grab || grab.timeSec - t < lead) return false;
+    const approach = followGrabApproach(view, slot, grab);
+    if (!approach) return false;
+    const exit = view.flagAt(
+      slot,
+      grab.timeSec + DIRECTOR_LIVE_MIN_EVENT_LEAD_SEC,
+    );
+    if (
+      exit?.status !== "held" ||
+      exit.carrierTargetId !== approach.targetId ||
+      exit.timeSec <= grab.timeSec ||
+      (flagAreaViewSees(area, sample.pos, grab.timeSec) &&
+        flagAreaViewSees(area, exit.pos, exit.timeSec))
+    )
+      return false;
+
+    shot = approach;
+    latestStartSec = grab.timeSec - lead;
+  }
+  if (!takePickupStory(state, slot, t)) return false;
+  state.cuts.set(shot, {
+    priority: "flagHandoff",
+    flagSlot: slot,
+    latestStartSec,
+  });
+  // A brief establishing view still covered the touch before this handoff.
+  if (sample.status === "held") open.quickCut = true;
+  openShot(state, t, shot);
+  return true;
+}
+
 /** Once viewers know where the stand is, give an occasional grab the runner's view. */
 function showGrabPov(state: SwitcherState, t: number): boolean {
   const { view } = state;
@@ -3187,8 +3426,17 @@ function showGrabPov(state: SwitcherState, t: number): boolean {
     return false;
   const grab = view.peekFlagEvents(current.slot, ["flag-grab"])[0];
   if (!grab?.actor || grab.timeSec - t > 2.5) return false;
+  const latestStartSec = grab.timeSec - DIRECTOR_LIVE_MIN_EVENT_LEAD_SEC;
+  if (t > latestStartSec) return false;
   const stand = view.standFor(current.slot);
   const targetId = targetIdForName(grab.actor, view.dataset, grab.timeSec);
+  if (
+    open.kind === "followPlayer" &&
+    open.targetId === targetId &&
+    open.subject?.type === "flag" &&
+    open.subject.slot === current.slot
+  )
+    return false;
   const player = targetId == null ? null : view.playerAt(targetId);
   if (
     !stand ||
@@ -3218,7 +3466,7 @@ function showGrabPov(state: SwitcherState, t: number): boolean {
   state.varietyChoices.set(shot, "flagGrabPov");
   state.cuts.set(shot, {
     priority: "ordinary",
-    latestStartSec: grab.timeSec - DIRECTOR_LIVE_MIN_EVENT_LEAD_SEC,
+    latestStartSec,
   });
   openShot(state, t, shot);
   return true;
@@ -3325,64 +3573,15 @@ function styleFor(state: SwitcherState, t: number): Shot {
         topic: "flag-run",
       };
     }
-    if (sample?.status === "field") {
-      const speed = view.trailingFlagSpeed(slot, 2) ?? 0;
-      const velocity = view.trailingFlagVelocity(slot, 2);
-      // A loose flag is often still FLYING — thrown at ski speed, it
-      // covers a hundred units before it settles, which no parked
-      // camera can hold (DIRECTOR_FIXED_MAX_SPEED is exactly this
-      // judgement). Ride it down instead of framing where it was.
-      if (speed > DIRECTOR_FIXED_MAX_SPEED) {
-        return {
-          kind: "followFlag",
-          slot,
-          distance: distanceForSpeed(speed),
-          pitch: DIRECTOR_PITCH_CHASE,
-          aim: { mode: "forward" },
-          startSec: t,
-          endSec: t,
-          transitionIn: "cut",
-          reason: `${label} loose — still moving`,
-          topic: "flag-run",
-        };
-      }
-      // Settling: frame slightly AHEAD of it, from a bearing square to
-      // its drift, so the last of the slide crosses the frame instead
-      // of running out of the back of it.
-      const ahead = view.flagAt(slot, view.horizon);
-      // A return teleports the flag. Frame its loose position so the
-      // audience can see the retrieval itself.
-      const settled = ahead?.status === "field" ? ahead : sample;
-      const drift = velocity && Math.hypot(velocity.x, velocity.y) > 1;
-      const center: DirectorVec3 = drift
-        ? [
-            settled.pos[0] + velocity!.x * 1.5,
-            settled.pos[1] + velocity!.y * 1.5,
-            settled.pos[2],
-          ]
-        : settled.pos;
-      // Camera offset is Torque (sinθ, cosθ); perpendicular to the
-      // drift means sinθ·vx + cosθ·vy = 0.
-      const across = drift
-        ? onBroadcastSide(Math.atan2(-velocity!.y, velocity!.x), dataset)
-        : undefined;
-      const parked = fieldStaleness(view, slot, sample.pos, t) >= 0.5;
-      const wide = orbitShot({
-        center,
-        radius: DIRECTOR_DROPPED_ORBIT_RADIUS,
-        heightFactor: DIRECTOR_DROPPED_ORBIT_HEIGHT,
-        still: true,
-        lookSubject: { type: "flag", slot },
-        ...(across != null ? { angle: across } : { framing }),
-        startSec: t,
-        endSec: t,
-        reason: parked
-          ? `${label} still parked in the field — checking in`
-          : `${label} on the ground — wide view`,
-        topic: "flag-run",
-      });
-      return createFlagFightShot(view, wide, sample) ?? wide;
-    }
+    const allowSweep = state.shots.at(-1)?.kind !== "sweep";
+    if (sample?.status === "field")
+      return createLooseFlagShot(
+        view,
+        variety,
+        sample,
+        fieldStaleness(view, slot, sample.pos, t) >= 0.5,
+        allowSweep,
+      );
     // At the stand. A battle, an incoming attacker, or quiet.
     const anchor = stand?.pos ?? sample?.pos;
     if (anchor) {
@@ -3391,7 +3590,7 @@ function styleFor(state: SwitcherState, t: number): Shot {
         .filter((p) => dist(p.pos, anchor) <= DIRECTOR_THREAT_RANGE);
       if (near.length >= STAND_BATTLE_MIN_PLAYERS) {
         const { spread } = boundingSpread(near.map((p) => p.pos));
-        return orbitShot({
+        const wide = orbitShot({
           center: centroid([...near.map((p) => p.pos), anchor]),
           radius: radiusForSpread(spread, dataset),
           lookSubject: { type: "flag", slot },
@@ -3401,6 +3600,10 @@ function styleFor(state: SwitcherState, t: number): Shot {
           reason: `${label} stand — battle overhead`,
           topic: "flag-stand",
         });
+        return (
+          (allowSweep && createStandFightSweep(view, wide, slot, anchor)) ||
+          wide
+        );
       }
       const wave = offensiveWaveShot(view, t, state.varietyMem, slot);
       if (wave) {

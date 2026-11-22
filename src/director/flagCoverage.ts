@@ -1,17 +1,32 @@
-import { orbitLiftFactor } from "./cameraRig";
+import { castWorldRay } from "../collision/worldCollision";
+import { orbitLiftFactor, sweepClock, sweepProgress } from "./cameraRig";
 import type { CausalView } from "./causalView";
 import { flagLabel, targetIdForName } from "./dataset";
-import { orbitShot, onBroadcastSide, type ShotVariety } from "./framing";
+import {
+  distanceForSpeed,
+  orbitShot,
+  onBroadcastSide,
+  type ShotVariety,
+} from "./framing";
 import { aimOf } from "./freeSpace";
 import { bearingYaw, centroid, dist } from "./geometry";
 import { PLAYER_AIM_LIFT } from "./humanScale";
-import { shotPoseAt, subjectInFrame, type ShotPose } from "./shotPath";
+import {
+  shotPoseAt,
+  subjectInFrame,
+  subjectVisible,
+  type ShotPose,
+} from "./shotPath";
 import {
   DIRECTOR_CAP_REACTION_SEC,
   DIRECTOR_CAP_SHOT_DISTANCE,
   DIRECTOR_DEATH_REACTION_SEC,
   DIRECTOR_DIST_FAST,
+  DIRECTOR_DROPPED_ORBIT_HEIGHT,
+  DIRECTOR_DROPPED_ORBIT_RADIUS,
   DIRECTOR_EVENT_LEAD_SEC,
+  DIRECTOR_FIXED_MAX_SPEED,
+  DIRECTOR_GRAB_CHASE_DIST,
   DIRECTOR_MIN_SHOT_SEC,
   DIRECTOR_PITCH_CHASE,
 } from "./tunables";
@@ -21,6 +36,7 @@ import type {
   DirectorPlayerSample,
   DirectorVec3,
   Shot,
+  ShotSubject,
 } from "./types";
 
 /** Keep the scorer or the stand in view across the score. */
@@ -93,6 +109,99 @@ export function createCaptureShot(
 }
 
 type FixedOrbit = ReturnType<typeof orbitShot>;
+type Sweep = Extract<Shot, { kind: "sweep" }>;
+type FlagAreaShot = FixedOrbit | Sweep;
+
+export function flagAreaSubject(
+  shot?: Pick<Shot, "kind" | "subject"> & { lookSubject?: ShotSubject },
+) {
+  if (shot?.kind !== "fixedOrbit" && shot?.kind !== "sweep") return;
+  if (shot.subject?.type === "flag") return shot.subject;
+  if (shot.kind === "fixedOrbit" && shot.lookSubject?.type === "flag")
+    return shot.lookSubject;
+}
+
+/** An area view can hold a pickup only while the runner stays in the scene. */
+export function flagAreaViewSees(
+  shot: FlagAreaShot,
+  pos: DirectorVec3,
+  timeSec: number,
+): boolean {
+  const aim = playerAim(pos);
+  if (shot.kind === "sweep") {
+    const pose = shotPoseAt(
+      shot,
+      sweepProgress(shot, sweepClock(shot, timeSec)),
+    )!;
+    return (
+      dist(pose.aim, pos) <= DIRECTOR_DROPPED_ORBIT_RADIUS &&
+      subjectInFrame(pose, aim)
+    );
+  }
+  const anchor = shot.staged?.anchor ?? shot.center;
+  const radius = Math.max(
+    shot.staged?.radius ?? shot.radius,
+    DIRECTOR_GRAB_CHASE_DIST,
+  );
+  if (dist(anchor, pos) > radius) return false;
+
+  const elapsed = Math.max(0, timeSec - shot.startSec);
+  const fraction = elapsed / Math.max(0.001, shot.endSec - shot.startSec);
+  const pose = shotPoseAt(shot, fraction)!;
+  return shot.trackSubject
+    ? subjectVisible(pose.eye, aim)
+    : subjectInFrame(pose, aim);
+}
+
+const FLAG_SWEEP_SEC = 5;
+const SCENE_FRACTIONS = [0, 0.25, 0.5, 0.75, 1];
+const SWEEP_HALF_ANGLE = Math.PI / 12;
+
+function sceneAngles(shot: FixedOrbit): number[] {
+  const angle = shot.staged?.angle ?? shot.startAngle ?? 0;
+  return [angle, angle + Math.PI / 2, angle - Math.PI / 2, angle + Math.PI];
+}
+
+/** A short lateral move on one scene. The camera stays off the subject's
+ * route, and comes to a stop on the action after the move. */
+function flagSceneSweep(
+  wide: FixedOrbit,
+  covers: (pose: ShotPose, index: number) => boolean,
+): Sweep | undefined {
+  for (const angle of sceneAngles(wide)) {
+    const from = shotPoseAt(
+      { ...wide, staged: undefined, startAngle: angle - SWEEP_HALF_ANGLE },
+      0,
+    )!;
+    const to = shotPoseAt(
+      { ...wide, staged: undefined, startAngle: angle + SWEEP_HALF_ANGLE },
+      0,
+    )!;
+    const sweep: Sweep = {
+      kind: "sweep",
+      from: from.eye,
+      to: to.eye,
+      target: from.aim,
+      subject: wide.subject,
+      startSec: wide.startSec,
+      endSec: wide.startSec + FLAG_SWEEP_SEC,
+      moveSec: FLAG_SWEEP_SEC,
+      transitionIn: "cut",
+      easing: "settle",
+      topic: wide.topic,
+      reason: wide.reason,
+    };
+    if (castWorldRay(sweep.from, sweep.to, { includeStatics: true })) continue;
+    if (
+      SCENE_FRACTIONS.every((fraction, i) =>
+        covers(shotPoseAt(sweep, sweepProgress(sweep, fraction))!, i),
+      )
+    ) {
+      sweep.pathSolved = true;
+      return sweep;
+    }
+  }
+}
 
 /** Keep the same geometry the planner checked when staging the shot. */
 function stageStillOrbit(
@@ -286,13 +395,13 @@ export function holdsFlagFight(
 }
 
 /** Try a fixed framing when both teams are converging on the dropped flag. */
-export function createFlagFightShot(
+function createFlagFightShot(
   view: CausalView,
   wide: FixedOrbit,
   sample: DirectorFlagSample,
+  positions: readonly DirectorVec3[],
 ): FixedOrbit | undefined {
   const { center, startSec } = wide;
-  const angle = wide.startAngle ?? 0;
   const radius = 30;
   const heightFactor = 0.2;
   const nearbyAt = (t: number) =>
@@ -309,10 +418,144 @@ export function createFlagFightShot(
       subject: { type: "flag", slot: sample.slot },
       reason: `${flagLabel(sample.slot, view.dataset)} — contest for the loose flag`,
     },
-    [angle, angle + Math.PI / 2, angle - Math.PI / 2, angle + Math.PI],
+    sceneAngles(wide),
     heightFactor,
     (pose) =>
-      subjectInFrame(pose, sample.pos) &&
+      positions.every((pos) => subjectInFrame(pose, pos)) &&
       (seesFlagFight(pose, now) || seesFlagFight(pose, soon)),
+  );
+}
+
+export function createLooseFlagShot(
+  view: CausalView,
+  variety: ShotVariety,
+  sample: DirectorFlagSample,
+  parked: boolean,
+  allowSweep: boolean,
+): Shot {
+  const { slot, pos } = sample;
+  const t = view.now;
+  const label = flagLabel(slot, view.dataset);
+  const subject = { type: "flag" as const, slot };
+  const past = view.flagAt(slot, t - 1);
+  const recentSpeed =
+    past?.status === "field" && sample.timeSec > past.timeSec
+      ? dist(past.pos, pos) / (sample.timeSec - past.timeSec)
+      : 0;
+  const follow: Shot = {
+    kind: "followFlag",
+    slot,
+    distance: distanceForSpeed(recentSpeed),
+    pitch: DIRECTOR_PITCH_CHASE,
+    aim: { mode: "forward" },
+    startSec: t,
+    endSec: t,
+    transitionIn: "cut",
+    reason: `${label} loose — still moving`,
+    topic: "flag-run",
+  };
+
+  // Only frame this loose run. A return, pickup or subsequent drop may
+  // place the flag somewhere that has nothing to do with the current shot.
+  const [nextPlay] = view.peekFlagEvents(slot, ["flag-grab", "flag-return"]);
+  const preview = Math.min(t + FLAG_SWEEP_SEC, view.horizon);
+  const positions: DirectorVec3[] = [pos];
+  let last = sample;
+  for (const fraction of SCENE_FRACTIONS.slice(1)) {
+    const time = t + fraction * (preview - t);
+    if (nextPlay && time >= nextPlay.timeSec) break;
+    const next = view.flagAt(slot, time);
+    if (next?.status !== "field") break;
+    if (time - next.timeSec > view.dataset.flagSampleStepSec * 2) break;
+    positions.push(next.pos);
+    last = next;
+  }
+  const dx = last.pos[0] - pos[0];
+  const dy = last.pos[1] - pos[1];
+  const travelled = Math.hypot(dx, dy);
+  // No useful preview of a fast throw. Let the normal follow camera
+  // carry it until there is a safe area framing.
+  if (last === sample && recentSpeed > DIRECTOR_FIXED_MAX_SPEED) return follow;
+
+  const wide = orbitShot({
+    center: centroid([pos, last.pos]),
+    radius: DIRECTOR_DROPPED_ORBIT_RADIUS,
+    heightFactor: DIRECTOR_DROPPED_ORBIT_HEIGHT,
+    still: true,
+    lookSubject: subject,
+    ...(travelled > 1
+      ? { angle: onBroadcastSide(Math.atan2(-dy, dx), view.dataset) }
+      : { framing: { dataset: view.dataset, variety } }),
+    startSec: t,
+    endSec: t,
+    reason: parked
+      ? `${label} still parked in the field — checking in`
+      : `${label} loose — wide view`,
+    topic: "flag-run",
+  });
+  const fight = createFlagFightShot(view, wide, sample, positions);
+  if (fight) return fight;
+  if (
+    allowSweep &&
+    positions.length === SCENE_FRACTIONS.length &&
+    preview === t + FLAG_SWEEP_SEC &&
+    travelled >= 5
+  ) {
+    const sweep = flagSceneSweep(
+      {
+        ...wide,
+        subject,
+        reason: `${label} loose — sideline sweep`,
+      },
+      (pose, i) => subjectInFrame(pose, positions[i]),
+    );
+    if (sweep) return sweep;
+  }
+  if (travelled < 5) return wide;
+
+  return (
+    stageStillOrbit(
+      { ...wide, lookSubject: undefined, subject },
+      sceneAngles(wide),
+      DIRECTOR_DROPPED_ORBIT_HEIGHT,
+      (pose) => positions.every((point) => subjectInFrame(pose, point)),
+    ) ?? follow
+  );
+}
+
+/** A pass across a contested stand, once it is clear the players will
+ * stay in the scene long enough to follow the move. */
+export function createStandFightSweep(
+  view: CausalView,
+  wide: FixedOrbit,
+  slot: number,
+  stand: DirectorVec3,
+): Sweep | undefined {
+  if (
+    view.horizon < wide.startSec + FLAG_SWEEP_SEC ||
+    view.peekFlagEvents(slot, ["flag-grab"]).length > 0
+  )
+    return;
+  const audience = SCENE_FRACTIONS.map((fraction) => {
+    const time = wide.startSec + FLAG_SWEEP_SEC * fraction;
+    return view
+      .playersAt(time)
+      .filter(
+        (player) =>
+          time - player.timeSec <= view.dataset.playerSampleStepSec * 2 &&
+          dist(player.pos, stand) <= 30,
+      );
+  });
+  if (audience.some((players) => players.length < 2)) return;
+  return flagSceneSweep(
+    {
+      ...wide,
+      radius: Math.min(35, wide.radius),
+      heightFactor: 0.3,
+      subject: { type: "flag", slot },
+      reason: `${flagLabel(slot, view.dataset)} stand — battle sweep`,
+    },
+    (pose, i) =>
+      subjectInFrame(pose, stand) && seesFlagFight(pose, audience[i]),
   );
 }

@@ -252,33 +252,37 @@ fieldset.GraphicsEffects {
   content: attr(data-max-value);
 }
 
-.IffChoiceList {
+.ChoiceList {
   margin: 10px 0 0 8px;
   padding: 0;
   list-style: none;
 }
 
-.IffChoiceList > :last-child {
+.ChoiceList > :last-child {
   margin-bottom: 0;
 }
 
-.FlagColorModes {
+.RadioGroup {
   min-inline-size: 0;
   margin: 8px 0 0;
   padding: 0;
   border: 0;
 }
 
-.FlagColorModes > legend {
+.RadioGroup:not(:last-child) {
+  margin-bottom: 12px;
+}
+
+.RadioGroup > legend {
   padding: 0;
 }
 
-.FlagColorModes .CheckboxField,
-.FlagColorModes .Label {
+.RadioGroup .CheckboxField,
+.RadioGroup .Label {
   align-items: start;
 }
 
-.FlagColorModes input[type="radio"] {
+.RadioGroup input[type="radio"] {
   margin-top: 1px;
 }
 

@@ -102,6 +102,7 @@ export interface Landmark {
   pos: DirectorVec3;
   teamId: number | null;
   kind: LandmarkKind;
+  firstSeenSec?: number;
   /** Framing distance for this class of thing. A turret filmed from 42
    *  units is a speck; a base filmed from 42 units is a wall. */
   radius: number;
@@ -203,6 +204,7 @@ export function landmarksFor(
       pos: st.pos,
       teamId: st.teamId ?? null,
       kind,
+      firstSeenSec: st.firstSeenSec,
       radius: framing.radius,
       indoor: framing.indoor,
       aimLift: framing.aimLift,

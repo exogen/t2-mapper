@@ -14,17 +14,18 @@ import {
 function followTargets() {
   const state = streamPlaybackStore.getState();
   const players = getFollowablePlayerIds();
-  const flag =
-    state.followFlagSlot != null &&
-    resolveFlagEntityId(state.followFlagSlot) != null;
-  return { state, players, flag };
+  const flagEntityId =
+    state.followFlagSlot == null
+      ? null
+      : resolveFlagEntityId(state.followFlagSlot);
+  return { state, players, flagEntityId };
 }
 
 /** Match the existing follow cycle's living-player eligibility. */
 export function getLocalCameraCapabilities() {
-  const { state, players, flag } = followTargets();
+  const { state, players, flagEntityId } = followTargets();
   return {
-    canFollow: flag || players.length > 0,
+    canFollow: flagEntityId != null || players.length > 0,
     canFirstPerson: state.followFlagSlot == null && players.length > 0,
     canCyclePlayers: players.length > 0,
   };
@@ -73,14 +74,18 @@ export function selectLocalCameraMode(
     return false;
   }
 
-  const { state, players, flag } = followTargets();
+  const { state, players, flagEntityId } = followTargets();
   if (mode === "firstPersonOverride" && state.followFlagSlot != null) {
     return false;
   }
   const currentPlayer =
     state.followEntityId != null && players.includes(state.followEntityId);
-  if (mode === "orbitOverride" && flag) {
-    streamPlaybackStore.setState({ cameraMode: mode, followCameraMode: mode });
+  if (mode === "orbitOverride" && flagEntityId != null) {
+    streamPlaybackStore.setState({
+      cameraMode: mode,
+      followCameraMode: mode,
+      followEntityId: flagEntityId,
+    });
     return true;
   }
   if (players.length === 0) return false;

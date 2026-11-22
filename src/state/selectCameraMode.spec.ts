@@ -139,6 +139,23 @@ it("permits an existing flag orbit without any players", () => {
   expect(selectLocalCameraMode("orbitOverride", true)).toBe(true);
 });
 
+it("reattaches to the flag when Follow is selected during a return hold", () => {
+  gameEntityStore.getState().setAllStreamEntities([flag()]);
+  followFlag(1);
+  streamPlaybackStore.setState({
+    cameraMode: "freeFly",
+    followEntityId: null,
+    orbitOverrideYaw: 0.7,
+  });
+  expect(selectLocalCameraMode("orbitOverride", true)).toBe(true);
+  expect(streamPlaybackStore.getState()).toMatchObject({
+    cameraMode: "orbitOverride",
+    followFlagSlot: 1,
+    followEntityId: "90",
+    orbitOverrideYaw: 0.7,
+  });
+});
+
 it("rejects follow without a living eligible player without mutating the mode", () => {
   gameEntityStore
     .getState()

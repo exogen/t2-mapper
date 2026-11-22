@@ -76,8 +76,13 @@ async function planCtfShots(
     flags: [TestFlag, TestFlag];
     players: DirectorSnapshot["entities"];
   },
+  lookaheadSec?: number,
 ): Promise<LiveCastPlannerShot[]> {
-  const planner = createLiveCastPlanner({ startTick: 0, metadata });
+  const planner = createLiveCastPlanner({
+    startTick: 0,
+    metadata,
+    lookaheadSec,
+  });
   const shots: LiveCastPlannerShot[] = [];
   const teams = ["Storm", "Inferno"];
   for (let tick = 0; tick * TICK_DURATION_MS <= durationSec * 1000; tick++) {
@@ -146,6 +151,126 @@ function inventoryShot({ shot }: LiveCastPlannerShot): boolean {
 }
 
 describe("authoritative live cast planner", () => {
+  it.each(["fixedOrbit", "sweep"])(
+    "lets a follow shot take over after the minimum hold when an aired %s loses the carrier",
+    async (kind) => {
+      const stageShot = stage.stageShot;
+      const staging = vi
+        .spyOn(stage, "stageShot")
+        .mockImplementation((...args) => {
+          const result = stageShot(...args);
+          const shot = result.shot;
+          if (
+            kind !== "sweep" ||
+            shot.kind !== "fixedOrbit" ||
+            shot.lookSubject?.type !== "flag"
+          )
+            return result;
+          return {
+            ...result,
+            shot: {
+              ...shot,
+              kind: "sweep",
+              subject: shot.lookSubject,
+              from: [0, 25, 105],
+              to: [-10, 25, 105],
+              target: [0, 0, 102],
+              moveSec: 5,
+              pathSolved: true,
+            },
+          };
+        });
+      try {
+        const grabAt = 10.5;
+        const shots = await planCtfShots(
+          19,
+          [flagEvent(grabAt, "MsgCTFFlagTaken", "Runner", "Storm")],
+          (time) => {
+            const position: DirectorVec3 = [
+              Math.max(0, time - grabAt) * 90,
+              0,
+              100,
+            ];
+            const held = time >= grabAt;
+            return {
+              flags: [
+                { position, status: held ? "held" : "home" },
+                { position: STAND_2, status: "home" },
+              ],
+              players: [
+                { ...player(15, 2, position), playerName: "Runner" },
+                player(11, 1, [1, -5, 100]),
+                player(12, 1, [-5, 5, 100]),
+                player(13, 1, [5, 5, 100]),
+              ],
+            };
+          },
+          0,
+        );
+        const atGrab = shots.findLast(({ shot }) => shot.startSec <= grabAt);
+        const flag = { type: "flag", slot: 1 };
+        expect(atGrab?.shot).toMatchObject(
+          kind === "sweep"
+            ? { kind, subject: flag }
+            : { kind, lookSubject: flag },
+        );
+        const firstFollow = shots.find(
+          ({ shot }) =>
+            shot.startSec > grabAt &&
+            shot.kind === "followFlag" &&
+            shot.slot === 1,
+        );
+        expect(firstFollow).toBeDefined();
+        const hold = firstFollow!.shot.startSec - atGrab!.shot.startSec;
+        expect(hold).toBeGreaterThanOrEqual(3);
+        expect(hold).toBeLessThan(3.6);
+      } finally {
+        staging.mockRestore();
+      }
+    },
+  );
+
+  it("reframes a thrown flag after it settles instead of keeping the chase", async () => {
+    const grabAt = 4;
+    const dropAt = 12;
+    const settledAt = 16;
+    const positionAt = (t: number): DirectorVec3 => [
+      (Math.max(grabAt, Math.min(t, settledAt)) - grabAt) * 35,
+      0,
+      100,
+    ];
+    const shots = await planCtfShots(
+      30,
+      [
+        flagEvent(grabAt, "MsgCTFFlagTaken", "Runner", "Storm"),
+        flagEvent(dropAt, "MsgCTFFlagDropped", "Runner", "Storm"),
+      ],
+      (t) => ({
+        flags: [
+          {
+            position: positionAt(t),
+            status: t < grabAt ? "home" : t < dropAt ? "held" : "field",
+          },
+          { position: STAND_2, status: "home" },
+        ],
+        players:
+          t < dropAt
+            ? [{ ...player(15, 2, positionAt(t)), playerName: "Runner" }]
+            : [],
+      }),
+      0,
+    );
+    const atLanding = shots.findLast(({ shot }) => shot.startSec <= settledAt);
+    expect(atLanding?.shot).toMatchObject({ kind: "followFlag", slot: 1 });
+    const wide = shots.find(
+      ({ shot }) =>
+        shot.kind === "fixedOrbit" &&
+        shot.startSec > settledAt &&
+        shot.center[0] === positionAt(settledAt)[0],
+    );
+    expect(wide?.shot.startSec).toBeLessThan(settledAt + 9);
+  });
+
   it("cuts away from a quiet flag contest to a sustained grab elsewhere", async () => {
     const looseFlag: DirectorVec3 = [580, 0, 100];
     const grabAt = 80;

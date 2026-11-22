@@ -23,21 +23,10 @@ import {
   createDirectorScanStream,
   scanDemoDirector,
 } from "./demoDirectorScanner";
-import {
-  assembleCastPlan,
-  createSwitcherStream,
-  planShotsCausal,
-  type SwitcherStream,
-} from "./switcher";
+import { assembleCastPlan, planShotsCausal } from "./switcher";
 import { detectMode } from "./planner";
-import {
-  addReports,
-  emptyReport,
-  stagePlan,
-  stageShot,
-  type StageReport,
-} from "./stage";
-import { CausalView } from "./causalView";
+import { addReports, emptyReport, stagePlan, type StageReport } from "./stage";
+import { createCtfCameraPlanner } from "./ctfCameraPlanner";
 import { describeScenes } from "./scene";
 import { DIRECTOR_LOOKAHEAD_SEC, DIRECTOR_TICK_SEC } from "./tunables";
 import type { DirectorDataset, Shot, ShotPlan } from "./types";
@@ -192,13 +181,8 @@ export async function createCastStream(
     factStreamId: options.factStreamId,
     stateStreamId: options.stateStreamId,
   });
-  let switcher: SwitcherStream | null = null;
-  let view: CausalView | null = null;
-  let planned = 0;
-  // The switcher owns decisions; the renderer owns their staged copies.
-  // A placement repair can replace a camera mechanism without changing
-  // the switcher's remembered subject, directive, or style comparisons.
-  const cameras = new WeakMap<Shot, Shot>();
+  const planner = createCtfCameraPlanner(0, DIRECTOR_LOOKAHEAD_SEC);
+  let planned = -DIRECTOR_TICK_SEC;
   const described = new WeakSet<Shot>();
   let complete = false;
   let latestDataset: DirectorDataset | null = null;
@@ -208,27 +192,6 @@ export async function createCastStream(
     gameMode: "ctf",
     shots: [],
     coverage: [],
-  };
-
-  const publish = (dataset: DirectorDataset): void => {
-    const decisions = switcher?.shots ?? [];
-    const shots = decisions.map((decision) => {
-      let camera = cameras.get(decision);
-      if (!camera) {
-        const staged = stageShot(decision, dataset, switcher?.freeSpace);
-        addReports(report, staged.report);
-        camera = staged.shot;
-        cameras.set(decision, camera);
-      }
-      // Cuts may shorten an open shot or discard a provisional fragment.
-      // Its placement and object identity stay fixed once published.
-      camera.startSec = decision.startSec;
-      camera.endSec = decision.endSec;
-      camera.quickCut = decision.quickCut;
-      return camera;
-    });
-    current.shots.length = 0;
-    current.shots.push(...shots);
   };
 
   const step = async (toSec: number): Promise<void> => {
@@ -241,7 +204,7 @@ export async function createCastStream(
     const dataset = scan.datasetTo(toSec + DIRECTOR_LOOKAHEAD_SEC);
     latestDataset = dataset;
     planned = toSec;
-    if (!switcher || !view) {
+    if (!planner.started) {
       // Only CTF has an online switcher; the other modes still go
       // through the oracle planner, which needs the whole recording.
       // Streaming one of those would silently cast it as CTF.
@@ -252,13 +215,23 @@ export async function createCastStream(
         if (dataset.gameClassName == null && toSec < scan.durationSec) return;
         throw new NotStreamable();
       }
-      view = new CausalView(dataset);
-      switcher = createSwitcherStream(view);
     }
-    withCollisionQueryBatch(() => {
-      switcher!.advanceTo(toSec, dataset);
-      publish(dataset);
-    });
+    const cut = withCollisionQueryBatch(() =>
+      planner.decide(toSec, dataset, { endSec: scan.durationSec }),
+    );
+    const previous = current.shots.at(-1);
+    const through = Math.min(scan.durationSec, toSec + DIRECTOR_TICK_SEC);
+    if (cut) {
+      addReports(report, cut.report);
+      if (previous) previous.endSec = cut.shot.startSec;
+      // The browser owns the timeline copy; the planner keeps its staged pose.
+      current.shots.push({
+        ...cut.shot,
+        endSec: Math.max(cut.shot.endSec, through),
+      });
+    } else if (previous) {
+      previous.endSec = Math.max(previous.endSec, through);
+    }
     current.matchFacts = dataset.matchFacts;
     // The venue is known once the world has arrived, and it does not
     // change — described once, before the booth's first word.
@@ -277,10 +250,11 @@ export async function createCastStream(
 
   const finalize = (): ShotPlan => {
     if (complete) return current;
-    switcher?.finish(scan.durationSec);
+    planner.finish(scan.durationSec);
     const dataset = scan.datasetTo(scan.durationSec);
     latestDataset = dataset;
-    publish(dataset);
+    const camera = current.shots.at(-1);
+    if (camera) camera.endSec = scan.durationSec;
     // Assemble metadata without restaging or rewriting camera history.
     // In particular, the offline cross-shot audit cannot remove footage
     // or change placements that a dynamic viewer has already seen.
@@ -315,7 +289,7 @@ export async function createCastStream(
 
   // Enough to open on, and no more.
   await grow(Math.min(CAST_MARGIN_SEC, scan.durationSec));
-  while (!switcher && planned < scan.durationSec) {
+  while (!planner.started && planned < scan.durationSec) {
     await grow(Math.min(planned + DIRECTOR_TICK_SEC, scan.durationSec));
   }
 

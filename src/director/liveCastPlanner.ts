@@ -7,32 +7,19 @@ import {
 import { withCollisionQueryBatch } from "../collision/worldCollision";
 import { streamTimeToTick, TICK_DURATION_MS } from "../stream/streamHelpers";
 import type { DirectorSnapshot } from "../stream/types";
-import { framesTheSame } from "./assemble";
-import { CausalView } from "./causalView";
+import { createCtfCameraPlanner } from "./ctfCameraPlanner";
 import {
   DirectorTrackers,
   FLAG_STEP_SEC,
   type TrackerSnapshotMeta,
 } from "./directorTrackers";
 import { detectMode } from "./planner";
-import { stageShot } from "./stage";
-import { ROOM_SUBJECT_MARGIN, sweepEasing } from "./cameraRig";
-import { shotPoseAt, subjectVisible } from "./shotPath";
-import { createSwitcherStream, type SwitcherStream } from "./switcher";
-import { visibleOpeningPlayers } from "./suitUp";
-import { DIRECTOR_EVENT_LEAD_SEC, DIRECTOR_TICK_SEC } from "./tunables";
+import { sweepEasing } from "./cameraRig";
+import { DIRECTOR_ON_AIR_MIN_SHOT_SEC, DIRECTOR_TICK_SEC } from "./tunables";
 import type { DirectorVec3, Shot, ShotAim, ShotSubject } from "./types";
 
 const OBSERVATION_STEP_MS = FLAG_STEP_SEC * 1000;
 const DECISION_STEP_MS = DIRECTOR_TICK_SEC * 1000;
-const LIVE_CAST_MIN_SHOT_SEC = 3;
-const LIVE_CAST_MIN_SHOT_TICKS = Math.ceil(
-  (LIVE_CAST_MIN_SHOT_SEC * 1000) / TICK_DURATION_MS,
-);
-/** Give ordinary coverage time to breathe. A shot can run longer when
- * the switcher still wants its subject. */
-const LIVE_CAST_NORMAL_HOLD_TICKS = Math.floor(5000 / TICK_DURATION_MS);
-
 export interface LiveCastPlannerFrame {
   readonly tick: number;
   /** Uses the authoritative source clock. May be lazy, including for gap
@@ -95,7 +82,7 @@ export function liveCameraShot(shot: Shot, startTick: number): LiveCastShot {
   const startSec = (startTick * TICK_DURATION_MS) / 1000;
   const base = {
     startSec,
-    endSec: Math.max(startSec + LIVE_CAST_MIN_SHOT_SEC, shot.endSec),
+    endSec: Math.max(startSec + DIRECTOR_ON_AIR_MIN_SHOT_SEC, shot.endSec),
     transitionIn: shot.transitionIn,
     subject: shotSubject(shot.subject),
     quickCut: shot.quickCut,
@@ -187,23 +174,13 @@ export function createLiveCastPlanner(options: LiveCastPlannerOptions) {
   const trackers = new DirectorTrackers();
   const withWorld =
     options.withWorld ?? ((_snapshot, operation) => operation());
-  let switcher: SwitcherStream | undefined;
-  let view: CausalView | undefined;
+  const cameraPlanner = createCtfCameraPlanner(startTick, lookaheadSec);
   let previous: LiveCastPlannerFrame | undefined;
   let nextSampleMs = startTick * TICK_DURATION_MS;
   let nextDecisionMs = nextSampleMs;
-  let plannedThroughTick = startTick - 1;
   let sawRunning = false;
   let kickoffDecisionMs: number | undefined;
   let terrainReadySec: number | undefined;
-  let lastPublished:
-    | {
-        source: Shot;
-        startTick: number;
-        priority: ReturnType<SwitcherStream["cutFor"]>["priority"];
-        room?: { eye: DirectorVec3; subject: ShotSubject };
-      }
-    | undefined;
   let finished = false;
 
   // The packet sealed by a source tick is applied at the preceding tick. Both
@@ -238,6 +215,7 @@ export function createLiveCastPlanner(options: LiveCastPlannerOptions) {
     atMs: number,
     horizonMs: number,
     output: LiveCastPlannerShot[],
+    endSec?: number,
   ): void => {
     const atSec = atMs / 1000;
     const horizonSec = horizonMs / 1000;
@@ -246,7 +224,7 @@ export function createLiveCastPlanner(options: LiveCastPlannerOptions) {
       horizonSec,
     );
     const horizonTick = streamTimeToTick(horizonSec);
-    if (!switcher || !view) {
+    if (!cameraPlanner.started) {
       const ctf =
         supportsLiveCastMode(metadata.gameClassName, metadata.gameType) ??
         detectMode(dataset) === "ctf";
@@ -258,121 +236,19 @@ export function createLiveCastPlanner(options: LiveCastPlannerOptions) {
         dataset.playerSamples[0]?.timeSec ?? Infinity,
       );
       if (sceneReadySec > atSec) return;
-      view = new CausalView(dataset, lookaheadSec, true);
-      switcher = createSwitcherStream(view, {
-        startSec: atSec,
-        live: true,
-      });
     }
-    switcher.advanceTo(
-      atSec + 1e-9,
-      dataset,
-      atMs === kickoffDecisionMs ? atSec : undefined,
-    );
-    const decisionTick = streamTimeToTick(atSec);
-    const nextUnplannedTick = plannedThroughTick + 1;
-    if (decisionTick < nextUnplannedTick) return;
-    plannedThroughTick = decisionTick;
-
-    const holdUntilTick =
-      (lastPublished?.startTick ?? -Infinity) + LIVE_CAST_MIN_SHOT_TICKS;
-
-    // Let the switcher keep observing during the hold. Once we can cut,
-    // consider only the picture it would be showing now.
-    const source = switcher.shots.findLast(
-      (shot) => streamTimeToTick(shot.startSec) <= decisionTick,
-    );
-    if (!source) return;
-    const { priority, latestStartSec } = switcher.cutFor(source);
-    // A capture can start between decision updates. Schedule it on the
-    // first eligible game tick so the hold doesn't eat into its lead-in.
-    const canScheduleAhead =
-      priority === "capture" &&
-      holdUntilTick <= horizonTick &&
-      holdUntilTick < streamTimeToTick((atMs + DECISION_STEP_MS) / 1000);
-    if (decisionTick < holdUntilTick && !canScheduleAhead) return;
-    const sameFraming =
-      lastPublished && framesTheSame(lastPublished.source, source);
-    const room = lastPublished?.room;
-    let leftRoom = false;
-    if (room && (source === lastPublished?.source || sameFraming)) {
-      const subject =
-        room.subject.type === "flag"
-          ? view?.flagAt(room.subject.slot, atSec)
-          : view?.playerAt(room.subject.targetId, atSec);
-      if (subject) {
-        const aim: DirectorVec3 = [
-          subject.pos[0],
-          subject.pos[1],
-          subject.pos[2] + 1,
-        ];
-        leftRoom = !subjectVisible(room.eye, aim, ROOM_SUBJECT_MARGIN);
-      }
-    }
-    if (!leftRoom && (switcher.hasAired(source) || sameFraming)) return;
-
-    const kickoff =
-      source.topic === "suit-up" && lastPublished?.source.topic !== "suit-up";
-    const leavingEmptySetup =
-      lastPublished?.source.topic === "suit-up" &&
-      !visibleOpeningPlayers(lastPublished.source, view.playersAt(atSec));
-    const importantCut =
-      priority === "capture" ||
-      (priority === "flagPlay" && lastPublished?.priority === "ordinary");
-    const cutAfterTick =
-      leftRoom || kickoff || leavingEmptySetup || importantCut
-        ? holdUntilTick
-        : (lastPublished?.startTick ?? -Infinity) + LIVE_CAST_NORMAL_HOLD_TICKS;
-    if (decisionTick < cutAfterTick && !canScheduleAhead) return;
-    const sourceStartTick = streamTimeToTick(source.startSec);
-    const delayed = leftRoom || sourceStartTick < cutAfterTick;
-    const startTick = delayed
-      ? Math.max(decisionTick, cutAfterTick)
-      : Math.max(nextUnplannedTick, sourceStartTick);
-    const startSec = (startTick * TICK_DURATION_MS) / 1000;
-    // The original event deadline governs entry. Once a shot has
-    // aired, leaving a room must still allow a sightline repair.
-    if (!leftRoom && startSec > (latestStartSec ?? Infinity)) return;
-    if (
-      source.topic === "suit-up" &&
-      !visibleOpeningPlayers(source, view.playersAt(startSec))
-    )
-      return;
-    // Reserve the preferred lead-in for a known score. The score can
-    // still air in its shorter window if it arrives during a hold.
-    const pendingCapture = switcher.pendingCaptureSec;
-    if (
-      pendingCapture != null &&
-      startSec + LIVE_CAST_MIN_SHOT_SEC >
-        pendingCapture - DIRECTOR_EVENT_LEAD_SEC
-    )
-      return;
-    const { shot: fixed } = stageShot(source, dataset, switcher.freeSpace, {
-      startSec,
-      endSec: Math.max(source.endSec, startSec + LIVE_CAST_MIN_SHOT_SEC),
-      transitionIn: delayed ? "cut" : source.transitionIn,
+    const cut = cameraPlanner.decide(atSec, dataset, {
+      kickoff: atMs === kickoffDecisionMs,
+      endSec,
     });
-    const shot = liveCameraShot(fixed, startTick);
-    plannedThroughTick = Math.max(plannedThroughTick, startTick);
-    switcher.markAired(source, shot.startSec);
-    const roomPose =
-      fixed.kind === "fixedOrbit" &&
-      fixed.trackSubject &&
-      fixed.staged &&
-      fixed.lookSubject
-        ? shotPoseAt(fixed, 0)
-        : null;
-    lastPublished = {
-      source,
-      startTick,
-      priority,
-      room:
-        roomPose && fixed.kind === "fixedOrbit" && fixed.lookSubject
-          ? { eye: roomPose.eye, subject: fixed.lookSubject }
-          : undefined,
-    };
+    if (!cut) return;
+    const { startTick, shot } = cut;
     output.push(
-      Object.freeze({ startTick, availableThroughTick: horizonTick, shot }),
+      Object.freeze({
+        startTick,
+        availableThroughTick: horizonTick,
+        shot: liveCameraShot(shot, startTick),
+      }),
     );
   };
 
@@ -380,15 +256,16 @@ export function createLiveCastPlanner(options: LiveCastPlannerOptions) {
     atMs: number,
     horizonMs: number,
     output: LiveCastPlannerShot[],
+    endSec?: number,
   ): void {
-    decide(atMs, horizonMs, output);
+    decide(atMs, horizonMs, output, endSec);
     if (atMs === kickoffDecisionMs) kickoffDecisionMs = undefined;
     nextDecisionMs = atMs + DECISION_STEP_MS;
   }
 
   return {
     get plannedThroughTick() {
-      return plannedThroughTick;
+      return cameraPlanner.plannedThroughTick;
     },
 
     async pushFrame(
@@ -461,9 +338,8 @@ export function createLiveCastPlanner(options: LiveCastPlannerOptions) {
             decisionMs < endMs;
             decisionMs = nextDecision()
           )
-            planNext(decisionMs, endMs, output);
-          switcher?.finish(endMs / 1000);
-          if (switcher) plannedThroughTick = tick;
+            planNext(decisionMs, endMs, output, endMs / 1000);
+          cameraPlanner.finish(endMs / 1000);
         }),
       );
       return output;

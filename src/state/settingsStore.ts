@@ -52,6 +52,13 @@ export const IFF_DISTANCE_STEP = 50;
 export type FlagColorMode = "matchTeam" | "possession";
 const FLAG_COLOR_MODES: readonly FlagColorMode[] = ["matchTeam", "possession"];
 
+export type FlagReturnCamera = "followHome" | "holdPosition" | "delay";
+const FLAG_RETURN_CAMERAS: readonly FlagReturnCamera[] = [
+  "followHome",
+  "holdPosition",
+  "delay",
+];
+
 /** Server browser layout: the classic table or preview tiles. */
 export type ServerBrowserView = "list" | "tiles";
 const SERVER_BROWSER_VIEW_VALUES: readonly ServerBrowserView[] = [
@@ -140,6 +147,7 @@ export interface Preferences {
   /** Player names under command circuit dot markers. */
   ccPlayerNames: CcPlayerNames;
   followBehindPlayer: boolean;
+  flagReturnCamera: FlagReturnCamera;
   renderOnDemand: boolean;
   lodEnabled: boolean;
   showFpsMeter: boolean;
@@ -212,6 +220,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   firstPersonTeamIff: false,
   ccPlayerNames: "always",
   followBehindPlayer: false,
+  flagReturnCamera: "followHome",
   renderOnDemand: false,
   lodEnabled: true,
   showFpsMeter: false,
@@ -364,6 +373,7 @@ export function restorePreferences(
   copy("firstPersonTeamIff", isBoolean);
   copy("ccPlayerNames", (value) => CC_PLAYER_NAMES_VALUES.includes(value));
   copy("followBehindPlayer", isBoolean);
+  copy("flagReturnCamera", (value) => FLAG_RETURN_CAMERAS.includes(value));
   copy("serverBrowserView", (value) =>
     SERVER_BROWSER_VIEW_VALUES.includes(value),
   );

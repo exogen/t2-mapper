@@ -88,6 +88,7 @@ vi.mock("../collision/terrainCollision", () => ({
 }));
 
 vi.mock("../collision/worldCollision", () => ({
+  interiorBoundsById: () => new Map(),
   castWorldRay: (start: number[], end: number[]) => {
     const ground = terrainRay(start, end);
     let best: {
@@ -124,8 +125,9 @@ vi.mock("../collision/worldCollision", () => ({
     p[2] < 0 || world.boxes.some((box) => inside(p, box, radius)),
 }));
 
-import { auditAhead, midAim, stagePlan, stageShot, stageShots } from "./stage";
+import { midAim, stagePlan, stageShot, stageShots } from "./stage";
 import type { FreeSpaceGrid } from "./freeSpace";
+import { paddedFrameWeight } from "./frameScore";
 import {
   cameraBuried,
   inspectShot,
@@ -133,6 +135,7 @@ import {
   subjectVisible,
 } from "./shotPath";
 import { Vector3 } from "three";
+import { torqueVecToThree } from "../scene/coordinates";
 import { orbitPullbackDir } from "../stream/streamHelpers";
 import { directorDataset } from "./directorTestFixtures";
 
@@ -499,10 +502,9 @@ describe("stagePlan", () => {
       { ...shot, aim: { mode: "backward" }, startSec: 5 },
     ]);
     expect(
-      auditAhead(
+      stagePlan(
         plan,
         makeDataset(() => ANCHOR),
-        -Infinity,
       ).merged,
     ).toBe(0);
     expect(plan.shots).toHaveLength(2);
@@ -521,6 +523,84 @@ describe("stagePlan", () => {
     expect(report.fixedShots).toBe(1);
     expect(report.clean + report.adjusted).toBe(1);
     expect(shot.staged).toMatchObject({ visibility: 1 });
+  });
+
+  it("counts a clear subject only while it is in the fixed camera's frame", () => {
+    const playerSamples: DirectorDataset["playerSamples"] = Array.from(
+      { length: 8 },
+      (_, timeSec) => {
+        const angle = (timeSec * Math.PI) / 4;
+        return {
+          targetId: 2,
+          teamId: 1,
+          timeSec,
+          pos: [12 * Math.sin(angle), 12 * Math.cos(angle), 12],
+        };
+      },
+    );
+    const { shot } = stageShot(
+      fixedShot({
+        center: [0, 0, 12],
+        radius: 12,
+        lookLift: 1,
+        lookSubject: { type: "player", targetId: 2 },
+        endSec: 7,
+      }),
+      directorDataset({ playerSamples }),
+    );
+    if (shot.kind !== "fixedOrbit" || !shot.staged)
+      throw new Error("Expected a staged fixed camera");
+    const pose = shotPoseAt(shot, 0)!;
+    const eye = torqueVecToThree(pose.eye, new Vector3());
+    const aim = torqueVecToThree(pose.aim, new Vector3());
+    const visible = playerSamples.filter(({ pos: [x, y, z] }) =>
+      paddedFrameWeight(eye, aim, new Vector3(y, z + 1, x)),
+    );
+    expect(shot.staged.visibility).toBe(visible.length / playerSamples.length);
+  });
+
+  it("chooses an orbit behind a throw even if the front angle is clear", () => {
+    const dataset = makeDataset((time) => [
+      time < 4 ? 4 * time : 16 + 30 * (time - 4),
+      0,
+      2,
+    ]);
+    dataset.flagSamples = dataset.flagSamples.map((sample) =>
+      sample.timeSec < 4
+        ? { ...sample, status: "held", carrierTargetId: 2 }
+        : { ...sample, status: "field" },
+    );
+    const { shot } = stageShot(
+      {
+        ...indoorFollow(),
+        endSec: 5,
+        aim: { mode: "hold", yaw: -Math.PI / 2 },
+      },
+      dataset,
+    );
+    expect(shot.kind).toBe("followFlag");
+    if (shot.kind !== "followFlag" || shot.aim?.mode !== "hold")
+      throw new Error("Expected a staged flag orbit");
+    expect(Math.sin(shot.aim.yaw)).toBeGreaterThan(0.7);
+  });
+
+  it("frames the nearby fight when no camera can see its flag stand", () => {
+    world.boxes.push({ min: [-12, -12, -1], max: [12, 12, 18] });
+    const dataset = makeDataset(
+      () => ANCHOR,
+      Array.from({ length: 11 }, (_, timeSec) => ({
+        targetId: 2,
+        teamId: 1,
+        timeSec,
+        pos: [25, timeSec, 1],
+      })),
+    );
+    const { shot } = stageShot(fixedShot({ topic: "flag-stand" }), dataset);
+    expect(shot).toMatchObject({
+      kind: "fixedOrbit",
+      lookSubject: { type: "player", targetId: 2 },
+      staged: { visibility: 1 },
+    });
   });
 
   it("swings to a bearing that can see past a wall on the planned one", () => {
