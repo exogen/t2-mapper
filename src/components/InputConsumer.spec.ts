@@ -55,6 +55,7 @@ const preferences = vi.hoisted(() => ({
   followBehindPlayer: false,
   speedMultiplier: 1,
   mouseSensitivity: 0.002,
+  invertLookY: false,
   invertScroll: false,
   invertDrag: false,
   touchMode: "moveLookStick" as "moveLookStick" | "dualStick",
@@ -77,7 +78,7 @@ vi.mock("../state/settingsStore", () => ({
   },
 }));
 
-import { PerspectiveCamera, Scene, Vector3 } from "three";
+import { Euler, PerspectiveCamera, Scene, Vector3 } from "three";
 import { GameEngine } from "../engine/gameEngine";
 import { installInputBindings } from "../engine/inputBindings";
 import { installInputConsumer } from "../engine/inputConsumer";
@@ -100,7 +101,7 @@ import {
 const unmounts: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const unmount of unmounts.splice(0)) await unmount();
-  for (const code of ["KeyW", "KeyS"]) {
+  for (const code of ["KeyW", "KeyS", "ArrowUp", "ArrowDown"]) {
     browser.dispatch("keyup", { code, metaKey: false, preventDefault() {} });
   }
   joystickState.move.force = 0;
@@ -124,6 +125,7 @@ interface SentMove {
   index: number;
   y: number;
   yaw: number;
+  pitch: number;
 }
 
 interface TestSnapshot {
@@ -152,6 +154,7 @@ async function mountInput({
 } = {}) {
   browser.touch = touch;
   preferences.speedMultiplier = speedMultiplier;
+  preferences.invertLookY = false;
   preferences.touchMode = touchMode;
   preferences.invertScroll = invertScroll;
   const canvasListeners = new Map<string, (event: unknown) => void>();
@@ -181,8 +184,8 @@ async function mountInput({
     getSnapshot() {
       return this.snapshot;
     },
-    submitMove(move: { y: number; yaw: number }, index: number) {
-      sent.push({ frame, index, y: move.y, yaw: move.yaw });
+    submitMove(move: { y: number; yaw: number; pitch: number }, index: number) {
+      sent.push({ frame, index, ...move });
     },
   };
   liveConnectionStore.setState({
@@ -513,6 +516,84 @@ it("consumes the final drag after release without repeating it on later frames",
   expect(streamPlaybackStore.getState().orbitOverrideYaw).toBeCloseTo(0.2);
   expect(streamPlaybackStore.getState().orbitOverridePitch).toBeCloseTo(0.1);
 });
+
+it.each(["explore", "freeFly", "orbitOverride"] as const)(
+  "inverts desktop mouse and arrow pitch in %s while preserving yaw",
+  async (cameraMode) => {
+    const local = await mountInput({ live: false });
+    if (cameraMode !== "explore")
+      streamPlaybackStore.setState({ playback: {} as never, cameraMode });
+    const orbiting = cameraMode === "orbitOverride";
+    const readAngles = () => {
+      const camera = new Euler().setFromQuaternion(
+        local.camera.quaternion,
+        "YXZ",
+      );
+      const { orbitOverridePitch, orbitOverrideYaw } =
+        streamPlaybackStore.getState();
+      return orbiting
+        ? { pitch: orbitOverridePitch, yaw: orbitOverrideYaw }
+        : { pitch: -camera.x, yaw: -camera.y };
+    };
+    const resetAngles = () => {
+      local.camera.quaternion.identity();
+      streamPlaybackStore.setState({
+        orbitOverridePitch: 0,
+        orbitOverrideYaw: 0,
+      });
+    };
+
+    for (const action of ["lockedLook", "dragLook"]) {
+      for (const inverted of [false, true]) {
+        resetAngles();
+        preferences.invertLookY = inverted;
+        inputControlsStore.setState(({ actions }) => ({
+          actions: {
+            ...actions,
+            [action]: {
+              dragging: true,
+              deltaX: 50,
+              deltaY: 25,
+              startX: 0,
+              startY: 0,
+            },
+          },
+        }));
+        await local.step(1 / 60);
+        const sign = action === "dragLook" && !orbiting ? -1 : 1;
+        const { pitch, yaw } = readAngles();
+        expect(pitch).toBeCloseTo(0.05 * sign * (inverted ? -1 : 1));
+        expect(yaw).toBeCloseTo(0.1 * sign);
+      }
+    }
+
+    preferences.invertLookY = true;
+    for (const [key, direction] of [
+      ["ArrowUp", 1],
+      ["ArrowDown", -1],
+    ] as const) {
+      resetAngles();
+      local.key("keydown", key);
+      await local.step(0.1);
+      local.key("keyup", key);
+      expect(readAngles().pitch).toBeCloseTo(0.1 * direction);
+    }
+  },
+);
+
+it.each(["observer", "third-person"])(
+  "sends the inverted arrow pitch to the live server in %s mode",
+  async (mode) => {
+    const live = await mountInput();
+    live.adapter.snapshot.camera.mode = mode;
+    await live.step(1 / 60);
+    preferences.invertLookY = true;
+    live.key("keydown", "ArrowUp");
+    await live.step(1 / 30);
+    live.key("keyup", "ArrowUp");
+    expect(live.sent.at(-1)?.pitch).toBeGreaterThan(0);
+  },
+);
 
 it.each(["original", "firstPersonOverride", "freeFly"] as const)(
   "does not change orbit distance or angles from stale follow gestures in %s mode",

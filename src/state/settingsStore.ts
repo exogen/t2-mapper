@@ -85,6 +85,7 @@ export interface Preferences {
   highQualityFog: boolean;
   speedMultiplier: number;
   mouseSensitivity: number;
+  invertLookY: boolean;
   clickToCycle: boolean;
   fov: number;
   audioEnabled: boolean;
@@ -164,6 +165,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   highQualityFog: false,
   speedMultiplier: 0.15,
   mouseSensitivity: DEFAULT_MOUSE_SENSITIVITY,
+  invertLookY: false,
   clickToCycle: true,
   fov: 90,
   audioEnabled: true,
@@ -293,6 +295,7 @@ export function restorePreferences(
     saved.fov > 0
   )
     restored.fov = Math.min(saved.fov, MAX_PREFERRED_FOV);
+  copy("invertLookY", isBoolean);
   copy("clickToCycle", isBoolean);
   copy("touchMode");
   if (

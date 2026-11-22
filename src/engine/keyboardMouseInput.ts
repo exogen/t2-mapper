@@ -226,7 +226,7 @@ export function installKeyboardMouseInput(engine: GameEngine): () => void {
       }
 
       const inputState = inputControlsStore.getState().actions;
-      const { speedMultiplier, mouseSensitivity, invertDrag } =
+      const { speedMultiplier, mouseSensitivity, invertDrag, invertLookY } =
         settingsStore.getState();
 
       // ── Look deltas ──
@@ -301,7 +301,7 @@ export function installKeyboardMouseInput(engine: GameEngine): () => void {
 
       engine.input.push({
         deltaYaw,
-        deltaPitch,
+        deltaPitch: invertLookY ? -deltaPitch : deltaPitch,
         x,
         y,
         z,

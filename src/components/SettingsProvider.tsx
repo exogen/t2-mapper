@@ -161,6 +161,8 @@ type ControlsContextType = {
   setSpeedMultiplier: StateSetter<number>;
   mouseSensitivity: number;
   setMouseSensitivity: StateSetter<number>;
+  invertLookY: boolean;
+  setInvertLookY: StateSetter<boolean>;
   clickToCycle: boolean;
   setClickToCycle: StateSetter<boolean>;
   touchMode: TouchMode;
@@ -301,6 +303,7 @@ function selectDebug(state: SettingsState): DebugContextType {
 const controlsActions = {
   setSpeedMultiplier: setter("speedMultiplier"),
   setMouseSensitivity: setter("mouseSensitivity"),
+  setInvertLookY: setter("invertLookY"),
   setClickToCycle: setter("clickToCycle"),
   setTouchMode: setter("touchMode"),
   setJoystickOpacity: setter("joystickOpacity"),
@@ -314,6 +317,7 @@ function selectControls(state: SettingsState): ControlsContextType {
     ...controlsActions,
     speedMultiplier: state.speedMultiplier,
     mouseSensitivity: state.mouseSensitivity,
+    invertLookY: state.invertLookY,
     clickToCycle: state.clickToCycle,
     touchMode: state.touchMode,
     joystickOpacity: state.joystickOpacity,

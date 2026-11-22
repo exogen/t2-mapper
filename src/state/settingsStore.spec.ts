@@ -36,6 +36,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("defaults to normal vertical look and restores the saved inversion", () => {
+  const store = createSettingsStore();
+  expect(store.getState().invertLookY).toBe(false);
+  setPreference("invertLookY", true, store);
+  vi.advanceTimersByTime(500);
+  expect(lastSaved().invertLookY).toBe(true);
+  stubSaved(lastSaved());
+  expect(createSettingsStore().getState().invertLookY).toBe(true);
+});
+
 it("remembers clip recording help alongside the other preferences", () => {
   const store = createSettingsStore();
   expect(store.getState().hasSeenClipRecordingHelp).toBe(false);

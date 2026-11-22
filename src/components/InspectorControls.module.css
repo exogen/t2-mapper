@@ -157,6 +157,10 @@
   margin-top: 4px;
 }
 
+.Field:has(> .Control > [data-range-slider]) > .Description {
+  margin-top: 0;
+}
+
 .IffOptions > .Field {
   margin-bottom: 8px;
 }

@@ -189,6 +189,8 @@ export const InspectorControls = memo(function InspectorControls({
     setSpeedMultiplier,
     mouseSensitivity,
     setMouseSensitivity,
+    invertLookY,
+    setInvertLookY,
     clickToCycle,
     setClickToCycle,
     touchMode,
@@ -544,6 +546,29 @@ export const InspectorControls = memo(function InspectorControls({
                       : ""}
                   </p>
                 </div>
+                {isTouch === false && (
+                  <div className={styles.Field}>
+                    <label
+                      id="mouseSensitivityInput-label"
+                      htmlFor="mouseSensitivityInput"
+                    >
+                      Mouse sensitivity
+                    </label>
+                    <div className={styles.Control}>
+                      <RangeSlider
+                        id="mouseSensitivityInput"
+                        aria-labelledby="mouseSensitivityInput-label"
+                        min={1}
+                        max={256}
+                        step={2}
+                        value={Math.round(mouseSensitivity * 16000)}
+                        onValueChange={(value) =>
+                          setMouseSensitivity(value / 16000)
+                        }
+                      />
+                    </div>
+                  </div>
+                )}
                 {isTouch ? (
                   <div className={styles.Field}>
                     <label id="touchModeInput-label" htmlFor="touchModeInput">
@@ -653,29 +678,16 @@ export const InspectorControls = memo(function InspectorControls({
                     Reverse how dragging the viewport aims the camera.
                   </p>
                 </div>
-                {isTouch === false && (
-                  <div className={styles.Field}>
-                    <label
-                      id="mouseSensitivityInput-label"
-                      htmlFor="mouseSensitivityInput"
-                    >
-                      Mouse sensitivity
-                    </label>
-                    <div className={styles.Control}>
-                      <RangeSlider
-                        id="mouseSensitivityInput"
-                        aria-labelledby="mouseSensitivityInput-label"
-                        min={1}
-                        max={256}
-                        step={2}
-                        value={Math.round(mouseSensitivity * 16000)}
-                        onValueChange={(value) =>
-                          setMouseSensitivity(value / 16000)
-                        }
-                      />
-                    </div>
-                  </div>
-                )}
+                <div className={styles.CheckboxField}>
+                  <Checkbox
+                    id="invertLookY"
+                    checked={invertLookY}
+                    onChange={(event) => setInvertLookY(event.target.checked)}
+                  />
+                  <label className={styles.Label} htmlFor="invertLookY">
+                    Invert look Y-axis
+                  </label>
+                </div>
                 {isTouch === false && (
                   <div className={styles.CheckboxField}>
                     <Checkbox
