@@ -8,7 +8,7 @@
  * airtime with the subject's sightline blocked. This pass runs where
  * plans are actually made (the app and the backfill browser, with the
  * collision world loaded). The offline stagePlan can inspect the whole
- * recorded path. The causal CTF pipeline calls stageShots before publishing
+ * recorded path. The causal CTF pipeline calls stageShot before publishing
  * each camera and limits the checked span to the available prefix; later
  * motion is handled by the live visibility rail. Placements are chosen by
  * how much of the shot they can actually SEE, and a location that admits no
@@ -21,6 +21,7 @@
  * runtime search.
  */
 import { Vector3 } from "three";
+import { cloneData } from "../cloneData";
 import { framesTheSame } from "./assemble";
 import type {
   DirectorDataset,
@@ -65,7 +66,6 @@ import {
   sweepProgress,
 } from "./cameraRig";
 import {
-  DIRECTOR_TIGHT_SHOT_SHARE,
   DIRECTOR_DIST_STAND,
   DIRECTOR_PITCH_STAND,
   DIRECTOR_DIST_CHASE,
@@ -205,7 +205,6 @@ function openStageContext(
   }
   _stageCtx = {
     freeSpace,
-    tightAcc: 0,
     playersAtSec: playersAtSecFor(dataset),
     tracks,
     standsThree: dataset.flagStands.map((st) =>
@@ -228,24 +227,7 @@ export function stagePlan(
   dataset: DirectorDataset,
   freeSpace?: FreeSpaceGrid | null,
 ): StageReport {
-  const report = emptyReport();
-  const tracks = buildFlagTracks(dataset);
-  openStageContext(dataset, tracks, freeSpace);
-  try {
-    for (let i = 0; i < plan.shots.length; i++) {
-      stageSweepShot(plan, i, tracks, dataset, report);
-    }
-    for (let i = 0; i < plan.shots.length; i++) {
-      stageFixedShot(plan, i, tracks, dataset, report);
-    }
-    // After the fixed pass: its repairs may have created follow shots,
-    // which get verified like the planner's own.
-    for (let i = 0; i < plan.shots.length; i++) {
-      stageTrackedShot(plan, i, tracks, dataset, report);
-    }
-  } finally {
-    _stageCtx = null;
-  }
+  const report = stageShots(plan.shots, dataset, freeSpace);
   // LAST WORD. Every pass above reasons about a placement; this one
   // walks the camera path each shot will actually fly and throws out
   // what does not hold up. A shot that spends its duration inside a
@@ -290,25 +272,52 @@ export function auditAhead(
 }
 
 /**
- * Solve the shots at `indices`, for a cast being planned as it plays.
- *
- * Per-shot passes only; the cross-shot ones are `auditAhead`, which
- * needs to know where the playhead is.
+ * Stage a camera copy against the available data. The switcher keeps
+ * its original proposal for subject and style comparisons.
+ */
+export function stageShot(
+  source: Shot,
+  dataset: DirectorDataset,
+  freeSpace?: FreeSpaceGrid | null,
+  {
+    startSec = source.startSec,
+    endSec = source.endSec,
+    transitionIn = source.transitionIn,
+  }: Partial<Pick<Shot, "startSec" | "endSec" | "transitionIn">> = {},
+): { shot: Shot; report: StageReport } {
+  const candidate = cloneData(source);
+  if (candidate.kind === "sweep" && startSec > candidate.startSec) {
+    candidate.moveOffsetSec =
+      (candidate.moveOffsetSec ?? 0) + (startSec - candidate.startSec);
+  }
+  candidate.startSec = startSec;
+  candidate.endSec = Math.min(endSec, dataset.durationSec);
+  candidate.transitionIn = transitionIn;
+  const shots = [candidate];
+  const report = stageShots(shots, dataset, freeSpace);
+  return { shot: shots[0], report };
+}
+
+/**
+ * Solve placements without cross-shot edits. Repairs can replace the
+ * mechanism, so run the follow pass after the sweep and fixed passes.
  */
 export function stageShots(
   shots: Shot[],
-  indices: number[],
   dataset: DirectorDataset,
   freeSpace?: FreeSpaceGrid | null,
 ): StageReport {
   const report = emptyReport();
-  const plan: ShotPlan = { shots, gameMode: "ctf" } as ShotPlan;
+  const plan = { shots };
   const tracks = buildFlagTracks(dataset);
   openStageContext(dataset, tracks, freeSpace);
   try {
-    for (const i of indices) stageSweepShot(plan, i, tracks, dataset, report);
-    for (const i of indices) stageFixedShot(plan, i, tracks, dataset, report);
-    for (const i of indices) stageTrackedShot(plan, i, tracks, dataset, report);
+    for (let i = 0; i < shots.length; i++)
+      stageSweepShot(plan, i, tracks, dataset, report);
+    for (let i = 0; i < shots.length; i++)
+      stageFixedShot(plan, i, tracks, dataset, report);
+    for (let i = 0; i < shots.length; i++)
+      stageTrackedShot(plan, i, tracks, dataset, report);
   } finally {
     _stageCtx = null;
   }
@@ -600,7 +609,7 @@ function sweepSeesAudience(
  * the same subject.
  */
 function stageSweepShot(
-  plan: ShotPlan,
+  plan: Pick<ShotPlan, "shots">,
   i: number,
   tracks: Map<number, FlagTrack>,
   dataset: DirectorDataset,
@@ -797,20 +806,8 @@ function storyOf(shot: Shot) {
   };
 }
 
-/** Bresenham distribution of the tight-shot share across framings. */
-function takeTightFraming(): boolean {
-  const ctx = _stageCtx;
-  if (!ctx) return false;
-  ctx.tightAcc += DIRECTOR_TIGHT_SHOT_SHARE;
-  if (ctx.tightAcc >= 1) {
-    ctx.tightAcc -= 1;
-    return true;
-  }
-  return false;
-}
-
 function stageFixedShot(
-  plan: ShotPlan,
+  plan: Pick<ShotPlan, "shots">,
   i: number,
   tracks: Map<number, FlagTrack>,
   dataset: DirectorDataset,
@@ -851,10 +848,10 @@ function stageFixedShot(
     // Standoff is part of the composition search: intent first, then a
     // tighter and a wider framing compete on the frame they produce.
     rungs: [1, 0.55, 1.4],
-    // Subject framings split hero (tight) vs action (wide) sizes by
-    // the tunable share; anonymous area shots stay establishing.
+    // The requested standoff distinguishes a close-up from a wider
+    // subject framing. Area shots stay establishing.
     targetSubjectFraction: shot.lookSubject
-      ? shot.radius <= 20 || takeTightFraming()
+      ? shot.radius <= 20
         ? 0.1
         : 0.055
       : 0.03,
@@ -996,13 +993,12 @@ function placeFixedFromGrid(
  * camera parked looking across them into their cover). Where the
  * planned aim fails, find one fixed (yaw, distance) that works and
  * rewrite the aim to hold it — seeing the subject beats framing
- * intent, the same trade the runtime rail makes. Where nothing works:
- * a roofed flag hold becomes a doorway watch, a shooter with a known
- * target hands the camera to the impact zone, and anything else is
- * left for the runtime's best effort.
+ * intent. If the staged bearings and grid cannot follow the subject,
+ * leave the arm to the viewer's orbit collision. Bombardment can still
+ * show the intended impact zone when the shooter is obscured.
  */
 function stageTrackedShot(
-  plan: ShotPlan,
+  plan: Pick<ShotPlan, "shots">,
   i: number,
   tracks: Map<number, FlagTrack>,
   dataset: DirectorDataset,
@@ -1181,33 +1177,12 @@ function stageTrackedShot(
     report.gridFixed++;
     return;
   }
-  // A shot that DECLARED a framing floor is stating intent that
-  // outranks geometry: ship it as planned and let the runtime rails
-  // handle transient occlusion, rather than demoting it to another
-  // mechanism (a grab dive squeezed into a portrait — or replaced by
-  // yet another stand orbit — is exactly what the floor forbids).
-  if (shot.minDistance != null) {
-    report.followUnsolved++;
-    return;
-  }
-  // A held flag deep inside a structure: the watchable framing is the
-  // building's mouth, like the planner's own turtle coverage.
-  const mid = path[Math.floor(path.length / 2)].pos;
-  const midTorque: DirectorVec3 = [mid.z, mid.x, mid.y - 1];
-  if (shot.kind === "followFlag" && isRoofed(midTorque)) {
-    plan.shots[i] = {
-      kind: "fixedOrbit",
-      center: midTorque,
-      radius: DIRECTOR_DOORWAY_RADIUS,
-      angularSpeed: 0,
-      heightFactor: DIRECTOR_DOORWAY_HEIGHT,
-      doorwayOf: midTorque,
-      ...storyOf(shot),
-    };
-    report.followConverted++;
-    return;
-  }
-  if (shot.kind === "followPlayer" && shot.aim?.mode === "toward") {
+  if (
+    shot.kind === "followPlayer" &&
+    shot.topic === "bombardment" &&
+    shot.aim?.mode === "toward" &&
+    shot.minDistance == null
+  ) {
     // Nowhere around the shooter can see them, but we know what they
     // are shooting AT. Watch the impact zone instead, solved like any
     // other fixed shot.
@@ -1592,9 +1567,6 @@ function stageFog(): number | undefined {
 
 interface StageCtx {
   freeSpace?: FreeSpaceGrid | null;
-  /** Accumulator distributing DIRECTOR_TIGHT_SHOT_SHARE across the
-   *  plan's subject framings (Bresenham-style, order-stable). */
-  tightAcc: number;
   playersAtSec: PlayersAtSec;
   tracks: Map<number, FlagTrack>;
   standsThree: Vector3[];

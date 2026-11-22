@@ -208,7 +208,7 @@ export function orbitShot(opts: {
   role?: ShotRole;
   /** What it is about, for the booth (see ShotBase.topic). */
   topic?: SceneTopic;
-}): Shot {
+}): Extract<Shot, { kind: "fixedOrbit" }> {
   let startAngle: number | undefined;
   let drift = 0;
   // An explicit angle replaces the framing entirely — never burn a

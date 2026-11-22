@@ -354,6 +354,17 @@ function coveringShot(
   shots: Shot[],
   { event, slot, pos }: TierOneEvent,
 ): Shot | undefined {
+  if (event.type === "flag-cap" && slot != null) {
+    const scoringShot = shots.find(
+      (shot) =>
+        shot.topic === "capture" &&
+        shot.subject?.type === "flag" &&
+        shot.subject.slot === slot &&
+        shot.startSec < event.timeSec &&
+        shot.endSec > event.timeSec,
+    );
+    if (scoringShot) return scoringShot;
+  }
   const windowStart = event.timeSec - 2.5;
   const windowEnd = event.timeSec + 1;
   return shots.find(

@@ -99,11 +99,7 @@ export const DOLLY_DEFAULT_HEIGHT = 4;
 export const DOLLY_LOOK_LIFT = 1;
 
 /**
- * Loose-spring damping for the follow camera's target while the
- * director drives (streamPlaybackStore.orbitTargetDamping). The camera
- * catches up like a human operator instead of teleporting with every
- * flag drop, pass and pickup; at ski speed the lag is a few metres —
- * imperfect centering is the point.
+ * Gentle follow-target damping for the director's flag hand-offs.
  */
 export const DIRECTOR_ORBIT_TARGET_DAMPING = 4.5;
 
@@ -307,10 +303,6 @@ export const TERRAIN_FOLLOW_LOOKAHEAD_SEC = [0.5, 1.1];
  *  (the hard clamp backstops anything faster), descents gentle. */
 export const TERRAIN_LIFT_RISE_RATE = 14;
 export const TERRAIN_LIFT_FALL_RATE = 5;
-/** Follow orbits closer than this are deliberate low/tight shots (the
- *  hip view, the hero frame) — they keep only the hard ground floor,
- *  never the elevated track. */
-export const TERRAIN_TRACK_MIN_DISTANCE = 10;
 /** Vertical span the ground probe searches, in Torque Z. */
 
 const GROUND_PROBE_TOP = 2000;

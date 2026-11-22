@@ -34,7 +34,7 @@ import {
   addReports,
   emptyReport,
   stagePlan,
-  stageShots,
+  stageShot,
   type StageReport,
 } from "./stage";
 import { CausalView } from "./causalView";
@@ -46,7 +46,6 @@ import { describeVenue } from "./venue";
 import type { DirectorFactRecord } from "./factJournal";
 import type { DirectorStateFrame } from "./observationContract";
 import { withCollisionQueryBatch } from "../collision/worldCollision";
-import { cloneData } from "../cloneData";
 
 export interface CastPipelineOptions {
   /** Scan progress, 0..1. */
@@ -216,17 +215,9 @@ export async function createCastStream(
     const shots = decisions.map((decision) => {
       let camera = cameras.get(decision);
       if (!camera) {
-        // Solve BEFORE publication using only the available path. Future
-        // movement belongs to the live camera's visibility rail, not an
-        // archive repair after the shot has already aired.
-        const candidate = cloneData(decision);
-        candidate.endSec = Math.min(candidate.endSec, dataset.durationSec);
-        const pending = [candidate];
-        addReports(
-          report,
-          stageShots(pending, [0], dataset, switcher?.freeSpace),
-        );
-        camera = pending[0];
+        const staged = stageShot(decision, dataset, switcher?.freeSpace);
+        addReports(report, staged.report);
+        camera = staged.shot;
         cameras.set(decision, camera);
       }
       // Cuts may shorten an open shot or discard a provisional fragment.

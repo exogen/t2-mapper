@@ -125,13 +125,6 @@ export const DIRECTOR_VARIETY_INTERRUPT: Record<
 export const DIRECTOR_VARIETY_FRESH_SEC = 150;
 /** Minimum weighted value a variety candidate needs to air at all. */
 export const DIRECTOR_VARIETY_MIN_VALUE = 0.15;
-/**
- * Tight-vs-wide balance for solved fixed framings: the fraction of
- * subject-framing shots that take the HERO size target (subject large
- * in frame) instead of the ACTION size. 0 = all wide, 1 = all tight.
- */
-export const DIRECTOR_TIGHT_SHOT_SHARE = 0.5;
-
 /** Interest-grid tick. */
 export const DIRECTOR_TICK_SEC = 0.5;
 /** Give the outcome of an on-camera death time to read. */
@@ -162,9 +155,13 @@ export const DIRECTOR_GRAB_LOOKAHEAD_SEC = 10;
  * with no delay still cuts to the carrier a beat after the touch.
  */
 export const DIRECTOR_GRAB_REACT_SEC = 3;
-/** Recent captures still merit an aftermath if their message missed the
- *  anticipation window. This does not change the picture's lookahead. */
-export const DIRECTOR_CAP_REACT_SEC = 3;
+/** Aim to give viewers this much time to find the action in frame. */
+export const DIRECTOR_EVENT_LEAD_SEC = 2;
+/** A live shot can still tell the story if it misses that target by one beat. */
+export const DIRECTOR_LIVE_MIN_EVENT_LEAD_SEC =
+  DIRECTOR_EVENT_LEAD_SEC - DIRECTOR_TICK_SEC;
+export const DIRECTOR_EVENT_REACTION_SEC = 2;
+export const DIRECTOR_CAP_SETUP_SEC = 3;
 /** Hold a local possession exchange long enough to read its next beat. */
 export const DIRECTOR_POSSESSION_HOLD_SEC = 2.5;
 /** The final delivery area where a recovery/drop can decide a scoring attempt. */
@@ -264,6 +261,7 @@ export const DIRECTOR_FAIR_SHARE_SEC = 12;
  *  (a tight orbit fills the frame with one body and the dirt under it,
  *  which is the least informative shot available). */
 export const DIRECTOR_DIST_CHASE = 15;
+export const DIRECTOR_MAX_FOLLOW_DISTANCE = 30;
 export const DIRECTOR_DIST_STAND = 14;
 /**
  * Grab coverage rides WIDE: a capper arrives at ski speed, and a 14m
@@ -272,27 +270,16 @@ export const DIRECTOR_DIST_STAND = 14;
  * incoming capper ridden from behind with the stand beyond them, and
  * a flight alongside them — so grabs never look the same twice.
  */
-export const DIRECTOR_DIST_STAND_WIDE = 34;
+export const DIRECTOR_DIST_STAND_WIDE = DIRECTOR_MAX_FOLLOW_DISTANCE;
 export const DIRECTOR_GRAB_CHASE_DIST = 28;
 export const DIRECTOR_GRAB_ALONGSIDE_DIST = 24;
-/** No grab shot rides closer than this, whatever the geometry
- *  solvers would prefer — the whole point is the wide view. */
-export const DIRECTOR_GRAB_MIN_DIST = 20;
 /** Below this capper likelihood (see inboundAttacker) an approach is
  *  a base push, not a flag dive — it gets no grab framing. */
 export const DIRECTOR_CAPPER_MIN_LIKELIHOOD = 0.5;
 export const DIRECTOR_GRAB_ALONGSIDE_HEIGHT = 6;
-/**
- * Closing on the cap, the SHOT IS THE PAIR: the carrier and the stand
- * they are about to touch. Inside this range the camera pulls back to
- * hold both — framing scales with how far out they still are — and
- * sits behind them looking across at the stand rather than head-on or
- * tight from the side.
- */
+/** Inside this range the orbit looks along the carrier's approach. */
 export const DIRECTOR_CAP_APPROACH_RANGE = 220;
-export const DIRECTOR_CAP_APPROACH_MIN_DIST = 30;
-export const DIRECTOR_CAP_APPROACH_MAX_DIST = 70;
-export const DIRECTOR_DIST_HERO = 8;
+export const DIRECTOR_DIST_HERO = 10;
 /** Follow-shot orbit pitch (radians; positive looks down). Chases stay
  *  shallow so the frame carries the horizon and the players ahead
  *  rather than the ground. */
@@ -363,11 +350,10 @@ export const DIRECTOR_CLUSTER_OVERHEAD_HEIGHT = 0.85;
  */
 export const DIRECTOR_SLOW_SPEED = 8;
 export const DIRECTOR_FAST_SPEED = 65;
-export const DIRECTOR_DIST_SLOW = 9;
+export const DIRECTOR_DIST_SLOW = 10;
 export const DIRECTOR_DIST_FAST = 24;
 /** Inside-the-base shot on a turtling carrier: close, low, and tight. */
-export const DIRECTOR_TURTLE_INSIDE_RADIUS = 12;
-export const DIRECTOR_TURTLE_INSIDE_HEIGHT = 0.3;
+export const DIRECTOR_TURTLE_FOLLOW_DISTANCE = 12;
 /** Doorway watch: framing on the attackers outside trying to get in. */
 export const DIRECTOR_DOORWAY_RADIUS = 30;
 export const DIRECTOR_DOORWAY_HEIGHT = 0.4;
@@ -507,15 +493,9 @@ export const DIRECTOR_FIXED_MAX_SPEED = 14;
 /** Fixed shots re-anchor at least this often, so their aim point can't
  *  go stale while the fight moves on. */
 export const DIRECTOR_FIXED_CHUNK_SEC = 8;
-/**
- * After a capture or a return, hold a static camera on the spot where
- * it HAPPENED for this long. The flag itself teleports home the moment
- * it is capped or returned, and any camera still attached to it snaps
- * across the map with it — the most anti-climactic cut a broadcast can
- * make. The story for the next beat is the aftermath, not the item.
- */
-export const DIRECTOR_AFTERMATH_HOLD_SEC = 4.5;
-export const DIRECTOR_AFTERMATH_RADIUS = 30;
+/** Let the scoring shot stay on the scorer or stand through the reaction. */
+export const DIRECTOR_CAP_REACTION_SEC = 4.5;
+export const DIRECTOR_CAP_SHOT_DISTANCE = 30;
 /** Riders aboard (pilot included) before a transport reads as a raid
  *  under way, and how far it must move within the window to count as
  *  flying rather than loading. */

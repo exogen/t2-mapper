@@ -128,7 +128,7 @@ describe("cast pipeline cadence", () => {
     expect(await dynamic.finish()).toBe(dynamicPlan);
   });
 
-  it("reacts to a delayed capture identically in batch and playback, preserving aired cameras", async () => {
+  it("keeps the same coverage in batch and playback when a capture is reported too late", async () => {
     // Capture at 80.1, learned only at scan time 84.5. With the normal
     // two-second lookahead the picture has already reached 82.5.
     facts.captureAvailableAt = 84.5;
@@ -147,22 +147,13 @@ describe("cast pipeline cadence", () => {
       );
       expect(shot).toBeDefined();
       aired.push({ time, shot: shot!, camera: framing(shot!) });
-      if (time === 82.5) {
-        expect(shot).toMatchObject({
-          topic: "aftermath",
-          startSec: 82.5,
-        });
-        if (shot?.kind === "fixedOrbit") expect(shot.staged).toBeDefined();
-      }
     }
     const dynamic = await stream.finish();
     const { plan: batch } = await runCastPipeline(new ArrayBuffer(0));
     expect(cameras(dynamic.shots)).toEqual(cameras(batch.shots));
-    expect(dynamic.shots.find((s) => s.topic === "aftermath")?.endSec).toBe(
-      84.6,
-    );
-    expect(dynamic.shots.filter((s) => s.topic === "aftermath")).toHaveLength(
-      1,
+    expect(dynamic.shots.some((s) => s.topic === "aftermath")).toBe(false);
+    expect(dynamic.shots.some((s) => s.reason.endsWith("— scoring play"))).toBe(
+      false,
     );
     for (const { time, shot, camera } of aired) {
       expect(

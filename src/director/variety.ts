@@ -19,6 +19,7 @@ import {
   DIRECTOR_CLUSTER_CAM_HEIGHT,
   DIRECTOR_CLUSTER_CAM_RADIUS,
   DIRECTOR_DIST_CHASE,
+  DIRECTOR_EVENT_LEAD_SEC,
   DIRECTOR_PITCH_CHASE,
   DIRECTOR_STATION_CAM_HEIGHT,
   DIRECTOR_STATION_CAM_RADIUS,
@@ -203,6 +204,7 @@ function detectKillCutIn(view: CausalView, t: number): Candidate | null {
     : undefined;
   return {
     family: "killCutIn",
+    latestStartSec: kill.timeSec - DIRECTOR_EVENT_LEAD_SEC,
     confidence: 1,
     buildShot: () =>
       orbitShot({
@@ -532,7 +534,7 @@ function detectOrdnanceImpact(view: CausalView, t: number): Candidate | null {
   const weapon = impact.kind === "mortar" ? "Mortar" : "Missile";
   return {
     family: "ordnanceImpact",
-    latestStartSec: impact.timeSec + 0.5,
+    latestStartSec: impact.timeSec - DIRECTOR_EVENT_LEAD_SEC,
     confidence: stand ? 0.9 : 0.82,
     buildShot: (variety) =>
       orbitShot({

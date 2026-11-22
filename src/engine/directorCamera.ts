@@ -35,6 +35,10 @@ import type {
 } from "../director/types";
 import { demoClock, describeShot } from "../director/shotLog";
 import { directorCamDebug } from "../state/cameraDebug";
+import {
+  DIRECTOR_DIST_CHASE,
+  DIRECTOR_MAX_FOLLOW_DISTANCE,
+} from "../director/tunables";
 
 const camlog = createLogger("camdbg");
 import { bearingYaw } from "../director/geometry";
@@ -436,6 +440,15 @@ const _panAnchor = new Vector3();
 const _panProposed = new Vector3();
 const _panLead = new Vector3();
 
+type FollowShot = Extract<Shot, { kind: "followFlag" | "followPlayer" }>;
+
+function followDistance(shot: FollowShot): number {
+  return Math.min(
+    shot.distance ?? DIRECTOR_DIST_CHASE,
+    DIRECTOR_MAX_FOLLOW_DISTANCE,
+  );
+}
+
 /**
  * Auto-director playback driver — while a demo or live cast is playing,
  * looks up the planned shot for the current demo time each frame and
@@ -493,11 +506,6 @@ export function installDirectorCamera(engine: GameEngine): () => void {
   let visibilitySlot = -1;
   let visibilityStrikes = 0;
   let visibilityYaw: number | null = null;
-  /**
-   * A shorter orbit standoff that fits the space the subject is in, when
-   * the shot's own distance does not. Cleared when the shot changes.
-   */
-  let visibilityDistance: number | null = null;
   /** Demo time of the last visibility correction (cooldown). */
   let lastCorrection = -Infinity;
   /** Consecutive too-disruptive holds within one shot: after two, the
@@ -697,7 +705,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
     baseYaw: number,
     pitch: number,
     wanted: number,
-  ): { yaw: number; offset: number; room: number } | null => {
+  ): { yaw: number; offset: number } | null => {
     for (const offset of VISIBILITY_YAW_OFFSETS) {
       const yaw = baseYaw + offset;
       orbitPullbackDir(yaw, pitch, _visCandidate);
@@ -714,7 +722,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
       ) {
         continue;
       }
-      return { yaw, offset, room };
+      return { yaw, offset };
     }
     return null;
   };
@@ -1077,32 +1085,22 @@ export function installDirectorCamera(engine: GameEngine): () => void {
       shot.kind === "followFlag" ||
       (shot.kind === "followPlayer" && !shot.firstPerson)
     ) {
-      // Swing the orbit round the subject until the line is clear, and
-      // where no bearing has room for the full standoff, pull in to what
-      // does fit — a subject indoors has metres, not tens of metres. The
-      // aim steering turns at its own rate, so this reads as the camera
-      // repositioning rather than a cut.
+      // Look for a better bearing. The shared follow orbit retracts and
+      // recovers the arm as clearance changes on that bearing.
       const state = streamPlaybackStore.getState();
-      const wanted = shot.distance ?? state.orbitOverrideDistance;
+      const wanted = followDistance(shot);
       const clear = findClearFollowYaw(
         state.orbitOverrideYaw,
         state.orbitOverridePitch,
         wanted,
       );
       if (clear) {
-        // Never pull in past the shot's declared framing floor: a
-        // wide-by-intent shot squeezed to a portrait is the plan
-        // being overruled, not a rail doing its job.
-        const floor = shot.minDistance ?? 0;
-        const room = Math.max(clear.room, floor);
         log.info(
-          "%s visibility: follow subject blocked — swinging yaw %d°%s",
+          "%s visibility: follow subject blocked — swinging yaw %d°",
           demoClock(shotTimeSec),
           Math.round((clear.offset * 180) / Math.PI),
-          room < wanted ? ` and pulling in to ${Math.round(room)}m` : "",
         );
         visibilityYaw = clear.yaw;
-        visibilityDistance = room < wanted ? room : null;
         return;
       }
       log.info(
@@ -1162,7 +1160,6 @@ export function installDirectorCamera(engine: GameEngine): () => void {
     travelArmedSec = 0;
     visibilityStrikes = 0;
     visibilityYaw = null;
-    visibilityDistance = null;
     lastCorrection = -Infinity;
     budgetHolds = 0;
     resetPanState(panState);
@@ -1189,7 +1186,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
         _subjectPos.copy(group.position);
         _subjectPos.y += ORBIT_LOOK_LIFT;
         const playbackState = streamPlaybackStore.getState();
-        const wanted = shot.distance ?? playbackState.orbitOverrideDistance;
+        const wanted = followDistance(shot);
         const pitch = shot.pitch ?? playbackState.orbitOverridePitch;
         let entryYaw = playbackState.orbitOverrideYaw;
         if (shot.aim?.mode === "hold") {
@@ -1207,25 +1204,18 @@ export function installDirectorCamera(engine: GameEngine): () => void {
           }
         }
         const clear = findClearFollowYaw(entryYaw, pitch, wanted);
-        if (clear && (clear.offset !== 0 || clear.room < wanted)) {
+        if (clear && clear.offset !== 0) {
           log.info(
-            "%s entry: planned bearing blocked — opening at %d°%s",
+            "%s entry: planned bearing blocked — opening at %d°",
             demoClock(t),
             Math.round((clear.offset * 180) / Math.PI),
-            clear.room < wanted
-              ? ` and pulled in to ${Math.round(clear.room)}m`
-              : "",
           );
           visibilityYaw = clear.yaw;
-          visibilityDistance = clear.room < wanted ? clear.room : null;
           if (snapEntry) {
             // A cut has no continuity to preserve: open ON the clear
             // bearing rather than swinging onto it in view.
             streamPlaybackStore.setState({
               orbitOverrideYaw: clear.yaw,
-              ...(clear.room < wanted
-                ? { orbitOverrideDistance: clear.room }
-                : null),
             });
           }
         }
@@ -1727,7 +1717,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
   };
 
   const driveFollow = (
-    shot: Extract<Shot, { kind: "followFlag" | "followPlayer" }>,
+    shot: FollowShot,
     isPlaying: boolean,
     demoDelta: number,
     fallbackCamera: Camera,
@@ -1762,15 +1752,10 @@ export function installDirectorCamera(engine: GameEngine): () => void {
       orbitOverrideYaw: number;
     }> = {};
     const ease = Math.min(1, demoDelta * PARAM_EASE_RATE);
-    // A standoff the visibility check found room for outranks the shot's
-    // own distance: seeing the subject beats framing intent.
-    const wantDistance = visibilityDistance ?? shot.distance;
-    if (wantDistance != null) {
-      const diff = wantDistance - playbackState.orbitOverrideDistance;
-      if (Math.abs(diff) > 0.05) {
-        updates.orbitOverrideDistance =
-          playbackState.orbitOverrideDistance + diff * ease;
-      }
+    const diff = followDistance(shot) - playbackState.orbitOverrideDistance;
+    if (Math.abs(diff) > 0.05) {
+      updates.orbitOverrideDistance =
+        playbackState.orbitOverrideDistance + diff * ease;
     }
     if (shot.pitch != null) {
       const diff = shot.pitch - playbackState.orbitOverridePitch;
@@ -1969,24 +1954,23 @@ function applyShot(shot: Shot, snapEntry: boolean, holdMissing: boolean): void {
     exitToFreeFly();
     return;
   }
+  streamPlaybackStore.setState({
+    followCameraMode:
+      shot.kind === "followPlayer" && shot.firstPerson
+        ? "firstPersonOverride"
+        : "orbitOverride",
+  });
   if (shot.kind === "followFlag") {
     if (!followFlag(shot.slot) && holdMissing) exitToFreeFly();
   } else {
     const entityId = findLivingEntityByTargetId(shot.targetId);
     if (!entityId && (holdMissing || shot.firstPerson)) exitToFreeFly();
-    streamPlaybackStore.setState({
-      followCameraMode: shot.firstPerson
-        ? "firstPersonOverride"
-        : "orbitOverride",
-    });
     if (entityId) enterWatchFollow(entityId);
     if (shot.firstPerson) return;
   }
   if (snapEntry) {
     streamPlaybackStore.setState({
-      ...(shot.distance != null
-        ? { orbitOverrideDistance: shot.distance }
-        : null),
+      orbitOverrideDistance: followDistance(shot),
       ...(shot.pitch != null ? { orbitOverridePitch: shot.pitch } : null),
       // A fixed-bearing shot starts on its bearing — a fresh cut has no
       // continuity to preserve, so don't swing into it.

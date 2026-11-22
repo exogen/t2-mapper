@@ -132,7 +132,8 @@ function fixture(scenario: Scenario): DirectorDataset {
 function concerns(shot: Shot | undefined, slot: number): boolean {
   return (
     shot != null &&
-    ((shot.kind === "followFlag" && shot.slot === slot) ||
+    ((shot.subject?.type === "flag" && shot.subject.slot === slot) ||
+      (shot.kind === "followFlag" && shot.slot === slot) ||
       (shot.kind === "fixedOrbit" &&
         shot.lookSubject?.type === "flag" &&
         shot.lookSubject.slot === slot) ||
@@ -283,8 +284,13 @@ describe.each([0, 2])(
             expect(concerns(at(t), 2), `at ${t}`).toBe(true);
         } else if (scenario === "capture") {
           const reaction = Math.ceil((63.1 - lookahead) * 2) / 2;
-          if (lookahead) expect(concerns(at(reaction), 1)).toBe(true);
-          expect(at(Math.max(63.1, reaction))?.topic).toBe("aftermath");
+          if (lookahead) {
+            expect(concerns(at(reaction), 1)).toBe(true);
+            expect(at(63.1)).toBe(at(reaction));
+            expect(at(65.1)).toBe(at(reaction));
+          } else {
+            expect(at(reaction)?.topic).not.toBe("aftermath");
+          }
         } else if (scenario === "new-carrier") {
           expect(concerns(at(64), 2)).toBe(true);
           expect(concerns(at(lookahead ? 64.5 : 65), 1)).toBe(true);

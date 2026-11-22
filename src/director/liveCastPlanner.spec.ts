@@ -1,13 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import { TICK_DURATION_MS } from "../stream/streamHelpers";
 import type { DirectorSnapshot } from "../stream/types";
+import { STAND_1, STAND_2 } from "./directorTestFixtures";
 import {
   createLiveCastPlanner,
   liveCameraShot,
   type LiveCastPlannerFrame,
+  type LiveCastPlannerShot,
 } from "./liveCastPlanner";
+import * as shotPath from "./shotPath";
+import * as stage from "./stage";
 import * as variety from "./variety";
-import type { Shot } from "./types";
+import type { DirectorVec3, Shot } from "./types";
 
 function frame(
   tick: number,
@@ -32,7 +36,358 @@ function frame(
 
 const metadata = { gameClassName: "CTFGame" };
 
+type TestFlag = {
+  position: DirectorVec3;
+  status: "home" | "held" | "field";
+};
+
+function player(
+  targetId: number,
+  teamId: number,
+  position: DirectorVec3,
+): DirectorSnapshot["entities"][number] {
+  return {
+    id: `player-${targetId}`,
+    type: "Player",
+    targetId,
+    teamId,
+    position,
+  };
+}
+
+function flagEvent(
+  timeSec: number,
+  msgType: string,
+  actor: string,
+  team: string,
+): DirectorSnapshot["serverEvents"][number] {
+  return {
+    id: Math.round(timeSec * 1000),
+    timeSec,
+    msgType,
+    args: ["", "", actor, team],
+  };
+}
+
+async function planCtfShots(
+  durationSec: number,
+  events: DirectorSnapshot["serverEvents"],
+  sceneAt: (timeSec: number) => {
+    flags: [TestFlag, TestFlag];
+    players: DirectorSnapshot["entities"];
+  },
+): Promise<LiveCastPlannerShot[]> {
+  const planner = createLiveCastPlanner({ startTick: 0, metadata });
+  const shots: LiveCastPlannerShot[] = [];
+  const teams = ["Storm", "Inferno"];
+  for (let tick = 0; tick * TICK_DURATION_MS <= durationSec * 1000; tick++) {
+    const timeSec = (tick * TICK_DURATION_MS) / 1000;
+    const { flags, players } = sceneAt(timeSec);
+    const entities = flags.map(({ position }, index) => ({
+      id: `flag-${index}`,
+      type: "Item",
+      teamId: index + 1,
+      targetRenderFlags: 2,
+      position,
+    }));
+    shots.push(
+      ...(await planner.pushFrame(
+        frame(tick, {
+          entities: [...entities, ...players],
+          teamScores: flags.map(({ status }, index) => ({
+            teamId: index + 1,
+            name: teams[index],
+            playerCount: 1,
+            score: 0,
+            flag: { teamId: index + 1, status },
+          })),
+          matchPhase: { kind: "running", startSec: -600 },
+          serverEvents: events.filter((event) => event.timeSec <= timeSec),
+        }),
+      )),
+    );
+  }
+  return shots;
+}
+
 describe("authoritative live cast planner", () => {
+  it("cuts away from a quiet flag contest to a sustained grab elsewhere", async () => {
+    const looseFlag: DirectorVec3 = [580, 0, 100];
+    const grabAt = 80;
+    const shots = await planCtfShots(
+      102,
+      [
+        flagEvent(48, "MsgCTFFlagTaken", "Runner", "Inferno"),
+        flagEvent(50, "MsgCTFFlagDropped", "Runner", "Inferno"),
+        flagEvent(grabAt, "MsgCTFFlagTaken", "Other runner", "Storm"),
+      ],
+      (t) => {
+        const stormPosition: DirectorVec3 =
+          t < grabAt ? STAND_1 : [Math.min((t - grabAt) * 20, 550), 0, 100];
+        const players =
+          t >= 49
+            ? [player(1, 1, [580, -4, 100]), player(2, 2, [580, 4, 100])]
+            : [];
+        if (t >= grabAt) players.push(player(3, 2, stormPosition));
+        return {
+          flags: [
+            { position: stormPosition, status: t < grabAt ? "home" : "held" },
+            {
+              position: t < 48 ? STAND_2 : looseFlag,
+              status: t < 48 ? "home" : t < 50 ? "held" : "field",
+            },
+          ],
+          players,
+        };
+      },
+    );
+    expect(
+      shots.some(
+        ({ shot }) =>
+          shot.kind === "fixedOrbit" &&
+          shot.subject?.type === "flag" &&
+          shot.subject.slot === 2,
+      ),
+    ).toBe(true);
+    const coveringGrab = shots.findLast(
+      ({ shot }) => shot.startSec <= grabAt + 6,
+    );
+    expect(coveringGrab?.shot).toMatchObject({ kind: "followFlag", slot: 1 });
+  });
+
+  it.each([
+    { returnAt: 65, isUseful: true },
+    { returnAt: 64.6, isUseful: false },
+  ])(
+    "only gives a late scoring return cut room when it can show the play ($returnAt)",
+    async ({ returnAt, isUseful }) => {
+      const dropAt = 62.5;
+      const returnPosition: DirectorVec3 = [500, 0, 100];
+      const shots = await planCtfShots(
+        78,
+        [
+          flagEvent(50, "MsgCTFFlagTaken", "Runner", "Inferno"),
+          flagEvent(dropAt, "MsgCTFFlagDropped", "Runner", "Storm"),
+          flagEvent(returnAt, "MsgCTFFlagReturned", "Defender", "Storm"),
+        ],
+        (t) => {
+          const stormStatus =
+            t < 59 || t >= returnAt ? "home" : t < dropAt ? "held" : "field";
+          return {
+            flags: [
+              {
+                position: stormStatus === "home" ? STAND_1 : returnPosition,
+                status: stormStatus,
+              },
+              {
+                position: t >= 50 ? [170, 0, 100] : STAND_2,
+                status: t >= 50 ? "held" : "home",
+              },
+            ],
+            players:
+              t >= 59 && t < 69
+                ? [player(8, 1, returnPosition), player(9, 2, [500, 5, 100])]
+                : [],
+          };
+        },
+      );
+      expect(
+        shots.findLast(({ shot }) => shot.startSec < dropAt)?.shot,
+      ).toMatchObject({
+        kind: "followFlag",
+        slot: 1,
+      });
+      const next = shots.find(({ shot }) => shot.startSec >= dropAt);
+      if (isUseful) {
+        expect(next?.shot).toMatchObject({
+          kind: "fixedOrbit",
+          center: returnPosition,
+        });
+        expect(next?.shot.startSec).toBeLessThan(returnAt);
+      } else {
+        expect(next?.shot.startSec).toBeGreaterThanOrEqual(returnAt);
+        expect(next?.shot.startSec).toBeLessThan(returnAt + 2);
+      }
+    },
+  );
+
+  it("repairs an aired scoring shot after its subject leaves the room", async () => {
+    const capAt = 20;
+    const stageShot = stage.stageShot;
+    let stagedRoom = false;
+    const staging = vi
+      .spyOn(stage, "stageShot")
+      .mockImplementation((...args) => {
+        const result = stageShot(...args);
+        if (args[0].topic !== "capture" || stagedRoom) return result;
+        stagedRoom = true;
+        return {
+          ...result,
+          shot: {
+            ...result.shot,
+            kind: "fixedOrbit",
+            center: STAND_1,
+            radius: 8,
+            lookSubject: { type: "player", targetId: 15 },
+            trackSubject: true,
+            staged: { angle: 0, radius: 8, liftFactor: 0.2, visibility: 1 },
+          },
+        };
+      });
+    const sightline = vi
+      .spyOn(shotPath, "subjectVisible")
+      .mockImplementation((_eye, aim) => aim[0] >= 0);
+    try {
+      const shots = await planCtfShots(
+        31,
+        [flagEvent(capAt, "MsgCTFFlagCapped", "Scorer", "Inferno")],
+        (t) => ({
+          flags: [
+            { position: STAND_1, status: "home" },
+            { position: STAND_2, status: "home" },
+          ],
+          players: [
+            {
+              ...player(15, 1, [
+                t > capAt + 0.5 ? -50 : Math.max(1, (capAt - t) * 15),
+                0,
+                100,
+              ]),
+              playerName: "Scorer",
+            },
+          ],
+        }),
+      );
+      const at = (t: number) =>
+        shots.findLast(({ shot }) => shot.startSec <= t);
+      expect(at(capAt)?.shot).toMatchObject({
+        kind: "fixedOrbit",
+        trackSubject: true,
+      });
+      expect(at(capAt + 3)?.shot).toMatchObject({
+        kind: "followPlayer",
+        targetId: 15,
+      });
+    } finally {
+      sightline.mockRestore();
+      staging.mockRestore();
+    }
+  });
+
+  it.each([
+    { runner: true, announcedAt: 20, raidAt: 14.5, kind: "followPlayer" },
+    { runner: false, announcedAt: 20, raidAt: 15.5, kind: "fixedOrbit" },
+    { runner: false, announcedAt: 25.5, raidAt: 15.5, kind: undefined },
+  ])(
+    "reserves the scoring shot before the capture when announced at $announcedAt (runner=$runner)",
+    async ({ runner, announcedAt, raidAt, kind }) => {
+      const capSec = runner ? 19.968 : 20;
+      const stand: [number, number, number] = [0, 0, 100];
+      const distant: [number, number, number] = [700, 400, 100];
+      const pick = vi
+        .spyOn(variety, "pickVarietyShot")
+        .mockImplementation((_view, t) =>
+          t === raidAt
+            ? {
+                family: "destruction",
+                shot: {
+                  kind: "fixedOrbit",
+                  center: distant,
+                  radius: 30,
+                  startSec: t,
+                  endSec: 28,
+                  transitionIn: "cut",
+                  reason: "Distant raid",
+                },
+              }
+            : null,
+        );
+      try {
+        const planner = createLiveCastPlanner({ startTick: 0, metadata });
+        const teams = ["Storm", "Inferno"];
+        const flags = teams.map((_, index) => ({
+          id: `flag-${index}`,
+          type: "Item",
+          teamId: index + 1,
+          targetRenderFlags: 2,
+          position:
+            index === 0 ? stand : ([800, 0, 100] as [number, number, number]),
+        }));
+        const shots: LiveCastPlannerShot[] = [];
+        for (let tick = 0; tick < 1_020; tick++) {
+          const t = (tick * TICK_DURATION_MS) / 1000;
+          const entities: DirectorSnapshot["entities"] = [...flags];
+          if (runner) {
+            entities.push({
+              id: "scorer",
+              type: "Player",
+              targetId: 15,
+              playerName: "Scorer",
+              teamId: 1,
+              position: [Math.max(1, (capSec - t) * 15), 0, 100],
+            });
+          }
+          shots.push(
+            ...(await planner.pushFrame(
+              frame(tick, {
+                entities,
+                teamScores: teams.map((name, index) => ({
+                  teamId: index + 1,
+                  name,
+                  playerCount: 1,
+                  score: 0,
+                })),
+                matchPhase: { kind: "running", startSec: -600 },
+                serverEvents:
+                  t >= announcedAt
+                    ? [
+                        {
+                          id: 1,
+                          timeSec: capSec,
+                          msgType: "MsgCTFFlagCapped",
+                          args: ["", "", "Scorer", "Inferno"],
+                        },
+                      ]
+                    : [],
+              }),
+            )),
+          );
+        }
+        const at = (t: number) =>
+          shots.findLast(({ shot }) => shot.startSec <= t);
+        const scoring = at(capSec);
+        expect(pick.mock.calls.some(([, t]) => t === raidAt)).toBe(true);
+        if (!kind) {
+          expect(scoring?.shot).toMatchObject({
+            kind: "fixedOrbit",
+            center: distant,
+          });
+          expect(at(capSec + 3)).toBe(scoring);
+          return;
+        }
+        expect(scoring?.shot).toMatchObject({
+          kind,
+          subject: { type: "flag", slot: 2 },
+          ...(runner ? { targetId: 15 } : { center: stand }),
+        });
+        expect(at(capSec - 2)).toBe(scoring);
+        expect(at(capSec + 3)).toBe(scoring);
+        const raid = shots.find(
+          ({ shot }) =>
+            shot.kind === "fixedOrbit" &&
+            shot.center.every((value, i) => value === distant[i]),
+        );
+        if (runner) {
+          expect(raid).toBeDefined();
+          const hold = scoring!.shot.startSec - raid!.shot.startSec;
+          expect(hold).toBeCloseTo(3.008, 3);
+        } else expect(raid).toBeUndefined();
+      } finally {
+        pick.mockRestore();
+      }
+    },
+  );
+
   it("waits for a useful scene but can start with terrain alone", async () => {
     const planner = createLiveCastPlanner({
       startTick: 0,
@@ -252,12 +607,12 @@ describe("authoritative live cast planner", () => {
       const candidate: Shot = {
         kind: "sweep",
         startSec: 0.5,
-        endSec: 6,
+        endSec: 10,
         from: [0, 0, 100],
         to: [60, 0, 100],
         target: [0, 30, 100],
         targetTo: [60, 30, 100],
-        moveSec: 5,
+        moveSec: 9,
         easing: "linear",
         pathSolved: true,
         transitionIn: "cut",
@@ -270,11 +625,11 @@ describe("authoritative live cast planner", () => {
             return {
               family: "offensiveWave",
               cooldownKey: "offensiveWave:2",
-              latestStartSec: expired ? 2 : 4,
+              latestStartSec: expired ? 2 : 7.5,
               shot: candidate,
             };
           }
-          if (expired && t === 2.5) {
+          if (expired && t >= 2.5 && t <= 3) {
             return {
               family: "vehiclePad",
               shot: {
@@ -282,7 +637,7 @@ describe("authoritative live cast planner", () => {
                 center: [80, 60, 100],
                 radius: 20,
                 startSec: t,
-                endSec: t + 4,
+                endSec: t + 5,
                 transitionIn: "cut",
                 reason: "Vehicle pad",
               },
@@ -292,7 +647,7 @@ describe("authoritative live cast planner", () => {
         });
       try {
         const shots = [];
-        for (let tick = 0; tick < 230; tick++) {
+        for (let tick = 0; tick < 310; tick++) {
           shots.push(
             ...(await planner.pushFrame(
               frame(tick, {
@@ -310,9 +665,9 @@ describe("authoritative live cast planner", () => {
             ({ shot }) => shot.kind === "fixedOrbit" && shot.center[0] === 80,
           );
           expect(replacement?.shot.startSec).toBeLessThan(candidate.endSec);
-          expect(replacement?.shot.startSec).toBeGreaterThanOrEqual(3);
+          expect(replacement?.shot.startSec).toBeGreaterThan(4.9);
         } else {
-          expect(sweep?.shot.startSec).toBeGreaterThanOrEqual(3);
+          expect(sweep?.shot.startSec).toBeGreaterThan(4.9);
           expect(sweep?.shot).toMatchObject({
             moveOffsetSec: (sweep?.shot.startSec ?? 0) - 0.5,
           });

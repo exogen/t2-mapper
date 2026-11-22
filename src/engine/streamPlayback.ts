@@ -51,14 +51,7 @@ import { PlaybackClock } from "../stream/PlaybackClock";
 import { advancePlaybackFrame } from "../stream/advancePlaybackFrame";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { isProjectileEntity } from "../state/projectileEntities";
-import {
-  DIRECTOR_ORBIT_TARGET_MAX_LAG,
-  GROUND_MIN_CLEARANCE,
-  groundHeightAt,
-  smoothedGroundHeightAt,
-  TERRAIN_FOLLOW_CLEARANCE,
-  TERRAIN_TRACK_MIN_DISTANCE,
-} from "../director/cameraRig";
+import { DIRECTOR_ORBIT_TARGET_MAX_LAG } from "../director/cameraRig";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import {
   MAX_ORBIT_DISTANCE,
@@ -1503,7 +1496,8 @@ export class StreamPlaybackSession {
       this.orbitDistance.reset();
       this.lastOrbitSnapNonce = orbitSnapNonce;
     }
-    const localOrbit = orbitOverride && owner === "input";
+    const localOrbit =
+      orbitOverride && (owner === "input" || owner === "director");
     const followOrbit = localOrbit || hasClipOrbitDistance;
     const { followFlagSlot } = streamPlaybackStore.getState();
     // Both springs follow the flag across carrier/item hand-offs. A drop also
@@ -1568,17 +1562,13 @@ export class StreamPlaybackSession {
         else if (followOrbit && resolvedTarget)
           this.placeFollowOrbitPivot(resolvedTarget);
         else if (targetGroup) _orbitTarget.copy(targetGroup.position);
-        // Loose-spring target for the auto-director: ease toward where
-        // the followed thing IS rather than teleporting with it through
-        // drops, passes and pickups. A jump far beyond hand-off range is
-        // a shot cut — snap, don't glide across the map. EXCEPT a
-        // followed flag arriving at a flag stand: that jump is the
-        // capture/return teleport, and chasing it yanks the viewer to
-        // the home base mid-shot — freeze on the last framing instead
-        // and let the next shot (the aftermath) own what follows.
+        // Preserve continuity when a directed flag jumps between bodies
+        // and items or teleports home. Player shots orbit the actual pivot.
         const spState = streamPlaybackStore.getState();
         const damping =
-          projectileTracking || clipOrbit ? null : spState.orbitTargetDamping;
+          owner === "director" && followFlagSlot != null
+            ? spState.orbitTargetDamping
+            : null;
         if (damping != null) {
           advanceFollowSpring(
             this.spring,
@@ -1692,36 +1682,6 @@ export class StreamPlaybackSession {
             .copy(_orbitTarget)
             .addScaledVector(_orbitDir, orbitDistance);
 
-          // Auto-director terrain track: a follow camera trailing a
-          // skier dips into every jag of the ground. Ride the SMOOTHED
-          // terrain surface a few metres up instead — a rolling curve
-          // even where the heightmap is jagged — with the raw-height
-          // clamp underneath as the never-inside-the-hill guarantee.
-          // Tight close shots (the defender's hip, the hero frame) are
-          // deliberately near the ground and keep only the hard floor.
-          const directing = damping != null;
-          if (directing && orbitDistance >= TERRAIN_TRACK_MIN_DISTANCE) {
-            const soft = smoothedGroundHeightAt(
-              _orbitCandidate.x,
-              _orbitCandidate.z,
-            );
-            if (
-              soft != null &&
-              _orbitCandidate.y < soft + TERRAIN_FOLLOW_CLEARANCE
-            ) {
-              _orbitCandidate.y = soft + TERRAIN_FOLLOW_CLEARANCE;
-            }
-          }
-          if (directing) {
-            const hard = groundHeightAt(_orbitCandidate.x, _orbitCandidate.z);
-            if (
-              hard != null &&
-              _orbitCandidate.y < hard + GROUND_MIN_CLEARANCE
-            ) {
-              _orbitCandidate.y = hard + GROUND_MIN_CLEARANCE;
-            }
-          }
-
           if (localOrbit) {
             const distanceSpring = this.orbitDistance;
             _orbitCandidate
@@ -1767,6 +1727,7 @@ export class StreamPlaybackSession {
           );
           if (
             localOrbit &&
+            owner === "input" &&
             cameraMode === "orbitOverride" &&
             (followBlend === null || followBlend === 1)
           )

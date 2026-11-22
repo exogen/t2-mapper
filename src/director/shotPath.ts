@@ -267,6 +267,23 @@ export function subjectVisible(
 const _fromThree = new Vector3();
 const _toThree = new Vector3();
 
+/** Safe framing inside the nominal vertical field of view, with room
+ * for motion between samples and for narrower viewer layouts. */
+export function subjectInFrame({ eye, aim }: ShotPose, point: DirectorVec3) {
+  const x = aim[0] - eye[0];
+  const y = aim[1] - eye[1];
+  const z = aim[2] - eye[2];
+  const dx = point[0] - eye[0];
+  const dy = point[1] - eye[1];
+  const dz = point[2] - eye[2];
+  const cosHalfAngle = 0.88;
+  return (
+    x * dx + y * dy + z * dz >=
+      cosHalfAngle * Math.hypot(x, y, z) * Math.hypot(dx, dy, dz) &&
+    subjectVisible(eye, point)
+  );
+}
+
 /** Walk a shot's path and report whether it is worth broadcasting. */
 export function inspectShot(shot: Shot): PathReport | null {
   const path = shotCameraPath(shot);

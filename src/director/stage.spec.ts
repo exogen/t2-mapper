@@ -124,7 +124,7 @@ vi.mock("../collision/worldCollision", () => ({
     p[2] < 0 || world.boxes.some((box) => inside(p, box, radius)),
 }));
 
-import { auditAhead, midAim, stagePlan, stageShots } from "./stage";
+import { auditAhead, midAim, stagePlan, stageShot, stageShots } from "./stage";
 import type { FreeSpaceGrid } from "./freeSpace";
 import {
   cameraBuried,
@@ -244,7 +244,6 @@ describe("staging with the director's free-space grid", () => {
       const shots = [shot];
       const report = stageShots(
         shots,
-        [0],
         makeDataset(() => pos),
         gridAt(spot),
       );
@@ -264,7 +263,7 @@ describe("staging with the director's free-space grid", () => {
     const dataset = makeDataset((t) => [0, t / 10, 1]);
     const shot = indoorFollow();
     const shots: Shot[] = [shot];
-    const report = stageShots(shots, [0], dataset, gridAt([3, 0, 3]));
+    const report = stageShots(shots, dataset, gridAt([3, 0, 3]));
     expect(report.gridFollow).toBe(1);
     expect(shots[0]).toBe(shot);
     expect(shot.aim?.mode).toBe("hold");
@@ -294,7 +293,7 @@ describe("staging with the director's free-space grid", () => {
     enclose();
     const shots: Shot[] = [indoorFollow()];
     const dataset = makeDataset((t) => [t / 5, 0, 1]);
-    const report = stageShots(shots, [0], dataset, gridAt([3, 0, 3]));
+    const report = stageShots(shots, dataset, gridAt([3, 0, 3]));
     expect(report.gridFollow).toBe(0);
     expect(report.gridFixed).toBe(1);
     expect(shots[0]).toMatchObject({
@@ -314,7 +313,6 @@ describe("staging with the director's free-space grid", () => {
     const shots: Shot[] = [shot];
     const report = stageShots(
       shots,
-      [0],
       makeDataset(() => ANCHOR),
       gridAt([3, 0, 3]),
     );
@@ -345,9 +343,9 @@ describe("staging with the director's free-space grid", () => {
       })),
     );
     const insideShots = [dolly];
-    expect(
-      stageShots(insideShots, [0], staysInside, gridAt(spot)).gridFixed,
-    ).toBe(1);
+    expect(stageShots(insideShots, staysInside, gridAt(spot)).gridFixed).toBe(
+      1,
+    );
     expect(insideShots[0]).toMatchObject({
       kind: "fixedOrbit",
       lookSubject: dolly.subject,
@@ -360,9 +358,7 @@ describe("staging with the director's free-space grid", () => {
       ),
     };
     const movingShots = [dolly];
-    expect(stageShots(movingShots, [0], leaves, gridAt(spot)).gridFixed).toBe(
-      0,
-    );
+    expect(stageShots(movingShots, leaves, gridAt(spot)).gridFixed).toBe(0);
     expect(movingShots[0]).toBe(dolly);
   });
 
@@ -371,23 +367,23 @@ describe("staging with the director's free-space grid", () => {
     world.boxes.push({ min: [2.5, -1, 2], max: [3.5, 1, 4] });
     const report = stageShots(
       [indoorFollow()],
-      [0],
       makeDataset(() => ANCHOR),
       gridAt([3, 0, 3]),
     );
     expect(report.gridFollow).toBe(0);
   });
 
-  it("falls back when this stream has no grid, without borrowing another's", () => {
+  it("leaves an indoor flag on the follow orbit when this stream has no grid", () => {
     enclose();
     const dataset = makeDataset(() => ANCHOR);
     expect(
-      stageShots([indoorFollow()], [0], dataset, gridAt([3, 0, 3])).gridFollow,
+      stageShots([indoorFollow()], dataset, gridAt([3, 0, 3])).gridFollow,
     ).toBe(1);
     const shots: Shot[] = [indoorFollow()];
-    const report = stageShots(shots, [0], dataset);
+    const report = stageShots(shots, dataset);
     expect(report.gridFollow).toBe(0);
-    expect(report.followConverted).toBe(1);
+    expect(report.followUnsolved).toBe(1);
+    expect(shots[0].kind).toBe("followFlag");
   });
 });
 
@@ -412,7 +408,7 @@ describe("stagePlan", () => {
     const shots: Shot[] = [
       { ...delayedTour, from: [-40, 0, -40], to: [40, 0, -40] },
     ];
-    const report = stageShots(shots, [0], directorDataset());
+    const report = stageShots(shots, directorDataset());
     expect(report.sweepTrimmed).toBe(0);
     expect(report.sweepConverted).toBe(1);
     expect(shots[0].kind).toBe("fixedOrbit");
@@ -421,7 +417,7 @@ describe("stagePlan", () => {
   it("keeps the open portion of a tour sweep with a buried tail", () => {
     world.boxes.push({ min: [30, -5, -10], max: [50, 5, 45] });
     const shots: Shot[] = [{ ...delayedTour }];
-    const report = stageShots(shots, [0], directorDataset());
+    const report = stageShots(shots, directorDataset());
     expect(report.sweepTrimmed).toBe(1);
     expect(shots[0]).toMatchObject({ kind: "sweep", pathSolved: true });
     expect(inspectShot(shots[0])?.buried).toBe(0);
@@ -444,16 +440,22 @@ describe("stagePlan", () => {
         transitionIn: "cut",
         reason: "Tracking wide",
       } satisfies Shot;
-      const early = makePlan([{ ...sweep }]);
-      const late = makePlan([{ ...sweep, moveOffsetSec }]);
       const dataset = directorDataset();
-      expect(stageShots(early.shots, [0], dataset).sweepConverted).toBe(1);
-      expect(stageShots(late.shots, [0], dataset).sweepClean).toBe(1);
-      expect(late.shots[0]).toMatchObject({
+      const early = stageShot(sweep, dataset);
+      const late = stageShot(sweep, dataset, undefined, {
+        startSec: sweep.startSec + moveOffsetSec,
+        endSec: sweep.endSec + moveOffsetSec,
+      });
+      expect(early.report.sweepConverted).toBe(1);
+      expect(late.report.sweepClean).toBe(1);
+      expect(late.shot).toMatchObject({
         ...sweep,
+        startSec: sweep.startSec + moveOffsetSec,
+        endSec: sweep.endSec + moveOffsetSec,
         moveOffsetSec,
         pathSolved: true,
       });
+      expect(sweep).not.toHaveProperty("moveOffsetSec");
     },
   );
 
@@ -671,10 +673,7 @@ describe("stagePlan", () => {
     expect(kept.endSec - kept.startSec).toBeLessThanOrEqual(14);
   });
 
-  it("walks an unshootable roofed flag down to a doorway watch", () => {
-    // The fixed pass converts to a follow; the follow pass then finds
-    // the room too small for ANY orbit and, since the flag is roofed,
-    // lands on the building's mouth.
+  it("uses the live follow arm when no fixed angle sees an indoor flag", () => {
     enclose();
     const plan = makePlan([fixedShot()]);
     const report = stagePlan(
@@ -685,11 +684,11 @@ describe("stagePlan", () => {
       fixedShots: 1,
       follow: 1,
       followShots: 1,
-      followConverted: 1,
+      followUnsolved: 1,
     });
     expect(plan.shots[0]).toMatchObject({
-      kind: "fixedOrbit",
-      doorwayOf: [0, 0, 1],
+      kind: "followFlag",
+      slot: 1,
       startSec: 0,
       endSec: 10,
       reason: "test shot",
