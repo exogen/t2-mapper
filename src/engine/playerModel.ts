@@ -72,6 +72,7 @@ import { registerEyeNode } from "./eyePositions";
 import { showShapeDebugBounds } from "./shapeModel";
 import { combineCleanups, type Cleanup } from "./storeReaction";
 import { FramePriority } from "./framePriority";
+import type { PlayerSkinSelection } from "./playerSkins";
 import { createPlayerPresentation } from "./playerPresentation";
 import { firstPersonSpineNodes } from "./firstPersonPlayer";
 import { setPlayerMuzzleAction } from "./weaponMuzzle";
@@ -122,7 +123,7 @@ export interface PlayerModelOptions {
   entity: () => PlayerEntity;
   anisotropy: number;
   emap: boolean;
-  skinUrl: string | undefined;
+  playerSkin: PlayerSkinSelection;
   /** Chest physics (the `nc17` feature). */
   jiggle: boolean;
   /** The mounted image roots and whether each is cloakable. */
@@ -159,7 +160,7 @@ export function createPlayerModel(
     model: gltf,
     anisotropy: options.anisotropy,
     emap: options.emap,
-    skinUrl: options.skinUrl,
+    playerSkin: options.playerSkin,
   });
   const { root, rotated, scene: clonedScene, mixer } = presentation;
   const spineNodes = firstPersonSpineNodes(gltf.data);

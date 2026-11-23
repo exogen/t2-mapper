@@ -736,6 +736,8 @@ export interface InferredMissileLock {
 
 export interface StreamSnapshot {
   timeSec: number;
+  /** Live playback revision that owns this snapshot's message IDs. */
+  playbackRevision?: number;
   /** Bounded history captured by director scans. */
   ordnanceImpacts?: readonly StreamOrdnanceImpact[];
   /** World gravity in m/s² (negative is down) — see worldGravity.ts. */
@@ -923,7 +925,9 @@ export interface StreamingPlayback {
   readonly debrisHistory?: import("./debrisHistory").DebrisHistory;
   readonly projectileTrailHistory?: import("./projectileTrailHistory").ProjectileTrailHistory;
   readonly lightningHistory?: import("./lightningHistory").LightningHistory;
-  readonly groundEffectHistory?: import("./groundEffectHistory").GroundEffectHistory;
+  /** Transient renderer input, consumed once and cleared on seek/reset.
+   * Unlike the effect histories above, this queue is never checkpointed. */
+  readonly groundEffectQueue?: import("./groundEffectQueue").GroundEffectQueue;
   /** Retained seek checkpoints, in recorded ticks. Absent on live streams. */
   readonly checkpointTicks?: readonly number[];
   importCheckpoints?(

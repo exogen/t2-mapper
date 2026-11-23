@@ -992,7 +992,7 @@ it("shows the public Discord identity above Uploaded demos", () => {
   expect(fixture.profileOptions.queryKey).toEqual(["userProfile", OWNER]);
   expect(fixture.profileOptions.enabled).toBe(true);
   expect(fixture.profileOptions.staleTime).toBe(60_000);
-  expect(fixture.profileOptions.refetchOnWindowFocus).toBe(false);
+  expect(fixture.profileOptions.refetchOnWindowFocus).toBe(true);
 });
 
 it("shows the current signed-in identity immediately without a public profile request", () => {

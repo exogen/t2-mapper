@@ -1025,7 +1025,7 @@ it("replays from the recording when an imported checkpoint fails during restore"
   const source = demo(blocks) as DemoStreamAdapter;
   const first = await source.captureCheckpointAt(3, async () => {});
   const invalid = await source.captureCheckpointAt(8, async () => {});
-  Object.assign(invalid.simulation.groundEffects, { frames: null });
+  Object.assign(invalid.simulation.debris, { events: null });
   const restored = demo(blocks) as DemoStreamAdapter;
   const onRestoreError = vi.fn();
   restored.importCheckpoints([first, invalid], onRestoreError);

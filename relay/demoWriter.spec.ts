@@ -14,7 +14,7 @@ import {
 import {
   extractMissionInfo,
   parseDemoValues,
-} from "../src/stream/demoStreaming";
+} from "../src/stream/demoInitialValues";
 import { BitStreamWriter } from "./BitStreamWriter.js";
 import {
   DEMO_PROTOCOL_VERSION,

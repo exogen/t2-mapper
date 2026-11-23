@@ -4,7 +4,7 @@ import { engineStore } from "../state/engineStore";
 import { settingsStore } from "../state/settingsStore";
 import { streamClock } from "../state/streamPlaybackStore";
 import { getCachedAudioBuffer } from "./audioBuffers";
-import type { AudioGraph } from "./audioGraph";
+import type { AudioSources } from "./audioGraph";
 import { FramePriority } from "./framePriority";
 import type { GameEngine } from "./gameEngine";
 import { sampleMissileLockView } from "./missileLockView";
@@ -17,7 +17,7 @@ import {
 } from "./soundEffects";
 import { combineCleanups, reaction } from "./storeReaction";
 
-function createLockTone(filename: string, audio: AudioGraph) {
+function createLockTone(filename: string, audio: AudioSources) {
   let buffer: AudioBuffer | undefined;
   let sound: Audio | undefined;
   try {
@@ -64,7 +64,7 @@ function createLockTone(filename: string, audio: AudioGraph) {
   };
 }
 
-function startLockAudio(engine: GameEngine, audio: AudioGraph): () => void {
+function startLockAudio(engine: GameEngine, audio: AudioSources): () => void {
   const searching = createLockTone(
     "fx/weapons/missile_firer_search.wav",
     audio,
@@ -122,7 +122,7 @@ function startLockAudio(engine: GameEngine, audio: AudioGraph): () => void {
 /** Play the stock client-local missile warnings through the game's audio mix. */
 export function installMissileLockAudio(
   engine: GameEngine,
-  audio: AudioGraph,
+  audio: AudioSources,
 ): () => void {
   return reaction(
     settingsStore,

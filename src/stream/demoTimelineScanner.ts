@@ -23,7 +23,7 @@ import { hasGameOverAnnouncement, isRealMatchStart } from "./matchEvents";
 import { assertDemoBlockParsed } from "./demoParseError";
 import { loadDemoParser } from "./loadDemoParser";
 import { GeneratorTimeline } from "./generatorTimeline";
-import { parseDemoValues } from "./demoStreaming";
+import { parseDemoValues } from "./demoInitialValues";
 import {
   applyServerMessageState,
   type ServerMessageRosterEntry,

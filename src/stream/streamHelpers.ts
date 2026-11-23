@@ -851,30 +851,3 @@ export function detectControlObjectType(
   if (typeof data.rotationZ === "number") return "player";
   return null;
 }
-
-// ── Backpack HUD ──
-
-const BACKPACK_BITMAP_TO_INDEX = new Map<string, number>([
-  ["gui/hud_new_packammo", 0],
-  ["gui/hud_new_packcloak", 1],
-  ["gui/hud_new_packenergy", 2],
-  ["gui/hud_new_packrepair", 3],
-  ["gui/hud_new_packsatchel", 4],
-  ["gui/hud_new_packshield", 5],
-  ["gui/hud_new_packinventory", 6],
-  ["gui/hud_new_packmotionsens", 7],
-  ["gui/hud_new_packradar", 8],
-  ["gui/hud_new_packturretout", 9],
-  ["gui/hud_new_packturretin", 10],
-  ["gui/hud_new_packsensjam", 11],
-  ["gui/hud_new_packturret", 12],
-  ["gui/hud_satchel_unarmed", 18],
-]);
-
-export function backpackBitmapToIndex(bitmap: string): number {
-  const lower = bitmap.toLowerCase();
-  for (const [key, val] of BACKPACK_BITMAP_TO_INDEX) {
-    if (key === lower) return val;
-  }
-  return -1;
-}

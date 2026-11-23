@@ -28,6 +28,7 @@ import {
 import { browserIdentity } from "./browserAudit.js";
 import { isPublishedDemoKey } from "./demoKeys.js";
 import { discordPkce } from "./discordPkce.js";
+import { discordProfileReader } from "./discordProfile.js";
 import { relayLog } from "./logger.js";
 import {
   GAME_PRESENTATION_PATH,
@@ -63,6 +64,8 @@ const MAX_AUTH_BODY_BYTES = 16 * 1024;
 const AUTH_CLIENT_IP_HEADER = "x-mapgenius-account-client-ip";
 // Keep counters well beyond the configured and built-in rate-limit windows.
 const RATE_LIMIT_RETENTION_MS = 24 * 60 * 60_000;
+const DISCORD_PROFILE_CHECK_INTERVAL_MS = 24 * 60 * 60_000;
+const MAX_DISCORD_PROFILE_CHECKS = 4;
 const ACCOUNT_ROUTES = new Map([
   [`${AUTH_PATH}/sign-in/social`, "POST"],
   [`${AUTH_PATH}/callback/discord`, "GET"],
@@ -168,6 +171,7 @@ function mapDiscordProfile(profile: DiscordProfile) {
     email: `${profile.id}@discord.invalid`,
     emailVerified: false,
     discordUsername: profile.username,
+    discordProfileCheckedAt: Date.now(),
   };
 }
 
@@ -319,9 +323,13 @@ export async function createAppAuth({
           defaultValue: "user",
           input: false,
         },
-        // Only the trusted provider mapper can reach this field: profile-update
+        // Only the trusted provider mapper can set these fields: profile-update
         // endpoints are deliberately not mounted by the HTTP adapter below.
         discordUsername: { type: "string", required: true, defaultValue: "" },
+        discordProfileCheckedAt: {
+          type: "number",
+          required: false,
+        },
       },
     },
     account: {
@@ -399,7 +407,63 @@ export async function createAppAuth({
   cleanupTimer.unref();
   const readT2Profile = t2ProfileReader(database);
   const readT2AccountNames = t2AccountNamesReader(database);
-  const readAccount = async (headers: IncomingHttpHeaders | Headers) => {
+  const readDiscordProfile = discordProfileReader(database, auth.$context);
+  const claimDiscordProfileCheck = database.prepare(`
+    UPDATE "user" SET "discordProfileCheckedAt" = ?
+    WHERE "id" = ? AND ("discordProfileCheckedAt" IS NULL OR "discordProfileCheckedAt" <= ?)
+  `);
+  const saveDiscordProfile = database.prepare(`
+    UPDATE "user" SET "name" = ?, "discordUsername" = ?, "image" = ?, "updatedAt" = ?
+    WHERE "id" = ? AND "discordProfileCheckedAt" = ?
+  `);
+  let discordProfileChecks = 0;
+  let closed = false;
+
+  async function refreshDiscordProfile(
+    userId: string,
+    accountId: string,
+    discordId: string,
+    checkedAt: number | null | undefined,
+  ): Promise<void> {
+    const now = Date.now();
+    const cutoff = now - DISCORD_PROFILE_CHECK_INTERVAL_MS;
+    if (
+      closed ||
+      discordProfileChecks >= MAX_DISCORD_PROFILE_CHECKS ||
+      (checkedAt != null && checkedAt > cutoff)
+    )
+      return;
+    discordProfileChecks++;
+    try {
+      // Claim the check before calling Discord. Failed checks also cool down.
+      if (!claimDiscordProfileCheck.run(now, userId, cutoff).changes) return;
+      const profile = await readDiscordProfile(userId, accountId);
+      if (closed || !profile) return;
+      const discord = profile.data as DiscordProfile;
+      if (discord.id !== discordId) return;
+      // A newer sign-in may already have saved a fresh profile.
+      saveDiscordProfile.run(
+        profile.user.name ?? discord.username,
+        discord.username,
+        profile.user.image ?? null,
+        Date.now(),
+        userId,
+        now,
+      );
+    } catch {
+      relayLog.debug(
+        { event: "discord_profile_check_failed" },
+        "Using cached Discord profile",
+      );
+    } finally {
+      discordProfileChecks--;
+    }
+  }
+
+  const readAccount = async (
+    headers: IncomingHttpHeaders | Headers,
+    checkDiscordProfile = false,
+  ) => {
     const result = await auth.api.getSession({
       headers: headers instanceof Headers ? headers : fromNodeHeaders(headers),
       query: { disableCookieCache: true },
@@ -409,9 +473,10 @@ export async function createAppAuth({
     if (!session) return { user: null, headers: result.headers };
     const account = database
       .prepare(
-        'SELECT "accountId" FROM "account" WHERE "userId" = ? AND "providerId" = ?',
+        'SELECT "id", "accountId" FROM "account" WHERE "userId" = ? AND "providerId" = ?',
       )
-      .get(session.user.id, "discord") as { accountId: string } | undefined;
+      .get(session.user.id, "discord") as
+      { id: string; accountId: string } | undefined;
     if (!account) return { user: null, headers: result.headers };
     const user: AccountUser = {
       id: session.user.id,
@@ -423,12 +488,22 @@ export async function createAppAuth({
       t2AccountNames: readT2AccountNames(account.accountId),
       t2Profile: readT2Profile(session.user.id),
     };
+    if (checkDiscordProfile)
+      void refreshDiscordProfile(
+        user.id,
+        account.id,
+        account.accountId,
+        session.user.discordProfileCheckedAt,
+      );
     return { user, headers: result.headers };
   };
   const getAccount: AppAuthService["getAccount"] = async (headers) =>
     (await readAccount(headers)).user;
   const publicProfileQuery = database.prepare(
-    'SELECT u."id" AS "userId", a."accountId" AS "discordId", u."name", u."discordUsername", u."image" FROM "user" u JOIN "account" a ON a."userId" = u."id" WHERE a."providerId" = ? AND a."accountId" = ? LIMIT 2',
+    `SELECT u."id" AS "userId", a."id" AS "accountId", a."accountId" AS "discordId",
+       u."name", u."discordUsername", u."image", u."discordProfileCheckedAt"
+     FROM "user" u JOIN "account" a ON a."userId" = u."id"
+     WHERE a."providerId" = ? AND a."accountId" = ? LIMIT 2`,
   );
   const publicDemoLinkQuery = database.prepare(
     'SELECT 1 FROM "t2AccountLink" WHERE "discordId" = ? LIMIT 1',
@@ -441,7 +516,10 @@ export async function createAppAuth({
     return user;
   };
   return {
-    close: () => clearInterval(cleanupTimer),
+    close: () => {
+      closed = true;
+      clearInterval(cleanupTimer);
+    },
     getAccount,
     requireAdmin,
     async handle(req, res) {
@@ -472,6 +550,8 @@ export async function createAppAuth({
           const rows = publicProfileQuery.all("discord", discordId) as Array<
             Omit<AccountPublicProfile, "t2Profile" | "t2AccountNames"> & {
               userId: string;
+              accountId: string;
+              discordProfileCheckedAt: number | null;
             }
           >;
           if (rows.length > 1)
@@ -501,13 +581,20 @@ export async function createAppAuth({
             }
             return true;
           }
-          const { userId, ...discord } = rows[0];
+          const { userId, accountId, discordProfileCheckedAt, ...discord } =
+            rows[0];
           const profile: AccountPublicProfile = {
             ...discord,
             t2AccountNames: readT2AccountNames(discordId),
             t2Profile: readT2Profile(userId),
           };
           json(res, 200, profile);
+          void refreshDiscordProfile(
+            userId,
+            accountId,
+            discordId,
+            discordProfileCheckedAt,
+          );
           return true;
         }
         if (pathname === "/api/account") {
@@ -515,7 +602,7 @@ export async function createAppAuth({
             json(res, 405, { error: "Method not allowed" });
             return true;
           }
-          const { user, headers } = await readAccount(req.headers);
+          const { user, headers } = await readAccount(req.headers, true);
           const cookies = headers.getSetCookie();
           if (cookies.length) res.setHeader("Set-Cookie", cookies);
           json(res, 200, { enabled: true, user });

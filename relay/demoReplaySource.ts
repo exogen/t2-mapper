@@ -16,7 +16,7 @@ import {
 import {
   extractMissionInfo,
   parseDemoValues,
-} from "../src/stream/demoStreaming.js";
+} from "../src/stream/demoInitialValues.js";
 import { assertDemoBlockParsed } from "../src/stream/demoParseError.js";
 import { buildCatchupPayload } from "./watchCatchup.js";
 import { WatchStateAccumulator } from "./watchState.js";

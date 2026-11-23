@@ -26,6 +26,7 @@ const test = vi.hoisted(() => ({
   looping: true,
   contextRunning: true,
   failPlay: false,
+  trackSound: vi.fn(),
   generation: 0,
   snapshot: null as StreamSnapshot | null,
   playback: {
@@ -51,6 +52,7 @@ vi.mock("three", async (importOriginal) => {
       this.isPlaying = false;
     });
     disconnect = vi.fn();
+    gain = { disconnect: vi.fn() };
     setBuffer = vi.fn();
     setLoop = vi.fn();
     setPlaybackRate = vi.fn();
@@ -97,7 +99,26 @@ vi.mock("./soundEffects", () => ({
   audioContextRunning: () => test.contextRunning,
   getEffectiveSoundRate: () => 1,
   getSoundGeneration: () => test.generation,
-  trackSound: vi.fn(),
+  playManagedOneShot: (
+    sound: Audio,
+    { pitch = 1, onEnd }: { pitch?: number; onEnd?: () => void } = {},
+  ) => {
+    const baseOnEnded = sound.onEnded.bind(sound);
+    sound.onEnded = () => {
+      baseOnEnded();
+      sound.stop();
+      onEnd?.();
+    };
+    try {
+      sound.play();
+      test.trackSound(sound, pitch);
+      return true;
+    } catch {
+      sound.stop();
+      return false;
+    }
+  },
+  trackSound: test.trackSound,
   untrackSound: vi.fn(),
   playOneShotSound: vi.fn(),
 }));
@@ -306,6 +327,19 @@ it("does not start a pending weapon loop on a new mount in the same state", () =
   expect(trackSound).not.toHaveBeenCalled();
 });
 
+it("binds deferred weapon one-shots to their current mount and view", () => {
+  test.looping = false;
+  const { slot, dispose } = mountWeaponSounds();
+  frame();
+  const owner = vi.mocked(playOneShotSound).mock.calls[0][5]!;
+  expect(owner.canStart?.()).toBe(true);
+  expect(owner.signal.aborted).toBe(false);
+  slot.mountedAtSec = 11;
+  expect(owner.canStart?.()).toBe(false);
+  dispose();
+  expect(owner.signal.aborted).toBe(true);
+});
+
 it("stops jets despite a held jet flag, then allows jets in the next match", () => {
   const root = new Group();
   const update = startJetSound(root, 7);
@@ -348,6 +382,21 @@ it("stops a frozen projectile's loop but still plays new audio events", () => {
   streamClock.matchEndedAtSec = null;
   frame();
   expect((root.children[0] as Audio).isPlaying).toBe(true);
+  expect(playOneShotSound).toHaveBeenCalledOnce();
+});
+
+it("plays recorded world cues after the seek tick and skips the restored history", () => {
+  const { snapshot } = mountProjectile();
+  test.playback.seekTime = 10;
+  snapshot.audioEvents.push(
+    { timeSec: 9.9, profileId: 8 },
+    { timeSec: 10, profileId: 8 },
+  );
+  frame();
+  expect(playOneShotSound).not.toHaveBeenCalled();
+
+  snapshot.audioEvents.push({ timeSec: 10.04, profileId: 8 });
+  frame();
   expect(playOneShotSound).toHaveBeenCalledOnce();
 });
 

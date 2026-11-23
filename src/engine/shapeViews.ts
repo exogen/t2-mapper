@@ -39,7 +39,7 @@ import {
 } from "./shapeModel";
 import { createPlayerModel, type PlayerModel } from "./playerModel";
 import { ImageMounts, MountPoints } from "./shapeMounts";
-import { loadSkinManifest, resolvePlayerSkinUrl } from "./playerSkins";
+import { loadSkinManifest, getPlayerSkinSelection } from "./playerSkins";
 import { createFlagMarkerSlot } from "./flagMarker";
 import { createPlayerNameplate } from "./playerNameplate";
 import { createCommandCircuitPlayerMarker } from "./commandCircuitPlayerMarker";
@@ -418,9 +418,10 @@ export function createShapeView(
 function playerModelKey(entity: PlayerEntity): string {
   return JSON.stringify([
     entity.shapeName,
-    resolvePlayerSkinUrl(
+    getPlayerSkinSelection(
       entity.shapeName ?? "",
-      entity.skinPrefName ?? entity.skinName,
+      entity.skinPrefName,
+      entity.skinName,
     ),
     entity.dataBlockId,
     entity.dataBlock,
@@ -470,9 +471,10 @@ export function createPlayerView(
           entity: readEntity,
           anisotropy: maxAnisotropy(engine),
           emap: resolveEmapFromDatablock(entity.dataBlockId, entity.dataBlock),
-          skinUrl: resolvePlayerSkinUrl(
+          playerSkin: getPlayerSkinSelection(
             shapeName,
-            entity.skinPrefName ?? entity.skinName,
+            entity.skinPrefName,
+            entity.skinName,
           ),
           jiggle: engine.features.jiggle,
           mountedImages: () =>

@@ -11,13 +11,19 @@ import type { AudioEmitterEntity } from "../state/gameEntityTypes";
 import { selectDebugMode, settingsStore } from "../state/settingsStore";
 import { getAudioGraph } from "./audioGraph";
 import { getCachedAudioBuffer } from "./audioBuffers";
-import { createPositionalAudio } from "./soundEffects";
+import { createPositionalAudio, stopAndDetachSound } from "./soundEffects";
 import { createDebugMarker, showWhileDebugTourTarget } from "./debugVisuals";
 import { createPositionedRoot, type EntityView } from "./entityViews";
 import { FramePriority } from "./framePriority";
 import { combineCleanups, reaction } from "./storeReaction";
 import { WorldLabel } from "./worldLabel";
 import type { GameEngine } from "./gameEngine";
+
+const EMITTER_RETRY_MS = 1000;
+
+interface PendingEmitterLoad {
+  unsubscribe?: () => void;
+}
 
 /**
  * An AudioEmitter's sound, while audio is enabled. 3D emitters play only
@@ -28,29 +34,36 @@ import type { GameEngine } from "./gameEngine";
 function startEmitterSound(
   entity: AudioEmitterEntity,
   engine: GameEngine,
-): () => void {
-  const fileName = entity.audioFileName ?? "";
+): (() => void) | undefined {
+  if (!entity.audioFileName) return;
+  let audioUrl: string;
+  try {
+    audioUrl = audioToUrl(entity.audioFileName);
+  } catch {
+    return;
+  }
   const volume = entity.audioVolume ?? 1;
   const minDistance = entity.audioMinDistance ?? 1;
   const maxDistance = entity.audioMaxDistance ?? 1;
-  const minLoopGap = entity.audioMinLoopGap ?? 0;
-  const maxLoopGap = entity.audioMaxLoopGap ?? 0;
   const is3D = entity.audioIs3D ?? true;
   const isLooping = entity.audioIsLooping ?? true;
+  const minGap = Math.max(0, entity.audioMinLoopGap ?? 0);
+  const maxGap = Math.max(minGap, entity.audioMaxLoopGap ?? 0);
+  const hasLoopGap = isLooping && maxGap > 0;
+  const loopDelay = hasLoopGap
+    ? (minGap + Math.random() * (maxGap - minGap)) / 1000
+    : 0;
   const emitterPos = new Vector3(...(entity.position ?? [0, 0, 0]));
-  const randomValue = Math.random();
   const { audioLoader, audioListener } = getAudioGraph();
 
-  let loopTimer: ReturnType<typeof setTimeout> | null = null;
-  let loopGapTimer: ReturnType<typeof setTimeout> | null = null;
-  let loaded = false;
-  let inRange = false;
-  let stopped = false;
+  let pendingLoad: PendingEmitterLoad | undefined;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  let inRange = !is3D;
+  let disposed = false;
 
-  const clearTimers = () => {
-    if (loopTimer != null) clearTimeout(loopTimer);
-    if (loopGapTimer != null) clearTimeout(loopGapTimer);
-    loopTimer = loopGapTimer = null;
+  const cancelRetry = () => {
+    clearTimeout(retryTimer);
+    retryTimer = undefined;
   };
 
   let sound: Audio<GainNode | PannerNode>;
@@ -66,83 +79,75 @@ function startEmitterSound(
     sound = new Audio(audioListener);
     sound.setVolume(volume);
   }
+  sound.setLoop(isLooping && !hasLoopGap);
 
-  const setupLooping = () => {
-    if (!isLooping) return;
-    if (minLoopGap > 0 || maxLoopGap > 0) {
-      const gapMin = Math.max(0, minLoopGap);
-      const gapMax = Math.max(gapMin, maxLoopGap);
-      const gap =
-        gapMin === gapMax ? gapMin : randomValue * (gapMax - gapMin) + gapMin;
-      sound.setLoop(false);
-      const checkLoop = () => {
-        if (stopped) return;
-        if (sound.isPlaying === false) {
-          loopTimer = setTimeout(() => {
-            if (stopped) return;
-            try {
-              sound.play();
-              setupLooping();
-            } catch {
-              /* expected */
-            }
-          }, gap);
-        } else {
-          loopGapTimer = setTimeout(checkLoop, 100);
-        }
-      };
-      loopGapTimer = setTimeout(checkLoop, 100);
-    } else {
-      sound.setLoop(true);
+  const play = (delay = 0) => {
+    if (disposed || !inRange || !sound.buffer || sound.isPlaying) return;
+    try {
+      sound.play(delay);
+    } catch {
+      // The audio device may have gone away.
     }
   };
 
-  // Load once, then play (and restart after a stop).
+  const onEnded = sound.onEnded.bind(sound);
+  sound.onEnded = () => {
+    onEnded();
+    sound.disconnect();
+    // The shared context pauses the gap together with the rest of the mix.
+    if (hasLoopGap) play(loopDelay);
+  };
+
   const loadAndPlay = () => {
-    if (!loaded) {
-      let audioUrl: string;
-      try {
-        audioUrl = audioToUrl(fileName);
-      } catch {
-        return;
-      }
-      getCachedAudioBuffer(audioUrl, audioLoader, (audioBuffer) => {
-        if (stopped || sound.buffer) return;
-        sound.setBuffer(audioBuffer);
-        loaded = true;
-        try {
-          sound.play();
-          setupLooping();
-        } catch {
-          /* expected */
-        }
-      });
-    } else if (!sound.isPlaying) {
-      try {
-        sound.play();
-        setupLooping();
-      } catch {
-        /* expected */
-      }
+    if (disposed || !inRange || retryTimer !== undefined) return;
+    if (sound.buffer) {
+      play();
+      return;
+    }
+    if (pendingLoad) return;
+    const request: PendingEmitterLoad = {};
+    pendingLoad = request;
+    const settle = () => {
+      if (pendingLoad !== request) return false;
+      pendingLoad = undefined;
+      return true;
+    };
+    const onError = () => {
+      if (!settle() || !inRange) return;
+      // The cache owns retry backoff for the URL. This wakes the emitter even
+      // when the canvas is rendering on demand.
+      retryTimer = setTimeout(() => {
+        retryTimer = undefined;
+        loadAndPlay();
+      }, EMITTER_RETRY_MS);
+    };
+    try {
+      request.unsubscribe = getCachedAudioBuffer(
+        audioUrl,
+        audioLoader,
+        (buffer) => {
+          if (!settle()) return;
+          sound.setBuffer(buffer);
+          play();
+        },
+        onError,
+      );
+      if (disposed) request.unsubscribe();
+    } catch {
+      onError();
     }
   };
 
-  if (!is3D && fileName) loadAndPlay();
+  if (!is3D) loadAndPlay();
 
   return combineCleanups(
     () => {
-      stopped = true;
-      clearTimers();
-      try {
-        sound.stop();
-      } catch {
-        /* already stopped */
-      }
-      try {
-        sound.disconnect();
-      } catch {
-        /* already disconnected */
-      }
+      disposed = true;
+      cancelRetry();
+      pendingLoad?.unsubscribe?.();
+      pendingLoad = undefined;
+      stopAndDetachSound(sound);
+      sound.gain.disconnect();
     },
     is3D
       ? engine.withHost(({ scene }) => {
@@ -152,20 +157,19 @@ function startEmitterSound(
       : undefined,
     // 3D emitters: load/play when the camera comes in range, stop when it
     // leaves.
-    is3D && fileName
+    is3D
       ? engine.scheduler.add(FramePriority.PostCamera, ({ camera }) => {
           const nowInRange =
             camera.position.distanceTo(emitterPos) <= maxDistance;
-          if (nowInRange && !inRange) {
-            inRange = true;
+          if (nowInRange === inRange) return;
+          inRange = nowInRange;
+          if (inRange) {
             loadAndPlay();
-          } else if (!nowInRange && inRange) {
-            inRange = false;
-            clearTimers();
-            try {
+          } else {
+            cancelRetry();
+            if (sound.isPlaying) {
               sound.stop();
-            } catch {
-              /* expected */
+              sound.disconnect();
             }
           }
         })

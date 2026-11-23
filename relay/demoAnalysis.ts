@@ -16,7 +16,7 @@ import { parseMissionSequence } from "./shared.js";
 import {
   extractMissionInfo,
   parseDemoValues,
-} from "../src/stream/demoStreaming";
+} from "../src/stream/demoInitialValues";
 import { parseDemoHeaderDate } from "../src/stream/demoDate";
 import { MAX_USER_DEMO_DECOMPRESSED_BYTES } from "./userDemoTypes.js";
 

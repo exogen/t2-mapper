@@ -37,6 +37,16 @@ const APP_ORIGIN = "http://localhost:3000";
 const SECRET = "this-is-a-test-secret-with-at-least-thirty-two-bytes";
 const cleanups: Array<() => Promise<void>> = [];
 
+function discordTokenResponse(label = "provider"): Response {
+  return Response.json({
+    access_token: `${label}-access-secret`,
+    refresh_token: `${label}-refresh-secret`,
+    token_type: "Bearer",
+    expires_in: 3600,
+    scope: "identify",
+  });
+}
+
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
   vi.unstubAllGlobals();
@@ -189,6 +199,8 @@ async function fixture({
   const originalFetch = globalThis.fetch;
   const providerRequests: string[] = [];
   const codeChallenges = new Set<string>();
+  let nextTokenResponse: Response | Promise<Response> | undefined;
+  let nextProfileResponse: Response | Promise<Response> | undefined;
   vi.stubGlobal(
     "fetch",
     async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
@@ -202,22 +214,25 @@ async function fixture({
         providerRequests.push(url);
         if (url === "https://discord.com/api/oauth2/token") {
           const params = new URLSearchParams(String(init?.body));
-          const verifier = params.get("code_verifier");
-          expect(verifier).toMatch(/^[A-Za-z0-9._~-]{43,128}$/);
-          const challenge = createHash("sha256")
-            .update(verifier!)
-            .digest("base64url");
-          expect(codeChallenges.delete(challenge)).toBe(true);
-          return Response.json({
-            access_token: "provider-access-secret",
-            refresh_token: "provider-refresh-secret",
-            token_type: "Bearer",
-            expires_in: 3600,
-            scope: "identify",
-          });
+          if (params.get("grant_type") === "refresh_token") {
+            expect(params.get("refresh_token")).toBe("provider-refresh-secret");
+          } else {
+            const verifier = params.get("code_verifier");
+            expect(verifier).toMatch(/^[A-Za-z0-9._~-]{43,128}$/);
+            const challenge = createHash("sha256")
+              .update(verifier!)
+              .digest("base64url");
+            expect(codeChallenges.delete(challenge)).toBe(true);
+          }
+          const response = nextTokenResponse;
+          nextTokenResponse = undefined;
+          return response ?? discordTokenResponse();
         }
-        if (decodeURIComponent(url) === "https://discord.com/api/users/@me")
-          return Response.json(profile);
+        if (decodeURIComponent(url) === "https://discord.com/api/users/@me") {
+          const response = nextProfileResponse;
+          nextProfileResponse = undefined;
+          return response ?? Response.json(profile);
+        }
         throw new Error(`Unexpected Discord request ${url}`);
       }
       return originalFetch(input, init);
@@ -322,6 +337,12 @@ async function fixture({
     setProfile: (value: Partial<DiscordProfile>) => {
       profile = { ...profile, ...value };
     },
+    setNextTokenResponse: (response: Response | Promise<Response>) => {
+      nextTokenResponse = response;
+    },
+    setNextProfileResponse: (response: Response | Promise<Response>) => {
+      nextProfileResponse = response;
+    },
     restart: async () => {
       service?.close();
       service = await createAppAuth({
@@ -425,6 +446,161 @@ it("returns only a cached public Discord profile without requiring a session", a
     name: "New display name",
     discordUsername: "new_handle",
   });
+});
+
+it("refreshes an old Discord profile once in the background after sign-out", async () => {
+  const app = await fixture();
+  await app.login();
+  const original = (await app.account())!;
+  expect(
+    (await app.request("/api/auth/sign-out", { method: "POST" })).status,
+  ).toBe(200);
+  expect(await app.account()).toBeNull();
+  app.database
+    .prepare(
+      'UPDATE "user" SET "discordProfileCheckedAt" = NULL WHERE "id" = ?',
+    )
+    .run(original.id);
+  app.database
+    .prepare(
+      'UPDATE "account" SET "accessTokenExpiresAt" = ? WHERE "userId" = ?',
+    )
+    .run(Date.now() - 60_000, original.id);
+
+  const route = `/api/users/${USER_ID}`;
+  const providerRequestCount = app.providerRequests.length;
+  let sendProfile!: (response: Response) => void;
+  app.setNextProfileResponse(
+    new Promise<Response>((resolve) => {
+      sendProfile = resolve;
+    }),
+  );
+  const avatar = "7e56211ee9fa3f62256732cdfb74a65f";
+  const refreshed = {
+    id: USER_ID,
+    username: "new_handle",
+    global_name: "New display name",
+    discriminator: "0",
+    avatar,
+  };
+  const cached = {
+    discordId: USER_ID,
+    name: original.name,
+    discordUsername: original.discordUsername,
+    image: original.image,
+    t2AccountNames: [],
+    t2Profile: null,
+  };
+
+  try {
+    const first = await app.request(route, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    expect(first.status).toBe(200);
+    expect(first.headers.getSetCookie()).toEqual([]);
+    expect(await first.json()).toEqual(cached);
+    await vi.waitFor(() =>
+      expect(app.providerRequests).toHaveLength(providerRequestCount + 2),
+    );
+    const overlapping = await app.request(route, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    expect(await overlapping.json()).toEqual(cached);
+    expect(app.providerRequests).toHaveLength(providerRequestCount + 2);
+  } finally {
+    sendProfile(Response.json(refreshed));
+  }
+
+  await vi.waitFor(async () => {
+    expect(await (await app.request(route)).json()).toEqual({
+      ...cached,
+      name: refreshed.global_name,
+      discordUsername: refreshed.username,
+      image: expect.stringContaining(avatar),
+    });
+  });
+  expect(
+    app.providerRequests.slice(providerRequestCount).map(decodeURIComponent),
+  ).toEqual([
+    "https://discord.com/api/oauth2/token",
+    "https://discord.com/api/users/@me",
+  ]);
+});
+
+it("retains the cached Discord profile and cools down after a refresh failure", async () => {
+  const app = await fixture();
+  await app.login();
+  const route = `/api/users/${USER_ID}`;
+  const publicRequest = () => app.request(route, { headers: { Cookie: "" } });
+  const cached = await (await publicRequest()).json();
+  app.database
+    .prepare('UPDATE "user" SET "discordProfileCheckedAt" = ?')
+    .run(Date.now() - 25 * 60 * 60_000);
+  app.setNextProfileResponse(Response.json({}, { status: 401 }));
+  const providerRequestCount = app.providerRequests.length;
+
+  expect(await (await publicRequest()).json()).toEqual(cached);
+  await vi.waitFor(() =>
+    expect(app.providerRequests).toHaveLength(providerRequestCount + 1),
+  );
+  expect(await (await publicRequest()).json()).toEqual(cached);
+  expect(app.providerRequests).toHaveLength(providerRequestCount + 1);
+});
+
+it("keeps newer sign-in credentials when a background token exchange finishes late", async () => {
+  const app = await fixture();
+  await app.login();
+  app.database.exec('UPDATE "user" SET "discordProfileCheckedAt" = NULL');
+  app.database
+    .prepare('UPDATE "account" SET "accessTokenExpiresAt" = ?')
+    .run(Date.now() - 60_000);
+  const readTokens = app.database.prepare(
+    'SELECT "accessToken", "refreshToken" FROM "account"',
+  );
+  const originalTokens = JSON.stringify(readTokens.get());
+
+  const prepare = vi.spyOn(app.database, "prepare");
+  await app.restart();
+  const saveIndex = prepare.mock.calls.findIndex(([sql]) =>
+    sql.includes('"accessToken" IS @previousAccessToken'),
+  );
+  expect(saveIndex).toBeGreaterThanOrEqual(0);
+  const saveTokens = vi.spyOn(prepare.mock.results[saveIndex].value, "run");
+
+  const requestCount = app.providerRequests.length;
+  let finishRefresh!: (response: Response) => void;
+  app.setNextTokenResponse(
+    new Promise<Response>((resolve) => {
+      finishRefresh = resolve;
+    }),
+  );
+  let signedInTokens: string;
+  let requestCountAfterLogin: number;
+  try {
+    const cached = await app.request(`/api/users/${USER_ID}`, {
+      headers: { Cookie: "" },
+    });
+    expect(cached.status).toBe(200);
+    await vi.waitFor(() => {
+      expect(app.providerRequests.slice(requestCount)).toEqual([
+        "https://discord.com/api/oauth2/token",
+      ]);
+    });
+
+    app.setNextTokenResponse(discordTokenResponse("new-sign-in"));
+    await app.login();
+    signedInTokens = JSON.stringify(readTokens.get());
+    expect(signedInTokens !== originalTokens).toBe(true);
+    requestCountAfterLogin = app.providerRequests.length;
+  } finally {
+    finishRefresh(discordTokenResponse("background-refresh"));
+  }
+
+  // Wait for the conditional write to settle before checking the stored grant.
+  await vi.waitFor(() => expect(saveTokens).toHaveBeenCalledTimes(1));
+  expect(saveTokens.mock.results[0].value.changes).toBe(0);
+  expect(JSON.stringify(readTokens.get()) === signedInTokens).toBe(true);
+  expect(app.providerRequests).toHaveLength(requestCountAfterLogin);
 });
 
 it("rejects malformed public IDs and looks up only linked Discord identities", async () => {

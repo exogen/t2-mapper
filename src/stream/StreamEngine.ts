@@ -12,7 +12,8 @@ import {
   resolveStreamPrecipitation,
 } from "../weather/data";
 import { THRUST_BACKWARD, THRUST_DOWN, THRUST_FORWARD } from "./types";
-import { GroundEffectHistory, type GroundActor } from "./groundEffectHistory";
+import { GroundEffectQueue, type GroundActor } from "./groundEffectQueue";
+import { emptyGroundEffectState } from "./groundEffectCheckpoint";
 import { timelineRandom } from "./timelineRandom";
 import { decodeVehicleSteering, wheelRotationAt } from "./vehicleWheels";
 import { updateClientAnimation } from "./clientAnimation";
@@ -480,7 +481,9 @@ function snapshotEntityPosition(entity: MutableEntity): Point3 | undefined {
  * source: DemoParser blocks for demo playback, or PacketParser for live.
  */
 export abstract class StreamEngine implements StreamingPlayback {
-  readonly groundEffectHistory = new GroundEffectHistory();
+  readonly groundEffectQueue = new GroundEffectQueue(undefined, () =>
+    this.recordGroundEffects(),
+  );
   readonly debrisHistory = new DebrisHistory();
   readonly projectileTrailHistory = new ProjectileTrailHistory((id) =>
     this.getDataBlockData(id),
@@ -501,12 +504,15 @@ export abstract class StreamEngine implements StreamingPlayback {
     hydrating: boolean;
   };
 
+  getDiagnosticMetrics(): Record<string, number | null> {
+    return this.groundEffectQueue.getMetrics();
+  }
+
   /** Render effects must discard the previous world after reset or restore. */
   get worldGeneration(): number {
     return this._worldGeneration;
   }
 
-  private groundLifetimeData = new Map<number, number>();
   private ambientEmitterData = new Map<
     number,
     {
@@ -618,50 +624,15 @@ export abstract class StreamEngine implements StreamingPlayback {
     return resolved;
   }
 
-  private groundRetentionSec(dataBlockId: number): number {
-    const cached = this.groundLifetimeData.get(dataBlockId);
-    if (cached !== undefined) return cached;
-    const db = this.getDataBlockData(dataBlockId);
-    if (!db) return 0;
-    let complete = true,
-      retention = 0;
-    for (const name of [
-      "footPuffEmitter",
-      "dustEmitter",
-      "dustTrailEmitter",
-      "tireEmitter",
-    ]) {
-      const id = db[name];
-      if (typeof id !== "number") continue;
-      const emitter = this.getDataBlockData(id);
-      if (!emitter) {
-        complete = false;
-        continue;
-      }
-      for (const particleId of (emitter.particles as
-        (number | null)[] | undefined) ?? []) {
-        if (particleId == null) continue;
-        const particle = this.getDataBlockData(particleId);
-        if (!particle) {
-          complete = false;
-          continue;
-        }
-        const lifetime =
-          (Number(particle.lifetimeMS ?? 0) +
-            Number(particle.lifetimeVarianceMS ?? 0)) *
-          32;
-        if (Number.isFinite(lifetime))
-          retention = Math.max(retention, lifetime / 1000 + 1);
-      }
-    }
-    // References may arrive in later packets. Cache the duration, not whether
-    // it was applied: restoring a checkpoint can restore a shorter window.
-    if (complete) this.groundLifetimeData.set(dataBlockId, retention);
-    return retention;
-  }
-
-  /** Capture simulation inputs even when models have not loaded yet. */
+  /** Capture only ticks requested by an active presentation consumer. */
   protected recordGroundEffects(): void {
+    if (
+      !this.groundEffectQueue.capturing ||
+      !this.presentationEffectsEnabled ||
+      !this.groundEffectsEnabled ||
+      this.matchEnded
+    )
+      return;
     const actors: GroundActor[] = [];
     for (const entity of this.entities.values()) {
       if (
@@ -670,10 +641,6 @@ export abstract class StreamEngine implements StreamingPlayback {
         entity.dataBlockId == null
       )
         continue;
-      this.groundEffectHistory.retentionSec = Math.max(
-        this.groundEffectHistory.retentionSec,
-        this.groundRetentionSec(entity.dataBlockId),
-      );
       actors.push({
         key: `${entity.ghostIndex}:${entity.spawnTick}`,
         ghostIndex: entity.ghostIndex,
@@ -687,14 +654,18 @@ export abstract class StreamEngine implements StreamingPlayback {
         mounted: entity.mountObjectGhostIndex != null,
         jetting: entity.jetting,
         frozen: entity.frozen,
-        scale: entity.scale ? [...entity.scale] : undefined,
-        threads: entity.threads,
-        clientAnimation: entity.clientAnimation,
-        actionSlot: entity.actionSlot,
-        damageState: entity.damageState,
+        ...(entity.type === "Vehicle"
+          ? {
+              scale: entity.scale ? [...entity.scale] : undefined,
+              threads: entity.threads,
+            }
+          : {
+              moveAnimation: entity.clientAnimation?.move,
+              actionSlot: entity.actionSlot,
+            }),
       });
     }
-    this.groundEffectHistory.append({
+    this.groundEffectQueue.append({
       timeSec: this.getTimeSec(),
       gravity: this.gravity,
       actors,
@@ -1290,7 +1261,7 @@ export abstract class StreamEngine implements StreamingPlayback {
           images.map((image) => image?.saveState()),
         ]),
       ),
-      groundEffects: this.groundEffectHistory.save(),
+      groundEffects: emptyGroundEffectState,
       debris: this.debrisHistory.save(),
       projectileTrails: this.projectileTrailHistory.save(),
       lightning: this.lightningHistory.save(),
@@ -1307,7 +1278,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       latestControl: { missileLock, ...latestControl },
       ...state
     } = cloneData(checkpoint.state);
-    this.groundEffectHistory.restore(checkpoint.groundEffects);
+    this.groundEffectQueue.clear();
     this.debrisHistory.restore(checkpoint.debris);
     // Every restore creates new render lifetimes. Reusing checkpoint IDs would
     // retain stale mounted models, effects and per-entity renderer caches.
@@ -1547,11 +1518,10 @@ export abstract class StreamEngine implements StreamingPlayback {
     // A reset invalidates every ghost, so the world is incomplete again
     // until the server says otherwise.
     this.ghostAlwaysDoneSec = null;
-    this.groundEffectHistory.clear();
+    this.groundEffectQueue.clear();
     this.debrisHistory.clear();
     this.projectileTrailHistory.clear();
     this.lightningHistory.clear();
-    this.groundLifetimeData.clear();
     this.ambientEmitterData.clear();
     this.entities.clear();
     this.playerForceFieldBoxes.clear();

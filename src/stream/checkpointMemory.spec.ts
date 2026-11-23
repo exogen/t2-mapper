@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { gzipSync } from "node:zlib";
 import { BlockTypeInfo } from "t2-demo-parser";
-import { DemoStreamAdapter, type DemoStreamingOptions } from "./demoStreaming";
+import {
+  DemoStreamAdapter,
+  type DemoSeekCheckpoint,
+  type DemoStreamingOptions,
+} from "./demoStreaming";
+import type { DemoCheckpointRepository } from "./demoCheckpointRepository";
+import { emptyGroundEffectState } from "./groundEffectCheckpoint";
 import { fakeDemoParser, moveBlock } from "./streamTestFixtures";
 import { PlaybackClock } from "./PlaybackClock";
 import { bytesToBase64, encodeCheckpoint } from "./checkpointCodec";
@@ -43,17 +49,41 @@ function stream(options: DemoStreamingOptions = {}, onRestore?: () => void) {
   playback.setPlayerPredictionEnabled(true);
   return playback;
 }
-async function index(ticks: number[]) {
+async function index(ticks: number[], legacyGroundEffects = false) {
   const source = stream({ checkpoints: false });
   const buffer = new Uint8Array([1, 2, 3]).buffer;
   const checkpoints = ticks.map((tick) => {
     source.stepToTime(atTick(tick));
+    const checkpoint = source.captureCheckpoint();
+    if (legacyGroundEffects) {
+      checkpoint.simulation.groundEffects = {
+        retentionSec: 8,
+        frames: [
+          {
+            timeSec: atTick(tick),
+            gravity: -20,
+            actors: [
+              {
+                key: "1:0",
+                ghostIndex: 1,
+                spawnTick: 0,
+                type: "Player",
+                className: "Player",
+                dataBlockId: 10,
+                mounted: false,
+                position: [1, 2, 3],
+                rotation: [0, 0, 0, 1],
+                velocity: [4, 5, 6],
+              },
+            ],
+          },
+        ],
+      };
+    }
     return {
       tick,
       description: "Anchor",
-      data: bytesToBase64(
-        gzipSync(encodeCheckpoint(source.captureCheckpoint())),
-      ),
+      data: bytesToBase64(gzipSync(encodeCheckpoint(checkpoint))),
     };
   });
   return readDemoCheckpointIndex(
@@ -69,6 +99,46 @@ async function index(ticks: number[]) {
 }
 
 describe("browser checkpoint retention", () => {
+  it("seeks through a legacy v24 lazy anchor without retaining or restoring its ground history", async () => {
+    const source = await index([2000], true);
+    const originalLoad = source.load;
+    let decoded: DemoSeekCheckpoint | undefined;
+    const load = vi
+      .spyOn(source, "load")
+      .mockImplementation(async (...args) => {
+        decoded = await originalLoad(...args);
+        return decoded;
+      });
+    const playback = stream({ checkpoints: false });
+    playback.installCheckpointIndex(source);
+    playback.stepToTime(atTick(2500));
+    await playback.checkpointWait;
+    const repository = (
+      playback as unknown as { checkpointRepository: DemoCheckpointRepository }
+    ).checkpointRepository;
+    const retained = repository.getImported(2000)!.checkpoint;
+    expect(retained).toBe(repository.get(2000));
+    expect(retained.simulation.groundEffects).toBe(emptyGroundEffectState);
+    expect(retained.simulation.state).toBe(decoded!.simulation.state);
+    expect(decoded!.simulation.groundEffects.frames[0].actors).toHaveLength(1);
+    for (const tick of [2500, 100, 2500]) {
+      const actual = playback.stepToTime(atTick(tick));
+      const expected = stream({ checkpoints: false }).stepToTime(atTick(tick));
+      expect(actual.timeSec).toBe(expected.timeSec);
+      expect(actual.camera).toEqual(expected.camera);
+      expect(playback.captureCheckpoint().simulation.groundEffects).toEqual({
+        frames: [],
+        retentionSec: 8,
+      });
+    }
+    expect(load).toHaveBeenCalledOnce();
+    expect(source.ticks).toEqual([2000]);
+    expect(playback.getDiagnosticMetrics()).toMatchObject({
+      groundEffectPendingFrames: 0,
+      groundEffectPendingActors: 0,
+      groundEffectQueueLimit: expect.any(Number),
+    });
+  });
   it.each([false, true])(
     "aborts discarded lazy work without stale events (decode started: %s)",
     async (started) => {

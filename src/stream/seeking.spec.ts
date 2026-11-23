@@ -838,58 +838,64 @@ describe("on-demand demo checkpoints", () => {
   });
 });
 
-it("reconstructs the ground effect input window across checkpoint restores", () => {
-  const stream = demo(
-    Array.from({ length: DEMO_CHECKPOINT_TICKS + 300 }, move),
-  );
-  const target = (DEMO_CHECKPOINT_TICKS + 280) * 0.032;
-  stream.stepToTime(target);
-  const expected = structuredClone(stream.groundEffectHistory!.save());
-  stream.stepToTime(1);
-  stream.stepToTime(target);
-  expect(stream.groundEffectHistory!.save()).toEqual(expected);
-  expect(expected.frames.every((f) => f.timeSec <= target)).toBe(true);
-  expect(expected.frames.length).toBeLessThanOrEqual(251);
-});
-it("avoids ground effect history in headless scans", () => {
-  const stream = demo(timeline(), { checkpoints: false, groundEffects: false });
-  stream.stepToTime(3.2);
-  expect(stream.groundEffectHistory!.save().frames).toHaveLength(0);
-});
-
-it("extends ground history when a referenced particle datablock arrives late", () => {
-  const stream = demo(Array.from({ length: 100 }, move));
-  const data = new Map<number, Record<string, unknown>>([
-    [1, { tireEmitter: 10 }],
-  ]);
-  stream.getDataBlockData = (id) => data.get(id);
+it("captures ground ticks only while a renderer owns the queue", () => {
+  const stream = demo(Array.from({ length: 400 }, move));
+  const queue = stream.groundEffectQueue!;
   stream.stepToTime(0.32);
-  expect(stream.groundEffectHistory!.retentionSec).toBe(8);
-  data.set(10, { particles: [30] });
+  expect(stream.getDiagnosticMetrics?.().groundEffectPendingFrames).toBe(0);
+  const consumer = queue.connect();
   stream.stepToTime(0.64);
-  data.set(30, { lifetimeMS: 400, lifetimeVarianceMS: 50 });
-  stream.stepToTime(0.96);
-  expect(stream.groundEffectHistory!.retentionSec).toBeCloseTo(15.4);
+  const ticks: number[] = [];
+  queue.consumeThrough(-Infinity, 0.64, (frame) => ticks.push(frame.timeSec));
+  expect(ticks).toHaveLength(10);
+  expect(ticks[0]).toBeCloseTo(0.352);
+  expect(ticks.at(-1)).toBeCloseTo(0.64);
+  expect(queue.getMetrics().groundEffectPendingFrames).toBe(0);
+  consumer.setCapturing(false);
+  stream.stepToTime(9.6);
+  expect(stream.getDiagnosticMetrics?.().groundEffectPendingFrames).toBe(0);
+  consumer.setCapturing(true);
+  queue.discardThrough(9.6);
+  stream.stepToTime(9.632);
+  queue.consumeThrough(-Infinity, 10, (frame) => ticks.push(frame.timeSec));
+  expect(ticks).toHaveLength(11);
+  expect(ticks.at(-1)).toBeCloseTo(9.632);
+  consumer.dispose();
 });
 
-it("recomputes ground history lifetimes after restoring an earlier checkpoint", () => {
-  const stream = demo([
-    ...Array.from({ length: DEMO_CHECKPOINT_TICKS + 50 }, move),
-    packet(update({ dataBlockId: 3 })),
-    ...Array.from({ length: 100 }, move),
-  ]);
-  const original = stream.getDataBlockData.bind(stream);
-  const data: Record<number, Record<string, unknown>> = {
-    3: { tireEmitter: 10 },
-    10: { particles: [30] },
-    30: { lifetimeMS: 400, lifetimeVarianceMS: 50 },
-  };
-  stream.getDataBlockData = (id) => data[id] ?? original(id);
-  const target = (DEMO_CHECKPOINT_TICKS + 100) * 0.032;
-  stream.stepToTime(target);
-  expect(stream.groundEffectHistory!.retentionSec).toBeCloseTo(15.4);
-  stream.stepToTime((DEMO_CHECKPOINT_TICKS + 10) * 0.032);
-  expect(stream.groundEffectHistory!.retentionSec).toBe(8);
-  stream.stepToTime(target);
-  expect(stream.groundEffectHistory!.retentionSec).toBeCloseTo(15.4);
+it("avoids ground inputs in headless scans even when stepping over checkpoints", () => {
+  const stream = demo(Array.from({ length: DEMO_CHECKPOINT_TICKS + 10 }, move));
+  stream.stepToTime((DEMO_CHECKPOINT_TICKS + 5) * 0.032);
+  expect(stream.checkpointTicks).not.toEqual([]);
+  expect(stream.getDiagnosticMetrics?.().groundEffectPendingActors).toBe(0);
+  expect(stream.getDiagnosticMetrics?.().groundEffectPendingFrames).toBe(0);
+  expect(stream.groundEffectQueue!.getMetrics().groundEffectPendingFrames).toBe(
+    0,
+  );
+});
+
+it("allows analysis callers to disable ground inputs even with a queue consumer", () => {
+  const stream = demo(timeline(), { checkpoints: false, groundEffects: false });
+  const consumer = stream.groundEffectQueue!.connect();
+  stream.stepToTime(3.2);
+  expect(stream.getDiagnosticMetrics?.().groundEffectPendingFrames).toBe(0);
+  consumer.dispose();
+});
+
+it("queues the already-computed interpolation tick when ground capture resumes", () => {
+  const stream = demo(Array.from({ length: 120 }, move));
+  const queue = stream.groundEffectQueue!;
+  const consumer = queue.connect();
+  consumer.setCapturing(false);
+  // Seeking computes one future tick while presentation capture is suspended.
+  stream.stepToTime(atTick(101));
+  expect(queue.getMetrics().groundEffectPendingFrames).toBe(0);
+  consumer.setCapturing(true);
+  const ticks: number[] = [];
+  queue.discardThrough(100 * 0.032);
+  queue.consumeThrough(-Infinity, 101 * 0.032, (frame) =>
+    ticks.push(frame.timeSec),
+  );
+  expect(ticks).toEqual([101 * 0.032]);
+  consumer.dispose();
 });

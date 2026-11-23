@@ -6,7 +6,7 @@ import {
   streamPlaybackStore,
 } from "../state/streamPlaybackStore";
 import { connectAudioPlayback } from "./audioPlayback";
-import { getAudioGraph, getPlaybackFade } from "./audioGraph";
+import { getAudioGraph } from "./audioGraph";
 import { installMissileLockAudio } from "./missileLockAudio";
 import { preloadMatchSounds } from "./preloadMatchSounds";
 import { FramePriority } from "./framePriority";
@@ -43,13 +43,23 @@ function liveSessionDead(): boolean {
  */
 export function installAudio(engine: GameEngine): () => void {
   const audio = getAudioGraph();
-  const { audioLoader, audioListener } = audio;
+  const { audioLoader, audioListener, outputFade } = audio;
+  let masterTarget: number | undefined;
+  const updateMasterVolume = () => {
+    const { audioEnabled, audioVolume } = settingsStore.getState();
+    const target =
+      (audioEnabled && !liveSessionDead() ? audioVolume : 0) *
+      (commentaryPlayback.active ? COMMENTARY_DUCK : 1);
+    if (target === masterTarget) return;
+    masterTarget = target;
+    audioListener.setMasterVolume(target);
+  };
 
   // Suspend all sounds at their current positions while a stream is
   // stopped, paused or seeking. At natural EOF only chat stays audible
   // until the final sounds finish.
   const playback = connectAudioPlayback(audioListener.context, {
-    output: getPlaybackFade(),
+    output: outputFade,
     world: audioListener.world,
     chat: audioListener.chat,
   });
@@ -58,9 +68,7 @@ export function installAudio(engine: GameEngine): () => void {
   // resume to finish before suspending again. Overlapping opposite requests
   // can leave Chrome reporting "running" with a frozen audio clock.
   const onGesture = () => playback.unlock();
-  // Also re-assert on visibility changes: a context created while the
-  // tab is in the background can come up suspended with no gesture in
-  // sight, and coming back to the tab is not itself a gesture.
+  // Reconcile interruptions and verify the audio clock on foregrounding.
   const onVisibility = () => playback.reconcile();
   const gestures = ["pointerdown", "click", "keydown", "touchend"] as const;
   for (const type of gestures) document.addEventListener(type, onGesture);
@@ -76,6 +84,11 @@ export function installAudio(engine: GameEngine): () => void {
     },
     reaction(
       settingsStore,
+      (state) => (state.audioEnabled ? state.audioVolume : 0),
+      updateMasterVolume,
+    ),
+    reaction(
+      settingsStore,
       (state) => state.audioEnabled,
       (enabled) => (enabled ? preloadMatchSounds(audioLoader) : undefined),
     ),
@@ -85,12 +98,7 @@ export function installAudio(engine: GameEngine): () => void {
     engine.scheduler.add(FramePriority.ShadowAtlas, ({ camera }) => {
       if (audioListener.parent !== camera) camera.add(audioListener);
     }),
-    engine.scheduler.add(FramePriority.PostCamera, () => {
-      const target =
-        (liveSessionDead() ? 0 : settingsStore.getState().audioVolume) *
-        (commentaryPlayback.active ? COMMENTARY_DUCK : 1);
-      if (audioListener.getMasterVolume() !== target)
-        audioListener.setMasterVolume(target);
-    }),
+    // Reconcile ducking and live-session state even when preferences haven't changed.
+    engine.scheduler.add(FramePriority.PostCamera, updateMasterVolume),
   );
 }

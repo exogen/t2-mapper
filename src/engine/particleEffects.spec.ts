@@ -44,6 +44,13 @@ vi.mock("../state/settingsStore", () => ({
 }));
 vi.mock("./audioGraph", () => ({ getAudioGraph: () => ({}) }));
 vi.mock("./soundEffects", () => ({}));
+vi.mock("./projectileAudio", () => ({
+  createProjectileAudio: () => ({
+    update: vi.fn(),
+    reset: vi.fn(),
+    dispose: vi.fn(),
+  }),
+}));
 vi.mock("../loaders", () => ({}));
 vi.mock("../state/engineStore", () => ({
   engineStore: { getState: () => ({ playback: test.transport }) },

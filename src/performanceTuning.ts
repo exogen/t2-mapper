@@ -46,6 +46,13 @@ export const performanceTuning = {
     maximumEntries: { constrained: 256, desktop: 512 },
   },
 
+  groundEffects: {
+    /** Pending ticks between simulation and rendering, never checkpoint history.
+     * 256 covers a 250 ms render frame at 16x plus interpolation lookahead.
+     * Overflow discards missed effects and resets emission origins. */
+    maximumPendingFrames: 256,
+  },
+
   browserCheckpoints: {
     /** Entry counts, not graph-byte estimates. Lower limits can increase
      * replay/decode work on seeks. Offline readers retain their own policy. */

@@ -1,6 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AudioLoader } from "three";
-import { audioBufferCache, getCachedAudioBuffer } from "./audioBuffers";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import {
+  audioBufferCache,
+  createAudioBufferLoader,
+  getCachedAudioBuffer,
+  type AudioBufferLoader,
+} from "./audioBuffers";
 
 vi.mock("../logger", () => ({
   createLogger: () => ({ error: vi.fn() }),
@@ -9,12 +13,14 @@ vi.mock("../logger", () => ({
 function loader() {
   let complete!: (buffer: AudioBuffer) => void;
   let fail!: (error: unknown) => void;
-  const load = vi.fn((_url, onLoad, _progress, onError) => {
-    complete = onLoad;
-    fail = onError;
-  });
+  const load = vi.fn<AudioBufferLoader["load"]>(
+    (_url, onLoad, _progress, onError) => {
+      complete = onLoad;
+      fail = onError;
+    },
+  );
   return {
-    loader: { load } as unknown as AudioLoader,
+    loader: { load },
     load,
     complete: (buffer: AudioBuffer) => complete(buffer),
     fail: (error: unknown) => fail(error),
@@ -22,6 +28,13 @@ function loader() {
 }
 
 beforeEach(() => audioBufferCache.clear());
+
+function useAudioTimers() {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  onTestFinished(() => {
+    vi.useRealTimers();
+  });
+}
 
 describe("shared audio buffers", () => {
   it("delivers oversized buffers to all pending owners without retaining them in the cache", () => {
@@ -85,7 +98,8 @@ describe("shared audio buffers", () => {
     expect(secondLoader.load).not.toHaveBeenCalled();
   });
 
-  it("notifies all failed owners and permits a later retry", () => {
+  it("notifies all failed owners and shares one later retry after backoff", () => {
+    useAudioTimers();
     const source = loader();
     const firstError = vi.fn(),
       secondError = vi.fn();
@@ -98,9 +112,68 @@ describe("shared audio buffers", () => {
     expect(secondError).toHaveBeenCalledExactlyOnceWith(error);
     expect(onLoad).not.toHaveBeenCalled();
     getCachedAudioBuffer("retry.wav", source.loader, onLoad);
+    const nextOnLoad = vi.fn();
+    getCachedAudioBuffer("retry.wav", source.loader, nextOnLoad);
+    expect(source.load).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(1000);
     expect(source.load).toHaveBeenCalledTimes(2);
     source.complete({} as AudioBuffer);
     expect(onLoad).toHaveBeenCalledOnce();
+    expect(nextOnLoad).toHaveBeenCalledOnce();
+  });
+
+  it("aborts a stalled request with no subscribers and rejects late completion", () => {
+    useAudioTimers();
+    const stalled = loader();
+    const recovered = loader();
+    const dropped = vi.fn();
+    const onLoad = vi.fn();
+    const onError = vi.fn();
+    const url = "stalled.wav";
+    const unsubscribe = getCachedAudioBuffer(url, stalled.loader, dropped);
+    unsubscribe();
+    const signal = stalled.load.mock.calls[0][4];
+    vi.advanceTimersByTime(10_000);
+    expect(signal.aborted).toBe(true);
+    expect(signal.reason).toMatchObject({ name: "TimeoutError" });
+    getCachedAudioBuffer(url, recovered.loader, onLoad, onError);
+    vi.advanceTimersByTime(1000);
+    expect(recovered.load).toHaveBeenCalledOnce();
+    stalled.complete({} as AudioBuffer);
+    expect(dropped).not.toHaveBeenCalled();
+    expect(onLoad).not.toHaveBeenCalled();
+    expect(audioBufferCache.has(url)).toBe(false);
+    const buffer = {} as AudioBuffer;
+    recovered.complete(buffer);
+    expect(onLoad).toHaveBeenCalledExactlyOnceWith(buffer);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("backs off on consecutive failures and resets after a successful decode", () => {
+    useAudioTimers();
+    const source = loader();
+    const onLoad = vi.fn();
+    const url = "consecutive-failures.wav";
+    getCachedAudioBuffer(url, source.loader, onLoad);
+    source.fail(new Error("first failure"));
+    getCachedAudioBuffer(url, source.loader, onLoad);
+    vi.advanceTimersByTime(1000);
+    source.fail(new Error("second failure"));
+    getCachedAudioBuffer(url, source.loader, onLoad);
+    vi.advanceTimersByTime(1000);
+    expect(source.load).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(1000);
+    expect(source.load).toHaveBeenCalledTimes(3);
+    source.complete({} as AudioBuffer);
+    expect(onLoad).toHaveBeenCalledOnce();
+    audioBufferCache.delete(url);
+    getCachedAudioBuffer(url, source.loader, onLoad);
+    source.fail(new Error("new failure"));
+    getCachedAudioBuffer(url, source.loader, onLoad);
+    vi.advanceTimersByTime(1000);
+    expect(source.load).toHaveBeenCalledTimes(5);
+    source.complete({} as AudioBuffer);
+    expect(onLoad).toHaveBeenCalledTimes(2);
   });
 
   it("does not let one owner's callback prevent other owners receiving their buffer", () => {
@@ -139,4 +212,28 @@ describe("shared audio buffers", () => {
     source.fail(new Error("network failure"));
     expect(onError).toHaveBeenCalledOnce();
   });
+});
+
+it("fetches with the shared request's signal and decodes on the given context", async () => {
+  const bytes = new ArrayBuffer(8);
+  const buffer = {} as AudioBuffer;
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    arrayBuffer: async () => bytes,
+  }));
+  vi.stubGlobal("fetch", fetchMock);
+  onTestFinished(() => {
+    vi.unstubAllGlobals();
+  });
+  const decodeAudioData = vi.fn(async () => buffer);
+  const loader = createAudioBufferLoader({ decodeAudioData });
+  const controller = new AbortController();
+  const decoded = new Promise<AudioBuffer>((resolve, reject) => {
+    loader.load("decoded.m4a", resolve, undefined, reject, controller.signal);
+  });
+  await expect(decoded).resolves.toBe(buffer);
+  expect(fetchMock).toHaveBeenCalledExactlyOnceWith("decoded.m4a", {
+    signal: controller.signal,
+  });
+  expect(decodeAudioData).toHaveBeenCalledExactlyOnceWith(bytes);
 });

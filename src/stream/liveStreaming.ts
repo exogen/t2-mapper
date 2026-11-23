@@ -224,6 +224,7 @@ export class LiveStreamAdapter extends StreamEngine {
       mode: "observer",
     };
     this._snapshot = this.buildSnapshot(false);
+    this._snapshot.playbackRevision = this.playbackRevision;
     this._snapshotTick = this.tickCount;
     return this._snapshot;
   }
@@ -298,6 +299,7 @@ export class LiveStreamAdapter extends StreamEngine {
   hydrate(payload: WatchCatchupPayload): void {
     // Fresh engine state (clears entities, HUD, net strings, targets).
     this.reset();
+    this.playbackRevision++;
     this.seedHydration(payload);
     if (
       typeof payload.worldGravity === "number" &&
@@ -430,7 +432,6 @@ export class LiveStreamAdapter extends StreamEngine {
       );
     }
     this.onMissionInfoChange?.();
-    this.playbackRevision++;
     log.info(
       "hydrated epoch %d: %d entities, %d datablocks, %d net strings",
       payload.epoch,

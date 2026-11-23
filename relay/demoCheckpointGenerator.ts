@@ -8,8 +8,8 @@ import { DemoParser } from "t2-demo-parser";
 import {
   DemoStreamAdapter,
   createRecordingFromParser,
-  extractMissionInfo,
 } from "../src/stream/demoStreaming";
+import { extractMissionInfo } from "../src/stream/demoInitialValues";
 import { scanDemoTimelineParser } from "../src/stream/demoTimelineScanner";
 import {
   DEFAULT_CHECKPOINT_INTERVAL_TICKS,
@@ -246,7 +246,8 @@ export async function generateDemoCheckpoints(
               }
               if (preparedTicks % 512 === 0) await setImmediate();
               if (preparedTicks++ % 32 !== 0) return;
-              // Effect lifetimes read their shapes' sequences.
+              // Debris and other retained effects still need shape lifetimes;
+              // this headless pass does not queue ground-particle input.
               for (const name of stream.getEffectShapes()) {
                 if (loadedShapes.has(name)) continue;
                 loadedShapes.add(name);

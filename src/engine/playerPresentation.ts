@@ -7,13 +7,15 @@ import {
 } from "../dts/dtsModel";
 import { observeShapeMeshes } from "../dts/dtsScene";
 import { SHAPE_MODEL_ROTATION_Y } from "../world/placement";
+import type { PlayerSkinSelection } from "./playerSkins";
 import { createShapeInstance } from "./shapeInstance";
 
 export interface PlayerPresentationOptions {
   model: DTSModel;
   anisotropy: number;
   emap: boolean;
-  skinUrl: string | undefined;
+  skinUrl?: string;
+  playerSkin?: PlayerSkinSelection;
 }
 
 /** A player shape instance, independent of a world, stream or animation clock. */

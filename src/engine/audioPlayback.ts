@@ -18,28 +18,29 @@ export function connectAudioPlayback(
   connections.get(context)?.();
   const device = getAudioDevice(context);
   let disposed = false;
-  const channels = () => {
+
+  function applyFades(world: boolean, chat: boolean) {
+    fades.world.setPlaying(world);
+    fades.chat.setPlaying(chat);
+    fades.output.setPlaying(world || chat);
+  }
+
+  function updateFades() {
     const { recording, status } = engineStore.getState().playback;
     // A new recording can arrive before StreamPlaybackSession changes the
     // scene's data source. Its stopped/seeking state already owns audio.
     const source = recording?.source ?? gameEntityStore.getState().dataSource;
     const world =
       !isStreamingSource(source) || (recording != null && status === "playing");
-    const chat = world || (recording?.source === "demo" && status === "ending");
-    return { world, chat };
-  };
-  const updateFade = () => {
+    const ending = recording?.source === "demo" && status === "ending";
+    const audible = world || ending;
+    applyFades(world, audible);
+    return audible;
+  }
+
+  const syncPlayback = () => {
     if (disposed) return;
-    const { world, chat } = channels();
-    fades.world.setPlaying(world);
-    fades.chat.setPlaying(chat);
-    fades.output.setPlaying(world || chat);
-  };
-  const reconcile = () => {
-    if (disposed) return;
-    updateFade();
-    const { world, chat } = channels();
-    device.setRunning(world || chat);
+    device.setRunning(updateFades());
   };
 
   const unsubscribePlayback = engineStore.subscribe((state, previous) => {
@@ -47,16 +48,16 @@ export function connectAudioPlayback(
       state.playback.status !== previous.playback.status ||
       state.playback.recording !== previous.playback.recording
     ) {
-      reconcile();
+      syncPlayback();
     }
   });
   const unsubscribeSource = gameEntityStore.subscribe((state, previous) => {
-    if (state.dataSource !== previous.dataSource) reconcile();
+    if (state.dataSource !== previous.dataSource) syncPlayback();
   });
   // Promise completion matters too: not every intermediate device state
   // necessarily produces a separate statechange event.
-  const unsubscribeDevice = device.subscribe(updateFade);
-  reconcile();
+  const unsubscribeDevice = device.subscribe(updateFades);
+  syncPlayback();
 
   const dispose = () => {
     if (disposed) return;
@@ -65,18 +66,20 @@ export function connectAudioPlayback(
     unsubscribePlayback();
     unsubscribeSource();
     unsubscribeDevice();
-    fades.world.setPlaying(false);
-    fades.chat.setPlaying(false);
-    fades.output.setPlaying(false);
+    applyFades(false, false);
     device.setRunning(false);
   };
   connections.set(context, dispose);
 
   return {
-    reconcile,
+    reconcile() {
+      if (disposed) return;
+      syncPlayback();
+      device.verifyClock();
+    },
     unlock() {
       if (disposed) return;
-      reconcile();
+      updateFades();
       device.unlock();
     },
     dispose,

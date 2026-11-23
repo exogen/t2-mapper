@@ -58,7 +58,7 @@ import {
 } from "../../relay/protocol.js";
 import { WatchStateAccumulator } from "../../relay/watchState.js";
 import { parseDemoHeaderDate } from "../../src/stream/demoDate";
-import { extractMissionInfo } from "../../src/stream/demoStreaming";
+import { extractMissionInfo } from "../../src/stream/demoInitialValues";
 import {
   LegacyControlObject,
   controlObjectLayouts,

@@ -26,6 +26,7 @@ import {
   resolvePlayerBodyType,
   type PlayerBodyType,
 } from "../src/player/playerBodyType";
+import { parseDemoValues } from "../src/stream/demoInitialValues";
 import { stripTaggedStringMarkup } from "../src/stream/streamHelpers";
 import type { StreamEntity, StreamSnapshot } from "../src/stream/types";
 import {
@@ -692,7 +693,7 @@ export class DemoPlayerStatsTracker {
   }
 }
 
-/** Replay a recording and observe it every `stepSec`. */
+/** Observe every `stepSec` without seek checkpoints or queued ground-particle input. */
 export async function computeDemoPlayerStats(
   bytes: Uint8Array,
   purchaseSequences: ReadonlyMap<string, number>,
@@ -700,11 +701,12 @@ export async function computeDemoPlayerStats(
 ): Promise<DemoStatsSidecar> {
   if (!Number.isFinite(stepSec) || stepSec <= 0)
     throw new Error("Player stats step must be a positive finite number");
-  const [{ createRecordingFromParser, parseDemoValues }, { loadDemoParser }] =
-    await Promise.all([
+  const [{ createRecordingFromParser }, { loadDemoParser }] = await Promise.all(
+    [
       import("../src/stream/demoStreaming"),
       import("../src/stream/loadDemoParser"),
-    ]);
+    ],
+  );
   const data = bytes.buffer.slice(
     bytes.byteOffset,
     bytes.byteOffset + bytes.byteLength,

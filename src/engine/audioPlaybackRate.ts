@@ -1,13 +1,6 @@
 import { engineStore } from "../state/engineStore";
 import { settingsStore } from "../state/settingsStore";
 
-/** Register a callback for when the adjustAudioSpeed setting changes. */
-export function onAdjustAudioSpeedChange(
-  listener: (value: boolean) => void,
-): () => void {
-  return settingsStore.subscribe((state) => state.adjustAudioSpeed, listener);
-}
-
 /**
  * Pitch-shift clamp for demo speed. The game's WAVs are low-sample-rate
  * (11–22 kHz); resampling them up 3–4× at fast-forward aliases audibly

@@ -3,6 +3,7 @@ import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { BoxGeometry, Mesh } from "three";
 import { DTSLoader } from "../dts/dtsLoader";
 import { DTSAnimationMixer } from "../dts/dtsAnimationMixer";
+import { DTSShape } from "../dts/dtsModel";
 import { parseDSQ } from "../dts/dsq";
 import {
   registerGroundEffectShape,
@@ -11,10 +12,11 @@ import {
   groundWheels,
 } from "./groundEffectAssets";
 import { GroundEffectSimulation } from "./GroundEffectSimulation";
+import { GroundVehicleCollision } from "./groundVehicleCollision";
 import type {
   GroundActor,
   GroundEffectFrame,
-} from "../stream/groundEffectHistory";
+} from "../stream/groundEffectQueue";
 import type { StreamingPlayback } from "../stream/types";
 import { setTerrainCollisionData } from "../collision/terrainCollision";
 import {
@@ -74,7 +76,7 @@ const player = (overrides: Partial<GroundActor> = {}): GroundActor => ({
   rotation: [0, 0, 0, 1],
   velocity: [0, 4, 0],
   mounted: false,
-  clientAnimation: { move: { animation: "run", timeSec: 0, timeScale: 1 } },
+  moveAnimation: { animation: "run", timeSec: 0, timeScale: 1 },
   ...overrides,
 });
 const frame = (
@@ -158,6 +160,121 @@ it("uses stock DTS left/right triggers, foot offsets and the terrain property ma
   expect(particles[0].g).toBe(0.36);
   expect(particles[0].b).toBe(0.26);
 });
+
+it("retains action-slot footsteps when only the compact movement timeline is recorded", () => {
+  terrain();
+  const clip = getGroundEffectShape("light_male.dts")!.clips.get("forward")!;
+  const triggerTime = (clip.triggers[0].position + 0.01) * clip.duration;
+  const movement = player({
+    moveAnimation: { animation: "run", timeSec: 1000, timeScale: 1 },
+  });
+  const action = {
+    ...movement,
+    actionSlot: { action: 1, calls: [{ timeSec: 0 }] },
+  };
+  const idle = new GroundEffectSimulation(playback);
+  const acting = new GroundEffectSimulation(playback);
+  try {
+    for (const time of [0, triggerTime]) {
+      idle.step(frame(time, movement));
+      acting.step(frame(time, action));
+    }
+    expect(idle.decals).toHaveLength(0);
+    expect(acting.decals).toHaveLength(1);
+    expect(acting.emitters.get("foot:10")!.emitter.particles).toHaveLength(15);
+  } finally {
+    idle.clear();
+    acting.clear();
+  }
+});
+
+it("emits the first post-reset tick from the landing time without retaining actor inputs", () => {
+  terrain();
+  const clip = getGroundEffectShape("light_male.dts")!.clips.get("forward")!;
+  const landing = clip.triggers[0].position * clip.duration - 0.016;
+  const nextTick = landing + 0.032;
+  const actor = player({ jetting: true });
+  const baseline = new GroundEffectSimulation(playback);
+  const seeded = new GroundEffectSimulation(playback);
+  try {
+    baseline.step(frame(landing, actor));
+    baseline.step(frame(nextTick, actor));
+    seeded.clear(landing);
+    expect(seeded.timeSec).toBe(landing);
+    expect(seeded.emitters.size).toBe(0);
+    seeded.step(frame(nextTick, actor));
+    expect(seeded.decals).toHaveLength(1);
+    expect(seeded.decals).toEqual(baseline.decals);
+    expect(seeded.emitters.get("foot:10")!.emitter.particles).toEqual(
+      baseline.emitters.get("foot:10")!.emitter.particles,
+    );
+    expect(seeded.emitters.get("1:1:jetDust")!.emitter.particles).toEqual(
+      baseline.emitters.get("1:1:jetDust")!.emitter.particles,
+    );
+    expect(seeded.emitters.get("1:1:jetDust")!.emitter.particles.length).toBe(
+      6,
+    );
+  } finally {
+    baseline.clear();
+    seeded.clear();
+  }
+});
+
+it("does not replay footstep triggers before a seeded landing or actor scope-in", () => {
+  terrain();
+  const clip = getGroundEffectShape("light_male.dts")!.clips.get("forward")!;
+  const trigger = clip.triggers[0].position * clip.duration;
+  const landed = new GroundEffectSimulation(playback);
+  const scoped = new GroundEffectSimulation(playback);
+  try {
+    const landing = trigger + 0.016;
+    landed.clear(landing);
+    landed.step(frame(landing - 0.016, player({ jetting: true })));
+    expect(landed.timeSec).toBe(landing);
+    landed.step(frame(landing + 0.032, player({ jetting: true })));
+    expect(landed.decals).toHaveLength(0);
+    expect(landed.emitters.get("1:1:jetDust")!.emitter.particles).toHaveLength(
+      6,
+    );
+
+    const spawnTick = Math.ceil(trigger / 0.032);
+    const spawnedAt = spawnTick * 0.032;
+    const actor = player({ key: `1:${spawnTick}`, spawnTick, jetting: true });
+    scoped.clear(spawnedAt - 0.032);
+    scoped.step(frame(spawnedAt, actor));
+    expect(scoped.decals).toHaveLength(0);
+    expect(scoped.emitters.size).toBe(0);
+    scoped.step(frame(spawnedAt + 0.032, actor));
+    expect(scoped.decals).toHaveLength(0);
+    expect(
+      scoped.emitters.get(`${actor.key}:jetDust`)!.emitter.particles,
+    ).toHaveLength(6);
+  } finally {
+    landed.clear();
+    scoped.clear();
+  }
+});
+
+it("clamps reset clocks and ignores invalid ticks without consuming the baseline", () => {
+  terrain();
+  const sim = new GroundEffectSimulation(playback);
+  try {
+    for (const time of [undefined, NaN, Infinity, -Infinity]) {
+      sim.clear(time);
+      expect(sim.timeSec).toBe(-Infinity);
+    }
+    sim.clear(-5);
+    expect(sim.timeSec).toBe(0);
+    sim.step(frame(NaN, player()));
+    sim.step(frame(Infinity, player()));
+    expect(sim.timeSec).toBe(0);
+    sim.step(frame(0.064, player({ key: "1:0", jetting: true, spawnTick: 0 })));
+    expect(sim.emitters.get("1:0:jetDust")!.emitter.particles).toHaveLength(12);
+  } finally {
+    sim.clear();
+  }
+});
+
 it("skips foot dust and marks on interiors, in water, above the ground, and with no MPM", () => {
   const run = (actor = player()) => {
     const sim = new GroundEffectSimulation(playback);
@@ -233,40 +350,62 @@ it("derives all six MPB spring contacts from the DTS and respects the frozen gat
   for (const { emitter } of sim.emitters.values())
     expect(emitter.particles).toHaveLength(1);
 });
-it("replays recent inputs identically regardless of render frame grouping", () => {
+it("keeps foot, jet and wheel emissions identical across batched ticks and paused renders", () => {
   terrain();
-  const frames = Array.from({ length: 220 }, (_, i) =>
-    frame(i * 0.032, player({ position: [0, i * 0.03, 0] })),
+  const normal = new GroundEffectSimulation(playback);
+  const batched = new GroundEffectSimulation(playback);
+  const frames = Array.from({ length: 240 }, (_, i) =>
+    frame(
+      i * 0.032,
+      player({ position: [-12, i * 0.12, 0], jetting: i % 24 < 5 }),
+      {
+        key: "2:1",
+        ghostIndex: 2,
+        spawnTick: 1,
+        type: "Vehicle",
+        className: "WheeledVehicle",
+        dataBlockId: 3,
+        position: [12, i * 0.1, 2.5],
+        rotation: [0, 0, 0, 1],
+        velocity: [0, 15, 0],
+        mounted: false,
+        frozen: i % 70 >= 60,
+      },
+    ),
   );
-  const normal = new GroundEffectSimulation(playback),
-    seek = new GroundEffectSimulation(playback);
-  frames.forEach((f) => normal.step(f));
-  frames.slice(0, 80).forEach((f) => seek.step(f));
-  seek.clear();
-  frames.forEach((f) => seek.step(f));
-  expect(seek.decals).toEqual(normal.decals);
-  expect([...seek.emitters.values()].map((e) => e.emitter.particles)).toEqual(
-    [...normal.emitters.values()].map((e) => e.emitter.particles),
-  );
-  expect(seek.decals.every((d) => seek.timeSec - d.timeSec <= 5)).toBe(true);
-});
-
-it("reconstructs foot puffs identically from a shorter history window", () => {
-  terrain();
-  const frames = Array.from({ length: 500 }, (_, i) =>
-    frame(i * 0.032, player({ position: [0, i * 0.03, 0] })),
-  );
-  const normal = new GroundEffectSimulation(playback),
-    seek = new GroundEffectSimulation(playback);
-  frames.forEach((f) => normal.step(f));
-  frames.slice(250).forEach((f) => seek.step(f));
-  // The pool's swap-removal order may differ; the live particle states must not.
-  const particles = (sim: GroundEffectSimulation) =>
-    sim.emitters
-      .get("foot:10")!
-      .emitter.particles.map((p) => JSON.stringify(p))
-      .sort();
-  expect(particles(seek)).toEqual(particles(normal));
+  // Several complete simulation ticks can arrive before a rendered frame.
+  // Empty renders while paused may then present the same endpoint again.
+  const groupSizes = [1, 4, 17, 2, 8];
+  const particles = (simulation: GroundEffectSimulation) =>
+    [...simulation.emitters].map(([key, { emitter }]) => ({
+      key,
+      particles: structuredClone(emitter.particles),
+    }));
+  try {
+    for (let start = 0, group = 0; start < frames.length; group++) {
+      const end = Math.min(
+        frames.length,
+        start + groupSizes[group % groupSizes.length],
+      );
+      for (let i = start; i < end; i++) normal.step(frames[i]);
+      for (const tick of frames.slice(start, end)) batched.step(tick);
+      batched.step(frames[end - 1]);
+      batched.step(frames[end - 1]);
+      expect(batched.timeSec).toBe(normal.timeSec);
+      expect(batched.decals).toEqual(normal.decals);
+      // Full particle state includes RNG-dependent position/velocity/spin,
+      // age, color, size and orientation, not merely an emission count.
+      expect(particles(batched)).toEqual(particles(normal));
+      start = end;
+    }
+    expect(normal.decals.length).toBeGreaterThan(0);
+    expect(normal.emitters.has("foot:10")).toBe(true);
+    expect(normal.emitters.has("1:1:jetDust")).toBe(true);
+    expect(normal.emitters.has("2:1:wheel0")).toBe(true);
+  } finally {
+    normal.clear();
+    batched.clear();
+  }
 });
 
 it("refreshes reused datablock IDs and action aliases after a live world reset", () => {
@@ -303,7 +442,7 @@ it("refreshes reused datablock IDs and action aliases after a live world reset",
   expect(groundActionName(live, shape, "light_male.dts", 3)).toBe("forward");
 });
 
-it("blocks ground effects against the vehicle's historical DTS collision details", async () => {
+it("blocks ground effects against each tick's vehicle collision pose", async () => {
   const { GroundVehicleCollision } = await import("./groundVehicleCollision");
   const query = new GroundVehicleCollision(playback);
   const vehicle = player({
@@ -321,20 +460,83 @@ it("blocks ground effects against the vehicle's historical DTS collision details
   expect(query.blocksRay([0, 0, 20], [0, 0, -1], 1)).toBe(true);
 });
 
-it("rebuilds recent contacts when a hover vehicle's collision shape loads late", () => {
+it("starts wheel effects on new ticks after the vehicle shape arrives", () => {
   terrain();
   const name = "late-ground-review-vehicle.dts";
+  const actor = player({
+    type: "Vehicle",
+    className: "WheeledVehicle",
+    dataBlockId: 3,
+    position: [0, 0, 2.5],
+    velocity: [0, 15, 0],
+  });
   const sim = new GroundEffectSimulation({
     ...playback,
-    getDataBlockData: () => ({ shapeName: name }),
+    getDataBlockData: (id: number) =>
+      id === 3 ? { ...blocks[3], shapeName: name } : blocks[id],
   });
-  sim.step(frame(0, player({ type: "Vehicle", className: "HoverVehicle" })));
-  expect(sim.hasNewShapeAssets()).toBe(false);
-  registerGroundEffectShape(
-    name,
-    getGroundEffectShape("vehicle_land_mpbase.dts")!.model,
-  );
-  expect(sim.hasNewShapeAssets()).toBe(true);
+  try {
+    sim.step(frame(0, actor));
+    sim.step(frame(0.16, actor));
+    expect(sim.emitters.size).toBe(0);
+    registerGroundEffectShape(
+      name,
+      getGroundEffectShape("vehicle_land_mpbase.dts")!.model,
+    );
+    sim.step(frame(0.32, actor));
+    expect(sim.emitters.size).toBe(6);
+    for (const { emitter } of sim.emitters.values()) {
+      expect(emitter.particles).toHaveLength(1);
+      expect(emitter.particles[0].currentAge).toBe(0);
+    }
+    expect(sim.timeSec).toBe(0.32);
+  } finally {
+    sim.clear();
+  }
+});
+
+it("starts late player assets at a fresh footstep baseline while preserving existing dust", () => {
+  terrain();
+  const name = "late-ground-movement-player.dts";
+  const loaded = getGroundEffectShape("light_male.dts")!;
+  const clip = loaded.clips.get("forward")!;
+  const latePlayback = {
+    ...playback,
+    getDataBlockData: (id: number) =>
+      id === 1 ? { ...blocks[1], shapeName: name } : blocks[id],
+    getShapeConstructorSequences: () => [
+      "late-ground-movement-player_forward.dsq run",
+    ],
+  } as StreamingPlayback;
+  const late = new GroundEffectSimulation(latePlayback);
+  const fresh = new GroundEffectSimulation(latePlayback);
+  const actor = player({ jetting: true });
+  const arrivedAt = (clip.triggers[0].position + 0.01) * clip.duration;
+  const nextStep = (clip.triggers[1].position + 0.01) * clip.duration;
+  try {
+    late.clear(0);
+    late.step(frame(0, actor));
+    late.step(frame(0.032, actor));
+    late.step(frame(0.064, actor));
+    const dust = late.emitters.get("1:1:jetDust")!.emitter;
+    registerGroundEffectShape(name, loaded.model);
+    late.step(frame(arrivedAt, actor));
+    // The missed first footstep is not replayed when the model arrives.
+    expect(late.decals).toHaveLength(0);
+    expect(late.emitters.has("foot:10")).toBe(false);
+    expect(late.emitters.get("1:1:jetDust")!.emitter).toBe(dust);
+    fresh.step(frame(arrivedAt, actor));
+    late.step(frame(nextStep, actor));
+    fresh.step(frame(nextStep, actor));
+    expect(late.decals).toHaveLength(1);
+    expect(late.decals).toEqual(fresh.decals);
+    expect(late.emitters.get("foot:10")!.emitter.particles).toEqual(
+      fresh.emitters.get("foot:10")!.emitter.particles,
+    );
+  } finally {
+    late.clear();
+    fresh.clear();
+  }
 });
 
 it("reuses repeated vehicle queries without sharing poses between actors or ticks", async () => {
@@ -373,5 +575,81 @@ it("reuses repeated vehicle queries without sharing poses between actors or tick
     expect(query.blocksRay([0, 0, 20], [0, 0, -1], 1)).toBe(true);
   } finally {
     updates.mockRestore();
+  }
+});
+
+it("releases consumed collision frames and recreates owned vehicle poses after reset", () => {
+  const query = new GroundVehicleCollision(playback);
+  const vehicle = player({
+    type: "Vehicle",
+    className: "WheeledVehicle",
+    dataBlockId: 3,
+    position: [0, 0, 2.5],
+  });
+  const updates = vi.spyOn(DTSAnimationMixer.prototype, "update");
+  const roots = vi.spyOn(DTSShape.prototype, "prepareAnimationTargets");
+  const blocked = () => query.blocksRay([0, 0, 20], [0, 0, -1], 1);
+  try {
+    query.setFrame(frame(1, vehicle));
+    expect(blocked()).toBe(true);
+    const sampled = updates.mock.calls.length;
+    expect(blocked()).toBe(true);
+    expect(updates).toHaveBeenCalledTimes(sampled);
+    query.endFrame();
+    expect(blocked()).toBe(false);
+
+    // Even the same actor/time belongs to a fresh tick after endFrame: the
+    // cached pose must not keep the consumed GroundActor and thread chain.
+    query.setFrame(frame(1, vehicle));
+    expect(blocked()).toBe(true);
+    expect(updates).toHaveBeenCalledTimes(sampled + 1);
+    const created = roots.mock.calls.length;
+    query.clear();
+    expect(blocked()).toBe(false);
+    query.setFrame(frame(1, vehicle));
+    expect(blocked()).toBe(true);
+    expect(roots.mock.calls.length).toBeGreaterThan(created);
+  } finally {
+    query.clear();
+    updates.mockRestore();
+    roots.mockRestore();
+  }
+});
+
+it("ends vehicle collision input ownership on successful and failed simulation ticks", () => {
+  terrain();
+  let failure = false;
+  const simulation = new GroundEffectSimulation({
+    ...playback,
+    getDataBlockData(id: number) {
+      if (failure) throw new Error("Missing ground-effect data");
+      return blocks[id];
+    },
+  });
+  const begin = vi.spyOn(GroundVehicleCollision.prototype, "setFrame");
+  const clear = vi.spyOn(GroundVehicleCollision.prototype, "clear");
+  const vehicle = player({
+    type: "Vehicle",
+    className: "WheeledVehicle",
+    dataBlockId: 3,
+    position: [0, 0, 2.5],
+  });
+  try {
+    simulation.step(frame(0, vehicle));
+    const query = begin.mock.contexts[0] as GroundVehicleCollision;
+    expect(query.blocksRay([0, 0, 20], [0, 0, -1], 1)).toBe(false);
+    failure = true;
+    expect(() => simulation.step(frame(0.032, vehicle))).toThrow(
+      "Missing ground-effect data",
+    );
+    failure = false;
+    // A failed query batch must not keep that tick's actors either.
+    expect(query.blocksRay([0, 0, 20], [0, 0, -1], 1)).toBe(false);
+    simulation.clear();
+    expect(clear).toHaveBeenCalledOnce();
+  } finally {
+    simulation.clear();
+    begin.mockRestore();
+    clear.mockRestore();
   }
 });

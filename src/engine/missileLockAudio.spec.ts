@@ -1,5 +1,4 @@
 import { afterEach, expect, it, vi } from "vitest";
-import type { AudioLoader } from "three";
 import { engineStore } from "../state/engineStore";
 import { settingsStore } from "../state/settingsStore";
 import { streamClock } from "../state/streamPlaybackStore";
@@ -53,7 +52,7 @@ function startAudio({ deferred = false } = {}) {
   disposals.push(
     installMissileLockAudio({ scheduler } as GameEngine, {
       audioListener,
-      audioLoader: { load } as unknown as AudioLoader,
+      audioLoader: { load },
     }),
   );
   const started = () =>

@@ -16,6 +16,8 @@ const fixture = vi.hoisted(() => ({
   view: undefined as ClipView | undefined,
   source: null as string | null,
   recording: null as StreamRecording | null,
+  demoBuffer: null as ArrayBuffer | null,
+  downloadComplete: false,
   route: {
     mode: "demo",
     clip: "clip-one",
@@ -70,8 +72,8 @@ vi.mock("../state/engineStore", () => ({
     select({
       playback: {
         recording: fixture.recording,
-        demoBuffer: null,
-        downloadComplete: false,
+        demoBuffer: fixture.demoBuffer,
+        downloadComplete: fixture.downloadComplete,
       },
     }),
 }));
@@ -86,7 +88,10 @@ vi.mock("../state/streamPlaybackStore", () => ({
 vi.mock("../stream/clipApi", async (original) => ({
   ...(await original<typeof import("../stream/clipApi")>()),
   readClip: vi.fn(),
+}));
+vi.mock("../stream/clipCheckpointApi", () => ({
   readClipCheckpoint: vi.fn(),
+  recoverClipCheckpoint: vi.fn(),
 }));
 vi.mock("../stream/clipPlayback", () => ({ startClipPlayback: vi.fn() }));
 vi.mock("./useQueryParams", () => ({
@@ -99,6 +104,11 @@ vi.mock("./useAppNavigation", () => ({
 
 import { ClipLoader } from "./ClipLoader";
 import { ClipApiError } from "../stream/clipApi";
+import {
+  readClipCheckpoint,
+  recoverClipCheckpoint,
+} from "../stream/clipCheckpointApi";
+import { startClipPlayback } from "../stream/clipPlayback";
 
 const cleanups: Array<() => void> = [];
 function stopActive() {
@@ -114,6 +124,8 @@ beforeEach(() => {
   fixture.view = undefined;
   fixture.source = null;
   fixture.recording = null;
+  fixture.demoBuffer = null;
+  fixture.downloadComplete = false;
   fixture.queryOptions = null;
   fixture.route = {
     mode: "demo",
@@ -177,6 +189,53 @@ it("preserves a pending source seek while preparing the initial clip view", () =
   } as ClipView;
   mountLoader();
   expect(fixture.pause).not.toHaveBeenCalled();
+});
+
+it("starts a ready clip with its checkpoint and reports a failed restore with its ETag", async () => {
+  const buffer = new ArrayBuffer(1);
+  const recording = { streamingPlayback: {} } as StreamRecording;
+  const timeline = { sourceDemo: "test.rec" } as ClipTake;
+  const view = {
+    id: "clip-one",
+    sourceDemo: "test.rec",
+    state: "ready",
+    timeline,
+  } as ClipView;
+  fixture.source = view.sourceDemo;
+  fixture.recording = recording;
+  fixture.view = view;
+  fixture.demoBuffer = buffer;
+  fixture.downloadComplete = true;
+  vi.mocked(readClipCheckpoint).mockResolvedValueOnce({
+    text: "checkpoint",
+    etag: '"cached"',
+  });
+
+  mountLoader();
+
+  expect(readClipCheckpoint).toHaveBeenCalledWith(
+    view,
+    buffer,
+    expect.any(AbortSignal),
+  );
+  const [, , signal] = vi.mocked(readClipCheckpoint).mock.calls[0];
+  await vi.waitFor(() => {
+    expect(startClipPlayback).toHaveBeenCalledWith(
+      timeline,
+      recording,
+      signal,
+      "checkpoint",
+      expect.any(Function),
+    );
+  });
+  const recover = vi.mocked(startClipPlayback).mock.calls[0][4]!;
+  await recover(new Error("Could not restore the checkpoint"));
+  expect(recoverClipCheckpoint).toHaveBeenCalledWith(
+    view,
+    buffer,
+    '"cached"',
+    signal,
+  );
 });
 
 it.each([404, 410])(

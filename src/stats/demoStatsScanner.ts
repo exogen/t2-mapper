@@ -11,7 +11,7 @@ import type { MatchStats, StatsData, StatsPlayer } from "./types";
 export const HEATMAP_SAMPLE_INTERVAL_SEC = 8 * STREAM_TICK_SEC;
 const YIELD_SLICE_MS = 16;
 
-/** Scan independently of the viewer's playback position, without seek history. */
+/** Scan independently without seek checkpoints or queued ground-particle input. */
 export async function scanDemoStats(
   buffer: ArrayBuffer,
   onProgress?: (progress: number) => void,

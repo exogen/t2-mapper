@@ -15,9 +15,10 @@ import { samplePlayerPose } from "../stream/playerAnimation";
 import type {
   GroundActor,
   GroundEffectFrame,
-} from "../stream/groundEffectHistory";
+} from "../stream/groundEffectQueue";
 import type { StreamingPlayback } from "../stream/types";
 import { timelineRandom } from "../stream/timelineRandom";
+import { STREAM_TICK_SEC } from "../stream/streamHelpers";
 import { collisionState } from "../collision/collisionContext";
 import { castTerrainRay, type Vec3 } from "../collision/terrainCollision";
 import {
@@ -52,28 +53,22 @@ const UP: Vec3 = [0, 0, 1],
 const n = (db: Record<string, unknown>, key: string, fallback = 0): number =>
   typeof db[key] === "number" ? (db[key] as number) : fallback;
 
-/** Ground effects consume simulation time, never wall time. The retained input
- * history also supplies the short warm-up after seeks and late asset loads. */
+/** Ground effects consume completed simulation ticks, never render-frame time. */
 export class GroundEffectSimulation {
   readonly emitters = new Map<string, ActiveGroundEmitter>();
   readonly decals: GroundDecal[] = [];
   readonly decalTimeoutSec = 5;
   readonly maxDecals = 256;
   timeSec = -Infinity;
+  private firstTickStartSec: number | undefined;
   private nextDecal = 0;
   private poses = new Map<string, { timeSec: number; state: number }>();
   private emitterData = new Map<number, EmitterDataResolved | null>();
   private wheelQuery = new WheelContactQuery();
   private matrix = new Matrix4();
   private gravity = -9.81;
-  private missingShapes = new Set<string>();
   private terrainColors: ReturnType<typeof terrainParticleColors>;
 
-  hasNewShapeAssets(): boolean {
-    for (const name of this.missingShapes)
-      if (getGroundEffectShape(name)) return true;
-    return false;
-  }
   private readonly playback: StreamingPlayback;
   private vehicles: GroundVehicleCollision;
   constructor(playback: StreamingPlayback) {
@@ -81,7 +76,9 @@ export class GroundEffectSimulation {
     this.vehicles = new GroundVehicleCollision(playback);
   }
 
-  clear(): void {
+  /** Drop live effects; a landing time seeds only the next advancing tick. */
+  clear(timeSec?: number): void {
+    this.vehicles.clear();
     for (const entry of this.emitters.values()) entry.emitter.dispose();
     this.emitters.clear();
     // Live mission changes can reuse this playback and its datablock IDs.
@@ -89,8 +86,14 @@ export class GroundEffectSimulation {
     clearGroundActionMaps(this.playback);
     this.decals.length = 0;
     this.poses.clear();
-    this.missingShapes.clear();
-    this.timeSec = -Infinity;
+    this.timeSec =
+      timeSec !== undefined && Number.isFinite(timeSec)
+        ? Math.max(0, timeSec)
+        : -Infinity;
+    // A reset can retain the clock boundary without retaining any old actors.
+    this.firstTickStartSec = Number.isFinite(this.timeSec)
+      ? this.timeSec
+      : undefined;
     this.nextDecal = 0;
   }
   private data(id: number): EmitterDataResolved | null {
@@ -158,8 +161,9 @@ export class GroundEffectSimulation {
     shape: GroundShape,
     db: Record<string, unknown>,
     now: number,
+    baselineSec?: number,
   ): void {
-    const move = actor.clientAnimation?.move;
+    const move = actor.moveAnimation;
     if (!move) return;
     const shapeName = String(db.shapeName ?? "");
     const clipName = (key: string | number) =>
@@ -175,11 +179,12 @@ export class GroundEffectSimulation {
       )[0];
     const pose = sample(now);
     const previous = this.poses.get(actor.key);
+    const previousTime = previous?.timeSec ?? baselineSec;
     let state = previous?.state ?? 0;
     const name = clipName(pose.name);
     const clip = name != null ? shape.clips.get(name) : undefined;
-    if (clip && previous) {
-      const before = sample(previous.timeSec);
+    if (clip && previousTime !== undefined) {
+      const before = sample(previousTime);
       const from =
         before.name === pose.name ? (before.phase ?? before.position) : 0;
       state = advanceDTSTriggers(
@@ -220,7 +225,7 @@ export class GroundEffectSimulation {
       if (entry) {
         entry.emitter.setColors(colors);
         // The engine creates an emitter for each step. Pool its storage, but
-        // keep each burst independent of which earlier steps were replayed.
+        // give each burst its own random stream within the shared pool.
         entry.emitter.emitRadial(
           point,
           n(db, "footPuffRadius"),
@@ -255,7 +260,10 @@ export class GroundEffectSimulation {
     }
   }
   step(frame: GroundEffectFrame): void {
-    if (frame.timeSec <= this.timeSec) return;
+    if (!Number.isFinite(frame.timeSec) || frame.timeSec <= this.timeSec)
+      return;
+    const firstTickStartSec = this.firstTickStartSec;
+    this.firstTickStartSec = undefined;
     const dtMS = Number.isFinite(this.timeSec)
       ? (frame.timeSec - this.timeSec) * 1000
       : 0;
@@ -264,7 +272,6 @@ export class GroundEffectSimulation {
     this.terrainColors = terrainParticleColors(
       collisionState().terrain?.textureName,
     );
-    this.vehicles.setFrame(frame);
     for (const entry of this.emitters.values()) {
       entry.touched = false;
       entry.emitter.worldGravity = frame.gravity;
@@ -276,128 +283,147 @@ export class GroundEffectSimulation {
     )
       this.decals.shift();
     const seen = new Set<string>();
-    withCollisionQueryBatch(() => {
-      for (const actor of frame.actors) {
-        seen.add(actor.key);
-        const db = this.playback.getDataBlockData(actor.dataBlockId);
-        if (!db) continue;
-        const name = String(db.shapeName ?? "");
-        const shape = getGroundEffectShape(name);
-        // Hover/flying vehicle collision shapes also affect nearby footsteps.
-        if (!shape && name) this.missingShapes.add(name);
-        groundActorMatrix(actor.position, actor.rotation, this.matrix);
-        if (actor.type === "Player") {
-          if (shape) this.footstep(actor, shape, db, frame.timeSec);
-          if (actor.jetting && typeof db.dustEmitter === "number") {
-            // Released binary 0x005d6980: horizontal offset -0.3 along +Y,
-            // terrain-only 2m ray, hit +0.3Z, no inherited velocity.
-            const p = torqueWorldPoint([0, -0.3, 0], this.matrix);
-            p[2] = actor.position[2];
-            const hit = castTerrainRay(p, [p[0], p[1], p[2] - 2]);
-            if (hit)
-              this.emit(
-                actor,
-                "jetDust",
-                db.dustEmitter,
-                [hit.point[0], hit.point[1], hit.point[2] + 0.3],
-                hit.normal,
-                dtMS,
-                ZERO,
-              );
-          }
-        } else {
-          const p = actor.position;
-          if (typeof db.dustEmitter === "number") {
-            const hit = castTerrainRay(p, [
-              p[0],
-              p[1],
-              p[2] - n(db, "triggerDustHeight"),
-            ]);
-            if (hit)
-              this.emit(
-                actor,
-                "wash",
-                db.dustEmitter,
-                [
-                  hit.point[0],
-                  hit.point[1],
-                  hit.point[2] + n(db, "dustHeight"),
-                ],
-                hit.normal,
-                dtMS,
-                actor.velocity,
-              );
-          }
-          const speed = Math.hypot(...actor.velocity);
-          const axis: Vec3 =
-            speed > 0 ? (actor.velocity.map((v) => v / speed) as Vec3) : UP;
-          if (
-            actor.className === "HoverVehicle" &&
-            speed > 2 &&
-            typeof db.dustTrailEmitter === "number" &&
-            this.terrainColors
-          ) {
-            const hit = castTerrainRay(p, [
-              p[0],
-              p[1],
-              p[2] - n(db, "triggerTrailHeight"),
-            ]);
-            const divisor = n(db, "dustTrailFreqMod");
-            if (hit && divisor > 0) {
-              const offset = (db.dustTrailOffset ?? { x: 0, y: 0, z: 0 }) as {
-                x: number;
-                y: number;
-                z: number;
-              };
-              this.emit(
-                actor,
-                "trail",
-                db.dustTrailEmitter,
-                [
-                  hit.point[0] + offset.x,
-                  hit.point[1] + offset.y,
-                  hit.point[2] + offset.z,
-                ],
-                axis,
-                (dtMS * speed) / divisor,
-                actor.velocity,
-                true,
-              );
-            }
-          }
-          if (
-            actor.className === "WheeledVehicle" &&
-            !actor.frozen &&
-            speed > 1 &&
-            typeof db.tireEmitter === "number" &&
-            shape
-          ) {
-            groundWheels(shape).forEach((wheel, i) => {
-              const hit = this.wheelQuery.contact(
-                wheel,
-                n(db, "tireRadius"),
-                this.matrix,
-                (box, out) =>
-                  this.vehicles.appendTriangles(box, out, actor.key),
-                (start, end, t) =>
-                  this.vehicles.blocksRay(start, end, t, actor.key),
-              );
+    this.vehicles.setFrame(frame);
+    try {
+      withCollisionQueryBatch(() => {
+        for (const actor of frame.actors) {
+          seen.add(actor.key);
+          const db = this.playback.getDataBlockData(actor.dataBlockId);
+          if (!db) continue;
+          const name = String(db.shapeName ?? "");
+          const shape = getGroundEffectShape(name);
+          const spawnSec = actor.spawnTick * STREAM_TICK_SEC;
+          const actorStartSec =
+            firstTickStartSec === undefined
+              ? undefined
+              : Math.min(
+                  frame.timeSec,
+                  Math.max(
+                    firstTickStartSec,
+                    Number.isFinite(spawnSec) ? spawnSec : firstTickStartSec,
+                  ),
+                );
+          const actorDtMS =
+            actorStartSec === undefined
+              ? dtMS
+              : Math.max(0, (frame.timeSec - actorStartSec) * 1000);
+          groundActorMatrix(actor.position, actor.rotation, this.matrix);
+          if (actor.type === "Player") {
+            if (shape)
+              this.footstep(actor, shape, db, frame.timeSec, actorStartSec);
+            if (actor.jetting && typeof db.dustEmitter === "number") {
+              // Released binary 0x005d6980: horizontal offset -0.3 along +Y,
+              // terrain-only 2m ray, hit +0.3Z, no inherited velocity.
+              const p = torqueWorldPoint([0, -0.3, 0], this.matrix);
+              p[2] = actor.position[2];
+              const hit = castTerrainRay(p, [p[0], p[1], p[2] - 2]);
               if (hit)
                 this.emit(
                   actor,
-                  `wheel${i}`,
-                  db.tireEmitter,
-                  [hit[0], hit[1], hit[2] + 0.5],
+                  "jetDust",
+                  db.dustEmitter,
+                  [hit.point[0], hit.point[1], hit.point[2] + 0.3],
+                  hit.normal,
+                  actorDtMS,
+                  ZERO,
+                );
+            }
+          } else {
+            const p = actor.position;
+            if (typeof db.dustEmitter === "number") {
+              const hit = castTerrainRay(p, [
+                p[0],
+                p[1],
+                p[2] - n(db, "triggerDustHeight"),
+              ]);
+              if (hit)
+                this.emit(
+                  actor,
+                  "wash",
+                  db.dustEmitter,
+                  [
+                    hit.point[0],
+                    hit.point[1],
+                    hit.point[2] + n(db, "dustHeight"),
+                  ],
+                  hit.normal,
+                  actorDtMS,
+                  actor.velocity,
+                );
+            }
+            const speed = Math.hypot(...actor.velocity);
+            const axis: Vec3 =
+              speed > 0 ? (actor.velocity.map((v) => v / speed) as Vec3) : UP;
+            if (
+              actor.className === "HoverVehicle" &&
+              speed > 2 &&
+              typeof db.dustTrailEmitter === "number" &&
+              this.terrainColors
+            ) {
+              const hit = castTerrainRay(p, [
+                p[0],
+                p[1],
+                p[2] - n(db, "triggerTrailHeight"),
+              ]);
+              const divisor = n(db, "dustTrailFreqMod");
+              if (hit && divisor > 0) {
+                const offset = (db.dustTrailOffset ?? { x: 0, y: 0, z: 0 }) as {
+                  x: number;
+                  y: number;
+                  z: number;
+                };
+                this.emit(
+                  actor,
+                  "trail",
+                  db.dustTrailEmitter,
+                  [
+                    hit.point[0] + offset.x,
+                    hit.point[1] + offset.y,
+                    hit.point[2] + offset.z,
+                  ],
                   axis,
-                  (dtMS * speed) / 15,
+                  (actorDtMS * speed) / divisor,
                   actor.velocity,
                   true,
                 );
-            });
+              }
+            }
+            if (
+              actor.className === "WheeledVehicle" &&
+              !actor.frozen &&
+              speed > 1 &&
+              typeof db.tireEmitter === "number" &&
+              shape
+            ) {
+              groundWheels(shape).forEach((wheel, i) => {
+                const hit = this.wheelQuery.contact(
+                  wheel,
+                  n(db, "tireRadius"),
+                  this.matrix,
+                  (box, out) =>
+                    this.vehicles.appendTriangles(box, out, actor.key),
+                  (start, end, t) =>
+                    this.vehicles.blocksRay(start, end, t, actor.key),
+                );
+                if (hit)
+                  this.emit(
+                    actor,
+                    `wheel${i}`,
+                    db.tireEmitter,
+                    [hit[0], hit[1], hit[2] + 0.5],
+                    axis,
+                    (actorDtMS * speed) / 15,
+                    actor.velocity,
+                    true,
+                  );
+              });
+            }
           }
         }
-      }
-    });
+      });
+    } finally {
+      this.vehicles.endFrame();
+    }
     for (const [key, entry] of this.emitters) {
       if (!entry.touched) entry.active = false;
       if (

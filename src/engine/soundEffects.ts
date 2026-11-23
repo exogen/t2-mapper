@@ -1,31 +1,28 @@
 import {
   Audio,
   AudioListener,
-  AudioLoader,
   Object3D,
   PositionalAudio,
   Vector3,
 } from "three";
 import { audioToUrl } from "../loaders";
 import { engineStore } from "../state/engineStore";
-import { getCachedAudioBuffer } from "./audioBuffers";
-import {
-  getEffectiveSoundRate,
-  onAdjustAudioSpeedChange,
-} from "./audioPlaybackRate";
+import { settingsStore } from "../state/settingsStore";
+import { getCachedAudioBuffer, type AudioBufferLoader } from "./audioBuffers";
+import { getEffectiveSoundRate } from "./audioPlaybackRate";
 import { PlaybackPositionalAudio } from "./spatialAudio";
 
-export { audioBufferCache, getCachedAudioBuffer } from "./audioBuffers";
+export { getCachedAudioBuffer } from "./audioBuffers";
 
 // Track active sounds so their playbackRate can be updated when the playback
 // rate changes (e.g. slow-motion or fast-forward). Maps each sound to its
 // intrinsic pitch (1.0 for normal, or the voice pitch multiplier for chat).
 const _activeSounds = new Map<Audio<GainNode | PannerNode>, number>();
+const _managedOneShots = new Set<Audio<GainNode | PannerNode>>();
+const _spatialOneShots = new Set<Audio<GainNode | PannerNode>>();
+const _pendingOneShots = new Set<() => boolean>();
 
-// Re-apply playback rate to all active sounds when the setting changes.
-// (The store is updated before listeners fire, so getEffectiveSoundRate —
-// which also applies the pitch-shift clamp — reads the new value.)
-onAdjustAudioSpeedChange(() => {
+function updatePlaybackRates() {
   for (const [sound, basePitch] of _activeSounds) {
     try {
       sound.setPlaybackRate(getEffectiveSoundRate(basePitch));
@@ -33,7 +30,23 @@ onAdjustAudioSpeedChange(() => {
       /* disposed */
     }
   }
-});
+}
+
+settingsStore.subscribe((state) => state.adjustAudioSpeed, updatePlaybackRates);
+engineStore.subscribe((state) => state.playback.rate, updatePlaybackRates);
+
+function cancelPendingOneShots() {
+  for (const cancel of _pendingOneShots) cancel();
+}
+
+settingsStore.subscribe(
+  (state) => state.audioEnabled,
+  (enabled) => {
+    if (enabled) return;
+    cancelPendingOneShots();
+    for (const sound of _managedOneShots) stopAndDetachSound(sound);
+  },
+);
 
 /** Register a sound for automatic playback rate tracking during streaming. */
 export function trackSound(
@@ -48,16 +61,9 @@ export function untrackSound(sound: Audio<GainNode | PannerNode>): void {
   _activeSounds.delete(sound);
 }
 
-/**
- * Stop a sound and fully discard it: untrack, stop, disconnect, and remove
- * from its parent. For sounds being thrown away — not ones whose node will
- * be reused (the jet loop, for example, keeps its node parented so it can
- * restart).
- */
-export function stopAndDetachSound(sound: Audio<GainNode | PannerNode>): void {
-  untrackSound(sound);
+function stopSound(sound: Audio<GainNode | PannerNode>): void {
   try {
-    sound.stop();
+    if (sound.isPlaying) sound.stop();
   } catch {
     /* already stopped */
   }
@@ -66,7 +72,38 @@ export function stopAndDetachSound(sound: Audio<GainNode | PannerNode>): void {
   } catch {
     /* already disconnected */
   }
+}
+
+/** Stop, untrack and detach a sound from its parent. */
+export function stopAndDetachSound(sound: Audio<GainNode | PannerNode>): void {
+  untrackSound(sound);
+  stopSound(sound);
+  _spatialOneShots.delete(sound);
+  if (_managedOneShots.delete(sound)) sound.gain.disconnect();
   sound.removeFromParent();
+}
+
+/** Start a fresh one-shot and retire it on completion or a failed start. */
+export function playManagedOneShot(
+  sound: Audio<GainNode | PannerNode>,
+  { pitch = 1, onEnd }: { pitch?: number; onEnd?: () => void } = {},
+): boolean {
+  _managedOneShots.add(sound);
+  const baseOnEnded = sound.onEnded.bind(sound);
+  sound.onEnded = () => {
+    baseOnEnded();
+    stopAndDetachSound(sound);
+    onEnd?.();
+  };
+  try {
+    sound.setPlaybackRate(getEffectiveSoundRate(pitch));
+    sound.play();
+    trackSound(sound, pitch);
+    return true;
+  } catch {
+    stopAndDetachSound(sound);
+    return false;
+  }
 }
 
 /**
@@ -86,40 +123,14 @@ export { getEffectiveSoundRate } from "./audioPlaybackRate";
 /** Stop and unregister all tracked sounds. Called on recording change. */
 export function stopAllTrackedSounds(): void {
   _soundGeneration++;
+  cancelPendingOneShots();
   for (const [sound] of _activeSounds) {
-    try {
-      sound.stop();
-    } catch {
-      /* already stopped */
-    }
-    try {
-      sound.disconnect();
-    } catch {
-      /* already disconnected */
-    }
-  }
-  // One-shots parent themselves into the scene and stop() suppresses their
-  // self-cleanup (three nulls source.onended), so detach them here. Looping
-  // sounds stay parented — their owning components manage them.
-  for (const sound of _oneShotSounds) {
-    sound.removeFromParent();
+    // Loop owners keep their nodes attached so they can restart.
+    if (_managedOneShots.has(sound)) stopAndDetachSound(sound);
+    else stopSound(sound);
   }
   _activeSounds.clear();
-  _oneShotSounds.clear();
 }
-
-engineStore.subscribe(
-  (state) => state.playback.rate,
-  () => {
-    for (const [sound, basePitch] of _activeSounds) {
-      try {
-        sound.setPlaybackRate(getEffectiveSoundRate(basePitch));
-      } catch {
-        // Sound may have been disposed.
-      }
-    }
-  },
-);
 
 export interface ResolvedAudioProfile {
   filename: string;
@@ -204,9 +215,17 @@ export function audioContextRunning(audioListener: AudioListener): boolean {
 // indistinguishable chaos, but every extra source still costs audio-thread
 // CPU. The distance cull runs first, so budget goes to audible sounds.
 const MAX_ONE_SHOTS = 32;
-const _oneShotSounds = new Set<Audio<GainNode | PannerNode>>();
+// World effects quickly lose their connection to the action once triggered.
+const ONE_SHOT_START_DEADLINE_MS = 500;
 const _listenerPos = new Vector3();
 const _soundPos = new Vector3();
+
+interface OneShotOwner {
+  /** Retires the pending start when its view is disposed. */
+  signal: AbortSignal;
+  /** Revalidates the source when a decode completes. */
+  canStart?: () => boolean;
+}
 
 /**
  * Play a one-shot sound effect. For 3D sounds, creates a PositionalAudio
@@ -222,11 +241,19 @@ const _soundPos = new Vector3();
 export function playOneShotSound(
   resolved: ResolvedAudioProfile,
   audioListener: AudioListener,
-  audioLoader: AudioLoader,
+  audioLoader: AudioBufferLoader,
   position?: Vector3,
   parent?: Object3D,
+  owner?: OneShotOwner,
 ): void {
-  if (!audioContextRunning(audioListener)) return;
+  const signal = owner?.signal;
+  if (
+    signal?.aborted ||
+    !settingsStore.getState().audioEnabled ||
+    !audioContextRunning(audioListener)
+  )
+    return;
+  const deadline = performance.now() + ONE_SHOT_START_DEADLINE_MS;
   let url: string;
   try {
     url = audioToUrl(resolved.filename);
@@ -234,64 +261,72 @@ export function playOneShotSound(
     // File not in manifest — skip silently.
     return;
   }
-  const is3D = resolved.is3D && !!parent;
-  if (is3D) {
-    if (_oneShotSounds.size >= MAX_ONE_SHOTS) return;
+  const spatialParent = resolved.is3D ? parent : undefined;
+  const withinBudgetAndRange = () => {
+    if (!spatialParent) return true;
+    if (_spatialOneShots.size >= MAX_ONE_SHOTS) return false;
     audioListener.getWorldPosition(_listenerPos);
-    if (position) {
-      parent!.updateWorldMatrix(true, false);
-      _soundPos.copy(position);
-      parent!.localToWorld(_soundPos);
-    } else {
-      parent!.getWorldPosition(_soundPos);
+    if (position) spatialParent.localToWorld(_soundPos.copy(position));
+    else spatialParent.getWorldPosition(_soundPos);
+    return _soundPos.distanceTo(_listenerPos) <= resolved.maxDist;
+  };
+  if (!withinBudgetAndRange()) return;
+
+  const { recording, seekNonce } = engineStore.getState().playback;
+  const revision = recording?.streamingPlayback?.playbackRevision;
+  let unsubscribe: (() => void) | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined = undefined;
+  const settle = () => {
+    if (!_pendingOneShots.delete(settle)) return false;
+    signal?.removeEventListener("abort", settle);
+    clearTimeout(timer);
+    unsubscribe?.();
+    return true;
+  };
+  const start = (buffer: AudioBuffer) => {
+    if (!settle()) return;
+    const current = engineStore.getState().playback;
+    if (
+      performance.now() >= deadline ||
+      signal?.aborted ||
+      owner?.canStart?.() === false ||
+      !settingsStore.getState().audioEnabled ||
+      current.recording !== recording ||
+      current.seekNonce !== seekNonce ||
+      recording?.streamingPlayback?.playbackRevision !== revision ||
+      (recording && current.status !== "playing") ||
+      !audioContextRunning(audioListener) ||
+      !withinBudgetAndRange()
+    )
+      return;
+
+    const sound = spatialParent
+      ? createPositionalAudio(audioListener, resolved)
+      : new Audio(audioListener).setVolume(resolved.volume);
+    sound.setBuffer(buffer);
+    if (spatialParent) {
+      if (position) sound.position.copy(position);
+      spatialParent.add(sound);
     }
-    if (_soundPos.distanceTo(_listenerPos) > resolved.maxDist) return;
+    if (playManagedOneShot(sound) && spatialParent) _spatialOneShots.add(sound);
+  };
+
+  _pendingOneShots.add(settle);
+  try {
+    unsubscribe = getCachedAudioBuffer(url, audioLoader, start, settle);
+  } catch {
+    settle();
+    return;
   }
-  const gen = _soundGeneration;
-  getCachedAudioBuffer(url, audioLoader, (buffer) => {
-    if (gen !== _soundGeneration) return;
-    // Re-check after the async load: the context may have suspended
-    // (or never resumed) between the call and the buffer arriving.
-    if (!audioContextRunning(audioListener)) return;
-    try {
-      if (is3D) {
-        // Re-check the cap: the check above ran at call time, but a burst
-        // of first plays of a not-yet-cached file all pass it before any
-        // of their async loads land here.
-        if (_oneShotSounds.size >= MAX_ONE_SHOTS) return;
-        const sound = createPositionalAudio(audioListener, resolved);
-        sound.setBuffer(buffer);
-        sound.setPlaybackRate(getEffectiveSoundRate());
-        if (position) {
-          sound.position.copy(position);
-        }
-        parent!.add(sound);
-        trackSound(sound);
-        _oneShotSounds.add(sound);
-        // Chain (not replace) three's onEnded so isPlaying bookkeeping —
-        // which also gates the panner's per-frame updates — stays correct.
-        const baseOnEnded = sound.onEnded.bind(sound);
-        sound.onEnded = () => {
-          baseOnEnded();
-          _oneShotSounds.delete(sound);
-          stopAndDetachSound(sound);
-        };
-        sound.play();
-      } else {
-        const sound = new Audio(audioListener);
-        sound.setBuffer(buffer);
-        sound.setVolume(resolved.volume);
-        sound.setPlaybackRate(getEffectiveSoundRate());
-        trackSound(sound);
-        const baseOnEnded = sound.onEnded.bind(sound);
-        sound.onEnded = () => {
-          baseOnEnded();
-          stopAndDetachSound(sound);
-        };
-        sound.play();
-      }
-    } catch {
-      // Playback failure (e.g. suspended AudioContext) — skip silently.
-    }
-  });
+  // A cache hit can settle the request before the loader returns.
+  if (!_pendingOneShots.has(settle)) {
+    unsubscribe?.();
+    return;
+  }
+  if (signal?.aborted) {
+    settle();
+    return;
+  }
+  signal?.addEventListener("abort", settle, { once: true });
+  timer = setTimeout(settle, Math.max(0, deadline - performance.now()));
 }

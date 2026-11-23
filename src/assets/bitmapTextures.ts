@@ -129,6 +129,7 @@ export function loadBitmapTexture(
 export function loadBitmapTextureInstance(
   url: string,
   onError?: (url: string) => void,
+  fallbackUrls: readonly string[] = [],
 ): Texture {
   const texture = new Texture();
   texture.flipY = false;
@@ -137,21 +138,29 @@ export function loadBitmapTextureInstance(
     disposed = true;
   };
   texture.addEventListener("dispose", markDisposed);
-  const source = loadBitmapTexture(
-    url,
-    (loaded) => {
-      texture.removeEventListener("dispose", markDisposed);
-      if (disposed) return;
-      texture.source = loaded.source;
-      texture.needsUpdate = true;
-    },
-    (failedUrl) => {
-      texture.removeEventListener("dispose", markDisposed);
-      if (!disposed) observeFailedBitmapTexture(texture);
-      onError?.(failedUrl);
-    },
-  );
-  texture.source = source.source;
+  let nextFallback = 0;
+  function load(candidate: string) {
+    const source = loadBitmapTexture(
+      candidate,
+      (loaded) => {
+        texture.removeEventListener("dispose", markDisposed);
+        if (disposed) return;
+        texture.source = loaded.source;
+        texture.needsUpdate = true;
+      },
+      (failedUrl) => {
+        if (!disposed && nextFallback < fallbackUrls.length) {
+          load(fallbackUrls[nextFallback++]);
+          return;
+        }
+        texture.removeEventListener("dispose", markDisposed);
+        if (!disposed) observeFailedBitmapTexture(texture);
+        onError?.(failedUrl);
+      },
+    );
+    texture.source = source.source;
+  }
+  load(url);
   return texture;
 }
 

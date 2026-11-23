@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseDemoValues } from "./demoStreaming";
+import { parseDemoValues } from "./demoInitialValues";
 import { normalizePlayerGuid } from "./streamHelpers";
 import { TestLiveStream } from "./streamTestFixtures";
 

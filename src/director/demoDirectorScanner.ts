@@ -6,7 +6,8 @@
  * themselves from each snapshot's raw server-message feed — the director
  * owns its event scanning and needs nothing from the app's
  * timeline. Yields to the event loop to stay responsive; safe to run
- * while the same buffer plays back (separate parser, no shared state).
+ * while the same buffer plays back (shared immutable bytes, independent
+ * parser cursors and simulation). This headless pass disables ground-particle input.
  */
 import type { DirectorDataset } from "./types";
 import { createDemoStreamingRecording } from "../stream/demoStreaming";

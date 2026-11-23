@@ -1,10 +1,10 @@
 import { TbMovie } from "react-icons/tb";
 import { LuClock } from "react-icons/lu";
-import { FaDiscord } from "react-icons/fa6";
 import { PiGlobe } from "react-icons/pi";
 import { IoCalendarNumberOutline } from "react-icons/io5";
 import { BiSolidEject } from "react-icons/bi";
 import { useAppAccount } from "../state/appAccountStore";
+import { DiscordAvatar } from "./DiscordAvatar";
 import { useClipQuery } from "./useClipQuery";
 import { usePublicProfile } from "./usePublicProfile";
 import { useDemoIndex } from "./useDemoIndex";
@@ -49,18 +49,13 @@ export function StreamingClipInfo({ clipId }: { clipId: string }) {
               href={profileUrl}
               title={`${creator?.name ?? "Clip creator"}’s profile`}
             >
-              {creator?.image ? (
-                <img
-                  className={styles.Avatar}
-                  src={creator.image}
-                  alt=""
-                  width={18}
-                  height={18}
-                  referrerPolicy="no-referrer"
-                />
-              ) : (
-                <FaDiscord className={styles.AvatarFallback} aria-hidden />
-              )}
+              <DiscordAvatar
+                key={creator?.image}
+                src={creator?.image}
+                size={18}
+                className={styles.Avatar}
+                fallbackClassName={styles.AvatarFallback}
+              />
               <span>{creator?.name ?? "Clip creator"}</span>
             </a>
             <span className={styles.MetaItem}>

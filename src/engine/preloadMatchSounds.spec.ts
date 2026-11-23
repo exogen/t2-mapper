@@ -1,8 +1,11 @@
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { AudioLoader } from "three";
+import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 import { audioToUrl } from "../loaders";
 import { getResourceMap } from "../manifest";
-import { audioBufferCache, getCachedAudioBuffer } from "./audioBuffers";
+import {
+  audioBufferCache,
+  getCachedAudioBuffer,
+  type AudioBufferLoader,
+} from "./audioBuffers";
 import { MATCH_SOUND_PATHS, preloadMatchSounds } from "./preloadMatchSounds";
 
 vi.mock("../logger", () => ({
@@ -12,11 +15,13 @@ vi.mock("../logger", () => ({
 function createLoader() {
   const pending = new Map<
     string,
-    { complete: (buffer: AudioBuffer) => void; fail?: (error: unknown) => void }
+    { complete: (buffer: AudioBuffer) => void; fail: (error: unknown) => void }
   >();
-  const load = vi.fn<AudioLoader["load"]>((url, onLoad, _progress, onError) => {
-    pending.set(url, { complete: onLoad, fail: onError });
-  });
+  const load = vi.fn<AudioBufferLoader["load"]>(
+    (url, onLoad, _progress, onError) => {
+      pending.set(url, { complete: onLoad, fail: onError });
+    },
+  );
   const buffer = {} as AudioBuffer;
   const complete = (url: string) => {
     const request = pending.get(url)!;
@@ -24,7 +29,7 @@ function createLoader() {
     request.complete(buffer);
   };
   return {
-    loader: { load } as unknown as AudioLoader,
+    loader: { load },
     load,
     pending,
     buffer,
@@ -32,7 +37,7 @@ function createLoader() {
     fail(url: string) {
       const request = pending.get(url)!;
       pending.delete(url);
-      request.fail?.(new Error("network failure"));
+      request.fail(new Error("network failure"));
     },
     finishAll() {
       while (pending.size) complete(pending.keys().next().value!);
@@ -116,6 +121,10 @@ it("reuses in-flight requests across a provider remount", () => {
 });
 
 it("continues after load failures and leaves failed sounds retryable", () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  onTestFinished(() => {
+    vi.useRealTimers();
+  });
   source.load.mockImplementationOnce(() => {
     throw new Error("loader failure");
   });
@@ -128,6 +137,7 @@ it("continues after load failures and leaves failed sounds retryable", () => {
   expect(audioBufferCache.size).toBe(MATCH_SOUND_PATHS.length - 2);
 
   start();
+  vi.advanceTimersByTime(1000);
   expect(source.pending.size).toBe(2);
   source.finishAll();
   expect(audioBufferCache.size).toBe(MATCH_SOUND_PATHS.length);

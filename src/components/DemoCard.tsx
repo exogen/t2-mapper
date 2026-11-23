@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { PiCassetteTapeFill, PiGlobe } from "react-icons/pi";
 import { FaMicrophoneAlt } from "react-icons/fa";
-import { FaPenToSquare } from "react-icons/fa6";
 import { IoCalendarNumberOutline } from "react-icons/io5";
 import { LuClock, LuLoaderCircle, LuUser, LuUsers } from "react-icons/lu";
 import { MdVerified } from "react-icons/md";
+import { RxInput } from "react-icons/rx";
 import { TbLaurelWreathFilled } from "react-icons/tb";
 import { useAppAccount } from "../state/appAccountStore";
 import { editableDemoGame } from "../state/editableGame";
@@ -257,7 +257,7 @@ export function DemoCard({
                 disabled={deleting}
                 onClick={() => setEditing(true)}
               >
-                <FaPenToSquare className={styles.EditIcon} aria-hidden />
+                <RxInput className={styles.EditIcon} aria-hidden />
               </button>
             )}
             {onDelete && (

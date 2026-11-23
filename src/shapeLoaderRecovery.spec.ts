@@ -11,6 +11,7 @@ import { buildDTS } from "./dts/dtsBuilder";
 import { DTSLoader } from "./dts/dtsLoader";
 import { createDTSTestShape } from "./dts/dtsTestFixtures";
 import { createShapeInstance } from "./engine/shapeInstance";
+import { getPlayerSkinSelection } from "./engine/playerSkins";
 import * as loaders from "./loaders";
 import { ShapeLoader } from "./shapeLoader";
 
@@ -32,6 +33,54 @@ function samplers(scene: Object3D): Texture[] {
   });
   return textures;
 }
+
+it("tries regular, team and authored skins after hi-res fetch and regular decode failures", async () => {
+  const path = (name: string) => loaders.textureToUrl(`skins/${name}`, null);
+  const hiRes = path("swolf_lmale_512");
+  const regular = path("swolf.lmale");
+  const team = path("baseb.lmale");
+  const original = path("base.lmale");
+  const requests: string[] = [];
+  vi.spyOn(FileLoader.prototype, "load").mockImplementation(
+    (url, done, _progress, fail) => {
+      requests.push(url);
+      if (url === hiRes) fail?.(new Error("404"));
+      else done?.(new Blob([url]) as unknown as ArrayBuffer);
+    },
+  );
+  const teamImage = { width: 16, height: 16 } as ImageBitmap;
+  const baseImage = { width: 8, height: 8 } as ImageBitmap;
+  vi.stubGlobal("createImageBitmap", async (blob: Blob) => {
+    const url = await blob.text();
+    if (url === regular) throw new Error("bad image");
+    return url === team ? teamImage : baseImage;
+  });
+  const data = createDTSTestShape();
+  data.materials[0].name = "skins/base.lmale";
+  const model = buildDTS(data);
+  const instance = (teamName?: string) =>
+    createShapeInstance({
+      model,
+      playerSkin: getPlayerSkinSelection("light_male.dts", "swolf", teamName),
+    });
+  const gameplay = instance("baseb");
+  const preview = instance();
+  try {
+    const gameMaps = samplers(gameplay.scene);
+    const previewMaps = samplers(preview.scene);
+    expect(gameMaps.length).toBeGreaterThan(0);
+    expect(previewMaps.length).toBeGreaterThan(0);
+    await vi.waitFor(() => {
+      for (const map of gameMaps) expect(map.image).toBe(teamImage);
+      for (const map of previewMaps) expect(map.image).toBe(baseImage);
+    });
+    expect(requests.slice(0, 2)).toEqual([hiRes, regular]);
+    expect(requests.slice(2).sort()).toEqual([team, original].sort());
+  } finally {
+    gameplay.dispose();
+    preview.dispose();
+  }
+});
 
 it("recovers real processed view samplers after a shared decode fails and dependency readiness retries", async () => {
   const warning = vi.spyOn(console, "warn").mockImplementation(() => {});

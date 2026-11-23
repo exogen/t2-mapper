@@ -48,7 +48,7 @@ function invalidateRefresh() {
   refreshRequest = null;
 }
 
-/** Re-read the app session, without making a request to Discord. */
+/** Re-read the cached account. The relay may queue a Discord profile refresh. */
 export function refreshAccount({ onlyIfStale = false } = {}): Promise<void> {
   if (appAccountStore.getState().pending) return Promise.resolve();
   if (refreshRequest) return refreshRequest;

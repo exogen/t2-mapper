@@ -1,7 +1,7 @@
 import { Dialog, DialogHeading } from "@ariakit/react";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { FaPenToSquare } from "react-icons/fa6";
+import { RxInput } from "react-icons/rx";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   MAX_GAME_TITLE_LENGTH,
@@ -38,7 +38,7 @@ export function GameDetailsButton() {
           aria-haspopup="dialog"
           onClick={() => setEditing(game)}
         >
-          <FaPenToSquare aria-hidden />
+          <RxInput aria-hidden />
         </button>
       )}
       {editing && (

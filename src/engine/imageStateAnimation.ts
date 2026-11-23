@@ -1,7 +1,6 @@
 import type {
   AnimationAction,
   AudioListener,
-  AudioLoader,
   Object3D,
   PositionalAudio,
 } from "three";
@@ -10,6 +9,7 @@ import type { ImageSlot } from "../stream/types";
 import { engineStore, type PlaybackStatus } from "../state/engineStore";
 import { streamClock } from "../state/streamPlaybackStore";
 import { audioToUrl } from "../loaders";
+import type { AudioBufferLoader } from "./audioBuffers";
 import { getAudioGraph } from "./audioGraph";
 import { settingsStore } from "../state/settingsStore";
 import {
@@ -89,6 +89,7 @@ export function createImageStateAnimation(
   let recordedState: ImageAnimationState | null = null;
   let previousMountTime: number | undefined;
   let disposed = false;
+  const soundLifetime = new AbortController();
   let lastSoundAttempt = {
     revision: -1,
     audioEnabled: false,
@@ -220,7 +221,7 @@ export function createImageStateAnimation(
         if (entered || fallbackSound >= 0) {
           const { recording, seekNonce } = playback;
           const { mountedAtSec, dataBlockId } = imageSlot;
-          const canStartLoop = () => {
+          const canStartSound = (requiredState?: number) => {
             const current = engineStore.getState().playback;
             const slot = readSlot();
             return (
@@ -231,14 +232,15 @@ export function createImageStateAnimation(
               current.seekNonce === seekNonce &&
               slot?.dataBlockId === dataBlockId &&
               slot.mountedAtSec === mountedAtSec &&
-              slot.animation?.state.stateIndex === stateIndex
+              (requiredState === undefined ||
+                slot.animation?.state.stateIndex === requiredState)
             );
           };
           playStateSounds(
             entered
               ? recorded.state
               : { ...recorded.state, soundDataBlockIds: [fallbackSound] },
-            canStartLoop,
+            { signal: soundLifetime.signal, canStart: canStartSound },
             target,
             playback,
             {
@@ -282,6 +284,7 @@ export function createImageStateAnimation(
     update,
     dispose() {
       disposed = true;
+      soundLifetime.abort();
       stopLoopingSound(loopingSoundRef, loopingSoundStateRef);
     },
   };
@@ -295,11 +298,11 @@ export function createImageStateAnimation(
  */
 function playStateSounds(
   animState: WeaponAnimState,
-  canStartLoop: () => boolean,
+  owner: { signal: AbortSignal; canStart: (requiredState?: number) => boolean },
   target: ImageStateAnimationTarget,
   playback: ReturnType<typeof engineStore.getState>["playback"],
   audio: {
-    audioLoader: AudioLoader;
+    audioLoader: AudioBufferLoader;
     audioListener: AudioListener;
     loopingSoundRef: Box<PositionalAudio | null>;
     loopingSoundStateRef: Box<number>;
@@ -323,6 +326,7 @@ function playStateSounds(
         audioLoader,
         undefined,
         target.imageRoot,
+        owner,
       );
       continue;
     }
@@ -334,7 +338,7 @@ function playStateSounds(
         if (
           gen !== getSoundGeneration() ||
           loopingSoundRef.current ||
-          !canStartLoop()
+          !owner.canStart(animState.stateIndex)
         )
           return;
         const sound = createPositionalAudio(audioListener, resolved);

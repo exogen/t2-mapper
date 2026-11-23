@@ -12,15 +12,15 @@ import { shapeThreadTime } from "../stream/shapeThreads";
 import type {
   GroundActor,
   GroundEffectFrame,
-} from "../stream/groundEffectHistory";
+} from "../stream/groundEffectQueue";
 import type { StreamingPlayback } from "../stream/types";
 import type { Vec3 } from "../collision/terrainCollision";
 import { groundActorMatrix } from "../collision/wheelContact";
 import { getGroundEffectShape, type GroundShape } from "./groundEffectAssets";
 import { torqueVecToThree } from "../scene/coordinates";
 
-/** Reuse shape geometry/mixers, but sample the historical vehicle transform and
- * threads. Today's rendered vehicle colliders must never leak into a seek. */
+/** Reuse shape geometry/mixers with each consumed tick's transform and threads.
+ * Interpolated render poses are not collision inputs. */
 class VehicleShape {
   root = new DTSShape();
   mixer: DTSAnimationMixer;
@@ -37,7 +37,7 @@ class VehicleShape {
     this.mixer = new DTSAnimationMixer(this.root);
   }
   sample(actor: GroundActor, shape: GroundShape, now: number) {
-    // History actors are immutable. A shape is shared by multiple vehicles,
+    // Tick actors are immutable. A shape is shared by multiple vehicles,
     // so both actor identity and time must match before reusing its pose.
     if (this.actor === actor && this.timeSec === now) return;
     this.actor = actor;
@@ -67,6 +67,11 @@ class VehicleShape {
       );
     this.root.updateMatrixWorld(true);
   }
+
+  endFrame(): void {
+    this.actor = undefined;
+    this.timeSec = -Infinity;
+  }
 }
 
 export class GroundVehicleCollision {
@@ -85,7 +90,18 @@ export class GroundVehicleCollision {
     this.playback = playback;
   }
   setFrame(frame: GroundEffectFrame) {
+    this.endFrame();
     this.frame = frame;
+  }
+  /** Release actor inputs after the tick's repeated pose queries finish. */
+  endFrame(): void {
+    this.frame = undefined;
+    for (const shape of this.shapes.values()) shape.endFrame();
+  }
+  clear(): void {
+    this.endFrame();
+    // These pose roots/mixers are owned here; geometry and clip data are shared.
+    this.shapes.clear();
   }
   private visit(
     box: Box3,

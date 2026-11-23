@@ -178,7 +178,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   clickToCycle: true,
   fov: 90,
   audioEnabled: true,
-  audioVolume: 0.75,
+  audioVolume: 0.5,
   commentaryEnabled: true,
   commentarySubtitles: false,
   adjustAudioSpeed: true,

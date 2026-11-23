@@ -1,7 +1,6 @@
-import type { AudioLoader } from "three";
 import { audioToUrl } from "../loaders";
 import { createLogger } from "../logger";
-import { getCachedAudioBuffer } from "./audioBuffers";
+import { getCachedAudioBuffer, type AudioBufferLoader } from "./audioBuffers";
 
 const log = createLogger("preloadMatchSounds");
 const PRELOAD_CONCURRENCY = 4;
@@ -24,7 +23,7 @@ export const MATCH_SOUND_PATHS = [
 ] as const;
 
 /** Warm the shared decoded cache without blocking rendering or playing audio. */
-export function preloadMatchSounds(audioLoader: AudioLoader): () => void {
+export function preloadMatchSounds(audioLoader: AudioBufferLoader): () => void {
   let next = 0;
   let cancelled = false;
 

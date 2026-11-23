@@ -1,6 +1,7 @@
 import type { AccountPublicProfile } from "../../relay/accountTypes";
 import type { ReactNode } from "react";
 import { FaDiscord } from "react-icons/fa6";
+import { DiscordAvatar } from "./DiscordAvatar";
 import { Tribes2Icon } from "./Tribes2Icon";
 import styles from "./UserIdentity.module.css";
 
@@ -17,17 +18,6 @@ export function UserIdentity({
   const page = variant === "page";
   const hasPortrait = page && portrait != null;
   const Name = page ? "h1" : "span";
-  const avatarSize = page ? 64 : 32;
-  const avatar = user.image && (
-    <img
-      className={styles.Avatar}
-      src={user.image}
-      alt=""
-      width={avatarSize}
-      height={avatarSize}
-      referrerPolicy="no-referrer"
-    />
-  );
   return (
     <div
       className={styles.Root}
@@ -35,7 +25,15 @@ export function UserIdentity({
       data-portrait={hasPortrait || undefined}
     >
       {hasPortrait && portrait}
-      {avatar}
+      {user.image && (
+        <DiscordAvatar
+          key={user.image}
+          src={user.image}
+          size={page ? 64 : 32}
+          className={styles.Avatar}
+          fallbackClassName={styles.AvatarFallback}
+        />
+      )}
       <div className={styles.Identity}>
         <Name className={styles.Name}>{user.name}</Name>
         {page ? (

@@ -8,7 +8,7 @@ import { interiorColliderVersion } from "../collision/worldCollision";
 import type { DebrisHistory } from "../stream/debrisHistory";
 import { DebrisSimulation } from "../particles/DebrisSimulation";
 import { GroundEffectSimulation } from "../particles/GroundEffectSimulation";
-import { groundAssetsVersion } from "../particles/groundEffectAssets";
+import { GroundEffectPlayback } from "../particles/groundEffectPlayback";
 import {
   createParticleGeometry,
   createParticleMaterial,
@@ -104,6 +104,8 @@ function createDebrisEffects(
 ): StreamEffect {
   const group = new Group();
   const { audioListener, audioLoader } = getAudioGraph();
+  const soundLifetime = new AbortController();
+  const soundOwner = { signal: soundLifetime.signal };
   let runtime: DebrisRuntime | null = null;
   const stop = combineCleanups(
     engine.scheduler.add(FramePriority.Debris, ({ renderer, delta }) => {
@@ -174,6 +176,7 @@ function createDebrisEffects(
                 audioLoader,
                 torqueVecToThree(pos, new Vector3()),
                 group,
+                soundOwner,
               );
           }
         }
@@ -186,6 +189,7 @@ function createDebrisEffects(
   return {
     group,
     dispose() {
+      soundLifetime.abort();
       stop();
       runtime?.renderer.dispose();
       runtime = null;
@@ -199,7 +203,9 @@ interface GroundVisual extends ParticleBuffers {
   material: import("three").ShaderMaterial;
 }
 
-/** Ground effects (dust, footprints, vehicle wakes) and world decals. */
+/** Forward-only ground contact visuals: dust, footprints and vehicle wakes.
+ * Seeks, hidden pages and stream replacement discard these effects. Unlike
+ * debris and projectile effects, they never warm up from saved history. */
 function createGroundEffects(
   engine: GameEngine,
   playback: StreamingPlayback,
@@ -208,14 +214,7 @@ function createGroundEffects(
   const simulation = new GroundEffectSimulation(playback);
   const decals = new WorldDecalRenderer(group, playback);
   const visuals = new Map<EmitterInstance, GroundVisual>();
-  const last = {
-    playback: undefined as StreamingPlayback | undefined,
-    generation: -1,
-    seek: -1,
-    assets: -1,
-    terrain: collisionState().terrain,
-    time: -Infinity,
-  };
+  let lastTime = -Infinity;
   const clearVisuals = () => {
     for (const v of visuals.values()) {
       v.mesh.removeFromParent();
@@ -224,45 +223,31 @@ function createGroundEffects(
     }
     visuals.clear();
   };
+  const queue = playback.groundEffectQueue;
+  if (!queue) return { group, dispose() {} };
+  const timing = new GroundEffectPlayback(queue, simulation, () => {
+    clearVisuals();
+    decals.dispose();
+    lastTime = -Infinity;
+  });
+  const syncTransport = () => {
+    const transport = engineStore.getState().playback;
+    timing.setCaptureSuspended(
+      transport.status === "seeking" ||
+        document.visibilityState === "hidden" ||
+        transport.recording?.streamingPlayback !== playback,
+    );
+  };
+  const unsubscribe = engineStore.subscribe(syncTransport);
+  document.addEventListener("visibilitychange", syncTransport);
+  syncTransport();
   const stop = engine.scheduler.add(FramePriority.PostCamera, () => {
     const transport = engineStore.getState().playback;
-    if (
-      transport.status === "seeking" ||
-      transport.recording?.streamingPlayback !== playback
-    )
-      return;
-    const history = playback.groundEffectHistory;
-    if (!history) return;
-    const now = streamClock.worldTime,
-      state = last;
-    const seek = transport.seekNonce,
-      terrain = collisionState().terrain;
-    if (
-      state.playback !== playback ||
-      state.generation !== history.generation ||
-      (Number.isFinite(simulation.timeSec) &&
-        simulation.timeSec < history.oldestTimeSec - 0.033) ||
-      state.seek !== seek ||
-      (state.assets !== groundAssetsVersion &&
-        simulation.hasNewShapeAssets()) ||
-      state.terrain !== terrain ||
-      now < state.time
-    ) {
-      state.playback = playback;
-      simulation.clear();
-      clearVisuals();
-      // A new live world can assign different DecalData to the same IDs.
-      if (state.generation !== history.generation) decals.dispose();
-      decals.update([], now, simulation.decalTimeoutSec);
-      state.generation = history.generation;
-      state.seek = seek;
-      state.assets = groundAssetsVersion;
-      state.terrain = terrain;
-      state.time = -Infinity;
-    }
-    state.assets = groundAssetsVersion;
-    if (!terrain) return;
-    history.visit(simulation.timeSec, now, (frame) => simulation.step(frame));
+    if (transport.recording?.streamingPlayback !== playback) return;
+    const now = streamClock.worldTime;
+    const terrain = collisionState().terrain;
+    timing.update(now, transport.seekNonce, terrain);
+    if (!terrain || transport.status === "seeking") return;
     const live = new Set<EmitterInstance>();
     for (const entry of simulation.emitters.values()) {
       const emitter = entry.emitter;
@@ -299,15 +284,19 @@ function createGroundEffects(
         v.material.dispose();
         visuals.delete(emitter);
       }
-    if (now !== state.time)
+    if (now !== lastTime)
       decals.update(simulation.decals, now, simulation.decalTimeoutSec);
     decals.updateTextureVisibility();
-    state.time = now;
+    lastTime = now;
   });
   return {
     group,
     dispose() {
+      unsubscribe();
+      document.removeEventListener("visibilitychange", syncTransport);
       stop();
+      timing.dispose();
+      simulation.clear();
       clearVisuals();
       decals.dispose();
     },

@@ -623,7 +623,7 @@ it("keeps the water impact and projectile lifetime when presentation effects are
     position: [4, 6, 20],
   });
   expect(stream.projectileTrailHistory.events).toHaveLength(0);
-  expect(stream.groundEffectHistory.oldestTimeSec).toBe(Infinity);
+  expect(stream.groundEffectQueue.oldestTimeSec).toBe(Infinity);
 });
 
 it("advances a slowed round through water and explodes at the lake bed", () => {

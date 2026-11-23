@@ -6,11 +6,11 @@ import { useEngineSelector, engineStore } from "../state/engineStore";
 import { publishedDemoFilename } from "../state/editableGame";
 import { graphicsEffectsStore } from "../state/graphicsEffectsStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
+import { ClipApiError } from "../stream/clipApi";
 import {
-  ClipApiError,
   readClipCheckpoint,
   recoverClipCheckpoint,
-} from "../stream/clipApi";
+} from "../stream/clipCheckpointApi";
 import { startClipPlayback } from "../stream/clipPlayback";
 import { navigationMode, useNavigationQueryState } from "./useQueryParams";
 import { useAppNavigation } from "./useAppNavigation";

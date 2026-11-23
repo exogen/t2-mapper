@@ -6,12 +6,29 @@ import {
 } from "./checkpointMemoryPolicy";
 import type { DemoCheckpointIndex } from "./demoCheckpoints";
 import type { DemoSeekCheckpoint } from "./demoStreaming";
+import { emptyGroundEffectState } from "./groundEffectCheckpoint";
 
 const log = createLogger("demoStreaming");
 
 export interface ImportedCheckpoint {
   checkpoint: DemoSeekCheckpoint;
   onRestoreError?: (error: unknown) => void;
+}
+
+/** Old v24 anchors can contain many seconds of actor and animation graphs.
+ * Keep the envelope readable by older clients without retaining those graphs. */
+function retainedCheckpoint(
+  checkpoint: DemoSeekCheckpoint,
+): DemoSeekCheckpoint {
+  if (checkpoint.simulation.groundEffects === emptyGroundEffectState)
+    return checkpoint;
+  return {
+    ...checkpoint,
+    simulation: {
+      ...checkpoint.simulation,
+      groundEffects: emptyGroundEffectState,
+    },
+  };
 }
 
 /** Owns decoded graph retention and one lazy decode. Simulation validation and
@@ -75,7 +92,7 @@ export class DemoCheckpointRepository {
   }
 
   addSession(tick: number, checkpoint: DemoSeekCheckpoint): void {
-    this.checkpoints.set(tick, checkpoint);
+    this.checkpoints.set(tick, retainedCheckpoint(checkpoint));
     this.prune();
   }
 
@@ -85,9 +102,10 @@ export class DemoCheckpointRepository {
     onRestoreError?: (error: unknown) => void,
   ): void {
     for (const [tick, checkpoint] of checkpoints) {
+      const retained = retainedCheckpoint(checkpoint);
       this.imported.delete(tick);
-      this.imported.set(tick, { checkpoint, onRestoreError });
-      if (predictionEnabled) this.checkpoints.set(tick, checkpoint);
+      this.imported.set(tick, { checkpoint: retained, onRestoreError });
+      if (predictionEnabled) this.checkpoints.set(tick, retained);
     }
     this.prune();
   }
@@ -166,7 +184,7 @@ export class DemoCheckpointRepository {
       })
       .then((checkpoint) => {
         if (controller.signal.aborted || this.index !== source) return;
-        this.acceptDecoded(checkpoint);
+        this.acceptDecoded(retainedCheckpoint(checkpoint));
         emitDiagnosticEvent("checkpoint-decode-end", { tick: requestedTick });
       })
       .catch((error: unknown) => {

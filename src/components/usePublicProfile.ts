@@ -27,7 +27,7 @@ export function usePublicProfile(
       return response.json();
     },
     staleTime: 60_000,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
     retry: false,
   });
 }

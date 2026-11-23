@@ -9,7 +9,13 @@ export class ParticleSnapshotIndex {
   readonly shockLances: StreamEntity[] = [];
   readonly trails: StreamEntity[] = [];
   readonly seekerLaunches: StreamEntity[] = [];
-  readonly audio: StreamEntity[] = [];
+  readonly projectiles: StreamEntity[] = [];
+
+  getEntity(snapshot: StreamSnapshot, id: string): StreamEntity | undefined {
+    return this.source === snapshot.entities
+      ? this.entities.get(id)
+      : snapshot.entities.find((entity) => entity.id === id);
+  }
 
   update(snapshot: StreamSnapshot): boolean {
     if (this.source === snapshot.entities) return false;
@@ -20,7 +26,7 @@ export class ParticleSnapshotIndex {
       this.shockLances.length =
       this.trails.length =
       this.seekerLaunches.length =
-      this.audio.length =
+      this.projectiles.length =
         0;
     for (const entity of snapshot.entities) {
       this.entities.set(entity.id, entity);
@@ -34,8 +40,7 @@ export class ParticleSnapshotIndex {
       )
         this.trails.push(entity);
       if (entity.seekerLaunch) this.seekerLaunches.push(entity);
-      if (entity.type === "Explosion" || entity.type === "Projectile")
-        this.audio.push(entity);
+      if (entity.type === "Projectile") this.projectiles.push(entity);
     }
     return true;
   }

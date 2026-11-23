@@ -15,7 +15,7 @@ import {
 import {
   extractMissionInfo,
   parseDemoValues,
-} from "../src/stream/demoStreaming";
+} from "../src/stream/demoInitialValues";
 import { BitStreamWriter } from "./BitStreamWriter.js";
 import { DemoRecorder, type ServerIdentity } from "./demoRecorder.js";
 import * as demoStart from "./demoStart.js";

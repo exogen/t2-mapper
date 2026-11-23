@@ -34,7 +34,7 @@ import { flushTransformChanges } from "../transformChanges";
 import { createPlayerPresentation } from "./playerPresentation";
 import { installProfileCanvasClick } from "./profileCanvasClick";
 import { createProfileGestureAnimations } from "./profileGestureAnimations";
-import { loadSkinManifest, resolvePlayerSkinUrl } from "./playerSkins";
+import { loadSkinManifest, getPlayerSkinSelection } from "./playerSkins";
 import {
   resolveProfileAppearance,
   type ProfileAppearanceInput,
@@ -294,7 +294,7 @@ export function mountPlayerProfileViewer(
     if (disposed) return;
     const anisotropy = renderer.capabilities.getMaxAnisotropy();
     const mounts = new MountPoints();
-    let skinUrl = resolvePlayerSkinUrl(
+    let playerSkin = getPlayerSkinSelection(
       appearance.shapeName,
       profile.skin ?? undefined,
     );
@@ -306,7 +306,7 @@ export function mountPlayerProfileViewer(
         model,
         anisotropy,
         emap: appearance.emap,
-        skinUrl,
+        playerSkin,
       });
       const stopMaterials = studioMaterials(player.scene);
       scene.add(player.root);
@@ -356,12 +356,12 @@ export function mountPlayerProfileViewer(
     void skinManifest
       .then(() => {
         if (disposed) return;
-        const nextSkinUrl = resolvePlayerSkinUrl(
+        const nextSkin = getPlayerSkinSelection(
           appearance.shapeName,
           profile.skin ?? undefined,
         );
-        if (nextSkinUrl !== skinUrl) {
-          skinUrl = nextSkinUrl;
+        if (nextSkin.preferred?.customUrl !== playerSkin.preferred?.customUrl) {
+          playerSkin = nextSkin;
           buildPlayer();
         }
       })

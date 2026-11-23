@@ -64,6 +64,7 @@ function connect() {
 }
 
 beforeEach(() => {
+  vi.useFakeTimers();
   demo = { source: "demo", duration: 100 } as StreamRecording;
   state().setRecording(demo);
   state().setPlaybackStatus("playing");
@@ -76,6 +77,8 @@ afterEach(() => {
   state().setRecording(null);
   state().setPlaybackStatus("stopped");
   gameEntityStore.setState({ dataSource: null });
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("audio transport synchronization", () => {
@@ -285,7 +288,7 @@ describe("audio transport synchronization", () => {
     connection.unlock(); // A fresh gesture must be allowed to retry resume.
     expect(context.resume).toHaveBeenCalledTimes(2);
     expect(context.suspend).not.toHaveBeenCalled();
-    await context.finish(1); // The gesture's promise settles first.
+    await context.finish(); // The first resume settles while the gesture's resume is still pending.
     expect(context.suspend).not.toHaveBeenCalled();
     expect(context.gain.linearRampToValueAtTime).not.toHaveBeenCalled();
     await context.flush();
@@ -304,6 +307,146 @@ describe("audio transport synchronization", () => {
       1,
       10.05,
     );
+  });
+
+  it("recovers from an interrupted resume whose promise never settles", async () => {
+    connect();
+    await context.flush();
+    context.state = "interrupted";
+    context.dispatchEvent(new Event("statechange"));
+    expect(context.resume).toHaveBeenCalledTimes(2);
+
+    connection.unlock();
+    expect(context.resume).toHaveBeenCalledTimes(3);
+    // The device finishes resuming, but the original promise has no completion yet.
+    const [interrupted] = context.pending.splice(0, 1);
+    await context.finish();
+    expect(context.gain.linearRampToValueAtTime).toHaveBeenLastCalledWith(
+      1,
+      10.05,
+    );
+    state().setPlaybackStatus("paused");
+    expect(context.suspend).toHaveBeenCalledOnce();
+    await context.flush();
+    expect(context.state).toBe("suspended");
+    state().setPlaybackStatus("playing");
+    interrupted.resolve(); // A late completion from the old burst is ignored.
+    await context.flush();
+    expect(context.state).toBe("running");
+    expect(context.resume).toHaveBeenCalledTimes(4);
+  });
+
+  it("waits for another gesture when resume resolves during an OS interruption", async () => {
+    connect();
+    await context.flush();
+    context.state = "interrupted";
+    context.dispatchEvent(new Event("statechange"));
+    const [resume] = context.pending.splice(0, 1);
+    resume.resolve();
+    await Promise.resolve();
+    expect(context.pending).toHaveLength(0);
+    expect(context.gain.setValueAtTime).toHaveBeenLastCalledWith(0, 10);
+
+    connection.unlock();
+    expect(context.resume).toHaveBeenCalledTimes(3);
+    await context.flush();
+    expect(context.state).toBe("running");
+  });
+
+  it("restarts a frozen running clock after a gesture without repeated cycling", async () => {
+    connect();
+    await context.flush();
+    connection.unlock();
+    connection.unlock();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(context.suspend).toHaveBeenCalledOnce();
+    expect(context.resume).toHaveBeenCalledOnce();
+
+    await context.finish();
+    expect(context.resume).toHaveBeenCalledTimes(2);
+    await context.flush();
+    connection.unlock();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(context.suspend).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(context.suspend).toHaveBeenCalledOnce();
+  });
+
+  it("checks the clock after the native resume on foregrounding", async () => {
+    connect();
+    connection.reconcile();
+    await context.flush();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(context.suspend).toHaveBeenCalledOnce();
+    expect(context.resume).toHaveBeenCalledOnce();
+
+    state().setPlaybackStatus("paused");
+    await context.flush();
+    expect(context.state).toBe("suspended");
+    expect(context.resume).toHaveBeenCalledOnce();
+    expect(context.gain.setValueAtTime).toHaveBeenLastCalledWith(0, 10);
+  });
+
+  it("leaves a progressing audio clock alone on foregrounding", async () => {
+    connect();
+    await context.flush();
+    connection.reconcile();
+    context.currentTime += 0.1;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(context.suspend).not.toHaveBeenCalled();
+  });
+
+  it("cancels an audio clock check when the document hides or the view changes", async () => {
+    const document = { visibilityState: "visible" };
+    vi.stubGlobal("document", document);
+    connect();
+    await context.flush();
+    connection.reconcile();
+    document.visibilityState = "hidden";
+    connection.reconcile();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(context.suspend).not.toHaveBeenCalled();
+
+    document.visibilityState = "visible";
+    connection.reconcile();
+    connect(); // Replaces the view before its probe fires.
+    await context.flush();
+    expect(context.state).toBe("running");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(context.suspend).toHaveBeenCalledOnce();
+  });
+
+  it("resumes after native suspension when the suspend promise stays pending", async () => {
+    connect();
+    await context.flush();
+    state().setPlaybackStatus("paused");
+    state().setPlaybackStatus("playing");
+    expect(context.resume).toHaveBeenCalledOnce();
+
+    const [suspended] = context.pending.splice(0, 1);
+    context.state = "suspended";
+    context.dispatchEvent(new Event("statechange"));
+    expect(context.resume).toHaveBeenCalledTimes(2);
+    await context.flush();
+    suspended.resolve();
+    await Promise.resolve();
+    expect(context.state).toBe("running");
+    expect(context.suspend).toHaveBeenCalledOnce();
+  });
+
+  it("suspends after a native resume whose promise stays pending", async () => {
+    connect();
+    const [resumed] = context.pending.splice(0, 1);
+    context.state = "running";
+    context.dispatchEvent(new Event("statechange"));
+    state().setPlaybackStatus("paused");
+    expect(context.suspend).toHaveBeenCalledOnce();
+
+    await context.flush();
+    resumed.resolve();
+    await Promise.resolve();
+    expect(context.state).toBe("suspended");
+    expect(context.resume).toHaveBeenCalledOnce();
   });
 
   it("still runs ambience in map mode while transport is stopped", async () => {

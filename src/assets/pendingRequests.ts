@@ -6,7 +6,7 @@ interface Subscriber<V> {
 /** Shares unfinished work only. Finished-value caching and disposal belong to
  * the caller; cached callbacks can therefore retain their synchronous contract. */
 export class PendingRequests<K, V> {
-  private readonly entries = new Map<K, Subscriber<V>[]>();
+  private readonly entries = new Map<K, Set<Subscriber<V>>>();
   private readonly observerError: (error: unknown, key: K) => void;
 
   constructor(observerError: (error: unknown, key: K) => void) {
@@ -25,13 +25,15 @@ export class PendingRequests<K, V> {
     ) => void,
     onLoad?: Subscriber<V>["onLoad"],
     onError?: Subscriber<V>["onError"],
-  ): void {
+  ): () => void {
     const pending = this.entries.get(key);
-    if (pending) {
-      if (onLoad || onError) pending.push({ onLoad, onError });
-      return;
-    }
-    const subscribers = onLoad || onError ? [{ onLoad, onError }] : [];
+    const subscribers = pending ?? new Set<Subscriber<V>>();
+    const subscriber = { onLoad, onError };
+    if (onLoad || onError) subscribers.add(subscriber);
+    const unsubscribe = () => {
+      subscribers.delete(subscriber);
+    };
+    if (pending) return unsubscribe;
     this.entries.set(key, subscribers);
     let settled = false;
     const settle = (notify: (subscriber: Subscriber<V>) => void) => {
@@ -50,7 +52,7 @@ export class PendingRequests<K, V> {
           }
         }
       }
-      subscribers.length = 0;
+      subscribers.clear();
     };
     try {
       start(
@@ -65,5 +67,6 @@ export class PendingRequests<K, V> {
       }
       throw error;
     }
+    return unsubscribe;
   }
 }

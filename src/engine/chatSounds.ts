@@ -4,24 +4,59 @@ import { getAudioGraph } from "./audioGraph";
 import {
   audioContextRunning,
   getCachedAudioBuffer,
-  getEffectiveSoundRate,
   getSoundGeneration,
-  trackSound,
+  playManagedOneShot,
   stopAndDetachSound,
 } from "./soundEffects";
 import { combineCleanups, reaction } from "./storeReaction";
 import { settingsStore } from "../state/settingsStore";
 import { commentaryPlayback, streamClock } from "../state/streamPlaybackStore";
-import { engineStore } from "../state/engineStore";
+import { engineStore, type PlaybackSliceState } from "../state/engineStore";
 import { streamSnapshotStore } from "../state/streamSnapshotStore";
 import { streamTimeToTick } from "../stream/streamHelpers";
-import type { StreamSnapshot } from "../stream/types";
+import type {
+  ChatMessage,
+  StreamRecording,
+  StreamSnapshot,
+} from "../stream/types";
 
 const MAX_CHAT_SOUND_AGE_SEC = 5;
 
 interface PendingChatSound {
   sender: string;
   cancel(): void;
+}
+
+interface ChatTraversal {
+  recording: StreamRecording | null;
+  seekNonce: number;
+  revision: number | undefined;
+}
+
+function readTraversal({
+  recording,
+  seekNonce,
+}: PlaybackSliceState): ChatTraversal {
+  return {
+    recording,
+    seekNonce,
+    revision: recording?.streamingPlayback?.playbackRevision,
+  };
+}
+
+function matchesTraversal(
+  traversal: ChatTraversal,
+  { recording, seekNonce }: PlaybackSliceState,
+): boolean {
+  return (
+    traversal.recording === recording &&
+    traversal.seekNonce === seekNonce &&
+    traversal.revision === recording?.streamingPlayback?.playbackRevision
+  );
+}
+
+function allowsChatSound({ status }: PlaybackSliceState): boolean {
+  return status === "playing" || status === "ending";
 }
 
 /**
@@ -42,8 +77,8 @@ function isAnnouncerSound(soundPath: string): boolean {
 
 /**
  * Plays non-positional sound effects for chat messages with ~w sound tags.
- * `processMessages` plays whatever the current snapshot holds that hasn't
- * played yet; `reset` stops and forgets everything.
+ * `processMessages` consumes new messages in ID order; `reset` stops and
+ * forgets everything.
  *
  * While the CastGenius commentary track is on air, the in-game
  * announcer is suppressed entirely (the booth makes those calls);
@@ -51,197 +86,186 @@ function isAnnouncerSound(soundPath: string): boolean {
  */
 export function createChatSoundPlayer() {
   const { audioLoader, audioListener } = getAudioGraph();
-  // IDs are deterministic across reconstruction; dedupe within each traversal
-  // so rewinding allows the same voice bind to play when reached again.
-  const played = new Set<number>();
-  let traversal = {
-    recording: engineStore.getState().playback.recording,
-    seekNonce: engineStore.getState().playback.seekNonce,
-  };
-  // Track active voice chat sound per sender so a new voice bind from the
-  // same player stops their previous one (matching Tribes 2 behavior).
-  const activeBySender = new Map<string, Audio<GainNode>>();
+  // Rewinding a demo or rehydrating a live stream can reuse message IDs.
+  let traversal = readTraversal(engineStore.getState().playback);
+  let lastMessageId = 0;
   // Own chat sounds and pending loads through natural EOF. Manual transport
   // changes still silence them via the shared audio device.
-  const liveSounds = new Set<Audio<GainNode>>();
-  const pendingLoads = new Map<symbol, PendingChatSound>();
+  const liveSounds = new Map<Audio<GainNode>, string>();
+  const pendingLoads = new Set<PendingChatSound>();
   let processedMessages: StreamSnapshot["chatMessages"] | null = null;
 
-  const reset = () => {
-    for (const load of pendingLoads.values()) load.cancel();
-    played.clear();
-    for (const sound of liveSounds) stopAndDetachSound(sound);
+  const stopSounds = () => {
+    for (const load of pendingLoads) load.cancel();
+    for (const sound of liveSounds.keys()) stopAndDetachSound(sound);
     liveSounds.clear();
-    activeBySender.clear();
   };
 
-  const processMessages = () => {
-    const playback = engineStore.getState().playback;
-    const { recording } = playback;
-    const { audioEnabled } = settingsStore.getState();
-    const stopSound = (sound: Audio<GainNode>, sender: string) => {
-      stopAndDetachSound(sound);
-      liveSounds.delete(sound);
-      if (sender && activeBySender.get(sender) === sound) {
-        activeBySender.delete(sender);
-      }
-    };
-    if (
-      traversal.recording !== recording ||
-      traversal.seekNonce !== playback.seekNonce
-    ) {
-      for (const sound of liveSounds) stopAndDetachSound(sound);
-      liveSounds.clear();
-      activeBySender.clear();
-      for (const load of pendingLoads.values()) load.cancel();
-      played.clear();
-      traversal = { recording, seekNonce: playback.seekNonce };
-    }
-    const snapshot = streamSnapshotStore.getState().snapshot;
-    const currentMessages = snapshot?.chatMessages ?? null;
-    const finish = () => {
-      const current = engineStore.getState().playback;
-      if (
-        current.recording === recording &&
-        current.seekNonce === playback.seekNonce &&
-        current.status === "ending" &&
-        processedMessages ===
-          (streamSnapshotStore.getState().snapshot?.chatMessages ?? null) &&
-        pendingLoads.size === 0 &&
-        !Array.from(liveSounds).some((sound) => sound.isPlaying)
-      ) {
-        engineStore.getState().setPlaybackStatus("paused");
-      }
-    };
-    // A final buffer may finish before the final snapshot is processed.
-    // Don't close the audio tail until that entire batch has been handled.
+  const reset = () => {
+    stopSounds();
+    lastMessageId = 0;
     processedMessages = null;
-    if (!audioEnabled || !currentMessages?.length || !snapshot) {
-      processedMessages = currentMessages;
-      finish();
+  };
+
+  function finishAudioTail(expected: ChatTraversal) {
+    const playback = engineStore.getState().playback;
+    if (
+      playback.status !== "ending" ||
+      !matchesTraversal(expected, playback) ||
+      processedMessages !==
+        (streamSnapshotStore.getState().snapshot?.chatMessages ?? null) ||
+      pendingLoads.size > 0
+    )
+      return;
+    for (const sound of liveSounds.keys()) {
+      if (sound.isPlaying) return;
+    }
+    engineStore.getState().setPlaybackStatus("paused");
+  }
+
+  function queueSound(
+    { soundPath, soundPitch, sender, timeSec }: ChatMessage,
+    ageSec: number,
+    expected: ChatTraversal,
+  ) {
+    if (!soundPath) return;
+    const announcer = isAnnouncerSound(soundPath);
+    if (announcer && commentaryPlayback.active) return;
+
+    let url: string;
+    try {
+      url = audioToUrl(soundPath);
+    } catch {
+      // File not in manifest.
       return;
     }
-    const { timeSec } = snapshot;
-    for (const msg of currentMessages) {
-      if (played.has(msg.id)) continue;
-      played.add(msg.id);
-      if (!msg.soundPath) continue;
-      if (playback.status !== "playing" && playback.status !== "ending")
-        continue;
+
+    // A slow older voice bind must not interrupt this player's newer one.
+    if (sender) {
+      for (const load of pendingLoads) {
+        if (load.sender === sender) load.cancel();
+      }
+    }
+
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let deadline: number | undefined;
+    let unsubscribe: (() => void) | undefined;
+    const load: PendingChatSound = {
+      sender,
+      cancel() {
+        clearTimeout(timeout);
+        pendingLoads.delete(load);
+        unsubscribe?.();
+      },
+    };
+    const settle = () => {
+      load.cancel();
+      finishAudioTail(expected);
+    };
+    const generation = getSoundGeneration();
+    pendingLoads.add(load);
+
+    try {
+      unsubscribe = getCachedAudioBuffer(
+        url,
+        audioLoader,
+        (buffer) => {
+          if (!pendingLoads.has(load)) return;
+          try {
+            const playback = engineStore.getState().playback;
+            // A suspended context queues the cue until the user unlocks it.
+            if (
+              generation !== getSoundGeneration() ||
+              !matchesTraversal(expected, playback) ||
+              !allowsChatSound(playback) ||
+              !settingsStore.getState().audioEnabled ||
+              (announcer && commentaryPlayback.active) ||
+              (deadline !== undefined && performance.now() > deadline) ||
+              Math.abs(streamClock.time - timeSec) > MAX_CHAT_SOUND_AGE_SEC ||
+              !audioContextRunning(audioListener)
+            )
+              return;
+
+            // A new voice bind replaces the sender's previous cue. Also
+            // forget sounds stopped globally, which skip the onEnded callback.
+            for (const [sound, owner] of liveSounds) {
+              if (sender && sender === owner) stopAndDetachSound(sound);
+              else if (sound.isPlaying) continue;
+              liveSounds.delete(sound);
+            }
+            const sound = audioListener.createChatSound();
+            sound.setBuffer(buffer);
+            if (
+              playManagedOneShot(sound, {
+                pitch: soundPitch ?? 1,
+                onEnd: () => {
+                  liveSounds.delete(sound);
+                  finishAudioTail(expected);
+                },
+              })
+            ) {
+              liveSounds.set(sound, sender);
+            }
+          } finally {
+            settle();
+          }
+        },
+        settle,
+      );
+      // The demo clock stops at EOF. Apply the remaining age budget in real
+      // time to in-flight loads. Cache hits settle synchronously.
+      if (pendingLoads.has(load)) {
+        const waitMs = (MAX_CHAT_SOUND_AGE_SEC - ageSec) * 1000;
+        deadline = performance.now() + waitMs;
+        timeout = setTimeout(settle, waitMs);
+      }
+    } catch {
+      settle();
+    }
+  }
+
+  function processMessages() {
+    const playback = engineStore.getState().playback;
+    if (!matchesTraversal(traversal, playback)) {
+      reset();
+      traversal = readTraversal(playback);
+    }
+    const expected = traversal;
+    const { audioEnabled } = settingsStore.getState();
+    if (!audioEnabled) stopSounds();
+    const snapshot = streamSnapshotStore.getState().snapshot;
+    // The old snapshot can outlive an unload, a catch-up, or a seek in progress.
+    if (
+      !playback.recording ||
+      playback.status === "seeking" ||
+      snapshot?.playbackRevision !== expected.revision
+    )
+      return;
+
+    // A final buffer may finish before the final snapshot is processed.
+    // Hold EOF open until the entire batch has been handled.
+    processedMessages = null;
+    const canPlay = audioEnabled && allowsChatSound(playback);
+    const messages = snapshot?.chatMessages ?? null;
+    const timeSec = snapshot?.timeSec ?? 0;
+    for (const msg of messages ?? []) {
+      if (msg.id <= lastMessageId) continue;
+      lastMessageId = msg.id;
+      if (!canPlay) continue;
       // A seek restores chat history without replaying nearby old lines.
       if (
-        recording?.source === "demo" &&
+        playback.recording.source === "demo" &&
         playback.seekTime > 0 &&
         streamTimeToTick(msg.timeSec) <= streamTimeToTick(playback.seekTime)
       )
         continue;
       const ageSec = Math.abs(timeSec - msg.timeSec);
       if (ageSec > MAX_CHAT_SOUND_AGE_SEC) continue;
-      const onAir = commentaryPlayback.active;
-      if (onAir && isAnnouncerSound(msg.soundPath)) continue;
-      const request = Symbol();
-      let loadTimeout: ReturnType<typeof setTimeout> | undefined;
-      let loadDeadlineMs: number | undefined;
-      const cancel = () => {
-        clearTimeout(loadTimeout);
-        pendingLoads.delete(request);
-      };
-      const settle = () => {
-        cancel();
-        finish();
-      };
-      try {
-        const url = audioToUrl(msg.soundPath);
-        const pitch = msg.soundPitch ?? 1;
-        const sender = msg.sender;
-        const gen = getSoundGeneration();
-        const seekNonce = playback.seekNonce;
-        // A slow older voice bind must not interrupt this player's newer one.
-        if (sender) {
-          for (const load of pendingLoads.values()) {
-            if (load.sender === sender) load.cancel();
-          }
-        }
-        pendingLoads.set(request, { sender, cancel });
-        getCachedAudioBuffer(
-          url,
-          audioLoader,
-          (buffer) => {
-            if (!pendingLoads.has(request)) return;
-            try {
-              const currentPlayback = engineStore.getState().playback;
-              if (
-                gen !== getSoundGeneration() ||
-                currentPlayback.recording !== recording ||
-                currentPlayback.seekNonce !== seekNonce ||
-                (currentPlayback.status !== "playing" &&
-                  currentPlayback.status !== "ending") ||
-                (loadDeadlineMs != null &&
-                  performance.now() > loadDeadlineMs) ||
-                Math.abs(streamClock.time - msg.timeSec) >
-                  MAX_CHAT_SOUND_AGE_SEC
-              )
-                return;
-              // A suspended context queues the beep instead of playing it —
-              // it would join the pile-up on the first user gesture. Skip.
-              if (!audioContextRunning(audioListener)) return;
-              // Stop the sender's previous voice chat sound.
-              if (sender) {
-                const prev = activeBySender.get(sender);
-                if (prev) stopSound(prev, sender);
-              }
-              // A global stop (seek, recording change) nulls three's onended,
-              // so those sounds never announce themselves as finished — sweep
-              // them here rather than holding dead nodes for the session.
-              for (const done of liveSounds) {
-                if (!done.isPlaying) liveSounds.delete(done);
-              }
-              const sound = audioListener.createChatSound();
-              sound.setBuffer(buffer);
-              // On-air ducking is global now (AudioContext's master duck):
-              // chat routes through the listener, so a per-sound duck here
-              // would stack to a double discount.
-              sound.setPlaybackRate(getEffectiveSoundRate(pitch));
-              trackSound(sound, pitch);
-              liveSounds.add(sound);
-              if (sender) {
-                activeBySender.set(sender, sound);
-              }
-              // Chain (not replace) three's onEnded so isPlaying bookkeeping
-              // stays correct.
-              const baseOnEnded = sound.onEnded.bind(sound);
-              sound.onEnded = () => {
-                baseOnEnded();
-                stopSound(sound, sender);
-                finish();
-              };
-              try {
-                sound.play();
-              } catch (error) {
-                stopSound(sound, sender);
-                throw error;
-              }
-            } finally {
-              settle();
-            }
-          },
-          settle,
-        );
-        // The demo clock stops at EOF. Bound uncached loads in real time too,
-        // without cutting off sounds that have already started playing.
-        if (pendingLoads.has(request)) {
-          const waitMs = (MAX_CHAT_SOUND_AGE_SEC - ageSec) * 1000;
-          loadDeadlineMs = performance.now() + waitMs;
-          loadTimeout = setTimeout(settle, waitMs);
-        }
-      } catch {
-        settle();
-        // File not in manifest — skip silently.
-      }
+      queueSound(msg, ageSec, expected);
     }
-    processedMessages = currentMessages;
-    finish();
-  };
+    processedMessages = messages;
+    finishAudioTail(expected);
+  }
 
   return { processMessages, reset };
 }
@@ -250,23 +274,9 @@ export function createChatSoundPlayer() {
 export function installChatSounds(): () => void {
   const { processMessages, reset } = createChatSoundPlayer();
   return combineCleanups(
-    // A new recording or an audio toggle starts over.
-    reaction(
-      engineStore,
-      (state) => state.playback.recording,
-      () => {
-        processMessages();
-        return reset;
-      },
-    ),
-    reaction(
-      settingsStore,
-      (state) => state.audioEnabled,
-      () => {
-        processMessages();
-        return reset;
-      },
-    ),
+    reset,
+    reaction(engineStore, (state) => state.playback.recording, processMessages),
+    reaction(settingsStore, (state) => state.audioEnabled, processMessages),
     reaction(
       streamSnapshotStore,
       (state) => state.snapshot?.chatMessages,

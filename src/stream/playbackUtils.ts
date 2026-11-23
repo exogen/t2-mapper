@@ -30,10 +30,11 @@ import {
   isDTSMeshBatch,
 } from "../dts/dtsModel";
 import { observeShapeMeshes, getDTSObject } from "../dts/dtsScene";
+import { loadBitmapTextureInstance } from "../assets/bitmapTextures";
 import {
-  loadBitmapTexture,
-  loadBitmapTextureInstance,
-} from "../assets/bitmapTextures";
+  playerSkinUrls,
+  type PlayerSkinSelection,
+} from "../engine/playerSkins";
 import { setupTexture } from "../textureUtils";
 import { textureToUrl } from "../loaders";
 import type { Keyframe } from "./types";
@@ -217,6 +218,7 @@ export function replaceWithShapeMaterial(
   options: {
     anisotropy?: number;
     emap?: boolean;
+    playerSkin?: PlayerSkinSelection;
     skinUrl?: string;
     skinName?: string;
   } = {},
@@ -257,42 +259,31 @@ export function replaceWithShapeMaterial(
     };
   }
 
-  // Torque reSkin: replace "base." prefix with "{skinName}." in the resource
-  // path, then resolve to a URL. skinUrl takes precedence (pre-computed URL
-  // for player custom skins from external sources). skinName does the
-  // replacement locally (for flag team skins and other built-in skins).
   const isBaseTexture = /[/\\]base\./i.test(resourcePath);
-  let skinTextureUrl: string | undefined;
-  if (isBaseTexture && options.skinUrl) {
-    skinTextureUrl = options.skinUrl;
+  let skinUrls: string[] | undefined;
+  if (options.playerSkin) {
+    skinUrls = playerSkinUrls(resourcePath, options.playerSkin);
+  } else if (isBaseTexture && options.skinUrl) {
+    skinUrls = [options.skinUrl];
   } else if (isBaseTexture && options.skinName && options.skinName !== "base") {
     const skinnedPath = resourcePath.replace(
       /\bbase\./i,
       `${options.skinName}.`,
     );
     try {
-      skinTextureUrl = textureToUrl(skinnedPath, null);
+      skinUrls = [textureToUrl(skinnedPath, null)];
     } catch {
       // Skin texture not found — fall through to default.
     }
   }
-  const usingSkin = !!skinTextureUrl;
-  const url = skinTextureUrl ?? textureToUrl(resourcePath);
-  const texture = loadBitmapTextureInstance(
-    url,
-    usingSkin
-      ? () => {
-          // Skin failed (404) — load the default texture into the same object.
-          const fallbackUrl = textureToUrl(resourcePath);
-          loadBitmapTexture(fallbackUrl, (loaded) => {
-            texture.image = loaded.image;
-            texture.needsUpdate = true;
-          });
-        }
-      : undefined,
-  );
+  const defaultUrl = textureToUrl(resourcePath);
+  const url = skinUrls?.[0] ?? defaultUrl;
+  const fallbacks = skinUrls?.length
+    ? [...new Set([...skinUrls, defaultUrl])].slice(1)
+    : undefined;
+  const texture = loadBitmapTextureInstance(url, undefined, fallbacks);
   if (
-    !usingSkin &&
+    !fallbacks?.length &&
     mat instanceof DTSMaterial &&
     mat.map &&
     !mat.map.image &&
@@ -333,6 +324,7 @@ export function processShapeScene(
   options: {
     anisotropy?: number;
     emap?: boolean;
+    playerSkin?: PlayerSkinSelection;
     skinUrl?: string;
     skinName?: string;
     /**

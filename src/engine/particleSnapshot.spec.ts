@@ -19,11 +19,11 @@ describe("particle snapshot index", () => {
     expect(index.entities.get("1")).toBe(replacement.entities[0]);
     expect(index.explosions).toHaveLength(0);
     expect(index.trails).toEqual(replacement.entities);
-    expect(index.audio).toEqual(replacement.entities);
+    expect(index.projectiles).toEqual(replacement.entities);
     index.update(snapshot([]));
     expect(index.entities.size).toBe(0);
     expect(index.trails).toHaveLength(0);
-    expect(index.audio).toHaveLength(0);
+    expect(index.projectiles).toHaveLength(0);
   });
 
   it("keeps driver lookup for all entities while excluding scenery from effect scans", () => {
@@ -39,17 +39,17 @@ describe("particle snapshot index", () => {
     expect(index.entities.get("static")).toBe(staticShape);
     expect(index.explosions).toEqual([explosion]);
     expect(index.shockLances).toEqual([bolt]);
-    expect(index.audio).toEqual([explosion, bolt]);
+    expect(index.projectiles).toEqual([bolt]);
     expect(index.trails).toHaveLength(0);
   });
 
   it("retains the index while debrief HUD snapshots reuse the frozen world", () => {
     const index = new ParticleSnapshotIndex();
-    const entities = [{ id: "explosion", type: "Explosion" }];
+    const entities = [{ id: "bolt", type: "Projectile" }];
     expect(index.update(snapshot(entities, 10))).toBe(true);
     expect(index.update(snapshot(entities, 20))).toBe(false);
-    expect(index.audio).toEqual(entities);
+    expect(index.projectiles).toEqual(entities);
     expect(index.update(snapshot([], 21))).toBe(true);
-    expect(index.audio).toEqual([]);
+    expect(index.projectiles).toEqual([]);
   });
 });

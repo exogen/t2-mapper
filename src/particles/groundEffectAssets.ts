@@ -20,8 +20,9 @@ export interface GroundShape {
   clips: Map<string, DTSAnimationClip>;
   wheels?: WheelGroundData[];
 }
+// Page-lifetime registry of shared immutable models registered by ShapeLoader.
+// World cleanup releases local pose/action caches, not these shared assets.
 const shapes = new Map<string, GroundShape>();
-export let groundAssetsVersion = 0;
 export function registerGroundEffectShape(name: string, model: DTSModel): void {
   const key = shapeKey(name);
   if (shapes.has(key)) return;
@@ -29,7 +30,6 @@ export function registerGroundEffectShape(name: string, model: DTSModel): void {
     model,
     clips: new Map(model.animations.map((c) => [c.name.toLowerCase(), c])),
   });
-  groundAssetsVersion++;
 }
 export function getGroundEffectShape(name: string): GroundShape | undefined {
   return shapes.get(shapeKey(name));
@@ -37,8 +37,15 @@ export function getGroundEffectShape(name: string): GroundShape | undefined {
 
 const actionMaps = new WeakMap<
   StreamingPlayback,
-  Map<GroundShape, ReturnType<typeof buildActionAnimMap>>
+  Map<
+    GroundShape,
+    {
+      sequences: readonly string[];
+      actions: ReturnType<typeof buildActionAnimMap>;
+    }
+  >
 >();
+const noSequences: readonly string[] = [];
 export function clearGroundActionMaps(playback: StreamingPlayback): void {
   actionMaps.delete(playback);
 }
@@ -51,14 +58,18 @@ export function groundActionName(
 ): string | undefined {
   let maps = actionMaps.get(playback);
   if (!maps) actionMaps.set(playback, (maps = new Map()));
-  let actions = maps.get(shape);
-  if (!actions) {
-    const sequences = playback.getShapeConstructorSequences(name) ?? [];
+  const sequences = playback.getShapeConstructorSequences(name) ?? noSequences;
+  let cached = maps.get(shape);
+  if (!cached || cached.sequences !== sequences) {
     const prefix = shapeKey(name).replace(/\.dts$/, "_");
-    actions = buildActionAnimMap(sequences, prefix, shape.model.animations);
-    // A model can arrive before its TSShapeConstructor datablock.
-    if (sequences.length) maps.set(shape, actions);
+    cached = {
+      sequences,
+      actions: buildActionAnimMap(sequences, prefix, shape.model.animations),
+    };
+    // Late constructor datablocks replace the stream's sequence-list snapshot.
+    maps.set(shape, cached);
   }
+  const { actions } = cached;
   if (typeof action === "number") return actions.get(action)?.clipName;
   for (const entry of actions.values())
     if (entry.alias === action) return entry.clipName;
