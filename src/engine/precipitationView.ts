@@ -19,7 +19,7 @@ import {
   Vector4,
 } from "three";
 import { audioToUrl, loadDetailMapList, textureToUrl } from "../loaders";
-import { loadTexture } from "../textureUtils";
+import { loadBitmapTexture } from "../assets/bitmapTextures";
 import { threeToTorque, torqueVecToThree } from "../scene/coordinates";
 import { engineStore, worldDeltaSec } from "../state/engineStore";
 import { gameEntityStore, selectSkyData } from "../state/gameEntityStore";
@@ -278,7 +278,7 @@ export function createPrecipitationView(
       instance.wrapS = instance.wrapT = RepeatWrapping;
       instance.minFilter = LinearMipmapNearestFilter;
       texture = instance;
-      const shared = loadTexture(url, (loaded) => {
+      const shared = loadBitmapTexture(url, (loaded) => {
         if (disposed || token !== textureToken) return;
         instance.source = loaded.source;
         instance.needsUpdate = true;

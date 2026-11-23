@@ -34,11 +34,11 @@ import {
 vi.mock("../loaders", () => ({
   textureToUrl: (name: string) => `/textures/${name}`,
 }));
-vi.mock("../textureUtils", async (original) => {
-  const utilities = await original<typeof import("../textureUtils")>();
+vi.mock("../assets/bitmapTextures", async (original) => {
+  const utilities = await original<typeof import("../assets/bitmapTextures")>();
   return {
     ...utilities,
-    loadTextureInstance: (name: string) => {
+    loadBitmapTextureInstance: (name: string) => {
       const texture = new Texture();
       texture.name = name;
       return texture;

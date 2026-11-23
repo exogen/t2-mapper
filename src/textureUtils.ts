@@ -3,7 +3,6 @@
  */
 import {
   DataTexture,
-  FileLoader,
   LinearFilter,
   LinearMipmapLinearFilter,
   NoColorSpace,
@@ -13,119 +12,6 @@ import {
   Texture,
   UnsignedByteType,
 } from "three";
-
-// FileLoader rejects HTTP errors before their bodies reach the image decoder.
-const _bitmapLoader = new FileLoader().setResponseType("blob");
-const _textureCache = new Map<string, Texture>();
-const _textureWaiters = new Map<
-  string,
-  Array<{
-    onLoad?: (texture: Texture) => void;
-    onError?: (url: string) => void;
-  }>
->();
-
-/**
- * Fetch a texture with HTTP status checking and decode it off the main thread
- * to avoid jank from synchronous image decodes during texSubImage2D.
- * Returns a cached Texture if the same URL was loaded before, otherwise creates
- * an initially-empty Texture that gets populated when the image loads.
- */
-export function loadTexture(
-  url: string,
-  onLoad?: (texture: Texture) => void,
-  onError?: (url: string) => void,
-): Texture {
-  const cached = _textureCache.get(url);
-  if (cached) {
-    // Already loaded (or in flight) — fire callback if image is ready.
-    if (cached.image) onLoad?.(cached);
-    else if (onLoad || onError) {
-      const waiters = _textureWaiters.get(url) ?? [];
-      waiters.push({ onLoad, onError });
-      _textureWaiters.set(url, waiters);
-    }
-    return cached;
-  }
-  const texture = new Texture();
-  // ImageBitmap doesn't support UNPACK_FLIP_Y_WEBGL, so flipY must be false.
-  // This matches our codebase where all textures use flipY = false.
-  texture.flipY = false;
-  _textureCache.set(url, texture);
-  const failed = () => {
-    // Remove failed URLs so their fallback or a later retry can be loaded.
-    _textureCache.delete(url);
-    const waiters = _textureWaiters.get(url);
-    _textureWaiters.delete(url);
-    onError?.(url);
-    for (const waiter of waiters ?? []) waiter.onError?.(url);
-  };
-  _bitmapLoader.load(
-    url,
-    (blob) => {
-      // The fetch item ends when this callback returns. Keep the loading
-      // manager busy until the asynchronous bitmap decode and callbacks finish.
-      const manager = _bitmapLoader.manager;
-      manager.itemStart(url);
-      void Promise.resolve()
-        .then(() =>
-          // Three's FileLoader types omit Blob from the response union.
-          createImageBitmap(blob as unknown as Blob, {
-            // Tribes 2 also uses transparent pixels' RGB for environment masks.
-            premultiplyAlpha: "none",
-            colorSpaceConversion: "none",
-          }),
-        )
-        .then(
-          (bitmap) => {
-            texture.image = bitmap;
-            texture.needsUpdate = true;
-            const waiters = _textureWaiters.get(url);
-            _textureWaiters.delete(url);
-            onLoad?.(texture);
-            for (const waiter of waiters ?? []) waiter.onLoad?.(texture);
-          },
-          () => {
-            manager.itemError(url);
-            failed();
-          },
-        )
-        .finally(() => manager.itemEnd(url));
-    },
-    undefined,
-    failed,
-  );
-  return texture;
-}
-
-/** Independent sampler state backed by the shared image/Three Source. */
-export function loadTextureInstance(
-  url: string,
-  onError?: (url: string) => void,
-): Texture {
-  const texture = new Texture();
-  texture.flipY = false;
-  const source = loadTexture(
-    url,
-    (loaded) => {
-      texture.source = loaded.source;
-      texture.needsUpdate = true;
-    },
-    onError,
-  );
-  texture.source = source.source;
-  return texture;
-}
-
-/** Promise-based variant of loadTexture. */
-export function loadTextureAsync(url: string): Promise<Texture> {
-  return new Promise((resolve, reject) => {
-    loadTexture(url, resolve, (failedUrl) =>
-      reject(new Error(`Failed to load texture: ${failedUrl}`)),
-    );
-  });
-}
-
 export interface TextureSetupOptions {
   /** Texture repeat values [x, y]. Default: [1, 1] */
   repeat?: [number, number];
@@ -175,7 +61,7 @@ export function setupTexture<T extends Texture>(
   tex.magFilter = LinearFilter;
 
   // Only mark for upload if the texture actually has image data. Textures
-  // from loadTexture() get needsUpdate set in the load callback instead.
+  // from the bitmap loader get needsUpdate set in the load callback instead.
   if (tex.image) {
     tex.needsUpdate = true;
   }

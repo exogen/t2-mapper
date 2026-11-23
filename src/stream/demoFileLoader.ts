@@ -1,7 +1,7 @@
 /**
  * Shared .rec demo file loading pipeline (sidebar button + drop screen):
  * parse the recording, swap it into the engine, and kick off the
- * background timeline scan. Module-level token/abort state means a new
+ * background timeline scan. Module-level attempt/abort state means a new
  * load cancels the previous download; scans belong to the installed recording.
  */
 import { createLogger } from "../logger";
@@ -19,6 +19,8 @@ import { engineStore } from "../state/engineStore";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import type { StreamRecording } from "./types";
+import type { DemoParser } from "t2-demo-parser";
+import { DemoLoadAttempt } from "./demoLoadAttempt";
 import {
   directDemoSource,
   resolveDemoSource,
@@ -26,9 +28,20 @@ import {
   DemoSourceLoadError,
 } from "./demoSources";
 import type { SourceDemoMetadata } from "../../relay/demoSourceMetadata";
-import { DEMO_CHECKPOINT_SUFFIX, readDemoCheckpoints } from "./demoCheckpoints";
+import {
+  DEMO_CHECKPOINT_SUFFIX,
+  readDemoCheckpoints,
+  readDemoCheckpointIndex,
+} from "./demoCheckpoints";
 import { readDemoGames } from "../../relay/demoMetadata";
 import { versionedDemoMetadataUrl, type DemoIndexEntry } from "./demoIndex";
+import { markDiagnosticEvent } from "../diagnostics/browserDiagnostics";
+import { browserCheckpointMemoryPolicy } from "./checkpointMemoryPolicy";
+import { readDeviceSignals } from "../deviceConstraints";
+import { classifyDevice } from "../deviceConstraints";
+import { CompressedDemoBuffer } from "./compressedDemoBuffer";
+import { registerMetricSource } from "../diagnostics/resourceMetricRegistry";
+import { deviceTierValue, performanceTuning } from "../performanceTuning";
 
 interface LoadedDemoSource {
   url: string;
@@ -42,7 +55,7 @@ interface LoadedDemoSource {
 
 const log = createLogger("demoFileLoader");
 
-let parseToken = 0;
+let loadAttempt: DemoLoadAttempt | undefined;
 let scanAbort: AbortController | null = null;
 let timelineScanEnabled = true;
 let timelineScan: {
@@ -50,8 +63,6 @@ let timelineScan: {
   recording: StreamRecording;
   settled: boolean;
 } | null = null;
-let loadAbort: AbortController | null = null;
-let cancelDownload: ((preserveRecording: boolean) => void) | null = null;
 
 /** Clips use their own camera track; defer the full-demo event scan until exit. */
 export function setDemoTimelineScanEnabled(enabled: boolean): void {
@@ -76,22 +87,20 @@ function isInstalledSource(source: LoadedDemoSource): boolean {
   );
 }
 
-function cancelLoad(preserveRecording = true): number {
+function cancelLoad(preserveRecording = true): DemoLoadAttempt {
   const clip = clipStore.getState();
   if (clip.recording || clip.draft) clip.discard();
   else if (clip.active) clip.stopPlayback();
-  ++parseToken;
-  loadAbort?.abort();
-  loadAbort = null;
+  const previous = loadAttempt;
+  const next = new DemoLoadAttempt();
+  loadAttempt = next;
+  previous?.cancel(preserveRecording);
   if (!preserveRecording) {
     scanAbort?.abort();
     scanAbort = null;
     timelineScan = null;
   }
-  const cancel = cancelDownload;
-  cancelDownload = null;
-  cancel?.(preserveRecording);
-  return parseToken;
+  return next;
 }
 
 /**
@@ -100,6 +109,9 @@ function cancelLoad(preserveRecording = true): number {
  */
 export function unloadDemo(): void {
   cancelLoad(false);
+  engineStore
+    .getState()
+    .playback.recording?.streamingPlayback?.disposeCheckpointIndex?.();
   casterStore.getState().suspend();
   demoLoadStore.setState({
     requestedUrl: null,
@@ -127,10 +139,9 @@ export async function loadDemoFile(
   file: File,
   checkpoints?: File,
 ): Promise<void> {
-  // Take our turn number before the (possibly slow) read, so if another
-  // load starts while we're reading, that newer one wins — not whichever
-  // happens to finish last.
-  const token = cancelLoad();
+  // Own the attempt before a slow file read so a newer load wins even if
+  // this read finishes last.
+  const attempt = cancelLoad();
   demoLoadStore.setState({
     requestedUrl: null,
     requestedDemo: null,
@@ -138,11 +149,11 @@ export async function loadDemoFile(
   demoLoadStore.getState().begin("parsing");
   try {
     const buffer = await file.arrayBuffer();
-    if (parseToken !== token) return;
+    if (!attempt.isCurrent) return;
     await loadDemoBuffer(
       buffer,
       null,
-      token,
+      attempt,
       checkpoints
         ? checkpoints.text().catch((error) => {
             log.warn("Couldn't read seek checkpoints: %o", error);
@@ -153,7 +164,7 @@ export async function loadDemoFile(
     );
   } catch (err) {
     log.error("Failed to load demo: %o", err);
-    if (parseToken === token) {
+    if (attempt.isCurrent) {
       demoLoadStore.getState().fail("Couldn't read the demo file");
     }
   }
@@ -176,9 +187,8 @@ async function loadRemoteDemo(
   resolve: () => DemoSource,
   reference: string | null = null,
 ): Promise<void> {
-  const token = cancelLoad();
-  const abort = new AbortController();
-  loadAbort = abort;
+  const attempt = cancelLoad();
+  const abort = attempt.abortController;
   demoLoadStore.setState({
     requestedUrl: null,
     requestedDemo: reference,
@@ -241,7 +251,7 @@ async function loadRemoteDemo(
             )
           )
             return;
-          if (parseToken !== token || abort.signal.aborted) return;
+          if (!attempt.isCurrent || abort.signal.aborted) return;
           const installed = isInstalledSource(loadedSource);
           // An editor can fetch or save newer metadata while this initial
           // public request is in flight. Keep the newer installed snapshot.
@@ -256,12 +266,12 @@ async function loadRemoteDemo(
           if (installed) demoLoadStore.setState({ publishedGames: games });
         })
         .catch((err) => {
-          if (parseToken === token && !abort.signal.aborted)
+          if (attempt.isCurrent && !abort.signal.aborted)
             log.warn("Couldn't load saved game details: %o", err);
         });
     }
     response = await source.load(abort.signal);
-    if (parseToken !== token) return;
+    if (!attempt.isCurrent) return;
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
@@ -296,30 +306,30 @@ async function loadRemoteDemo(
         .loadMetadata(response, abort.signal)
         .then((metadata) => {
           loadedSource.metadata = metadata;
-          if (parseToken === token && isInstalledSource(loadedSource)) {
+          if (attempt.isCurrent && isInstalledSource(loadedSource)) {
             demoLoadStore.setState({ sourceMetadata: metadata });
           }
         })
         .catch((err) => {
-          if (parseToken === token && !abort.signal.aborted)
+          if (attempt.isCurrent && !abort.signal.aborted)
             log.warn("Couldn't load demo metadata: %o", err);
         });
     }
     if (!response.body) {
       // No streaming body (ancient environment): one-shot fallback.
       const buffer = await response.arrayBuffer();
-      if (parseToken !== token) return;
-      if (!(await loadDemoBuffer(buffer, loadedSource, token))) abort.abort();
+      if (!attempt.isCurrent) return;
+      if (!(await loadDemoBuffer(buffer, loadedSource, attempt))) abort.abort();
       return;
     }
     const totalBytes = Number(response.headers.get("content-length")) || 0;
-    await streamDemoResponse(response.body, loadedSource, token, totalBytes);
+    await streamDemoResponse(response.body, loadedSource, attempt, totalBytes);
     if (!loadedSource.recording) abort.abort();
   } catch (err) {
     abort.abort();
-    if (parseToken !== token) return;
+    if (!attempt.isCurrent) return;
     log.error("Failed to load demo from %s: %o", url, err);
-    if (parseToken === token) {
+    if (attempt.isCurrent) {
       demoLoadStore
         .getState()
         .fail(
@@ -363,8 +373,34 @@ function snapshotHasWorld(snapshot: {
 async function streamDemoResponse(
   body: ReadableStream<Uint8Array>,
   source: LoadedDemoSource,
-  token: number,
+  attempt: DemoLoadAttempt,
   totalBytes: number,
+): Promise<void> {
+  const constrained = classifyDevice(readDeviceSignals()).constrained;
+  const bytes = new CompressedDemoBuffer(
+    totalBytes,
+    deviceTierValue(
+      performanceTuning.compressedDemoBuffer.maximumPreallocationBytes,
+      constrained,
+    ),
+    () => markDiagnosticEvent("demo-compressed-copy"),
+  );
+  const stopMetrics = registerMetricSource("demoDownload", () =>
+    bytes.metrics(),
+  );
+  try {
+    await streamDemoResponseBytes(body, source, attempt, totalBytes, bytes);
+  } finally {
+    stopMetrics();
+  }
+}
+
+async function streamDemoResponseBytes(
+  body: ReadableStream<Uint8Array>,
+  source: LoadedDemoSource,
+  attempt: DemoLoadAttempt,
+  totalBytes: number,
+  compressed: CompressedDemoBuffer,
 ): Promise<void> {
   const url = source.url;
   const [{ DemoParser }, demoStreaming, { shareDemoParser }] =
@@ -373,12 +409,11 @@ async function streamDemoResponse(
       import("./demoStreaming"),
       import("./loadDemoParser"),
     ]);
-  if (parseToken !== token) {
+  if (!attempt.isCurrent) {
     void body.cancel().catch(() => {});
     return;
   }
   const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
   let received = 0;
   let reportedPercent = -1;
   // Set once enough bytes exist for the header + initial block.
@@ -388,14 +423,13 @@ async function streamDemoResponse(
   let installed = false;
   let reportedBufferedSec = -1;
 
-  const assemble = (): ArrayBuffer => {
-    const buffer = new Uint8Array(received);
-    let offset = 0;
-    for (const chunk of chunks) {
-      buffer.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return buffer.buffer;
+  const assemble = () => compressed.prefix();
+  const finishParsedBuffer = (loadedParser: DemoParser) => {
+    // Release chunk owners before finish() may trim the inflated backing store.
+    const buffer = compressed.finish();
+    loadedParser.finish();
+    shareDemoParser(buffer, loadedParser);
+    return buffer;
   };
 
   const finishInstalledPrefix = () => {
@@ -406,16 +440,7 @@ async function streamDemoResponse(
       engineStore.getState().playback.recording !== recording
     )
       return;
-    parser.finish();
-    engineStore.getState().refreshRecordingDuration(recording);
-    const buffer = assemble();
-    shareDemoParser(buffer, parser);
-    engineStore.getState().setDemoBuffer(recording, buffer);
-    engineStore.getState().setDownloadComplete(true);
-    engineStore.getState().fulfillPendingSeek();
-    demoLoadStore.getState().setDownloadedSec(null);
-    setDirectorDemoBuffer(buffer);
-    startTimelineScan(buffer, recording);
+    publishDownloadedDemo(finishParsedBuffer(parser), recording);
   };
   const cancel = (preserveRecording: boolean) => {
     void reader.cancel().catch(() => {});
@@ -423,17 +448,17 @@ async function streamDemoResponse(
     // with a real EOF instead of waiting forever for the aborted download.
     if (preserveRecording) finishInstalledPrefix();
   };
-  cancelDownload = cancel;
+  const stopCancelling = attempt.onDownloadCancel(cancel);
 
   try {
     for (;;) {
       const { done, value } = await reader.read();
-      if (parseToken !== token) {
+      if (!attempt.isCurrent) {
         void reader.cancel().catch(() => {});
         return;
       }
       if (done) break;
-      chunks.push(value);
+      compressed.append(value);
       received += value.length;
 
       if (parser) {
@@ -443,7 +468,7 @@ async function streamDemoResponse(
         if (!Number.isFinite(prefixNeed)) {
           try {
             const peeked = DemoParser.peekHeader(
-              chunks.length === 1 ? value : new Uint8Array(assemble()),
+              received === value.length ? value : new Uint8Array(assemble()),
             );
             prefixNeed = peeked.byteLength + peeked.header.initialBlockSize;
           } catch (err) {
@@ -458,8 +483,11 @@ async function streamDemoResponse(
             incremental: true,
           });
           await parser.load();
-          if (parseToken !== token) return;
-          recording = demoStreaming.createRecordingFromParser(parser);
+          if (!attempt.isCurrent) return;
+          recording = demoStreaming.createRecordingFromParser(parser, {
+            checkpointMemoryPolicy:
+              browserCheckpointMemoryPolicy(readDeviceSignals()),
+          });
         }
       }
 
@@ -471,8 +499,8 @@ async function streamDemoResponse(
         playback.findSceneReadyTime(60);
         if (snapshotHasWorld(playback.getSnapshot())) {
           installed = true;
-          installRecording(recording, source);
-          if (parseToken !== token) return;
+          if (!installRecording(recording, source, attempt)) return;
+          if (!attempt.isCurrent) return;
           log.info(
             "progressive: playable at %d KB of %s",
             Math.round(received / 1024),
@@ -513,7 +541,7 @@ async function streamDemoResponse(
     }
   } catch (err) {
     void reader.cancel().catch(() => {});
-    if (parseToken !== token) return;
+    if (!attempt.isCurrent) return;
     if (!installed) throw err;
     // Mid-download failure after the scene is already up: keep what we
     // have. finish() flushes what the inflator holds; the demo simply
@@ -525,37 +553,25 @@ async function streamDemoResponse(
     finishInstalledPrefix();
     return;
   } finally {
-    if (cancelDownload === cancel) cancelDownload = null;
+    stopCancelling();
     reader.releaseLock();
   }
 
-  if (parseToken !== token) return;
-  const buffer = assemble();
+  if (!attempt.isCurrent) return;
   if (!parser || !recording) {
-    // Never got a parsable header/initial block from the stream (or the
-    // demo is tiny): parse the assembled whole the classic way.
-    await loadDemoBuffer(buffer, source, token);
+    // A tiny/unusual stream may finish before a parsable initial block exists.
+    await loadDemoBuffer(compressed.finish(), source, attempt);
     return;
   }
-  parser.finish();
-  // Whole-demo consumers (timeline scan, director, stats) load these
-  // bytes: they fork this parser instead of inflating them again.
-  shareDemoParser(buffer, parser);
+  const buffer = finishParsedBuffer(parser);
   if (!installed) {
-    // Download finished before a renderable scene appeared (odd but
-    // possible): install now — everything is parsed and playable.
-    installRecording(recording, source, buffer);
+    // A complete recording installs its source and buffer atomically.
+    if (!installRecording(recording, source, attempt, buffer)) return;
   }
-  engineStore.getState().refreshRecordingDuration(recording);
-  engineStore.getState().setDemoBuffer(recording, buffer);
-  engineStore.getState().setDownloadComplete(true);
-  void installCheckpoints(buffer, recording, source.checkpoints, token);
-  engineStore.getState().fulfillPendingSeek();
-  demoLoadStore.getState().setDownloadedSec(null);
-  // The whole-file consumers unlock now: the auto-director's scan buffer
-  // and the timeline scan.
-  setDirectorDemoBuffer(buffer);
-  startTimelineScan(buffer, recording);
+  publishDownloadedDemo(buffer, recording, {
+    pending: source.checkpoints,
+    attempt,
+  });
 }
 
 /**
@@ -567,20 +583,36 @@ async function streamDemoResponse(
 function installRecording(
   recording: StreamRecording,
   source: LoadedDemoSource | null,
+  attempt: DemoLoadAttempt,
   demoBuffer: ArrayBuffer | null = null,
   fileName: string | null = null,
-): void {
-  scanAbort?.abort();
-  scanAbort = null;
-  timelineScan = null;
-  demoTimelineStore.getState().reset();
+): boolean {
+  if (!attempt.isCurrent) return false;
+  const previous = engineStore.getState().playback.recording;
   demoLoadStore.getState().reset();
+  if (!attempt.isCurrent) return false;
   // Leave any live session and close the relay socket before loading
   // the demo — demo playback has no use for it.
   const liveState = liveConnectionStore.getState();
   liveState.leaveServer();
+  if (!attempt.isCurrent) return false;
   liveState.disconnectRelay();
+  if (!attempt.isCurrent) return false;
   engineStore.getState().setRecording(recording, demoBuffer);
+  // Retire the previous recording only after this replacement commits. A
+  // pre-commit store callback can supersede this attempt and keep it playing.
+  if (previous && previous !== recording && !isInstalledRecording(previous))
+    previous.streamingPlayback?.disposeCheckpointIndex?.();
+  // Store subscribers can synchronously eject or replace this recording.
+  // Once installed, its lifetime is independent of pending replacement loads.
+  if (!isInstalledRecording(recording)) return false;
+  const previousScan = scanAbort;
+  scanAbort = null;
+  timelineScan = null;
+  previousScan?.abort();
+  if (!isInstalledRecording(recording)) return false;
+  demoTimelineStore.getState().reset();
+  if (!isInstalledRecording(recording)) return false;
   if (source) source.recording = recording;
   demoLoadStore
     .getState()
@@ -592,9 +624,16 @@ function installRecording(
       fileName,
       source?.publishedGames ?? null,
     );
+  if (!isInstalledRecording(recording)) return false;
   // Which commentary tracks this demo has, from its record sidecar.
   void commentaryTracksStore.getState().load(source?.sidecarSourceUrl ?? null);
+  if (!isInstalledRecording(recording)) return false;
   resetDirector();
+  return isInstalledRecording(recording);
+}
+
+function isInstalledRecording(recording: StreamRecording): boolean {
+  return engineStore.getState().playback.recording === recording;
 }
 
 /**
@@ -604,54 +643,119 @@ function installRecording(
 async function loadDemoBuffer(
   buffer: ArrayBuffer,
   source: LoadedDemoSource | null,
-  token: number,
+  attempt: DemoLoadAttempt,
   localCheckpoints?: Promise<string | null>,
   fileName: string | null = null,
 ): Promise<boolean> {
   try {
     demoLoadStore.getState().begin("parsing");
     const { createDemoStreamingRecording } = await import("./demoStreaming");
-    if (parseToken !== token) return false;
-    const recording = await createDemoStreamingRecording(buffer);
-    if (parseToken !== token) return false;
+    if (!attempt.isCurrent) return false;
+    const recording = await createDemoStreamingRecording(buffer, {
+      checkpointMemoryPolicy:
+        browserCheckpointMemoryPolicy(readDeviceSignals()),
+    });
+    if (!attempt.isCurrent) return false;
     if (localCheckpoints)
-      await installCheckpoints(buffer, recording, localCheckpoints, token);
-    if (parseToken !== token) return false;
-    installRecording(recording, source, buffer, fileName);
+      await installCheckpoints(buffer, recording, localCheckpoints, attempt);
+    if (!attempt.isCurrent) return false;
+    if (!installRecording(recording, source, attempt, buffer, fileName))
+      return false;
     if (!localCheckpoints)
-      void installCheckpoints(buffer, recording, source?.checkpoints, token);
+      void installCheckpoints(buffer, recording, source?.checkpoints, attempt);
 
-    // Retain the buffer for the auto-director's lazy scan pass.
-    setDirectorDemoBuffer(buffer);
-
-    startTimelineScan(buffer, recording);
+    startWholeDemoConsumers(buffer, recording);
     return true;
   } catch (err) {
     log.error("Failed to load demo: %o", err);
-    if (parseToken === token) {
+    if (attempt.isCurrent) {
       demoLoadStore.getState().fail("Couldn't parse the demo");
     }
     return false;
   }
 }
 
+/** Streamed buffers become final either at EOF or at a preserved partial EOF.
+ * Partial demos omit checkpoint sidecars, which describe the complete file. */
+function publishDownloadedDemo(
+  buffer: ArrayBuffer,
+  recording: StreamRecording,
+  checkpoints?: {
+    pending: Promise<string | null> | undefined;
+    attempt: DemoLoadAttempt;
+  },
+): void {
+  if (!isInstalledRecording(recording)) return;
+  engineStore.getState().refreshRecordingDuration(recording);
+  if (!isInstalledRecording(recording)) return;
+  engineStore.getState().setDemoBuffer(recording, buffer);
+  if (!isInstalledRecording(recording)) return;
+  engineStore.getState().setDownloadComplete(true);
+  if (!isInstalledRecording(recording)) return;
+  if (checkpoints)
+    void installCheckpoints(
+      buffer,
+      recording,
+      checkpoints.pending,
+      checkpoints.attempt,
+    );
+  engineStore.getState().fulfillPendingSeek();
+  if (!isInstalledRecording(recording)) return;
+  demoLoadStore.getState().setDownloadedSec(null);
+  if (!isInstalledRecording(recording)) return;
+  startWholeDemoConsumers(buffer, recording);
+}
+
+/** Shared by complete one-shot files and finalized progressive downloads. */
+function startWholeDemoConsumers(
+  buffer: ArrayBuffer,
+  recording: StreamRecording,
+): void {
+  if (!isInstalledRecording(recording)) return;
+  setDirectorDemoBuffer(buffer);
+  if (!isInstalledRecording(recording)) return;
+  startTimelineScan(buffer, recording);
+}
+
 async function installCheckpoints(
   buffer: ArrayBuffer,
   recording: StreamRecording,
   pending: Promise<string | null> | undefined,
-  token: number,
+  attempt: DemoLoadAttempt,
 ): Promise<void> {
-  if (!pending || !recording.streamingPlayback?.importCheckpoints) return;
+  if (!pending || !recording.streamingPlayback) return;
+  const playback = recording.streamingPlayback;
+  if (!playback.installCheckpointIndex && !playback.importCheckpoints) return;
+  const { signal } = attempt.abortController;
   try {
     const text = await pending;
-    if (!text || parseToken !== token) return;
-    const checkpoints = await readDemoCheckpoints(text, buffer);
-    if (parseToken !== token) return;
-    recording.streamingPlayback.importCheckpoints(checkpoints);
-    log.info("Loaded %d precomputed seek checkpoints", checkpoints.length);
+    if (!text || !attempt.isCurrent || signal.aborted) return;
+    const started = performance.now();
+    markDiagnosticEvent("checkpoint-import-start", {
+      sidecarCharacters: text.length,
+    });
+    let entries: number;
+    if (playback.installCheckpointIndex) {
+      const index = await readDemoCheckpointIndex(text, buffer, signal);
+      if (!attempt.isCurrent) return;
+      playback.installCheckpointIndex(index);
+      entries = index.ticks.length;
+    } else {
+      const checkpoints = await readDemoCheckpoints(text, buffer, signal);
+      if (!attempt.isCurrent) return;
+      playback.importCheckpoints!(checkpoints);
+      entries = checkpoints.length;
+    }
+    markDiagnosticEvent("checkpoint-import-end", {
+      entries,
+      durationMs: performance.now() - started,
+    });
+    log.info("Indexed %d precomputed seek checkpoints", entries);
   } catch (error) {
-    if (parseToken === token)
+    if (attempt.isCurrent && !signal.aborted) {
+      markDiagnosticEvent("checkpoint-import-error");
       log.warn("Ignoring unusable seek checkpoints: %o", error);
+    }
   }
 }
 
@@ -660,6 +764,7 @@ function startTimelineScan(
   buffer: ArrayBuffer,
   recording: StreamRecording,
 ): void {
+  if (!isInstalledRecording(recording)) return;
   if (timelineScan?.buffer !== buffer || timelineScan.recording !== recording) {
     scanAbort?.abort();
     scanAbort = null;
@@ -676,7 +781,9 @@ function startTimelineScan(
     engineStore.getState().playback.recording === recording;
   const store = demoTimelineStore.getState();
   store.reset();
+  if (!isCurrentScan()) return;
   store.setScanProgress(0);
+  if (!isCurrentScan()) return;
   import("./demoTimelineScanner")
     .then(({ scanDemoTimeline }) => {
       if (!isCurrentScan()) return null;

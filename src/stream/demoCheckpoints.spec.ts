@@ -7,6 +7,7 @@ import {
   demoSha256,
   demoCheckpointTargets,
   readDemoCheckpoints,
+  readDemoCheckpointIndex,
   validateDemoCheckpoints,
   type DemoCheckpointSidecar,
 } from "./demoCheckpoints";
@@ -176,6 +177,48 @@ async function sidecar(buffer: ArrayBuffer): Promise<DemoCheckpointSidecar> {
 }
 
 describe("checkpoint sidecar loading", () => {
+  it("validates a lazy sidecar's identity and every index entry before decoding graphs", async () => {
+    const buffer = new Uint8Array([1, 2, 3]).buffer;
+    const original = await sidecar(buffer);
+    original.checkpoints[0].data = "corrupt";
+    const index = await readDemoCheckpointIndex(
+      JSON.stringify(original),
+      buffer,
+    );
+    expect(index.ticks).toEqual([1000]);
+    expect(index.encodedCharacters).toBe("corrupt".length);
+    await expect(index.load(1000)).rejects.toThrow();
+    await expect(
+      readDemoCheckpointIndex(JSON.stringify(original), new ArrayBuffer(3)),
+    ).rejects.toThrow("do not match");
+    original.checkpoints.push({ ...original.checkpoints[0], tick: -1 });
+    await expect(
+      readDemoCheckpointIndex(JSON.stringify(original), buffer),
+    ).rejects.toThrow("Invalid seek checkpoint");
+  });
+
+  it("lazily validates the captured tick, rejects duplicate index ticks, and honors cancellation", async () => {
+    const buffer = new ArrayBuffer(3);
+    const original = await sidecar(buffer);
+    original.checkpoints[0].data = checkpointData(1001);
+    const index = await readDemoCheckpointIndex(
+      JSON.stringify(original),
+      buffer,
+    );
+    await expect(index.load(1000)).rejects.toThrow(
+      "Invalid seek checkpoint state",
+    );
+    const abort = new AbortController();
+    abort.abort();
+    await expect(index.load(1000, abort.signal)).rejects.toThrow();
+    index.discard(1000);
+    expect(index.ticks).toEqual([]);
+    expect(index.encodedCharacters).toBe(0);
+    original.checkpoints.push(original.checkpoints[0]);
+    await expect(
+      readDemoCheckpointIndex(JSON.stringify(original), buffer),
+    ).rejects.toThrow("Duplicate seek checkpoint");
+  });
   it("decodes compressed checkpoints only for their original recording", async () => {
     const buffer = new Uint8Array([1, 2, 3]).buffer;
     const text = JSON.stringify(await sidecar(buffer));

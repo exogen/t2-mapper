@@ -107,6 +107,24 @@ const state = (sim: DebrisSimulation) => ({
 });
 
 describe("debris playback", () => {
+  it("releases emitter slots when the simulation owner clears", () => {
+    const sim = new DebrisSimulation(
+      get,
+      () => parts,
+      () => null,
+    );
+    sim.update(0.064, [event({ dataBlockId: 3 })]);
+    const emitters = [...sim.emitters];
+    expect(emitters.length).toBeGreaterThan(0);
+    expect(emitters.some((emitter) => emitter.allocatedParticleSlots > 0)).toBe(
+      true,
+    );
+    sim.clear();
+    for (const emitter of emitters) {
+      expect(emitter.allocatedParticleSlots).toBe(0);
+      expect(emitter.isDead()).toBe(true);
+    }
+  });
   it("decodes wire count and speed independently (VehicleExplosion makes 2–4 fireballs, not 200)", () => {
     expect(explosionDebris(blocks[2])).toEqual({
       count: 3,

@@ -18,6 +18,48 @@ import type { StreamRecording } from "../stream/types";
 import { FramePriority } from "./framePriority";
 import { GameEngine } from "./gameEngine";
 import { StreamPlaybackSession } from "./streamPlayback";
+import { createRecordingFromParser } from "../stream/demoStreaming";
+import { fakeDemoParser } from "../stream/streamTestFixtures";
+import { settingsStore } from "../state/settingsStore";
+
+it("wakes an idle on-demand seek and ignores obsolete or disposed sessions", () => {
+  const recording = createRecordingFromParser(fakeDemoParser(), {
+    checkpoints: false,
+  });
+  const replacement = createRecordingFromParser(fakeDemoParser(), {
+    checkpoints: false,
+  });
+  const engine = new GameEngine();
+  const invalidate = vi.spyOn(engine, "invalidate");
+  const previousOnDemand = settingsStore.getState().renderOnDemand;
+  settingsStore.setState({ renderOnDemand: true });
+  engineStore.getState().setRecording(recording);
+  const session = new StreamPlaybackSession(engine, recording);
+  let disposed = false;
+  try {
+    invalidate.mockClear();
+    expect(engineStore.getState().seekPlayback(1)).toBe(true);
+    expect(invalidate).toHaveBeenCalledOnce();
+
+    engineStore.getState().setRecording(replacement);
+    invalidate.mockClear();
+    engineStore.getState().seekPlayback(2);
+    expect(invalidate).not.toHaveBeenCalled();
+
+    session.dispose();
+    disposed = true;
+    engineStore.getState().setRecording(recording);
+    invalidate.mockClear();
+    engineStore.getState().seekPlayback(3);
+    expect(invalidate).not.toHaveBeenCalled();
+  } finally {
+    if (!disposed) session.dispose();
+    invalidate.mockRestore();
+    settingsStore.setState({ renderOnDemand: previousOnDemand });
+    engineStore.getState().setRecording(null);
+    gameEntityStore.getState().endStreaming();
+  }
+});
 
 it("retracts and restores the same follow arm for manual and directed live shots", () => {
   const stream = new LiveStreamAdapter({} as RelayClient, { mode: "watch" });

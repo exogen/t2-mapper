@@ -81,6 +81,7 @@ import { reaction, combineCleanups } from "./storeReaction";
 import { FramePriority } from "./framePriority";
 import type { GameEngine } from "./gameEngine";
 import { torqueVecToThree } from "../scene/coordinates";
+import { registerMetricSource } from "../diagnostics/resourceMetricRegistry";
 import { readMountedImageNodePosition } from "./weaponMuzzle";
 
 const log = createLogger("ParticleEffects");
@@ -494,6 +495,8 @@ function getExplosionRadius(expBlock: Record<string, unknown>): number {
 // ── Per-emitter rendering state ──
 
 interface ActiveEmitter extends ParticleBuffers {
+  /** Exact CPU typed-array payload of this emitter's particle geometry. */
+  geometryArrayBytes: number;
   mesh: Mesh;
   material: ShaderMaterial;
   /** The intended texture (may still be loading). */
@@ -547,8 +550,19 @@ function removeEmitterDebugMeshes(entry: ActiveEmitter): void {
 function disposeEmitter(entry: ActiveEmitter): void {
   entry.mesh.removeFromParent();
   removeEmitterDebugMeshes(entry);
+  entry.emitter.dispose();
   entry.geometry.dispose();
   entry.material.dispose();
+}
+
+function particleGeometryArrayBytes(geometry: BufferGeometry): number {
+  const arrays = new Set<ArrayBufferView>();
+  for (const attribute of Object.values(geometry.attributes))
+    arrays.add(attribute.array);
+  if (geometry.index) arrays.add(geometry.index.array);
+  let bytes = 0;
+  for (const array of arrays) bytes += array.byteLength;
+  return bytes;
 }
 
 /** Check if a ShaderMaterial compiled successfully. Must call after first render. */
@@ -691,6 +705,7 @@ function createStreamEmitter(
     emitter,
     mesh,
     geometry,
+    geometryArrayBytes: particleGeometryArrayBytes(geometry),
     material,
     targetTexture: texture,
     origin,
@@ -864,6 +879,57 @@ export function createParticleEffects(
   const group = new Group();
   const snapshotIndex = new ParticleSnapshotIndex();
   let activeEmitters: ActiveEmitter[] = [];
+  let peakActiveEmitters = 0;
+  let createdEmitters = 0;
+  let disposedEmitters = 0;
+  let retiredCreatedSlots = 0;
+  let retiredReusedSpawns = 0;
+  let ownedGeometryArrayBytes = 0;
+  let peakOwnedGeometryArrayBytes = 0;
+  const addEmitter = (entry: ActiveEmitter) => {
+    activeEmitters.push(entry);
+    createdEmitters++;
+    peakActiveEmitters = Math.max(peakActiveEmitters, activeEmitters.length);
+    ownedGeometryArrayBytes += entry.geometryArrayBytes;
+    peakOwnedGeometryArrayBytes = Math.max(
+      peakOwnedGeometryArrayBytes,
+      ownedGeometryArrayBytes,
+    );
+  };
+  const retireEmitter = (entry: ActiveEmitter) => {
+    retiredCreatedSlots += entry.emitter.createdParticleSlots;
+    retiredReusedSpawns += entry.emitter.reusedParticleSpawns;
+    ownedGeometryArrayBytes -= entry.geometryArrayBytes;
+    disposedEmitters++;
+    disposeEmitter(entry);
+  };
+  // Scope is the currently owned stream effects, not all emitters in the app.
+  // The reader traverses the owner's existing list; it never pins dead owners.
+  const stopMetrics = registerMetricSource("streamParticleEffects", () => {
+    let liveParticles = 0;
+    let freeParticleSlots = 0;
+    let createdParticleSlotsLifetime = retiredCreatedSlots;
+    let reusedParticleSpawnsLifetime = retiredReusedSpawns;
+    for (const entry of activeEmitters) {
+      liveParticles += entry.emitter.particles.length;
+      freeParticleSlots += entry.emitter.freeParticleSlots;
+      createdParticleSlotsLifetime += entry.emitter.createdParticleSlots;
+      reusedParticleSpawnsLifetime += entry.emitter.reusedParticleSpawns;
+    }
+    return {
+      activeEmitters: activeEmitters.length,
+      peakActiveEmitters,
+      ownedParticleSlots: liveParticles + freeParticleSlots,
+      liveParticles,
+      freeParticleSlots,
+      createdParticleSlotsLifetime,
+      reusedParticleSpawnsLifetime,
+      createdEmittersLifetime: createdEmitters,
+      disposedEmittersLifetime: disposedEmitters,
+      ownedGeometryArrayBytes,
+      peakOwnedGeometryArrayBytes,
+    };
+  });
   /** Track which explosion entity IDs we've already processed. */
   const processedExplosions = new Set<string>();
   /** Shocklance bolts whose hit effects (shockwave, burst) have spawned. */
@@ -957,7 +1023,7 @@ export function createParticleEffects(
         )
           return true;
         if (entry.node) nodeEmitterEntries.delete(entry.node);
-        disposeEmitter(entry);
+        retireEmitter(entry);
         return false;
       });
     }
@@ -1003,7 +1069,7 @@ export function createParticleEffects(
           );
           entry.splash = { timeSec: spawnTimeSec, elapsedMS: 0 };
           entry.driverEntityId = entity.id;
-          activeEmitters.push(entry);
+          addEmitter(entry);
         }
       }
       splashRings
@@ -1063,7 +1129,7 @@ export function createParticleEffects(
           entry.emitter.emitRadial(origin, burst.radius, burst.density);
           // Explosion::explode → deleteWhenEmpty on the burst emitter.
           entry.emitter.kill();
-          activeEmitters.push(entry);
+          addEmitter(entry);
         }
 
         // Streaming emitters (emitter[0..3]) are fed every frame while the
@@ -1072,7 +1138,7 @@ export function createParticleEffects(
         for (const emitterData of resolved.streamingEmitters) {
           const entry = createStreamEmitter(emitterData, origin, group);
           entry.driverEntityId = entity.id;
-          activeEmitters.push(entry);
+          addEmitter(entry);
         }
 
         const expBlock = getDataBlockData(entity.explosionDataBlockId);
@@ -1182,7 +1248,7 @@ export function createParticleEffects(
             entry.emitter.worldGravity = snapshot.gravity;
             entry.emitter.emitPeriodic(start, end, visual.numParts, axis);
             entry.emitter.kill();
-            activeEmitters.push(entry);
+            addEmitter(entry);
           }
         }
       }
@@ -1214,7 +1280,7 @@ export function createParticleEffects(
             entry.emitter.worldGravity = snapshot.gravity;
             entry.emitter.emitPeriodic(entry.origin, entry.origin, 1000);
             entry.emitter.kill();
-            activeEmitters.push(entry);
+            addEmitter(entry);
           }
         }
       }
@@ -1246,7 +1312,7 @@ export function createParticleEffects(
             startSec: spawnTimeSec,
             endSec: exhaustUntilSec,
           };
-          activeEmitters.push(entry);
+          addEmitter(entry);
         }
       }
     }
@@ -1273,7 +1339,7 @@ export function createParticleEffects(
             entry.driverEntityId = event.projectileId;
             entry.trail = "tick";
             entries.set(event.projectileId, entry);
-            activeEmitters.push(entry);
+            addEmitter(entry);
           }
           [entry.origin[0], entry.origin[1], entry.origin[2]] = event.to;
           entry.emitter.worldGravity = snapshot.gravity;
@@ -1325,7 +1391,7 @@ export function createParticleEffects(
           const entry = createStreamEmitter(data, origin, group);
           entry.driverEntityId = entity.id;
           entry.trail = trail;
-          activeEmitters.push(entry);
+          addEmitter(entry);
         }
       }
 
@@ -1366,7 +1432,7 @@ export function createParticleEffects(
       entry.prevOrigin![1] = entry.origin[1];
       entry.prevOrigin![2] = entry.origin[2];
       nodeEntries.set(node, entry);
-      activeEmitters.push(entry);
+      addEmitter(entry);
     }
     for (const [node, entry] of nodeEntries) {
       if (registered.has(node)) continue;
@@ -1550,7 +1616,7 @@ export function createParticleEffects(
 
       // Remove dead emitters.
       if (entry.emitter.isDead()) {
-        disposeEmitter(entry);
+        retireEmitter(entry);
         active.splice(i, 1);
       }
     }
@@ -1871,8 +1937,9 @@ export function createParticleEffects(
     group,
     dispose() {
       stop();
-      for (const entry of activeEmitters) disposeEmitter(entry);
+      for (const entry of activeEmitters) retireEmitter(entry);
       activeEmitters = [];
+      stopMetrics();
       clearSplashRings();
       for (const sphere of activeExplosionSpheres) {
         disposeExplosionSphere(sphere);

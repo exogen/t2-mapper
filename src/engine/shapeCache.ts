@@ -22,6 +22,11 @@ export async function loadShape(shapeName: string): Promise<DTSModel> {
   return loader.loadAsync(shapeToUrl(shapeName));
 }
 
+/** Background work includes dependent image/atlas readiness, not GPU upload. */
+export function loadShapeDependencies(shapeName: string): Promise<void> {
+  return loader.loadDependencies(shapeToUrl(shapeName));
+}
+
 /**
  * The shape if it has already loaded, so a view can build it in the same
  * frame instead of showing its placeholder for one.

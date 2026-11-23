@@ -6,7 +6,6 @@ import {
   Matrix4,
   Mesh,
   MeshBasicMaterial,
-  MeshStandardMaterial,
   NoColorSpace,
   PlaneGeometry,
   RepeatWrapping,
@@ -224,7 +223,7 @@ export function createWaterView(
   let repZ = cameraRepIndex(initialCamera.position.z);
   let reps = buildRepGrid(repX, repZ);
 
-  const fallbackMaterial = new MeshStandardMaterial({
+  const fallbackMaterial = new MeshBasicMaterial({
     color: "#00fbff",
     transparent: true,
     opacity: 0.4,
@@ -239,7 +238,6 @@ export function createWaterView(
 
   let water: { mesh: InstancedMesh; material: ShaderMaterial } | null = null;
   let elapsed = 0;
-  let disposed = false;
 
   const placeReps = () => {
     if (water) {
@@ -262,12 +260,10 @@ export function createWaterView(
     if (!fallbackShown) return;
     fallbackShown = false;
     for (const mesh of fallbackMeshes) group.remove(mesh);
-    fallbackMaterial.dispose();
   };
 
-  void engine
-    .whenHost()
-    .then(({ renderer }) => {
+  const stopTextures = engine.prepareWithHost(
+    ({ renderer }, signal) => {
       const anisotropy = renderer.capabilities.getMaxAnisotropy();
       return loadTextures(
         [
@@ -276,35 +272,41 @@ export function createWaterView(
         ],
         renderer,
         (texture) => setupWaterTexture(texture, anisotropy),
+        signal,
       );
-    })
-    .then(
-      ([baseTexture, envMapTexture]) => {
-        if (disposed) return;
-        const material = createWaterMaterial({
-          opacity: scene.surfaceOpacity,
-          waveMagnitude: scene.waveMagnitude,
-          envMapIntensity: scene.envMapIntensity,
-          baseTexture,
-          envMapTexture,
-        });
-        const mesh = new InstancedMesh(surfaceGeometry, material, 9);
-        mesh.frustumCulled = false;
-        mesh.renderOrder = -1;
-        removeFallback();
-        group.add(mesh);
-        water = { mesh, material };
-        placeReps();
-        engine.invalidate();
-      },
-      (error: unknown) => {
-        if (disposed) return;
-        // Like a shape that fails to load: draw nothing.
-        log.error("water textures failed: %o", error);
-        removeFallback();
-        engine.invalidate();
-      },
-    );
+    },
+    ([baseTexture, envMapTexture]) => {
+      const material = createWaterMaterial({
+        opacity: scene.surfaceOpacity,
+        waveMagnitude: scene.waveMagnitude,
+        envMapIntensity: scene.envMapIntensity,
+        baseTexture,
+        envMapTexture,
+      });
+      const mesh = new InstancedMesh(surfaceGeometry, material, 9);
+      mesh.frustumCulled = false;
+      mesh.renderOrder = -1;
+      removeFallback();
+      group.add(mesh);
+      water = { mesh, material };
+      placeReps();
+      engine.invalidate();
+      return () => {
+        group.remove(mesh);
+        mesh.dispose();
+        material.dispose();
+        water = null;
+        fallbackShown = true;
+        for (const fallback of fallbackMeshes) group.add(fallback);
+      };
+    },
+    (error: unknown) => {
+      // Like a shape that fails to load: draw nothing.
+      log.error("water textures failed: %o", error);
+      removeFallback();
+      engine.invalidate();
+    },
+  );
 
   return {
     root,
@@ -324,14 +326,10 @@ export function createWaterView(
     },
     dispose: combineCleanups(
       () => {
-        disposed = true;
+        stopTextures();
         setWaterBody(bodyId, null);
         removeFallback();
-        if (water) {
-          group.remove(water.mesh);
-          water.mesh.dispose();
-          water.material.dispose();
-        }
+        fallbackMaterial.dispose();
         surfaceGeometry.dispose();
       },
       // Debug wireframe showing the actual water block bounds.

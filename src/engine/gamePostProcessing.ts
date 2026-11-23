@@ -39,6 +39,12 @@ import type {
 } from "../state/graphicsEffectsStore";
 import { createLogger } from "../logger";
 import { createCrtPhosphorMask } from "./stylizedPostEffects";
+import type { ColorGradeLutCache } from "./colorGradeLutCache";
+import {
+  estimateRenderTargetBytes,
+  estimateTextureBytes,
+} from "../diagnostics/resourceEstimates";
+import { registerMetricSource } from "../diagnostics/resourceMetricRegistry";
 
 const log = createLogger("GamePostProcessing");
 // A grade change shouldn't trigger the mission asset loading indicator.
@@ -160,7 +166,10 @@ export function createGamePostProcessing(
   scene: Scene,
   initialCamera: Camera,
   effectsStore: GraphicsEffectsStore,
+  loadGradeTexture: typeof loadGrade = loadGrade,
+  lutCache?: ColorGradeLutCache,
 ) {
+  let disposed = false;
   const hdr = renderer.extensions.has("EXT_color_buffer_float");
   const autoClear = renderer.autoClear;
   const composer = new EffectComposer(renderer, {
@@ -210,10 +219,34 @@ export function createGamePostProcessing(
   let requestedGrade: ColorGrade = "off";
   let gradeStatus: GraphicsEffects["gradeStatus"] = "idle";
   let gradeRequest = 0;
+  const unregisterMetrics = registerMetricSource("postProcessing", () => {
+    const capture = estimateTextureBytes(sourceFrame.value);
+    const input = estimateRenderTargetBytes(composer.inputBuffer);
+    const output = estimateRenderTargetBytes(composer.outputBuffer);
+    return {
+      captureWidth: sourceFrame.value.image.width,
+      captureHeight: sourceFrame.value.image.height,
+      estimatedCaptureBytes: capture,
+      estimatedComposerBytes:
+        input != null && output != null ? input + output : null,
+      estimatedCoreTargetBytes:
+        capture != null && input != null && output != null
+          ? capture + input + output
+          : null,
+      estimatedLutTextureBytes: lut ? estimateTextureBytes(lut) : 0,
+      activeEffects: active.size,
+      // Bloom/blur own additional targets. This gauge makes the limited
+      // public composer accounting explicit instead of reporting a total.
+      effectsWithUncountedTargets:
+        Number(active.has("bloom")) + Number(active.has("tiltShift")),
+    };
+  });
 
   function publishGradeStatus() {
+    if (disposed) return;
     const settings = effectsStore.getState();
     if (
+      settings.enabled &&
       settings.colorGrade === requestedGrade &&
       settings.gradeStatus !== gradeStatus
     ) {
@@ -228,19 +261,36 @@ export function createGamePostProcessing(
     lut = undefined;
     gradeStatus = selection === "off" ? "idle" : "loading";
     if (selection === "off") return;
+    lut = lutCache?.restore(selection);
+    if (lut) {
+      gradeStatus = "idle";
+      return;
+    }
 
-    void loadGrade(selection).then(
+    void loadGradeTexture(selection).then(
       (loaded) => {
-        if (request !== gradeRequest) {
+        if (
+          disposed ||
+          request !== gradeRequest ||
+          !effectsStore.getState().enabled ||
+          effectsStore.getState().colorGrade !== selection
+        ) {
           loaded.dispose();
           return;
         }
+        lutCache?.remember(selection, loaded);
         lut = loaded;
         gradeStatus = "idle";
         publishGradeStatus();
       },
       (error: unknown) => {
-        if (request !== gradeRequest) return;
+        if (
+          disposed ||
+          request !== gradeRequest ||
+          !effectsStore.getState().enabled ||
+          effectsStore.getState().colorGrade !== selection
+        )
+          return;
         gradeStatus = "error";
         publishGradeStatus();
         log.warn("Failed to load color grade %s: %o", selection, error);
@@ -328,6 +378,7 @@ export function createGamePostProcessing(
       delta: number,
       settings: GraphicsEffects,
     ): boolean {
+      if (disposed || !settings.enabled) return false;
       if (nextCamera !== camera) {
         camera = nextCamera;
         composer.setMainCamera(camera);
@@ -349,6 +400,7 @@ export function createGamePostProcessing(
       return true;
     },
     resize() {
+      if (disposed) return;
       renderer.getDrawingBufferSize(size);
       const frame = sourceFrame.value;
       if (frame.image.width === size.x && frame.image.height === size.y) return;
@@ -358,12 +410,24 @@ export function createGamePostProcessing(
       composer.setSize(size.x, size.y);
     },
     dispose() {
+      if (disposed) return;
+      disposed = true;
+      unregisterMetrics();
       gradeRequest++;
       composer.dispose();
       sourceFrame.value.dispose();
       for (const { effect } of active.values()) effect.dispose();
+      active.clear();
       grade?.dispose();
       lut?.dispose();
+      grade = undefined;
+      lut = undefined;
+      const settings = effectsStore.getState();
+      if (
+        settings.colorGrade === requestedGrade &&
+        settings.gradeStatus === "loading"
+      )
+        effectsStore.setState({ gradeStatus: "idle" });
     },
   };
 }

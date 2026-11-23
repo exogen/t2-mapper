@@ -1,7 +1,85 @@
-import { describe, expect, it } from "vitest";
-import { encodeCheckpoint, decodeCheckpoint } from "./checkpointCodec";
+import { describe, expect, it, vi } from "vitest";
+import { gzipSync } from "node:zlib";
+import {
+  encodeCheckpoint,
+  decodeCheckpoint,
+  decodeCompressedCheckpoint,
+  bytesToBase64,
+} from "./checkpointCodec";
+import { readResourceMetrics } from "../diagnostics/resourceMetricRegistry";
 
 describe("checkpoint graph codec", () => {
+  it("cancels a decompressor stalled before its first output chunk", async () => {
+    const cancelled = vi.fn();
+    let finish!: () => void;
+    vi.stubGlobal(
+      "DecompressionStream",
+      class {
+        readable = new ReadableStream<Uint8Array>({
+          start(controller) {
+            finish = () => controller.error(new Error("test cleanup"));
+          },
+          cancel: cancelled,
+        });
+        writable = new WritableStream<Uint8Array>();
+      },
+    );
+    const abort = new AbortController();
+    const pending = decodeCompressedCheckpoint("AA==", abort.signal);
+    const settled = pending.then(
+      () => "complete",
+      (error: Error) => (error.name === "AbortError" ? "aborted" : "error"),
+    );
+    try {
+      await Promise.resolve();
+      abort.abort();
+      expect(
+        await Promise.race([
+          settled,
+          new Promise((resolve) => setTimeout(() => resolve("pending"), 25)),
+        ]),
+      ).toBe("aborted");
+      expect(cancelled).toHaveBeenCalledOnce();
+      expect(readResourceMetrics()["checkpointDecode.active"]).toBe(0);
+    } finally {
+      finish();
+      await settled;
+      vi.unstubAllGlobals();
+    }
+  });
+  it("releases aborted decompression gauges without counting cancellation as a decode failure", async () => {
+    const data = bytesToBase64(
+      gzipSync(encodeCheckpoint({ payload: "x".repeat(1024 * 1024) })),
+    );
+    const before = readResourceMetrics()["checkpointDecode.failures"];
+    const abort = new AbortController();
+    const pending = decodeCompressedCheckpoint(data, abort.signal);
+    abort.abort();
+    await expect(pending).rejects.toThrow();
+    const after = readResourceMetrics();
+    expect(after["checkpointDecode.failures"]).toBe(before);
+    expect(after["checkpointDecode.active"]).toBe(0);
+    expect(after["checkpointDecode.activeCompressedBytes"]).toBe(0);
+    expect(after["checkpointDecode.activePlaintextBytes"]).toBe(0);
+  });
+  it("keeps prototype-named properties as data and rejects prototype constructor names", () => {
+    const source = JSON.parse(
+      '{"__proto__":{"checkpointPolluted":true},"constructor":"data"}',
+    );
+    const decoded = decodeCheckpoint(encodeCheckpoint(source)) as Record<
+      string,
+      unknown
+    >;
+    expect(Object.getPrototypeOf(decoded)).toBe(Object.prototype);
+    expect(Object.hasOwn(decoded, "__proto__")).toBe(true);
+    expect(decoded.constructor).toBe("data");
+    expect(({} as Record<string, unknown>).checkpointPolluted).toBeUndefined();
+    expect(() =>
+      decodeCheckpoint(
+        '{"root":{"ref":0},"nodes":[{"type":"__proto__","value":[]}]}',
+      ),
+    ).toThrow("node type");
+  });
   it("preserves shared objects, cycles, Map keys, sets and typed data", () => {
     const shared = {
       bytes: new Uint8Array([0, 255]),

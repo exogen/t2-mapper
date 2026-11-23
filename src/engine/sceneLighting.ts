@@ -9,15 +9,11 @@ import { onShadowBoundsChanged, shadowCasterSphere } from "../shadowBounds";
 import { invalidateShadows } from "./shadowControl";
 import { combineCleanups, reaction } from "./storeReaction";
 import type { GameEngine } from "./gameEngine";
+import { selectWorldShadowSize } from "../worldShadowSize";
+import { estimateRenderTargetBytes } from "../diagnostics/resourceEstimates";
+import { registerMetricSource } from "../diagnostics/resourceMetricRegistry";
 
 const log = createLogger("SceneLighting");
-
-/**
- * Only interiors receive this shadow map now — the ground's shadows are
- * baked into the terrain lightmap (see terrainLightmap.ts) — but terrain
- * still casts into it, so a hill can shade a building.
- */
-const SHADOW_MAP_SIZE = 4096;
 
 /** Frustum radius used until a caster registers its bounds. */
 const FALLBACK_SHADOW_RADIUS = 4096;
@@ -29,11 +25,17 @@ const FALLBACK_SHADOW_RADIUS = 4096;
  * for interiors and the shadow map they receive.
  */
 export function installSceneLighting(engine: GameEngine): () => void {
+  // Only interiors receive this map. Ground shadows are baked into the
+  // terrain lightmap, but terrain still casts here so hills shade buildings.
+  const shadowSelection = selectWorldShadowSize(
+    typeof location === "undefined" ? "" : location.search,
+  );
+  const shadowMapSize = shadowSelection.size;
   const fallbackAmbient = new AmbientLight("#888888", 1);
   const ambient = new AmbientLight(0xffffff, 1);
   const sun = new DirectionalLight(0xffffff, 1);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+  sun.shadow.mapSize.set(shadowMapSize, shadowMapSize);
   sun.shadow.bias = -0.00001;
   sun.shadow.radius = 1;
   const direction = new Vector3();
@@ -69,7 +71,7 @@ export function installSceneLighting(engine: GameEngine): () => void {
     // texel's worth of depth error, and it is what detaches a shadow from
     // its caster, so a tighter frustum has to spend less of it. The old
     // fixed 0.4 was a fifth of the old 2 m texel; keep that ratio.
-    const texelSize = (radius * 2) / SHADOW_MAP_SIZE;
+    const texelSize = (radius * 2) / shadowMapSize;
     sun.shadow.normalBias = Math.max(texelSize * 0.2, 0.02);
     // The shadow map is frozen (see shadowControl.ts); re-render it when
     // the light itself changes.
@@ -109,6 +111,15 @@ export function installSceneLighting(engine: GameEngine): () => void {
   };
 
   return engine.withHost(({ scene }) => {
+    const stopMetrics = registerMetricSource("sunShadow", () => ({
+      requestedSize: shadowMapSize,
+      deviceConstrained: shadowSelection.constrained ? 1 : 0,
+      explicitOverride: shadowSelection.source === "override" ? 1 : 0,
+      allocatedSize: sun.shadow.map?.width ?? 0,
+      estimatedTargetBytes: sun.shadow.map
+        ? estimateRenderTargetBytes(sun.shadow.map)
+        : 0,
+    }));
     const showLights = (data: SceneSun | null) => {
       if (data) {
         scene.remove(fallbackAmbient);
@@ -120,6 +131,7 @@ export function installSceneLighting(engine: GameEngine): () => void {
       }
     };
     return combineCleanups(
+      stopMetrics,
       () => scene.remove(fallbackAmbient, sun, ambient),
       reaction(gameEntityStore, selectSunData, (data) => {
         sunData = data;

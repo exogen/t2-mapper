@@ -24,7 +24,7 @@ import { selectDebugMode, settingsStore } from "../state/settingsStore";
 import { loadSharedDetailMapList, type DetailMapList } from "./detailMapList";
 import type { FogState } from "./fogState";
 import { FramePriority } from "./framePriority";
-import { combineCleanups, reaction } from "./storeReaction";
+import { combineCleanups, reaction, type Cleanup } from "./storeReaction";
 import { loadTextures } from "./textures";
 import type { GameEngine } from "./gameEngine";
 
@@ -463,6 +463,7 @@ function createCloudLayer(
   radius: number,
   layerIndex: number,
   bandUniforms: CloudBandUniforms,
+  offset: Vector2,
 ): CloudLayer {
   // Create geometry with height based on layer
   // From Tribes 2 sky.cc line 160: setHeights(cloudHeightPer[i], cloudHeightPer[i]-0.05f, 0.05f)
@@ -475,7 +476,7 @@ function createCloudLayer(
   const material = new ShaderMaterial({
     uniforms: {
       cloudTexture: { value: texture },
-      uvOffset: { value: new Vector2(0, 0) },
+      uvOffset: { value: offset },
       stormCenter: { value: new Vector2(0, 0) },
       stormRadius: { value: radius },
       stormFade: { value: 0 },
@@ -510,7 +511,7 @@ function createCloudLayer(
     mesh,
     index: layerIndex,
     speed: config.speed,
-    offset: new Vector2(0, 0),
+    offset,
   };
 }
 
@@ -557,6 +558,7 @@ export function startCloudLayers(
   const layers: CloudLayer[] = [];
   let cloudCount = 0;
   let active = true;
+  const textureTasks: Cleanup[] = [];
 
   if (materialList) {
     void loadSharedDetailMapList(materialList).then(
@@ -568,30 +570,36 @@ export function startCloudLayers(
         parent.add(group);
         configs.forEach((config, layerIndex) => {
           const url = textureToUrl(config.texture);
-          void engine
-            .whenHost()
-            .then(({ renderer }) =>
-              loadTextures([url], renderer, setupCloudTexture),
-            )
-            .then(
+          // Animation state belongs to the view, not its temporary GPU mesh.
+          const offset = new Vector2();
+          textureTasks.push(
+            engine.prepareWithHost(
+              ({ renderer }, signal) =>
+                loadTextures([url], renderer, setupCloudTexture, signal),
               ([texture]) => {
-                if (!active) return;
                 const layer = createCloudLayer(
                   texture,
                   config,
                   radius,
                   layerIndex,
                   bandUniforms,
+                  offset,
                 );
                 group.add(layer.mesh);
                 layers.push(layer);
                 engine.invalidate();
+                return () => {
+                  group.remove(layer.mesh);
+                  layer.mesh.geometry.dispose();
+                  layer.mesh.material.dispose();
+                  const index = layers.indexOf(layer);
+                  if (index !== -1) layers.splice(index, 1);
+                };
               },
-              (error: unknown) => {
-                if (!active) return;
-                log.warn("cloud texture %s failed: %o", url, error);
-              },
-            );
+              (error: unknown) =>
+                log.warn("cloud texture %s failed: %o", url, error),
+            ),
+          );
         });
       },
       // No list, no clouds (the failure is logged where it's loaded).
@@ -602,6 +610,8 @@ export function startCloudLayers(
   return combineCleanups(
     () => {
       active = false;
+      for (const stop of textureTasks) stop?.();
+      textureTasks.length = 0;
       parent.remove(group);
       for (const { mesh } of layers) {
         mesh.geometry.dispose();

@@ -281,7 +281,8 @@ it("refreshes reused datablock IDs and action aliases after a live world reset",
   const actor = player({ jetting: true });
   sim.step(frame(0, actor));
   sim.step(frame(0.032, actor));
-  const original = sim.emitters.get("1:1:jetDust")!.emitter.data;
+  const originalEmitter = sim.emitters.get("1:1:jetDust")!.emitter;
+  const original = originalEmitter.data;
   expect(original.ejectionPeriodMS).toBe(5);
   expect(original.particles.lifetimeMS).toBe(15 * 32);
   const shape = getGroundEffectShape("light_male.dts")!;
@@ -291,6 +292,8 @@ it("refreshes reused datablock IDs and action aliases after a live world reset",
   data[30] = { ...data[30], lifetimeMS: 30 };
   sequences = ["light_male_forward.dsq side"];
   sim.clear();
+  expect(originalEmitter.allocatedParticleSlots).toBe(0);
+  expect(originalEmitter.isDead()).toBe(true);
   sim.step(frame(0, actor));
   sim.step(frame(0.032, actor));
   const refreshed = sim.emitters.get("1:1:jetDust")!.emitter.data;

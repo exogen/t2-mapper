@@ -15,6 +15,7 @@ import type { EngineHost, GameEngine } from "./gameEngine";
 import { FrameScheduler } from "./frameScheduler";
 import { FramePriority } from "./framePriority";
 import { EntityViewRegistry } from "./entityViews";
+import { readResourceMetrics } from "../diagnostics/resourceMetricRegistry";
 import { createParticleEmissionDummyView } from "./particleEmissionDummyView";
 import {
   AmbientParticles,
@@ -190,6 +191,27 @@ function world() {
   cleanups.push(() => result.uninstall());
   return result;
 }
+
+it("releases particle ledger ownership when its host disconnects", () => {
+  const before = readResourceMetrics();
+  const w = world();
+  w.particles.add(new Group(), entity());
+  w.frame();
+  expect(readResourceMetrics()["particleAllocations.activeEmitters"]).toBe(
+    before["particleAllocations.activeEmitters"]! + 1,
+  );
+  w.disconnect();
+  const after = readResourceMetrics();
+  for (const name of [
+    "activeEmitters",
+    "ownedParticleSlots",
+    "liveParticles",
+    "freeParticleSlots",
+  ])
+    expect(after[`particleAllocations.${name}`]).toBe(
+      before[`particleAllocations.${name}`],
+    );
+});
 
 beforeEach(() => {
   streamClock.time = 0;

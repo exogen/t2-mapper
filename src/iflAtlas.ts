@@ -15,7 +15,7 @@ import {
 import type { DTSModel } from "./dts/dtsModel";
 import { DTSMaterialFlags } from "./dts/dtsTypes";
 import { iflTextureToUrl, loadImageFrameList } from "./loaders";
-import { loadTextureAsync } from "./textureUtils";
+import { loadBitmapTextureAsync } from "./assets/bitmapTextures";
 import { normalizePath } from "./stringUtils";
 
 // Cache in-flight work too: simultaneous spawns must not build duplicate atlases.
@@ -85,7 +85,7 @@ async function buildFrames(
   if (!entries.length) return { frames: [], duration: 0 };
   const names = [...new Set(entries.map((entry) => entry.name))];
   const textures = await Promise.all(
-    names.map((name) => loadTextureAsync(iflTextureToUrl(name, iflPath))),
+    names.map((name) => loadBitmapTextureAsync(iflTextureToUrl(name, iflPath))),
   );
   // An atlas cannot tile or preserve differently sized frames. Keep those
   // as ordinary textures, with separate sampler state from the image cache.
@@ -126,16 +126,24 @@ export function loadIflAtlas(
 /** Publish into a shared list so clones made before decoding finishes receive
  * the frames too. No mesh traversal or per-instance loading is necessary. */
 export async function loadShapeImageLists(model: DTSModel): Promise<void> {
-  const animations: DTSImageAnimation[] = [];
-  model.scene.imageAnimations = animations;
-  await Promise.all(
+  // Clones share this array. Retrying a failed atlas must update the same list,
+  // including successful lists from an earlier partial attempt.
+  const animations = model.scene.imageAnimations as DTSImageAnimation[];
+  const results = await Promise.allSettled(
     model.data.iflMaterials.map(async (ifl, iflIndex) => {
       const material = model.data.materials[ifl.materialSlot];
       if (!material || !(material.flags & DTSMaterialFlags.IflMaterial)) return;
       const name = model.data.names[ifl.nameIndex] || `${material.name}.ifl`;
       const path = `textures/${normalizePath(name).replace(/\.ifl$/i, "")}.ifl`;
       const frames = await loadIflAtlas(path, material.flags);
-      animations.push(createDTSImageAnimation(model.data, iflIndex, frames));
+      const animation = createDTSImageAnimation(model.data, iflIndex, frames);
+      const index = animations.findIndex(
+        (current) => current.iflIndex === iflIndex,
+      );
+      if (index === -1) animations.push(animation);
+      else animations[index] = animation;
     }),
   );
+  const failure = results.find((result) => result.status === "rejected");
+  if (failure?.status === "rejected") throw failure.reason;
 }

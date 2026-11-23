@@ -7,7 +7,7 @@ import {
 } from "three";
 import { clone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { loadImageFrameList } from "./loaders";
-import { loadTextureAsync } from "./textureUtils";
+import { loadBitmapTextureAsync } from "./assets/bitmapTextures";
 import { loadIflAtlas, loadShapeImageLists } from "./iflAtlas";
 import { buildDTS } from "./dts/dtsBuilder";
 import { createDTSTestShape } from "./dts/dtsTestFixtures";
@@ -18,7 +18,7 @@ vi.mock("./loaders", () => ({
   loadImageFrameList: vi.fn(),
   iflTextureToUrl: (name: string) => name,
 }));
-vi.mock("./textureUtils", () => ({ loadTextureAsync: vi.fn() }));
+vi.mock("./assets/bitmapTextures", () => ({ loadBitmapTextureAsync: vi.fn() }));
 const drawImage = vi.fn();
 const images = new Map<string, Texture>();
 
@@ -37,7 +37,7 @@ beforeEach(() => {
     { name: "b", frameCount: 2 },
     { name: "a", frameCount: 3 },
   ]);
-  vi.mocked(loadTextureAsync).mockImplementation(async (name) => {
+  vi.mocked(loadBitmapTextureAsync).mockImplementation(async (name) => {
     const texture = new Texture({ width: 16, height: 16 });
     images.set(name, texture);
     return texture;
@@ -52,7 +52,7 @@ describe("shared DTS IFL resources", () => {
     expect(a).toBe(b);
     const atlas = await a;
     expect(loadImageFrameList).toHaveBeenCalledTimes(1);
-    expect(loadTextureAsync).toHaveBeenCalledTimes(2);
+    expect(loadBitmapTextureAsync).toHaveBeenCalledTimes(2);
     expect(drawImage).toHaveBeenCalledTimes(2);
     const frames = atlas.frames.map((f) => f.texture);
     expect(frames[0]).toBe(frames[2]);
@@ -86,7 +86,7 @@ describe("shared DTS IFL resources", () => {
   });
 
   it("keeps differently sized frames as individual textures", async () => {
-    vi.mocked(loadTextureAsync).mockImplementation(
+    vi.mocked(loadBitmapTextureAsync).mockImplementation(
       async (name) =>
         new Texture({
           width: name === "a" ? 16 : 32,
@@ -136,5 +136,31 @@ describe("shared DTS IFL resources", () => {
     await expect(loadIflAtlas("retry.ifl")).rejects.toThrow("offline");
     await expect(loadIflAtlas("retry.ifl")).resolves.toHaveProperty("duration");
     expect(loadImageFrameList).toHaveBeenCalledTimes(2);
+  });
+
+  it("updates the same shared animation list on retry so existing clones receive recovered frames", async () => {
+    const data = createDTSTestShape();
+    data.materials[0].flags |= DTSMaterialFlags.IflMaterial;
+    data.iflMaterials = [
+      {
+        nameIndex: data.names.push("retry-clones.ifl") - 1,
+        materialSlot: 0,
+        firstFrame: 0,
+        firstFrameOffTimeIndex: 0,
+        numFrames: 1,
+      },
+    ];
+    const model = buildDTS(data);
+    const instance = clone(model.scene) as DTSShape;
+    vi.mocked(loadImageFrameList).mockRejectedValueOnce(new Error("offline"));
+    await expect(loadShapeImageLists(model)).rejects.toThrow("offline");
+    const shared = instance.imageAnimations;
+    await loadShapeImageLists(model);
+    expect(instance.imageAnimations).toBe(shared);
+    expect(model.scene.imageAnimations).toBe(shared);
+    expect(shared).toHaveLength(1);
+    expect(shared[0].frames).not.toHaveLength(0);
+    await loadShapeImageLists(model);
+    expect(shared).toHaveLength(1);
   });
 });

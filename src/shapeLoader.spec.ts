@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { FileLoader, LoadingManager } from "three";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { FileLoader, LoadingManager, Mesh, Texture } from "three";
+import { clone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { ShapeLoader } from "./shapeLoader";
 import { DTSLoader } from "./dts/dtsLoader";
 import { buildDTS } from "./dts/dtsBuilder";
@@ -10,6 +11,19 @@ import {
 } from "./dts/dtsTestFixtures";
 import * as manifest from "./manifest";
 import * as loaders from "./loaders";
+import { loadBitmapTextureAsync } from "./assets/bitmapTextures";
+import * as iflAtlas from "./iflAtlas";
+
+vi.mock("./assets/bitmapTextures", () => ({
+  loadBitmapTextureAsync: vi.fn(async () => new Texture()),
+  loadBitmapTextureInstance: vi.fn(() => new Texture()),
+}));
+
+beforeEach(() => {
+  vi.spyOn(loaders, "textureToUrl").mockImplementation(
+    (name) => `/textures/${name}`,
+  );
+});
 
 afterEach(() => {
   vi.useRealTimers();
@@ -17,6 +31,115 @@ afterEach(() => {
 });
 
 describe("shared shape sources", () => {
+  it.each(["image", "IFL"] as const)(
+    "retries failed %s readiness without rebuilding a model",
+    async (failedStage) => {
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const model = buildDTS(createDTSTestShape());
+      const load = vi
+        .spyOn(DTSLoader.prototype, "load")
+        .mockImplementation((_url, done) => done(model));
+      const stage =
+        failedStage === "image"
+          ? vi
+              .mocked(loadBitmapTextureAsync)
+              .mockRejectedValueOnce(new Error("offline"))
+          : vi
+              .spyOn(iflAtlas, "loadShapeImageLists")
+              .mockRejectedValueOnce(new Error("offline"));
+      const loader = new ShapeLoader(new LoadingManager());
+      await expect(
+        loader.loadDependencies(`retry-${failedStage}.dts`),
+      ).rejects.toThrow("offline");
+      await expect(
+        loader.loadDependencies(`retry-${failedStage}.dts`),
+      ).resolves.toBeUndefined();
+      expect(load).toHaveBeenCalledOnce();
+      expect(stage).toHaveBeenCalled();
+      expect(warning).toHaveBeenCalledOnce();
+    },
+  );
+  it("publishes a model before image readiness while prefetch waits for its dependencies", async () => {
+    const model = buildDTS(createDTSTestShape());
+    vi.spyOn(DTSLoader.prototype, "load").mockImplementation((_url, done) =>
+      done(model),
+    );
+    let complete!: (texture: Texture) => void;
+    vi.mocked(loadBitmapTextureAsync).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    );
+    const loader = new ShapeLoader(new LoadingManager());
+    const loaded = loader.loadAsync("progressive.dts");
+    const finished = vi.fn();
+    const dependencies = loader
+      .loadDependencies("progressive.dts")
+      .then(finished);
+    await expect(loaded).resolves.toBe(model);
+    expect(finished).not.toHaveBeenCalled();
+    complete(new Texture());
+    await dependencies;
+    expect(finished).toHaveBeenCalledOnce();
+  });
+
+  it("repairs a failed ordinary texture on the cached model and its existing clones before retry readiness resolves", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const empty = new Texture();
+    empty.repeat.set(3, 4);
+    empty.anisotropy = 8;
+    const model = buildDTS(createDTSTestShape(), { texture: () => empty });
+    const instance = clone(model.scene);
+    const recovered = new Texture({ width: 16, height: 16 });
+    vi.spyOn(DTSLoader.prototype, "load").mockImplementation((_url, done) =>
+      done(model),
+    );
+    vi.mocked(loadBitmapTextureAsync)
+      .mockRejectedValueOnce(new Error("decode failed"))
+      .mockResolvedValueOnce(recovered);
+    const loader = new ShapeLoader(new LoadingManager());
+    const ready = loader.loadAsync("retry-visible-texture.dts");
+    await expect(
+      loader.loadDependencies("retry-visible-texture.dts"),
+    ).rejects.toThrow("decode failed");
+    expect(await ready).toBe(model);
+    expect(empty.image).toBeNull();
+    await loader.loadDependencies("retry-visible-texture.dts");
+    expect(empty.image).toBe(recovered.image);
+    expect(empty.source).toBe(recovered.source);
+    expect(model.materials[0].map).toBe(empty);
+    const cloneSamplers: Texture[] = [];
+    instance.traverse((object) => {
+      if (object instanceof Mesh) {
+        const materials = Array.isArray(object.material)
+          ? object.material
+          : [object.material];
+        for (const material of materials)
+          if ("map" in material && material.map instanceof Texture)
+            cloneSamplers.push(material.map);
+      }
+    });
+    expect(cloneSamplers).toContain(empty);
+    expect(empty.repeat.toArray()).toEqual([3, 4]);
+    expect(empty.anisotropy).toBe(8);
+  });
+
+  it("leaves an already populated custom sampler unchanged while warming canonical dependencies", async () => {
+    const custom = new Texture({ width: 8, height: 8 });
+    const model = buildDTS(createDTSTestShape(), { texture: () => custom });
+    const source = custom.source;
+    vi.spyOn(DTSLoader.prototype, "load").mockImplementation((_url, done) =>
+      done(model),
+    );
+    vi.mocked(loadBitmapTextureAsync).mockResolvedValueOnce(
+      new Texture({ width: 16, height: 16 }),
+    );
+    const loader = new ShapeLoader(new LoadingManager());
+    await loader.loadDependencies("custom-populated-texture.dts");
+    expect(model.materials[0].map).toBe(custom);
+    expect(custom.source).toBe(source);
+  });
   it("scans each manifest once while preserving DSQ prefix matching and ordering", () => {
     const paths = [
       "shapes/test_shape_z.dsq",

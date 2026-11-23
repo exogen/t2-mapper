@@ -20,13 +20,14 @@ import { streamClock } from "../state/streamPlaybackStore";
 import { createFlareView } from "./flare";
 import { createShapeProjectileView } from "./shape";
 
-vi.mock("../textureUtils", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../textureUtils")>();
+vi.mock("../assets/bitmapTextures", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../assets/bitmapTextures")>();
   const { Texture } = await import("three");
   return {
     ...actual,
-    loadTexture: () => new Texture(),
-    loadTextureInstance: () => new Texture(),
+    loadBitmapTexture: () => new Texture(),
+    loadBitmapTextureInstance: () => new Texture(),
   };
 });
 

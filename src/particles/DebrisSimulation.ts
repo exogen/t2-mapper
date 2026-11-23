@@ -150,6 +150,7 @@ export class DebrisSimulation {
   }
 
   clear(): void {
+    for (const emitter of this.emitters) emitter.dispose();
     this.bodies.clear();
     this.emitters.clear();
     this.impacts.clear();
@@ -617,7 +618,10 @@ export class DebrisSimulation {
         }
         for (const emitter of this.emitters) {
           emitter.update(DT * 1000);
-          if (emitter.isDead()) this.emitters.delete(emitter);
+          if (emitter.isDead()) {
+            emitter.dispose();
+            this.emitters.delete(emitter);
+          }
         }
         for (const [id, body] of this.bodies) {
           if (body.end > this.time) this.advance(body);

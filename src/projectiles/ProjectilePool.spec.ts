@@ -9,7 +9,7 @@ import type {
   TracerEntity,
 } from "../state/gameEntityTypes";
 import { gameEntityStore, selectSceneEntities } from "../state/gameEntityStore";
-import * as textureUtils from "../textureUtils";
+import * as bitmapTextures from "../assets/bitmapTextures";
 
 const projectile = (id: string): SpriteEntity => ({
   id,
@@ -50,8 +50,8 @@ const tick = async (pool: ProjectilePool, entities: GameEntity[]) => {
 
 describe("pooled projectile lifecycle", () => {
   it("creates a texture-only tracer in the same frame as a new bucket", () => {
-    const loadTexture = vi
-      .spyOn(textureUtils, "loadTextureInstance")
+    const loadBitmapTexture = vi
+      .spyOn(bitmapTextures, "loadBitmapTextureInstance")
       .mockImplementation(() => new Texture());
     const root = new Group();
     const assets = new ProjectileAssets(1, () => true);
@@ -87,7 +87,7 @@ describe("pooled projectile lifecycle", () => {
     } finally {
       pool.dispose();
       assets.dispose();
-      loadTexture.mockRestore();
+      loadBitmapTexture.mockRestore();
     }
   });
 

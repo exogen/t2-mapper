@@ -153,6 +153,7 @@ export class AmbientParticles {
   }
 
   private remove(emission: Emission): void {
+    emission.emitter.dispose();
     emission.mesh.removeFromParent();
     emission.geometry.dispose();
     emission.material.dispose();

@@ -294,24 +294,22 @@ export function createTerrainView(
     // Each mesh draws a wireframe until the textures load.
     const fallbackMaterial = createTerrainFallbackMaterial();
     let pooledMaterial: Material = fallbackMaterial;
+    let castsShadow = false;
 
     // Primary tile at (0,0) with emptySquares applied. Terrain geometry is
     // centered at origin. Torque's terrain position formula is
     // -squareSize * 128, which equals -blockSize / 2. Since our geometry is
     // already centered, basePosition + geometryOffset cancels to 0.
     const geometryOffset = blockSize / 2;
-    const primary = new Mesh(geometry, fallbackMaterial);
+    const primary = new Mesh(geometry, fallbackMaterial as Material);
     primary.position.set(
       basePosition.x + geometryOffset,
       0,
       basePosition.z + geometryOffset,
     );
-    // Casts only; see the pooled mesh for why.
-    primary.castShadow = true;
+    // The unlit wireframe is a loading placeholder, never a shadow caster.
+    primary.castShadow = castsShadow;
     staticRoot.add(primary);
-    // Shadow map is frozen (shadowControl.ts); re-render it when this
-    // caster appears or goes.
-    invalidateShadows();
 
     // Pooled tiles — single InstancedMesh, matrices updated each frame.
     // All pooled tiles share the same geometry, material, and visibility
@@ -321,7 +319,7 @@ export function createTerrainView(
       // Casts (a hill shadows a building) but never receives: the ground's
       // own shadowing is baked into the terrain lightmap, which is what
       // keeps it free of acne and of bias pulling shadows off the slope.
-      mesh.castShadow = true;
+      mesh.castShadow = castsShadow;
       mesh.frustumCulled = false;
       staticRoot.add(mesh);
       pooledMesh = mesh;
@@ -344,51 +342,65 @@ export function createTerrainView(
 
     rebake();
 
-    let stopped = false;
-    void engine
-      .whenHost()
-      .then(({ renderer }) =>
-        loadTerrainTextures(loaded.textureNames, detailTextureName, renderer),
-      )
-      .then(
-        (textures) => {
-          if (stopped) return;
-          const debugMode = selectDebugMode(settingsStore.getState());
-          const lightmap = bake!.texture;
-          const primaryBlend = createBlendedTerrainMaterial(textures, {
-            visibilityMask: primaryVisibilityMask,
-            alphaTextures,
-            squareSize,
-            detailViewportHeight,
-            lightmap,
-            debugMode,
-          });
-          const pooledBlend = createBlendedTerrainMaterial(textures, {
-            visibilityMask: pooledVisibilityMask,
-            alphaTextures,
-            squareSize,
-            detailViewportHeight,
-            lightmap,
-            debugMode,
-          });
-          blendedMaterials = [primaryBlend, pooledBlend];
-          primary.material = primaryBlend.material;
-          pooledMaterial = pooledBlend.material;
-          if (pooledMesh) pooledMesh.material = pooledMaterial;
-          fallbackMaterial.dispose();
-          engine.invalidate();
-        },
-        (error: unknown) => {
-          if (stopped) return;
-          log.error("Failed to load textures for %s: %o", terrainFile, error);
-        },
-      );
+    const stopTextures = engine.prepareWithHost(
+      ({ renderer }, signal) =>
+        loadTerrainTextures(
+          loaded.textureNames,
+          detailTextureName,
+          renderer,
+          signal,
+        ),
+      (textures) => {
+        const debugMode = selectDebugMode(settingsStore.getState());
+        const lightmap = bake!.texture;
+        const primaryBlend = createBlendedTerrainMaterial(textures, {
+          visibilityMask: primaryVisibilityMask,
+          alphaTextures,
+          squareSize,
+          detailViewportHeight,
+          lightmap,
+          debugMode,
+        });
+        const pooledBlend = createBlendedTerrainMaterial(textures, {
+          visibilityMask: pooledVisibilityMask,
+          alphaTextures,
+          squareSize,
+          detailViewportHeight,
+          lightmap,
+          debugMode,
+        });
+        blendedMaterials = [primaryBlend, pooledBlend];
+        primary.material = primaryBlend.material;
+        pooledMaterial = pooledBlend.material;
+        castsShadow = primary.castShadow = true;
+        if (pooledMesh) {
+          pooledMesh.material = pooledMaterial;
+          pooledMesh.castShadow = true;
+        }
+        // Shadow maps are frozen: the newly ready solid terrain now casts.
+        invalidateShadows();
+        engine.invalidate();
+        return () => {
+          for (const { material } of blendedMaterials) material.dispose();
+          blendedMaterials = [];
+          primary.material = fallbackMaterial;
+          pooledMaterial = fallbackMaterial;
+          castsShadow = primary.castShadow = false;
+          if (pooledMesh) {
+            pooledMesh.material = fallbackMaterial;
+            pooledMesh.castShadow = false;
+          }
+          invalidateShadows();
+        };
+      },
+      (error: unknown) =>
+        log.error("Failed to load textures for %s: %o", terrainFile, error),
+    );
 
     engine.invalidate();
 
     return combineCleanups(
       () => {
-        stopped = true;
         setTerrainCollisionData(null);
         clearFogTerrainRows();
         setShadowCasterBounds("terrain", null);
@@ -396,7 +408,7 @@ export function createTerrainView(
         unfreezeStaticMatrices(staticRoot);
         removePool();
         staticRoot.remove(primary);
-        invalidateShadows();
+        if (castsShadow) invalidateShadows();
         fallbackMaterial.dispose();
         for (const { material } of blendedMaterials) material.dispose();
         blendedMaterials = [];
@@ -417,6 +429,7 @@ export function createTerrainView(
         );
         return lines;
       }),
+      stopTextures,
     );
   }
 
@@ -518,7 +531,7 @@ export function createTerrainView(
       mesh.instanceMatrix.needsUpdate = true;
       // Pooled tiles are shadow casters; their repositioning invalidates the
       // frozen shadow map (rare — only when the camera crosses a block).
-      invalidateShadows();
+      if (mesh.castShadow) invalidateShadows();
     }),
     engine.scheduler.add(FramePriority.PostCamera, ({ renderer }) => {
       // dglProjectRadius uses the physical viewport: CSS height × DPR.

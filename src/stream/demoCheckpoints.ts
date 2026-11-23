@@ -135,6 +135,55 @@ export async function readDemoCheckpoints(
   return checkpoints;
 }
 
+/** Encoded sidecar entries only; decoded graphs belong to the playback LRU. */
+export interface DemoCheckpointIndex {
+  readonly ticks: readonly number[];
+  readonly encodedCharacters: number;
+  load(tick: number, signal?: AbortSignal): Promise<DemoSeekCheckpoint>;
+  discard(tick: number): void;
+}
+
+/** Validate identity and every index entry before retaining any lazy payloads. */
+export async function readDemoCheckpointIndex(
+  text: string,
+  buffer: ArrayBuffer,
+  signal?: AbortSignal,
+): Promise<DemoCheckpointIndex> {
+  const sidecar = await readSidecar(text, buffer, signal);
+  const encoded = new Map<number, string>();
+  let encodedCharacters = 0;
+  for (const entry of sidecar.checkpoints) {
+    checkEntry(entry);
+    if (encoded.has(entry.tick)) throw new Error("Duplicate seek checkpoint");
+    encoded.set(entry.tick, entry.data);
+    encodedCharacters += entry.data.length;
+  }
+  let ticks = [...encoded.keys()].sort((a, b) => a - b);
+  return {
+    get ticks() {
+      return ticks;
+    },
+    get encodedCharacters() {
+      return encodedCharacters;
+    },
+    async load(tick, signal) {
+      signal?.throwIfAborted();
+      const data = encoded.get(tick);
+      if (data === undefined) throw new Error("Missing seek checkpoint");
+      const checkpoint = await decodeEntry({ tick, data }, signal);
+      signal?.throwIfAborted();
+      return checkpoint;
+    },
+    discard(tick) {
+      const data = encoded.get(tick);
+      if (data === undefined) return;
+      encodedCharacters -= data.length;
+      encoded.delete(tick);
+      ticks = ticks.filter((value) => value !== tick);
+    },
+  };
+}
+
 /** Check persisted states one at a time without retaining them during a retry. */
 export async function validateDemoCheckpoints(
   text: string,
@@ -150,11 +199,27 @@ async function visitDemoCheckpoints(
   signal?: AbortSignal,
   visit?: (checkpoint: DemoSeekCheckpoint) => void,
 ): Promise<void> {
+  const sidecar = await readSidecar(text, buffer, signal);
+  for (const entry of sidecar.checkpoints) {
+    signal?.throwIfAborted();
+    checkEntry(entry);
+    const checkpoint = await decodeEntry(entry, signal);
+    visit?.(checkpoint);
+  }
+  signal?.throwIfAborted();
+}
+
+async function readSidecar(
+  text: string,
+  buffer: ArrayBuffer,
+  signal?: AbortSignal,
+): Promise<DemoCheckpointSidecar> {
   const sidecar = JSON.parse(text) as DemoCheckpointSidecar;
   signal?.throwIfAborted();
   // Any checkpoint of this exact demo speeds seeking, wherever it falls:
   // the generator's plan (count, spacing) is its own business.
   if (
+    !sidecar ||
     sidecar.format !== "t2-mapper-seek-checkpoints" ||
     !isSupportedDemoCheckpointVersion(sidecar.version) ||
     sidecar.demoBytes !== buffer.byteLength ||
@@ -164,25 +229,35 @@ async function visitDemoCheckpoints(
     throw new Error(
       "Seek checkpoints do not match this demo or engine version",
     );
-  for (const entry of sidecar.checkpoints) {
-    signal?.throwIfAborted();
-    if (
-      !Number.isSafeInteger(entry.tick) ||
-      entry.tick < 0 ||
-      typeof entry.data !== "string"
-    )
-      throw new Error("Invalid seek checkpoint");
-    const checkpoint = (await decodeCompressedCheckpoint(
-      entry.data,
-    )) as DemoSeekCheckpoint;
-    if (
-      checkpoint.cursor?.moveTicks !== entry.tick ||
-      !(checkpoint.simulation?.state?.entities instanceof Map) ||
-      !(checkpoint.simulation.shared instanceof Map) ||
-      !(checkpoint.parser?.ghosts instanceof Map)
-    )
-      throw new Error("Invalid seek checkpoint state");
-    visit?.(checkpoint);
-  }
   signal?.throwIfAborted();
+  return sidecar;
+}
+
+function checkEntry(entry: { tick: number; data: string }): void {
+  if (
+    !entry ||
+    !Number.isSafeInteger(entry.tick) ||
+    entry.tick < 0 ||
+    typeof entry.data !== "string"
+  )
+    throw new Error("Invalid seek checkpoint");
+}
+
+async function decodeEntry(
+  entry: { tick: number; data: string },
+  signal?: AbortSignal,
+): Promise<DemoSeekCheckpoint> {
+  const checkpoint = (await decodeCompressedCheckpoint(
+    entry.data,
+    signal,
+  )) as DemoSeekCheckpoint;
+  if (
+    !checkpoint ||
+    checkpoint.cursor?.moveTicks !== entry.tick ||
+    !(checkpoint.simulation?.state?.entities instanceof Map) ||
+    !(checkpoint.simulation.shared instanceof Map) ||
+    !(checkpoint.parser?.ghosts instanceof Map)
+  )
+    throw new Error("Invalid seek checkpoint state");
+  return checkpoint;
 }

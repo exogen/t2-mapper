@@ -35,13 +35,13 @@ import { applyDTSMaterialMaps } from "./dtsMaterialMaps";
 import { applyShapeShaderModifications } from "../shapeMaterial";
 import { DTSInstanceRenderList, getRenderList } from "./dtsInstanceRenderList";
 
-function createRenderer(): WebGLRenderer {
+function createRenderer(maxArrayLayers = 128): WebGLRenderer {
   return {
     capabilities: { maxTextureSize: 1024 },
     renderLists: new WebGLRenderLists(undefined!),
     getContext: () => ({
       MAX_ARRAY_TEXTURE_LAYERS: 0x88ff,
-      getParameter: () => 128,
+      getParameter: () => maxArrayLayers,
     }),
     initTexture: vi.fn(),
     copyTextureToTexture: vi.fn((source, target, _region, position) => {
@@ -76,8 +76,8 @@ function getBonePalette(shader: ReturnType<typeof compileShader>) {
   return { texture, data };
 }
 
-function fixture(count = 2) {
-  const renderer = createRenderer();
+function fixture(count = 2, maxArrayLayers = 128) {
+  const renderer = createRenderer(maxArrayLayers);
   const world = new Scene(),
     camera = new PerspectiveCamera();
   const model = buildDTS(createDTSRigidTestShape());
@@ -158,6 +158,100 @@ function project(
 }
 
 describe("animated DTS instancing", () => {
+  it("retires a full unused skin page while its bucket continues rendering new skins", () => {
+    const { pool, bodies, prepare } = fixture(2, 2);
+    prepare();
+    const retired = pool.root.children[0] as InstancedMesh;
+    const disposed = vi.fn();
+    retired.addEventListener("dispose", disposed);
+    pool.restore();
+    // The original page's two layers are full. These new Sources use a new
+    // page while the original is visited, but cannot accept either source.
+    for (const body of bodies)
+      (body.material as MeshLambertMaterial).map = new DataTexture(
+        new Uint8Array([255, 128, 64, 255]),
+        1,
+        1,
+      );
+    prepare();
+    expect(pool.getMemoryMetrics()).toMatchObject({
+      pages: 2,
+      activePages: 1,
+      idlePages: 1,
+    });
+    pool.restore();
+    for (let frame = 0; frame < 660; frame++) {
+      prepare();
+      expect(pool.stats.instances).toBe(2);
+      pool.restore();
+    }
+    expect(disposed).toHaveBeenCalledTimes(1);
+    expect(pool.getMemoryMetrics()).toMatchObject({
+      pages: 1,
+      pagesDisposed: 1,
+      activePages: 1,
+    });
+    pool.dispose();
+  });
+
+  it("accounts owned arrays and skin allocations once, including idle retirement", () => {
+    const { pool, shapes, bodies, prepare } = fixture();
+    prepare();
+    const capacity = 4;
+    const attributes = capacity * (16 + 4 + 4 + 3 + 3 + 3) * 4;
+    const bones = capacity * bodies[0].skeleton.bones.length * 16 * 4;
+    const initial = pool.getMemoryMetrics();
+    expect(initial).toMatchObject({
+      pools: 1,
+      pages: 1,
+      activePages: 1,
+      idlePages: 0,
+      capacity,
+      activeCapacity: capacity,
+      attributeArrayBytes: attributes,
+      boneArrayBytes: bones,
+      morphArrayBytes: 0,
+      skinArrayEstimatedBytes: 4 * 4,
+      skinLayers: 4,
+      ownedCpuArrayBytes: attributes + bones,
+      estimatedGpuTextureBytes: bones + 4 * 4,
+      idleCpuArrayBytes: 0,
+      idleGpuTextureBytes: 0,
+      pagesCreated: 1,
+      pagesDisposed: 0,
+      pagesHighWater: 1,
+      retireAfterFrames: 600,
+      sweepEveryFrames: 60,
+    });
+    prepare();
+    expect(pool.getMemoryMetrics()).toEqual(initial);
+    for (const shape of shapes) shape.visible = false;
+    prepare();
+    expect(pool.getMemoryMetrics()).toMatchObject({
+      activePages: 0,
+      idlePages: 1,
+      activeCapacity: 0,
+      ownedCpuArrayBytes: attributes + bones,
+      idleCpuArrayBytes: attributes + bones,
+      idleGpuTextureBytes: bones + 4 * 4,
+    });
+    for (let i = 0; i < 660; i++) prepare();
+    expect(pool.getMemoryMetrics()).toMatchObject({
+      pages: 0,
+      activePages: 0,
+      capacity: 0,
+      ownedCpuArrayBytes: 0,
+      estimatedGpuTextureBytes: 0,
+      pagesCreated: 1,
+      pagesDisposed: 1,
+      pagesHighWater: 1,
+    });
+    pool.dispose();
+    pool.dispose();
+    expect(pool.getMemoryMetrics().pools).toBe(0);
+    expect(pool.getMemoryMetrics().pagesDisposed).toBe(1);
+  });
+
   it("restores current poses across culled, individual and pooled draws", () => {
     const { pool, renderer, world, camera, shapes, bodies, prepare } =
       fixture();
@@ -336,6 +430,14 @@ describe("animated DTS instancing", () => {
     prepare();
     expect(pool.stats.instances).toBe(22);
     expect(draw.instanceMatrix.count).toBeGreaterThanOrEqual(22);
+    expect(pool.getMemoryMetrics()).toMatchObject({
+      capacity: draw.instanceMatrix.count,
+      attributeArrayBytes: draw.instanceMatrix.count * 33 * 4,
+      boneArrayBytes:
+        draw.instanceMatrix.count * bodies[0].skeleton.bones.length * 16 * 4,
+      pagesCreated: 1,
+      pagesDisposed: 0,
+    });
     expect(dispose).toHaveBeenCalledTimes(1);
     const { texture, data } = getBonePalette(shader);
     expect(texture).not.toBe(initialTexture);
@@ -736,6 +838,9 @@ describe("shared DTS shape draws", () => {
       MeshBasicMaterial
     >;
     expect(draw.morphTexture!.image.height).toBeGreaterThanOrEqual(3);
+    expect(pool.getMemoryMetrics().morphArrayBytes).toBe(
+      draw.morphTexture!.image.data!.byteLength,
+    );
     expect(Array.from(draw.morphTexture!.image.data!.slice(0, 6))).toEqual([
       1, 0, 0.5, 0.5, 0, 1,
     ]);
@@ -755,6 +860,9 @@ describe("shared DTS shape draws", () => {
     expect(pool.stats.instances).toBe(5);
     expect(disposeOriginal).toHaveBeenCalledTimes(1);
     expect(draw.morphTexture).not.toBe(originalTexture);
+    expect(pool.getMemoryMetrics().morphArrayBytes).toBe(
+      draw.morphTexture!.image.data!.byteLength,
+    );
     expect(Array.from(draw.morphTexture!.image.data!.slice(0, 10))).toEqual([
       1, 0, 0.5, 0.5, 0, 1, 0.75, 0.25, 0.75, 0.25,
     ]);

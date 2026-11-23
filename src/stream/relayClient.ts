@@ -31,6 +31,7 @@ import type {
   WatchStatus,
   WatchEndReason,
 } from "../../relay/types";
+import { emitDiagnosticEvent as markDiagnosticEvent } from "../diagnostics/events";
 
 const log = createLogger("relayClient");
 type SessionStatusMessage = Extract<ServerMessage, { type: "sessionStatus" }>;
@@ -108,12 +109,23 @@ export type RelayEventHandler = {
   onCatchup?: (payload: WatchCatchupPayload) => void;
 };
 
+type DecompressionInput = Parameters<
+  ReturnType<DecompressionStream["writable"]["getWriter"]>["write"]
+>[0];
+
 async function gunzipToString(
-  chunks: Uint8Array[],
+  chunks: Uint8Array<ArrayBuffer>[],
   signal: AbortSignal,
+  onDecodedBytes: (bytes: number) => void,
 ): Promise<string> {
-  const reader = new Blob(chunks as ConstructorParameters<typeof Blob>[0])
-    .stream()
+  // Feed existing byte views directly. Constructing a Blob first copied the
+  // complete compressed snapshot into another browser-owned backing store.
+  const reader = new ReadableStream<DecompressionInput>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk);
+      controller.close();
+    },
+  })
     .pipeThrough(new DecompressionStream("gzip"))
     .getReader();
   const cancel = () => {
@@ -133,6 +145,7 @@ async function gunzipToString(
       bytes += value.byteLength;
       if (bytes > MAX_CATCHUP_DECOMPRESSED_BYTES)
         throw new Error("Catch-up payload exceeds the 64 MiB decoded limit");
+      onDecodedBytes(bytes);
       text.push(decoder.decode(value, { stream: true }));
     }
     text.push(decoder.decode());
@@ -165,7 +178,7 @@ export class RelayClient {
    */
   private catchupMode: "waiting" | "live" | "collecting" | "finalizing" =
     "live";
-  private catchupBytes: Uint8Array | null = null;
+  private catchupBytes: Uint8Array<ArrayBuffer> | null = null;
   private catchupReceivedBytes = 0;
   private catchupReceivedChunks = 0;
   private catchupTotalBytes = 0;
@@ -180,6 +193,11 @@ export class RelayClient {
   > = [];
   private bufferedBytes = 0;
   private catchupDecode: AbortController | null = null;
+  private catchupDecodedBytes = 0;
+  private catchupTextCodeUnits = 0;
+  private catchupDecodeMs: number | null = null;
+  private catchupParseMs: number | null = null;
+  private catchupHydrateMs: number | null = null;
   private replaySessionId: string | null = null;
   private replayCreating = false;
   private replayEpoch: number | null = null;
@@ -201,6 +219,25 @@ export class RelayClient {
 
   get connected(): boolean {
     return this._connected;
+  }
+
+  /** Byte counts describe wire/decode input, not retained object graph size. */
+  getDiagnosticMetrics(): Record<string, number | null> {
+    return {
+      catchupCollecting: this.catchupMode === "collecting" ? 1 : 0,
+      catchupFinalizing: this.catchupMode === "finalizing" ? 1 : 0,
+      catchupCompressedCapacityBytes:
+        this.catchupBytes?.byteLength ??
+        (this.catchupMode === "finalizing" ? this.catchupTotalBytes : 0),
+      catchupReceivedBytes: this.catchupReceivedBytes,
+      bufferedLiveBytes: this.bufferedBytes,
+      bufferedLiveFrames: this.bufferedFrames.length,
+      catchupDecodedBytes: this.catchupDecodedBytes,
+      catchupTextCodeUnits: this.catchupTextCodeUnits,
+      catchupDecodeMs: this.catchupDecodeMs,
+      catchupParseMs: this.catchupParseMs,
+      catchupHydrateMs: this.catchupHydrateMs,
+    };
   }
 
   connect(): void {
@@ -486,6 +523,7 @@ export class RelayClient {
         this.catchupChunkCount = message.chunkCount;
         this.catchupBytes = new Uint8Array(message.totalBytes);
         this.catchupEpoch = message.epoch;
+        markDiagnosticEvent("live-catchup-download-start");
         this.handlers.onCatchupProgress?.(0, message.totalBytes);
         break;
       case "catchupEnd":
@@ -514,10 +552,20 @@ export class RelayClient {
     const generation = this.sessionGeneration;
     const decode = new AbortController();
     this.catchupDecode = decode;
-    gunzipToString([bytes], decode.signal)
+    const decodeStart = performance.now();
+    markDiagnosticEvent("live-catchup-decode-start");
+    gunzipToString([bytes], decode.signal, (decodedBytes) => {
+      if (generation === this.sessionGeneration)
+        this.catchupDecodedBytes = decodedBytes;
+    })
       .then((json) => {
         if (generation !== this.sessionGeneration) return;
+        this.catchupDecodeMs = performance.now() - decodeStart;
+        this.catchupTextCodeUnits = json.length;
+        markDiagnosticEvent("live-catchup-decode-end");
+        const parseStart = performance.now();
         const payload = deserializeCatchupPayload(json);
+        this.catchupParseMs = performance.now() - parseStart;
         if (payload.epoch !== epoch) {
           throw new Error("Catch-up epoch does not match its framing");
         }
@@ -534,8 +582,12 @@ export class RelayClient {
           payload.dataBlocks.length,
           payload.epoch,
         );
+        markDiagnosticEvent("live-catchup-parse-end");
+        const hydrateStart = performance.now();
         this.handlers.onCatchup?.(payload);
         if (generation !== this.sessionGeneration) return;
+        this.catchupHydrateMs = performance.now() - hydrateStart;
+        markDiagnosticEvent("live-catchup-hydrate-end");
         this.catchupMode = "live";
         const buffered = this.bufferedFrames;
         this.bufferedFrames = [];
@@ -582,6 +634,7 @@ export class RelayClient {
 
   private failCatchup(error: unknown): void {
     log.error("Failed to decode catch-up payload: %o", error);
+    markDiagnosticEvent("live-catchup-error");
     this.resetSessionFraming("waiting");
     if (this.replaySessionId)
       this.handlers.onReplayError?.(
@@ -602,6 +655,11 @@ export class RelayClient {
     this.sessionGeneration++;
     this.catchupDecode?.abort();
     this.catchupDecode = null;
+    this.catchupDecodedBytes = 0;
+    this.catchupTextCodeUnits = 0;
+    this.catchupDecodeMs = null;
+    this.catchupParseMs = null;
+    this.catchupHydrateMs = null;
     this.catchupMode = mode;
     this.catchupBytes = null;
     this.catchupReceivedBytes = 0;

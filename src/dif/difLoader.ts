@@ -18,6 +18,7 @@ import {
   type DIFSurface,
 } from "./dif";
 import { DIFCollision } from "./difCollision";
+import { imageWorkQueue } from "../assets/imageWorkQueue";
 
 /** DIF has surface flags and texture names, not DTS material flags. */
 export class DIFMaterial extends MeshLambertMaterial {
@@ -191,6 +192,10 @@ export function createDIFModel(buffer: ArrayBuffer, detailIndex = 0): DIFModel {
 
 /** Native DIF loader for useLoader / loadAsync; only embedded PNGs need a DOM. */
 export class DIFLoader extends Loader<DIFModel> {
+  /** Geometry/material metadata is available before embedded PNG decoding.
+   * Applications can explicitly start independent dependency work here. */
+  onModelParsed?: (model: DIFModel) => void;
+
   override load(
     url: string,
     onLoad: (model: DIFModel) => void,
@@ -221,40 +226,59 @@ export class DIFLoader extends Loader<DIFModel> {
   }
 
   async parseAsync(buffer: ArrayBuffer): Promise<DIFModel> {
-    const model = this.parse(buffer);
-    // TextureLoader works in browsers without createImageBitmap as well. Blob
-    // URLs are scoped to each decode and revoked on both success and failure.
-    const textureLoader = new TextureLoader(this.manager);
-    const results = await Promise.allSettled(
-      [
-        ...model.interior.lightMaps.map((map, index) => ({
-          ...map,
-          texture: model.lightMaps[index],
-        })),
-        ...(model.collisionLightMaps === model.lightMaps
-          ? []
-          : model.collision.interior.lightMaps.map((map, index) => ({
-              ...map,
-              texture: model.collisionLightMaps[index],
-            }))),
-      ].map(async ({ png, texture }) => {
-        const url = URL.createObjectURL(new Blob([png], { type: "image/png" }));
-        try {
-          const loaded = await textureLoader.loadAsync(url);
-          texture.image = loaded.image;
-          texture.needsUpdate = true;
-          loaded.dispose();
-        } finally {
-          URL.revokeObjectURL(url);
-        }
-      }),
-    );
-    const failure = results.find((result) => result.status === "rejected");
-    if (failure?.status === "rejected") {
-      disposeDIFModel(model);
-      throw failure.reason;
+    const activity = "DIF embedded lightmaps";
+    // The queued jobs have not started their TextureLoader items yet. Keep
+    // this parse visible to the manager until every job settles, even on a
+    // failure or when the DIF contains no lightmaps.
+    this.manager.itemStart(activity);
+    try {
+      const model = this.parse(buffer);
+      try {
+        this.onModelParsed?.(model);
+      } catch (error) {
+        disposeDIFModel(model);
+        throw error;
+      }
+      // Keep the existing HTML PNG decoder fallback and lightmap orientation.
+      const textureLoader = new TextureLoader(this.manager);
+      const results = await Promise.allSettled(
+        [
+          ...model.interior.lightMaps.map((map, index) => ({
+            ...map,
+            texture: model.lightMaps[index],
+          })),
+          ...(model.collisionLightMaps === model.lightMaps
+            ? []
+            : model.collision.interior.lightMaps.map((map, index) => ({
+                ...map,
+                texture: model.collisionLightMaps[index],
+              }))),
+        ].map(({ png, texture }) =>
+          imageWorkQueue.run(async () => {
+            // Do not allocate a Blob/object URL while this decode is queued.
+            const url = URL.createObjectURL(
+              new Blob([png], { type: "image/png" }),
+            );
+            try {
+              const loaded = await textureLoader.loadAsync(url);
+              texture.image = loaded.image;
+              texture.needsUpdate = true;
+              loaded.dispose();
+            } finally {
+              URL.revokeObjectURL(url);
+            }
+          }),
+        ),
+      );
+      const failure = results.find((result) => result.status === "rejected");
+      if (failure?.status === "rejected") {
+        disposeDIFModel(model);
+        throw failure.reason;
+      }
+      return model;
+    } finally {
+      this.manager.itemEnd(activity);
     }
-    return model;
   }
 }
 

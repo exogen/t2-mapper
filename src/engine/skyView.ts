@@ -31,7 +31,8 @@ import {
   selectFogEnabled,
   settingsStore,
 } from "../state/settingsStore";
-import { loadTexture, setupTexture } from "../textureUtils";
+import { loadBitmapTexture } from "../assets/bitmapTextures";
+import { setupTexture } from "../textureUtils";
 import { startCloudLayers } from "./cloudLayers";
 import { loadSharedDetailMapList } from "./detailMapList";
 import { createDynamicFog } from "./dynamicFog";
@@ -322,7 +323,7 @@ function startShapeEnvMap(emapName: string | undefined): () => void {
   if (url === FALLBACK_TEXTURE_URL) return () => {};
   // The reflection shader blends raw sRGB samples with the lit base color.
   let active = true;
-  loadTexture(url, (loaded) => {
+  loadBitmapTexture(url, (loaded) => {
     // A previous map's pending load must not replace the current sky.
     if (!active) return;
     setupTexture(loaded, { noColorSpace: true });

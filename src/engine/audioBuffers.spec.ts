@@ -24,6 +24,47 @@ function loader() {
 beforeEach(() => audioBufferCache.clear());
 
 describe("shared audio buffers", () => {
+  it("delivers oversized buffers to all pending owners without retaining them in the cache", () => {
+    const source = loader();
+    const first = vi.fn(),
+      second = vi.fn();
+    const oversized = {
+      length: audioBufferCache.maxBytes / 4 + 1,
+      numberOfChannels: 1,
+    } as AudioBuffer;
+    getCachedAudioBuffer("large.wav", source.loader, first);
+    getCachedAudioBuffer("large.wav", source.loader, second);
+    source.complete(oversized);
+    expect(first).toHaveBeenCalledExactlyOnceWith(oversized);
+    expect(second).toHaveBeenCalledExactlyOnceWith(oversized);
+    expect(audioBufferCache.has("large.wav")).toBe(false);
+    expect(audioBufferCache.retainedBytes).toBe(0);
+    getCachedAudioBuffer("large.wav", source.loader, vi.fn());
+    expect(source.load).toHaveBeenCalledTimes(2);
+    source.complete({ length: 1, numberOfChannels: 1 } as AudioBuffer);
+  });
+
+  it("counts aliased buffers once and evicts lookup references without mutating active owners", () => {
+    const activeBuffer = { length: 10, numberOfChannels: 2 } as AudioBuffer;
+    audioBufferCache.set("first.wav", activeBuffer);
+    audioBufferCache.set("alias.wav", activeBuffer);
+    expect(audioBufferCache.retainedBytes).toBe(80);
+    expect(audioBufferCache.uniqueValues).toBe(1);
+    for (let i = 0; i < audioBufferCache.maxEntries; i++)
+      audioBufferCache.set(`small${i}.wav`, {
+        length: 1,
+        numberOfChannels: 1,
+      } as AudioBuffer);
+    expect(audioBufferCache.has("first.wav")).toBe(false);
+    expect(audioBufferCache.has("alias.wav")).toBe(false);
+    expect(activeBuffer.length).toBe(10);
+    expect(activeBuffer.numberOfChannels).toBe(2);
+    expect(audioBufferCache.size).toBe(audioBufferCache.maxEntries);
+    expect(audioBufferCache.retainedBytes).toBe(
+      audioBufferCache.maxEntries * 4,
+    );
+  });
+
   it("loads and decodes once for concurrent sound owners, then serves cached buffers synchronously", () => {
     const firstLoader = loader();
     const secondLoader = loader();

@@ -4,6 +4,25 @@ import type {
   ParticleDataResolved,
   ParticleKey,
 } from "./types";
+import { registerMetricSource } from "../diagnostics/resourceMetricRegistry";
+
+// Scalar ownership only: this ledger never retains an emitter or particle.
+// Every owner calls dispose when releasing an emitter; lifetime counters are
+// cumulative for the page/process, while owned/live/free are current counts.
+const particleAllocations = {
+  activeEmitters: 0,
+  peakActiveEmitters: 0,
+  createdEmittersLifetime: 0,
+  disposedEmittersLifetime: 0,
+  ownedParticleSlots: 0,
+  peakOwnedParticleSlots: 0,
+  liveParticles: 0,
+  peakLiveParticles: 0,
+  freeParticleSlots: 0,
+  createdParticleSlotsLifetime: 0,
+  reusedParticleSpawnsLifetime: 0,
+};
+registerMetricSource("particleAllocations", () => ({ ...particleAllocations }));
 
 const DEG_TO_RAD = Math.PI / 180;
 /** World gravity at the T2 default (setGravity −20 × 0.4905). */
@@ -267,6 +286,11 @@ export class EmitterInstance {
   /** Changes only when particle data changes, for render-buffer synchronization. */
   revision = 0;
   readonly maxParticles: number;
+  /** Reuse is local to this emitter; no Particle is shared across owners. */
+  private readonly freeParticles: Particle[] = [];
+  private createdSlots = 0;
+  private reusedSpawns = 0;
+  private disposed = false;
 
   private internalClock = 0;
   private nextParticleTime = 0;
@@ -298,6 +322,43 @@ export class EmitterInstance {
       );
     }
     this.lifetimeMS = lifetime;
+    particleAllocations.activeEmitters++;
+    particleAllocations.createdEmittersLifetime++;
+    particleAllocations.peakActiveEmitters = Math.max(
+      particleAllocations.peakActiveEmitters,
+      particleAllocations.activeEmitters,
+    );
+  }
+
+  /** Actual retained object/vector slots, separate from the authored limit. */
+  get allocatedParticleSlots(): number {
+    return this.particles.length + this.freeParticles.length;
+  }
+
+  get freeParticleSlots(): number {
+    return this.freeParticles.length;
+  }
+
+  /** Lifetime counters for this emitter, preserved after explicit disposal. */
+  get createdParticleSlots(): number {
+    return this.createdSlots;
+  }
+
+  get reusedParticleSpawns(): number {
+    return this.reusedSpawns;
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    particleAllocations.activeEmitters--;
+    particleAllocations.disposedEmittersLifetime++;
+    particleAllocations.liveParticles -= this.particles.length;
+    particleAllocations.freeParticleSlots -= this.freeParticles.length;
+    particleAllocations.ownedParticleSlots -= this.allocatedParticleSlots;
+    this.disposed = this.killed = true;
+    this.particles.length = 0;
+    this.freeParticles.length = 0;
+    this.revision++;
   }
 
   /** ParticleEmitter::setColors: instance overrides, never shared datablock edits. */
@@ -331,6 +392,7 @@ export class EmitterInstance {
     velocity: [number, number, number] = ZERO_VELOCITY,
     random = this.random,
   ): void {
+    if (this.disposed) return;
     const length = Math.hypot(...normal);
     const z: [number, number, number] =
       length > 0 ? (normal.map((v) => v / length) as typeof normal) : [0, 0, 1];
@@ -374,6 +436,7 @@ export class EmitterInstance {
     count: number,
     axis: [number, number, number] = [0, 0, 1],
   ): void {
+    if (this.disposed) return;
     for (
       let i = 0;
       i < count && this.particles.length < this.maxParticles;
@@ -446,6 +509,7 @@ export class EmitterInstance {
 
   /** Advance all live particles by dtMS (ParticleEmitter::advanceTime). */
   update(dtMS: number): void {
+    if (this.disposed) return;
     const numMS = Math.round(dtMS);
     if (numMS <= 0) return;
     this.elapsedMS += numMS;
@@ -458,6 +522,7 @@ export class EmitterInstance {
         // Remove dead particle (swap with last for O(1) removal).
         this.particles[i] = this.particles[this.particles.length - 1];
         this.particles.pop();
+        this.recycleParticle(p);
         continue;
       }
       this.updateParticle(p, numMS);
@@ -519,6 +584,7 @@ export class EmitterInstance {
     if (!advance || remaining <= 0) return;
     if (p.totalLifetime < remaining) {
       this.particles.pop();
+      this.recycleParticle(p);
       return;
     }
     this.updateParticle(p, remaining);
@@ -613,27 +679,17 @@ export class EmitterInstance {
       d.velocityVariance,
       random,
     );
-
-    const spawnPos: [number, number, number] = [
-      pos[0] + ejX * d.ejectionOffset,
-      pos[1] + ejY * d.ejectionOffset,
-      pos[2] + ejZ * d.ejectionOffset,
-    ];
+    const spawnX = pos[0] + ejX * d.ejectionOffset;
+    const spawnY = pos[1] + ejY * d.ejectionOffset;
+    const spawnZ = pos[2] + ejZ * d.ejectionOffset;
 
     // ParticleData::initializeParticle: vel += inherited × inheritedVelFactor,
     // then acc = vel × constantAcceleration, set once and applied every frame.
     const ivf = pData.inheritedVelFactor;
-    const vel: [number, number, number] = [
-      ejX * speed + inheritedVelocity[0] * ivf,
-      ejY * speed + inheritedVelocity[1] * ivf,
-      ejZ * speed + inheritedVelocity[2] * ivf,
-    ];
+    const vx = ejX * speed + inheritedVelocity[0] * ivf;
+    const vy = ejY * speed + inheritedVelocity[1] * ivf;
+    const vz = ejZ * speed + inheritedVelocity[2] * ivf;
     const ca = pData.constantAcceleration;
-    const acc: [number, number, number] = [
-      vel[0] * ca,
-      vel[1] * ca,
-      vel[2] * ca,
-    ];
 
     // Particle lifetime with variance.
     let lifetime = pData.lifetimeMS;
@@ -652,24 +708,75 @@ export class EmitterInstance {
     // Initial color/size from first keyframe.
     const k0 = this.instanceKeys?.[0] ?? pData.keys[0];
 
-    const particle: Particle = {
-      pos: spawnPos,
-      vel,
-      acc,
-      orientDir: [ejX, ejY, ejZ],
-      currentAge: 0,
-      totalLifetime: lifetime,
-      dataIndex: 0,
-      spinSpeed: spin,
-      currentSpin: 0,
-      r: k0.r,
-      g: k0.g,
-      b: k0.b,
-      a: k0.a,
-      size: k0.size,
-    };
+    let particle = this.freeParticles.pop();
+    if (particle) {
+      this.reusedSpawns++;
+      particleAllocations.reusedParticleSpawnsLifetime++;
+      particleAllocations.freeParticleSlots--;
+    } else {
+      this.createdSlots++;
+      particleAllocations.createdParticleSlotsLifetime++;
+      particleAllocations.ownedParticleSlots++;
+      particleAllocations.peakOwnedParticleSlots = Math.max(
+        particleAllocations.peakOwnedParticleSlots,
+        particleAllocations.ownedParticleSlots,
+      );
+      particle = {
+        pos: [0, 0, 0],
+        vel: [0, 0, 0],
+        acc: [0, 0, 0],
+        orientDir: [0, 0, 0],
+        currentAge: 0,
+        totalLifetime: 0,
+        dataIndex: 0,
+        spinSpeed: 0,
+        currentSpin: 0,
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 0,
+        size: 0,
+      };
+    }
+    // Reset every field in place. Keep random draws above in their original
+    // order, so recycled spawns match a fresh spawn with the same RNG state.
+    particle.pos[0] = spawnX;
+    particle.pos[1] = spawnY;
+    particle.pos[2] = spawnZ;
+    particle.vel[0] = vx;
+    particle.vel[1] = vy;
+    particle.vel[2] = vz;
+    particle.acc[0] = vx * ca;
+    particle.acc[1] = vy * ca;
+    particle.acc[2] = vz * ca;
+    particle.orientDir[0] = ejX;
+    particle.orientDir[1] = ejY;
+    particle.orientDir[2] = ejZ;
+    particle.currentAge = 0;
+    particle.totalLifetime = lifetime;
+    particle.dataIndex = 0;
+    particle.spinSpeed = spin;
+    particle.currentSpin = 0;
+    particle.r = k0.r;
+    particle.g = k0.g;
+    particle.b = k0.b;
+    particle.a = k0.a;
+    particle.size = k0.size;
     this.particles.push(particle);
+    particleAllocations.liveParticles++;
+    particleAllocations.peakLiveParticles = Math.max(
+      particleAllocations.peakLiveParticles,
+      particleAllocations.liveParticles,
+    );
     this.revision++;
     return particle;
+  }
+
+  private recycleParticle(particle: Particle): void {
+    particleAllocations.liveParticles--;
+    if (this.freeParticles.length < this.maxParticles) {
+      this.freeParticles.push(particle);
+      particleAllocations.freeParticleSlots++;
+    } else particleAllocations.ownedParticleSlots--;
   }
 }

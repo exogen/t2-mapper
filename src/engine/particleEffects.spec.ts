@@ -15,6 +15,7 @@ import { streamRenderFrame } from "../stream/interpolateEntity";
 import { ProjectileTrailHistory } from "../stream/projectileTrailHistory";
 import { registerImageMuzzle } from "./weaponMuzzle";
 import { addNodeEmitter, removeNodeEmitter } from "./nodeEmitters";
+import { readResourceMetrics } from "../diagnostics/resourceMetricRegistry";
 
 const test = vi.hoisted(() => ({
   frame: null as ((frame: unknown) => void) | null,
@@ -187,6 +188,50 @@ it("spreads explosion bursts over their authored particle radius", () => {
   expect([position.getX(0), position.getY(0), position.getZ(0)]).toEqual([
     -2, 1, -2,
   ]);
+});
+
+it("reports owned slots and exact particle geometry arrays, then unregisters on disposal", () => {
+  const { particles } = spawnExplosion();
+  const geometry = particles.geometry;
+  const bytes = Object.values(geometry.attributes).reduce(
+    (total, attribute) => total + attribute.array.byteLength,
+    geometry.index?.array.byteLength ?? 0,
+  );
+  const metrics = readResourceMetrics();
+  expect(metrics).toMatchObject({
+    "streamParticleEffects.activeEmitters": 1,
+    "streamParticleEffects.peakActiveEmitters": 1,
+    "streamParticleEffects.ownedGeometryArrayBytes": bytes,
+    "streamParticleEffects.peakOwnedGeometryArrayBytes": bytes,
+    "streamParticleEffects.createdEmittersLifetime": 1,
+    "streamParticleEffects.disposedEmittersLifetime": 0,
+  });
+  expect(metrics["streamParticleEffects.ownedParticleSlots"]).toBeGreaterThan(
+    0,
+  );
+  expect(metrics["streamParticleEffects.ownedParticleSlots"]).toBe(
+    metrics["streamParticleEffects.liveParticles"]! +
+      metrics["streamParticleEffects.freeParticleSlots"]!,
+  );
+  frame(13);
+  expect(readResourceMetrics()).toMatchObject({
+    "streamParticleEffects.activeEmitters": 0,
+    "streamParticleEffects.ownedParticleSlots": 0,
+    "streamParticleEffects.liveParticles": 0,
+    "streamParticleEffects.freeParticleSlots": 0,
+    "streamParticleEffects.ownedGeometryArrayBytes": 0,
+    "streamParticleEffects.peakOwnedGeometryArrayBytes": bytes,
+    "streamParticleEffects.createdEmittersLifetime": 1,
+    "streamParticleEffects.disposedEmittersLifetime": 1,
+    "streamParticleEffects.createdParticleSlotsLifetime":
+      metrics["streamParticleEffects.createdParticleSlotsLifetime"],
+  });
+  unmount();
+  expect(
+    Object.keys(readResourceMetrics()).some((key) =>
+      key.startsWith("streamParticleEffects."),
+    ),
+  ).toBe(false);
 });
 
 it.each(["paused", "seeking"])(

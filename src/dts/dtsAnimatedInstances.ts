@@ -43,6 +43,16 @@ import {
   replaceChunk,
   type ShaderSource,
 } from "../shaderUtils";
+import {
+  InstancePoolMemory,
+  type InstancePageMemory,
+} from "./instancePoolMemory";
+import { estimateTextureBytes } from "../diagnostics/resourceEstimates";
+import { performanceTuning } from "../performanceTuning";
+import {
+  DTS_PAGE_RETIRE_AFTER_FRAMES,
+  DTS_PAGE_SWEEP_EVERY_FRAMES,
+} from "./instancePagePolicy";
 
 type ShapeMaterial = MeshBasicMaterial | MeshLambertMaterial;
 
@@ -94,6 +104,10 @@ export class DTSAnimatedInstancePool {
   private readonly lists: DTSInstanceRenderList;
   private collecting = false;
   private revision = 0;
+  private readonly memory = new InstancePoolMemory();
+  getMemoryMetrics() {
+    return this.memory.getMetrics();
+  }
   get root() {
     return this.lists.root;
   }
@@ -253,15 +267,18 @@ export class DTSAnimatedInstancePool {
     this.stats.nativeDraws = this.stats.candidates - this.stats.instances;
     // Retire inactive registrations in bounded sweeps. Weak source records
     // neither retain despawned meshes nor require React lifecycle bookkeeping.
-    if (this.frame % 60 === 0)
+    if (this.frame % DTS_PAGE_SWEEP_EVERY_FRAMES === 0)
       for (const [key, bucket] of this.buckets) {
-        if (this.frame - bucket.frame > 600) {
+        if (this.frame - bucket.frame > DTS_PAGE_RETIRE_AFTER_FRAMES) {
           this.disposeBucket(bucket);
           this.buckets.delete(key);
         } else
           for (const pages of bucket.pages.values())
             for (let i = pages.length - 1; i >= 0; i--)
-              if (this.frame - pages[i].lastUsed > 600) {
+              if (
+                this.frame - pages[i].lastUsed >
+                DTS_PAGE_RETIRE_AFTER_FRAMES
+              ) {
                 pages[i].dispose();
                 pages.splice(i, 1);
               }
@@ -283,14 +300,17 @@ export class DTSAnimatedInstancePool {
           this.renderer,
           this.maxTextureSize,
           this.maxLayers,
+          this.memory,
         );
         pages.push(draw);
         this.root.add(draw.mesh);
       }
-      draw.lastUsed = this.frame;
       while (offset < sources.length && draw.add(sources[offset])) offset++;
       // Historical arrays may be full; later pages accept newly encountered skins.
       if (draw.sources.length < 2) continue;
+      // Visiting a full historical page is not use. Only a page which
+      // contributes a draw renews its idle-retirement clock.
+      draw.lastUsed = this.frame;
       draw.upload();
       draw.mesh.visible = true;
       this.lists.replace(draw.sources, draw.mesh);
@@ -322,6 +342,7 @@ export class DTSAnimatedInstancePool {
     this.transparentRun.length = 0;
     this.registrations = new WeakMap();
     this.root.removeFromParent();
+    this.memory.dispose();
   }
 }
 
@@ -419,6 +440,9 @@ class AnimatedDraw {
   private template: Texture | null;
   private textureWidth: number;
   private textureHeight: number;
+  private readonly memory: InstancePageMemory;
+  private ownedAttributeBytes = 0;
+  private skinTextureBytes = 0;
 
   get skinCount() {
     return this.arrayMode ? this.skinEntries.size : 0;
@@ -441,6 +465,7 @@ class AnimatedDraw {
   reset(): void {
     this.sources.length = 0;
     this.activeSkins.clear();
+    this.memory.setActive(false);
   }
 
   constructor(
@@ -448,7 +473,9 @@ class AnimatedDraw {
     renderer: WebGLRenderer,
     maxInstances: number,
     maxLayers: number,
+    memory: InstancePoolMemory,
   ) {
+    this.memory = memory.createPage();
     const { node, material, item } = source;
     this.renderer = renderer;
     this.maxInstances = maxInstances;
@@ -460,7 +487,8 @@ class AnimatedDraw {
         maxLayers,
         image
           ? Math.floor(
-              (64 * 1024 * 1024) / ((image.width * image.height * 4 * 4) / 3),
+              performanceTuning.dtsInstancePages.maximumSkinArrayPageBytes /
+                ((image.width * image.height * 4 * 4) / 3),
             )
           : 1,
       ),
@@ -565,6 +593,12 @@ class AnimatedDraw {
       this.uv1,
       this.mesh.instanceColor,
     ];
+    // These six attributes each own a distinct array. Geometry vertex/index
+    // and morph target buffers alias the cache and are deliberately excluded.
+    this.ownedAttributeBytes = 0;
+    for (const attribute of this.attributes)
+      this.ownedAttributeBytes += attribute.array.byteLength;
+    this.updateMemory();
   }
 
   private createAttribute(itemSize: number): InstancedBufferAttribute {
@@ -613,6 +647,8 @@ class AnimatedDraw {
       array.needsUpdate = true;
       this.renderer.initTexture(array);
       this.skins.value = array;
+      this.skinTextureBytes = estimateTextureBytes(array) ?? 0;
+      this.updateMemory();
       for (const existing of this.skinEntries.values()) existing.version = -1;
     }
     // Native GPU texture copies preserve RGB under zero alpha, which a canvas
@@ -725,6 +761,20 @@ class AnimatedDraw {
         this.attributeBytes += range.count * 4;
       attribute.needsUpdate = true;
     }
+    this.updateMemory();
+    this.memory.setActive(true);
+  }
+
+  private updateMemory(): void {
+    const morphData = this.mesh.morphTexture?.image.data;
+    this.memory.update(
+      this.capacity,
+      this.ownedAttributeBytes,
+      this.boneBytes,
+      ArrayBuffer.isView(morphData) ? morphData.byteLength : 0,
+      this.skinTextureBytes,
+      this.skins.value ? this.skinCapacity : 0,
+    );
   }
 
   private disposeInstanceAttributes(): void {
@@ -749,6 +799,7 @@ class AnimatedDraw {
   }
 
   dispose(): void {
+    this.memory.dispose();
     this.mesh.removeFromParent();
     this.mesh.dispose();
     this.disposeInstanceAttributes();
@@ -831,7 +882,8 @@ function readTexture(map: Texture, revision: number): TextureState {
   state.arrayTexture =
     !!width &&
     !!height &&
-    (width * height * 4 * 4) / 3 <= 64 * 1024 * 1024 &&
+    (width * height * 4 * 4) / 3 <=
+      performanceTuning.dtsInstancePages.maximumSkinArrayPageBytes &&
     map.format === RGBAFormat &&
     map.type === UnsignedByteType &&
     !map.flipY &&

@@ -257,7 +257,8 @@ const _snapshotEntityCache = new WeakMap<
 function getEntityMap(snapshot: StreamSnapshot): EntityById {
   let map = _snapshotEntityCache.get(snapshot.entities);
   if (!map) {
-    map = new Map(snapshot.entities.map((e) => [e.id, e]));
+    map = new Map();
+    for (const entity of snapshot.entities) map.set(entity.id, entity);
     _snapshotEntityCache.set(snapshot.entities, map);
   }
   return map;
@@ -421,6 +422,7 @@ export class StreamPlaybackSession {
   private silencedSeek = -1;
   private lastPublishTime = 0;
   private lastSyncedSnapshot: StreamSnapshot | null = null;
+  private readonly currentRenderableIds = new Set<string>();
   private streamRevision: number | undefined;
   private projectileAssetWait?: Promise<void>;
   private teardown: (() => void) | null = null;
@@ -457,7 +459,8 @@ export class StreamPlaybackSession {
   }
 
   private watchProjectileAssets(stream: StreamingPlayback): void {
-    const wait = stream.projectileAssetWait;
+    // Both loads can suspend a seek while an on-demand canvas is idle.
+    const wait = stream.checkpointWait ?? stream.projectileAssetWait;
     if (!wait || wait === this.projectileAssetWait) return;
     this.projectileAssetWait = wait;
     const wake = () => {
@@ -484,7 +487,8 @@ export class StreamPlaybackSession {
     let structuralChange = false;
 
     // Track which IDs are in the current snapshot for the removal pass.
-    const currentIds = new Set<string>();
+    const currentIds = this.currentRenderableIds;
+    currentIds.clear();
 
     for (const entity of snapshot.entities) {
       // Splash effects are rendered directly from the stream snapshot.
@@ -563,6 +567,7 @@ export class StreamPlaybackSession {
       map.delete(id);
       structuralChange = true;
     }
+    currentIds.clear();
 
     if (structuralChange) {
       gameEntityStore.getState().bumpStreamVersion();
@@ -696,6 +701,15 @@ export class StreamPlaybackSession {
     setStreamSnapshot(snapshot);
     this.publishedSnapshot = snapshot;
 
+    // A paused on-demand canvas needs its first seek frame before lazy
+    // checkpoint loading can start and register a completion wake-up.
+    const unsubscribeSeek = engineStore.subscribe(
+      (state) => state.playback.seekNonce,
+      () => {
+        if (this.stream === stream && isCurrentPlayback(this.recording))
+          this.engine.invalidate();
+      },
+    );
     // Aim comparisons should redraw immediately, including paused on-demand views.
     const unsubscribeAimSettings = settingsStore.subscribe(
       (state) => state.aimCorrection,
@@ -710,6 +724,7 @@ export class StreamPlaybackSession {
     );
 
     return () => {
+      unsubscribeSeek();
       unsubscribeAimSettings();
       unsubscribeInterpolation();
       if (stream.onMissionInfoChange === onMissionInfoChange) {

@@ -111,46 +111,48 @@ export function createForceFieldView(
     material: ReturnType<typeof createForceFieldMaterial>;
   } | null = null;
   let elapsed = 0;
-  let disposed = false;
 
-  if (data.textures.length > 0) {
-    void engine
-      .whenHost()
-      .then(({ renderer }) =>
-        loadTextures(
-          data.textures.map((t) => textureToUrl(t)),
-          renderer,
-          setupForceFieldTexture,
-        ),
-      )
-      .then(
-        (textures) => {
-          if (disposed) return;
-          const material = createForceFieldMaterial({
-            textures,
-            scale: data.dimensions,
-            umapping: data.umapping,
-            vmapping: data.vmapping,
-            color: data.color,
-            powerOffColor: data.powerOffColor,
-            baseTranslucency: data.baseTranslucency,
-            powerOffTranslucency: data.powerOffTranslucency,
-          });
-          const mesh = new Mesh(geometry, material);
-          mesh.renderOrder = 1;
-          model.remove(fallback);
-          model.add(mesh);
-          field = { mesh, material };
-          engine.invalidate();
-        },
-        (error: unknown) => {
-          if (disposed) return;
-          // Like a shape that fails to load: draw nothing.
-          log.warn("force field textures failed: %o", error);
-          model.remove(fallback);
-        },
-      );
-  }
+  const stopTextures =
+    data.textures.length > 0
+      ? engine.prepareWithHost(
+          ({ renderer }, signal) =>
+            loadTextures(
+              data.textures.map((t) => textureToUrl(t)),
+              renderer,
+              setupForceFieldTexture,
+              signal,
+            ),
+          (textures) => {
+            const material = createForceFieldMaterial({
+              textures,
+              scale: data.dimensions,
+              umapping: data.umapping,
+              vmapping: data.vmapping,
+              color: data.color,
+              powerOffColor: data.powerOffColor,
+              baseTranslucency: data.baseTranslucency,
+              powerOffTranslucency: data.powerOffTranslucency,
+            });
+            const mesh = new Mesh(geometry, material);
+            mesh.renderOrder = 1;
+            model.remove(fallback);
+            model.add(mesh);
+            field = { mesh, material };
+            engine.invalidate();
+            return () => {
+              model.remove(mesh);
+              material.dispose();
+              field = null;
+              model.add(fallback);
+            };
+          },
+          (error: unknown) => {
+            // Like a shape that fails to load: draw nothing.
+            log.warn("force field textures failed: %o", error);
+            model.remove(fallback);
+          },
+        )
+      : undefined;
 
   // The view and collider share the same Three.js placement. Changes to a
   // field's transform, dimensions or open state replace the view.
@@ -167,11 +169,10 @@ export function createForceFieldView(
     root,
     dispose: combineCleanups(
       () => {
-        disposed = true;
+        stopTextures?.();
         if (collider) unregisterForceFieldCollider(entity.id);
         geometry.dispose();
         fallbackMaterial.dispose();
-        field?.material.dispose();
       },
       showWhileDebugTourTarget(model, entity.id, () =>
         createDebugBounds(data.dimensions),

@@ -10,7 +10,7 @@ import { engineStore } from "../state/engineStore";
 import { streamClock } from "../state/streamPlaybackStore";
 import { selectDebugMode, settingsStore } from "../state/settingsStore";
 import type { InteriorInstanceEntity } from "../state/gameEntityTypes";
-import { loadInterior } from "./interiorCache";
+import { loadInterior } from "../assets/interiorAssets";
 import { interiorToUrl, textureToUrl } from "../loaders";
 import { interiorPlacement } from "../world/placement";
 import { interiorColliderMeshes } from "../world/colliderPolicy";
@@ -166,41 +166,62 @@ export function createInteriorView(
 
     // Each surface's texture, with the fog and interior-lighting shader
     // patches; the surface draws untextured until it arrives.
-    const textured: InteriorMaterial[] = [];
-    void engine.whenHost().then(({ renderer }) => {
-      const anisotropy = renderer.capabilities.getMaxAnisotropy();
-      for (const { material } of meshes) {
-        const url = textureToUrl(material.resourcePath);
-        void loadTextures([url], renderer, (texture: Texture) =>
-          setupTexture(texture, { anisotropy }),
-        ).then(
+    const textured = new Set<InteriorMaterial>();
+    const textureGroups = new Map<string, InteriorMaterial[]>();
+    for (const { material } of meshes) {
+      const url = textureToUrl(material.resourcePath);
+      const group = textureGroups.get(url) ?? [];
+      group.push(material);
+      textureGroups.set(url, group);
+    }
+    const stopTextures = combineCleanups(
+      ...[...textureGroups].map(([url, materials]) =>
+        engine.prepareWithHost(
+          ({ renderer }, signal) =>
+            loadTextures(
+              [url],
+              renderer,
+              (texture: Texture) =>
+                setupTexture(texture, {
+                  anisotropy: renderer.capabilities.getMaxAnisotropy(),
+                }),
+              signal,
+            ),
           ([texture]) => {
-            if (disposed) return;
-            const outsideVisible = material.outsideVisible;
-            material.map = texture;
-            material.defines = {
-              DEBUG_MODE: selectDebugMode(settingsStore.getState()) ? 1 : 0,
-            };
-            material.onBeforeCompile = (shader) => {
-              injectCustomFog(shader, globalFogUniforms);
-              injectInteriorLighting(shader, {
-                surfaceOutsideVisible: outsideVisible,
-                dynamicLights: true,
-              });
-            };
-            material.customProgramCacheKey = () => `dif:${outsideVisible}`;
-            material.needsUpdate = true;
-            textured.push(material);
+            for (const material of materials) {
+              const outsideVisible = material.outsideVisible;
+              material.map = texture;
+              material.defines = {
+                DEBUG_MODE: selectDebugMode(settingsStore.getState()) ? 1 : 0,
+              };
+              material.onBeforeCompile = (shader) => {
+                injectCustomFog(shader, globalFogUniforms);
+                injectInteriorLighting(shader, {
+                  surfaceOutsideVisible: outsideVisible,
+                  dynamicLights: true,
+                });
+              };
+              material.customProgramCacheKey = () => `dif:${outsideVisible}`;
+              material.needsUpdate = true;
+              textured.add(material);
+            }
             // The shadow map is frozen, and alpha-tested surfaces cast
             // through their texture: re-render it with this one.
             invalidateShadows();
             engine.invalidate();
+            return () => {
+              // Static DIF instances share cached materials and CPU textures.
+              // Retiring one binding must not clear a surviving instance's map.
+              for (const material of materials) {
+                textured.delete(material);
+              }
+            };
           },
           (error: unknown) =>
             log.warn("texture failed for %s: %o", interiorFile, error),
-        );
-      }
-    });
+        ),
+      ),
+    );
 
     // Register this interior's native BSP/hulls for collision. Interiors
     // are static, so world matrices are snapshotted once. Which meshes
@@ -259,6 +280,7 @@ export function createInteriorView(
         lines.position.copy(box.getCenter(new Vector3()));
         return lines;
       }),
+      stopTextures,
     );
   }
 

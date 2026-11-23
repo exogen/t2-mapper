@@ -2,6 +2,20 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./main.css";
 import App from "./components/App.tsx";
+import {
+  initializeBrowserDiagnostics,
+  stopBrowserDiagnostics,
+} from "./diagnostics/browserDiagnostics";
+import { installPlaybackMetrics } from "./diagnostics/playbackMetrics";
+
+const stopPlaybackMetrics = initializeBrowserDiagnostics()
+  ? installPlaybackMetrics()
+  : undefined;
+if (import.meta.hot)
+  import.meta.hot.dispose(() => {
+    stopPlaybackMetrics?.();
+    stopBrowserDiagnostics();
+  });
 
 // iOS Safari can still pinch-zoom the page via its proprietary GestureEvents
 // in cases touch-action doesn't cover (it ignores the viewport meta's

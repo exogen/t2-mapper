@@ -1174,6 +1174,78 @@ export abstract class StreamEngine implements StreamingPlayback {
     return 0;
   }
 
+  /** Borrow state references only long enough to inspect its field schema.
+   * This is not a restorable checkpoint and never visits entity/player data. */
+  protected simulationCheckpointFields() {
+    const state = this.buildSimulationCheckpointState(new Map());
+    return {
+      state: Object.keys(state),
+      conn: Object.keys(state.conn),
+      targets: Object.keys(state.conn.targets),
+    };
+  }
+
+  /** One authoritative state-field list for both capture and import validation. */
+  private buildSimulationCheckpointState(
+    entities: Map<
+      string,
+      Omit<
+        MutableEntity,
+        "playerPrediction" | keyof SharedEntityFields | "particleEmitter"
+      >
+    >,
+  ) {
+    return {
+      entities,
+      entityIdByGhostIndex: this.entityIdByGhostIndex,
+      ghostAlwaysDoneSec: this.ghostAlwaysDoneSec,
+      missionReadySec: this.missionReadySec,
+      tickCount: this.tickCount,
+      pendingPlayerMoves: this.pendingPlayerMoves,
+      nextPlayerMoveId: this.nextPlayerMoveId,
+      lastClientMoveId: this.lastClientMoveId,
+      controlMovesAvailable: this.controlMovesAvailable,
+      skippedPlayerPrediction: this.skippedPlayerPrediction,
+      camera: this.camera,
+      chatMessages: this.chatMessages,
+      serverEvents: this.serverEvents,
+      chatMessageIdCounter: this.chatMessageIdCounter,
+      audioEvents: this.audioEvents,
+      conn: this.conn.save(),
+      lastStatus: this.lastStatus,
+      predictedEnergy: this.predictedEnergy,
+      predictedHeat: this.predictedHeat,
+      controlRechargeRate: this.controlRechargeRate,
+      lastEnergyCorrectionData: this.lastEnergyCorrectionData,
+      latestControl: {
+        ...this.latestControl,
+        ...(this.missileLock && { missileLock: this.missileLock }),
+      },
+      controlPlayerGhostId: this.controlPlayerGhostId,
+      lastControlType: this.lastControlType,
+      isPiloting: this.isPiloting,
+      lastPilotGhostIndex: this.lastPilotGhostIndex,
+      lastVehicleHeading: this.lastVehicleHeading,
+      lastVehiclePitch: this.lastVehiclePitch,
+      lastVehicleOrbitDir: this.lastVehicleOrbitDir,
+      lastVehicleVelocity: this.lastVehicleVelocity,
+      lastVehiclePos: this.lastVehiclePos,
+      lastVehicleControl: this.lastVehicleControl,
+      firstPerson: this.firstPerson,
+      lastCameraMode: this.lastCameraMode,
+      lastOrbitGhostIndex: this.lastOrbitGhostIndex,
+      lastOrbitDistance: this.lastOrbitDistance,
+      latestFov: this.latestFov,
+      weaponsHud: this.weaponsHud,
+      backpackHud: this.backpackHud,
+      inventoryHud: this.inventoryHud,
+      connectedPlayerName: this.connectedPlayerName,
+      connectedClientId: this.connectedClientId,
+      pendingExplosions: this.pendingExplosions,
+      worldGravity: this.worldGravity,
+    };
+  }
+
   /** Snapshot mutable simulation data, sharing immutable assets and timelines. */
   protected captureSimulationState() {
     const entities = new Map<
@@ -1208,55 +1280,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         RETAIL_PLAYER_INTERPOLATION.maxPredictionTicks && {
         predictionLimit: this.playerInterpolation.maxPredictionTicks,
       }),
-      state: structuredClone({
-        entities,
-        entityIdByGhostIndex: this.entityIdByGhostIndex,
-        ghostAlwaysDoneSec: this.ghostAlwaysDoneSec,
-        missionReadySec: this.missionReadySec,
-        tickCount: this.tickCount,
-        pendingPlayerMoves: this.pendingPlayerMoves,
-        nextPlayerMoveId: this.nextPlayerMoveId,
-        lastClientMoveId: this.lastClientMoveId,
-        controlMovesAvailable: this.controlMovesAvailable,
-        skippedPlayerPrediction: this.skippedPlayerPrediction,
-        camera: this.camera,
-        chatMessages: this.chatMessages,
-        serverEvents: this.serverEvents,
-        chatMessageIdCounter: this.chatMessageIdCounter,
-        audioEvents: this.audioEvents,
-        conn: this.conn.save(),
-        lastStatus: this.lastStatus,
-        predictedEnergy: this.predictedEnergy,
-        predictedHeat: this.predictedHeat,
-        controlRechargeRate: this.controlRechargeRate,
-        lastEnergyCorrectionData: this.lastEnergyCorrectionData,
-        latestControl: {
-          ...this.latestControl,
-          ...(this.missileLock && { missileLock: this.missileLock }),
-        },
-        controlPlayerGhostId: this.controlPlayerGhostId,
-        lastControlType: this.lastControlType,
-        isPiloting: this.isPiloting,
-        lastPilotGhostIndex: this.lastPilotGhostIndex,
-        lastVehicleHeading: this.lastVehicleHeading,
-        lastVehiclePitch: this.lastVehiclePitch,
-        lastVehicleOrbitDir: this.lastVehicleOrbitDir,
-        lastVehicleVelocity: this.lastVehicleVelocity,
-        lastVehiclePos: this.lastVehiclePos,
-        lastVehicleControl: this.lastVehicleControl,
-        firstPerson: this.firstPerson,
-        lastCameraMode: this.lastCameraMode,
-        lastOrbitGhostIndex: this.lastOrbitGhostIndex,
-        lastOrbitDistance: this.lastOrbitDistance,
-        latestFov: this.latestFov,
-        weaponsHud: this.weaponsHud,
-        backpackHud: this.backpackHud,
-        inventoryHud: this.inventoryHud,
-        connectedPlayerName: this.connectedPlayerName,
-        connectedClientId: this.connectedClientId,
-        pendingExplosions: this.pendingExplosions,
-        worldGravity: this.worldGravity,
-      }),
+      state: structuredClone(this.buildSimulationCheckpointState(entities)),
       shared,
       endedEntities: this.endedEntities,
       players,

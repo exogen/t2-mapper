@@ -15,7 +15,7 @@ import { DTSShape } from "../dts/dtsModel";
 import { engineStore, effectNow } from "../state/engineStore";
 import { NormalBlending, RepeatWrapping, SRGBColorSpace } from "three";
 import type { Object3D, Texture } from "three";
-import { loadTexture } from "../textureUtils";
+import { loadBitmapTexture } from "../assets/bitmapTextures";
 import { textureToUrl } from "../loaders";
 import type { FrameContext } from "./frameScheduler";
 
@@ -23,7 +23,7 @@ import type { FrameContext } from "./frameScheduler";
 let _cloakTexture: Texture | null = null;
 export function getCloakTexture(): Texture {
   if (!_cloakTexture) {
-    _cloakTexture = loadTexture(textureToUrl("special/cloakTexture"));
+    _cloakTexture = loadBitmapTexture(textureToUrl("special/cloakTexture"));
     _cloakTexture.wrapS = RepeatWrapping;
     _cloakTexture.wrapT = RepeatWrapping;
     _cloakTexture.colorSpace = SRGBColorSpace;

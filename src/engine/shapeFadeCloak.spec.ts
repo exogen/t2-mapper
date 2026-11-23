@@ -14,10 +14,11 @@ import {
   shapeCloakAlpha,
 } from "./shapeFadeCloak";
 
-vi.mock("../textureUtils", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../textureUtils")>();
+vi.mock("../assets/bitmapTextures", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../assets/bitmapTextures")>();
   const { Texture } = await import("three");
-  return { ...actual, loadTexture: () => new Texture() };
+  return { ...actual, loadBitmapTexture: () => new Texture() };
 });
 
 function mesh(material = new MeshBasicMaterial({ map: new Texture() })) {

@@ -82,6 +82,7 @@ export class GroundEffectSimulation {
   }
 
   clear(): void {
+    for (const entry of this.emitters.values()) entry.emitter.dispose();
     this.emitters.clear();
     // Live mission changes can reuse this playback and its datablock IDs.
     this.emitterData.clear();
@@ -403,8 +404,10 @@ export class GroundEffectSimulation {
         !entry.touched &&
         !entry.emitter.particles.length &&
         (!entry.owner || !seen.has(entry.owner))
-      )
+      ) {
+        entry.emitter.dispose();
         this.emitters.delete(key);
+      }
     }
     for (const key of this.poses.keys())
       if (!seen.has(key)) this.poses.delete(key);

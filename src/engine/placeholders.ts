@@ -1,7 +1,7 @@
 import {
   BoxGeometry,
   Mesh,
-  MeshStandardMaterial,
+  MeshBasicMaterial,
   type Material,
   type Object3D,
 } from "three";
@@ -13,7 +13,7 @@ import { WorldLabel } from "./worldLabel";
 export function createPlaceholder(color: string): Mesh {
   return new Mesh(
     new BoxGeometry(10, 10, 10),
-    new MeshStandardMaterial({ color, wireframe: true }),
+    new MeshBasicMaterial({ color, wireframe: true }),
   );
 }
 

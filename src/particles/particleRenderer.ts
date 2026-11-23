@@ -16,7 +16,7 @@ import {
   UnsignedByteType,
 } from "three";
 import { textureToUrl } from "../loaders";
-import { loadTexture } from "../textureUtils";
+import { loadBitmapTexture } from "../assets/bitmapTextures";
 import { setupEffectTexture } from "../stream/playbackUtils";
 import { particleVertexShader, particleFragmentShader } from "./shaders";
 import type { EmitterInstance } from "./ParticleSystem";
@@ -71,7 +71,7 @@ export function getParticleTexture(textureName: string): Texture {
     // Share decoded pixels, not sampler/color-space settings with other effects.
     const tex = new Texture();
     setupParticleTexture(tex);
-    const source = loadTexture(url, (loaded) => {
+    const source = loadBitmapTexture(url, (loaded) => {
       tex.source = loaded.source;
       tex.needsUpdate = true;
       particleTexturesReady.add(tex);

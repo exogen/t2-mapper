@@ -3,7 +3,7 @@ import type { Texture, ColorSpace } from "three";
 import type { DTSModel } from "../dts/dtsModel";
 import { ShapeLoader } from "../shapeLoader";
 import { shapeToUrl, textureToUrl } from "../loaders";
-import { loadTextureInstance } from "../textureUtils";
+import { loadBitmapTextureInstance } from "../assets/bitmapTextures";
 import { setupEffectTexture } from "../stream/playbackUtils";
 import type { ProjectileEntity } from "../state/projectileEntities";
 import type { ProjectileEntityLookup, ProjectileFactory } from "./types";
@@ -46,7 +46,7 @@ export class ProjectileAssets {
       key = JSON.stringify([url, colorSpace, repeat]);
     let texture = this.textures.get(key);
     if (!texture) {
-      texture = loadTextureInstance(url);
+      texture = loadBitmapTextureInstance(url);
       setupEffectTexture(texture, colorSpace);
       if (repeat !== "none") texture.wrapS = RepeatWrapping;
       if (repeat === "st") texture.wrapT = RepeatWrapping;

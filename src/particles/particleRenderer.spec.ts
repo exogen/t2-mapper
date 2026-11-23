@@ -8,7 +8,7 @@ import {
   SRGBColorSpace,
   type BufferAttribute,
 } from "three";
-import { loadTexture } from "../textureUtils";
+import { loadBitmapTexture } from "../assets/bitmapTextures";
 import {
   getParticleTexture,
   particleTexturesReady,
@@ -44,7 +44,7 @@ beforeAll(() => {
 afterAll(() => vi.unstubAllGlobals());
 
 it("shares particle image data without changing another renderer's texture settings", async () => {
-  const source = loadTexture("/dust.png");
+  const source = loadBitmapTexture("/dust.png");
   source.colorSpace = SRGBColorSpace;
   source.minFilter = LinearFilter;
   source.wrapS = ClampToEdgeWrapping;
@@ -72,7 +72,7 @@ it("shares particle image data without changing another renderer's texture setti
 });
 
 it("makes an already-decoded particle texture ready immediately", async () => {
-  const source = loadTexture("/footprint.png");
+  const source = loadBitmapTexture("/footprint.png");
   pending.get("/footprint.png")!({ width: 32, height: 64 });
   await vi.waitFor(() => expect(source.image).toHaveProperty("width", 32));
   const particle = getParticleTexture("footprint");

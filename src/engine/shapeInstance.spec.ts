@@ -12,13 +12,14 @@ import { createShapeInstance } from "./shapeInstance";
 vi.mock("../loaders", () => ({
   textureToUrl: (name: string) => name,
 }));
-vi.mock("../textureUtils", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../textureUtils")>();
+vi.mock("../assets/bitmapTextures", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../assets/bitmapTextures")>();
   const { Texture } = await import("three");
   const images = new Map<string, Texture>();
   return {
     ...actual,
-    loadTextureInstance: (url: string) => {
+    loadBitmapTextureInstance: (url: string) => {
       let shared = images.get(url);
       if (!shared) {
         shared = new Texture();

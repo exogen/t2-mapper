@@ -172,6 +172,37 @@ describe("RelayClient catch-up ordering", () => {
     expect(ws.readyState).toBe(FakeWebSocket.OPEN);
   });
 
+  it("streams existing gzip bytes without a Blob copy and accounts the decode phases", async () => {
+    const { client, ws, events } = setup();
+    const blob = vi.fn(() => {
+      throw new Error("catch-up must not copy its input into a Blob");
+    });
+    vi.stubGlobal("Blob", blob);
+    snapshot(ws, 1);
+    await decodes[0]();
+    await vi.waitFor(() => expect(events).toEqual(["hydrate:1"]));
+    const metrics = client.getDiagnosticMetrics();
+    const json = JSON.stringify({
+      epoch: 1,
+      initialGhosts: [],
+      dataBlocks: [],
+    });
+    expect(metrics.catchupDecodedBytes).toBe(Buffer.byteLength(json));
+    expect(metrics.catchupTextCodeUnits).toBe(json.length);
+    expect(metrics.catchupDecodeMs).toBeGreaterThanOrEqual(0);
+    expect(metrics.catchupParseMs).toBeGreaterThanOrEqual(0);
+    expect(metrics.catchupHydrateMs).toBeGreaterThanOrEqual(0);
+    expect(blob).not.toHaveBeenCalled();
+    client.leaveServer();
+    expect(client.getDiagnosticMetrics()).toMatchObject({
+      catchupDecodedBytes: 0,
+      catchupTextCodeUnits: 0,
+      catchupDecodeMs: null,
+      catchupParseMs: null,
+      catchupHydrateMs: null,
+    });
+  });
+
   it("attaches with the requested picture when resuming a CastGenius watch", () => {
     const { client, ws } = setup();
     client.watchServer("test:28000", "session:cast", true);

@@ -31,10 +31,10 @@ import {
 } from "../dts/dtsModel";
 import { observeShapeMeshes, getDTSObject } from "../dts/dtsScene";
 import {
-  loadTexture,
-  loadTextureInstance,
-  setupTexture,
-} from "../textureUtils";
+  loadBitmapTexture,
+  loadBitmapTextureInstance,
+} from "../assets/bitmapTextures";
+import { setupTexture } from "../textureUtils";
 import { textureToUrl } from "../loaders";
 import type { Keyframe } from "./types";
 
@@ -278,19 +278,31 @@ export function replaceWithShapeMaterial(
   }
   const usingSkin = !!skinTextureUrl;
   const url = skinTextureUrl ?? textureToUrl(resourcePath);
-  const texture = loadTextureInstance(
+  const texture = loadBitmapTextureInstance(
     url,
     usingSkin
       ? () => {
           // Skin failed (404) — load the default texture into the same object.
           const fallbackUrl = textureToUrl(resourcePath);
-          loadTexture(fallbackUrl, (loaded) => {
+          loadBitmapTexture(fallbackUrl, (loaded) => {
             texture.image = loaded.image;
             texture.needsUpdate = true;
           });
         }
       : undefined,
   );
+  if (
+    !usingSkin &&
+    mat instanceof DTSMaterial &&
+    mat.map &&
+    !mat.map.image &&
+    !texture.image
+  ) {
+    // Each failed URL retry creates a new canonical placeholder. Keep unready
+    // default views in the native model's recovery group across those retries;
+    // their own load callback still installs a successful Source normally.
+    texture.source = mat.map.source;
+  }
   setupTexture(texture, { anisotropy: options.anisotropy });
 
   configureDTSImageTexture(

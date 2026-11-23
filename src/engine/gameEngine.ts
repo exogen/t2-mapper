@@ -22,6 +22,10 @@ import type { Cleanup } from "./storeReaction";
 import type { StreamSnapshot } from "../stream/types";
 import type { ClipCameraTransition, ClipSample } from "../../relay/clipTypes";
 import { renderShapeRaycast } from "../collision/renderShapeRaycast";
+import { createLogger } from "../logger";
+import { runOwnedCleanups } from "./runOwnedCleanups";
+
+const log = createLogger("GameEngine");
 
 const weaponPoseBatch = {
   stage: FramePriority.WeaponPose,
@@ -49,7 +53,16 @@ export type RenderHook = (
 /** A system started with withHost, and its cleanup for the current host. */
 interface HostUser {
   start: (host: EngineHost) => Cleanup;
-  cleanup: Cleanup;
+  binding?: {
+    connection: HostConnection;
+    active: boolean;
+    cleanup: Cleanup;
+  };
+}
+
+interface HostConnection {
+  host: EngineHost;
+  disconnect(): void;
 }
 
 /** Opt-in features, read once from the page URL. */
@@ -112,6 +125,8 @@ export class GameEngine {
   };
   private frameCount = 0;
   private host: EngineHost | null = null;
+  private connection?: HostConnection;
+  private connectionRequest = 0;
   private readonly hostUsers = new Set<HostUser>();
   private frameStartHooks: readonly (() => void)[] = [];
   private frameEndHooks: readonly (() => void)[] = [];
@@ -147,6 +162,10 @@ export class GameEngine {
    * function disconnects it, cleaning them up.
    */
   connect(host: EngineHost): () => void {
+    const request = ++this.connectionRequest;
+    this.connection?.disconnect();
+    // A previous owner's cleanup may synchronously connect a newer host.
+    if (request !== this.connectionRequest) return () => {};
     this.host = host;
     const { scene } = host;
     const before = scene.onBeforeRender;
@@ -161,18 +180,53 @@ export class GameEngine {
       for (const hook of this.afterRenderHooks) hook(renderer, scene, camera);
       after.apply(scene, args);
     };
-    for (const user of [...this.hostUsers])
-      user.cleanup = user.start(host) || undefined;
-    return () => {
-      if (this.host !== host) return;
-      for (const user of [...this.hostUsers]) {
-        user.cleanup?.();
-        user.cleanup = undefined;
-      }
+    const connection: HostConnection = { host, disconnect: () => {} };
+    connection.disconnect = () => {
+      if (this.connection !== connection) return;
+      const bindings = [...this.hostUsers].map(
+        (user) => [user, user.binding] as const,
+      );
+      this.connection = undefined;
       this.host = null;
       scene.onBeforeRender = before;
       scene.onAfterRender = after;
+      runOwnedCleanups(
+        bindings.map(([user, binding]) => () => {
+          if (binding?.connection === connection)
+            this.stopHostUser(user, binding);
+        }),
+      );
     };
+    this.connection = connection;
+    try {
+      for (const user of [...this.hostUsers])
+        this.startHostUser(user, connection);
+    } catch (error) {
+      connection.disconnect();
+      throw error;
+    }
+    return connection.disconnect;
+  }
+
+  private stopHostUser(user: HostUser, binding = user.binding): void {
+    if (!binding?.active) return;
+    if (user.binding === binding) user.binding = undefined;
+    binding.active = false;
+    const cleanup = binding.cleanup;
+    binding.cleanup = undefined;
+    cleanup?.();
+  }
+
+  private startHostUser(user: HostUser, connection: HostConnection): void {
+    if (this.connection !== connection || !this.hostUsers.has(user)) return;
+    this.stopHostUser(user);
+    if (this.connection !== connection || !this.hostUsers.has(user)) return;
+    const binding = { connection, active: true, cleanup: undefined as Cleanup };
+    user.binding = binding;
+    const cleanup = user.start(connection.host) || undefined;
+    if (binding.active && this.connection === connection)
+      binding.cleanup = cleanup;
+    else cleanup?.();
   }
 
   /**
@@ -181,14 +235,62 @@ export class GameEngine {
    * function stops it, running its cleanup.
    */
   withHost(start: (host: EngineHost) => Cleanup): () => void {
-    const user: HostUser = { start, cleanup: undefined };
+    const user: HostUser = { start };
     this.hostUsers.add(user);
-    if (this.host) user.cleanup = start(this.host) || undefined;
+    try {
+      if (this.connection) this.startHostUser(user, this.connection);
+    } catch (error) {
+      this.hostUsers.delete(user);
+      this.stopHostUser(user);
+      throw error;
+    }
     return () => {
       this.hostUsers.delete(user);
-      user.cleanup?.();
-      user.cleanup = undefined;
+      this.stopHostUser(user);
     };
+  }
+
+  /** Prepare a view's assets for each connected host. Releasing the view or
+   * disconnecting its host prevents further preparation/installation; shared
+   * asset requests keep running for other owners. Installed view resources are
+   * cleaned up before a replacement host starts its preparation. */
+  prepareWithHost<T>(
+    load: (host: EngineHost, signal: AbortSignal) => T | PromiseLike<T>,
+    install: (value: T, host: EngineHost) => Cleanup,
+    onError?: (error: unknown) => void,
+  ): () => void {
+    return this.withHost((host) => {
+      const controller = new AbortController();
+      const { signal } = controller;
+      let cleanup: Cleanup;
+      const failed = (error: unknown) => {
+        if (signal.aborted) return;
+        try {
+          if (onError) onError(error);
+          else log.error("Host preparation failed: %o", error);
+        } catch (error) {
+          log.error("Host preparation observer failed: %o", error);
+        }
+      };
+      // Publish the host cleanup before calling user code: even a synchronous
+      // load may release its view or disconnect the renderer reentrantly.
+      void Promise.resolve()
+        .then(async () => {
+          if (signal.aborted) return;
+          const value = await load(host, signal);
+          if (signal.aborted) return;
+          const installed = install(value, host);
+          // Installation can synchronously release its own owner.
+          if (signal.aborted) installed?.();
+          else cleanup = installed;
+        })
+        .catch(failed);
+      return () => {
+        controller.abort();
+        cleanup?.();
+        cleanup = undefined;
+      };
+    });
   }
 
   /** The connected host, if any. */

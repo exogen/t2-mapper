@@ -73,6 +73,10 @@ import {
   samePlayerInterpolation,
   type PlayerInterpolationSettings,
 } from "./playerInterpolation";
+import type { DemoCheckpointIndex } from "./demoCheckpoints";
+import type { CheckpointMemoryPolicy } from "./checkpointMemoryPolicy";
+import { DemoCheckpointRepository } from "./demoCheckpointRepository";
+import { emitDiagnosticEvent as markDiagnosticEvent } from "../diagnostics/events";
 
 interface DemoAimObservations {
   observations: QuantizedAimSample[];
@@ -424,19 +428,19 @@ export function parseDemoValues(demoValues: string[]): ParsedDemoValues {
 /** Checkpoint cadence in recorded simulation ticks; each tick is 32 ms. */
 export const DEMO_CHECKPOINT_TICKS = 1_000;
 
-function checkCheckpointFields<T extends object>(
+function checkCheckpointFields(
   section: string,
-  saved: T | undefined,
-  current: T,
-  optional?: keyof T,
+  saved: object | undefined,
+  current: readonly string[],
+  optional?: string,
 ): void {
   if (!saved) throw new Error(`Invalid seek checkpoint: missing ${section}`);
-  for (const key of Object.keys(current)) {
+  for (const key of current) {
     if (key !== optional && !Object.hasOwn(saved, key))
       throw new Error(`Invalid seek checkpoint: missing ${section}.${key}`);
   }
   for (const key of Object.keys(saved)) {
-    if (!Object.hasOwn(current, key))
+    if (!current.includes(key))
       throw new Error(`Invalid seek checkpoint: unexpected ${section}.${key}`);
   }
 }
@@ -460,6 +464,8 @@ export interface DemoStreamingOptions {
   playerViews?: boolean;
   /** Retain observed mortar and missile impacts for director sampling. */
   directorImpacts?: boolean;
+  /** Browser loaders opt in; offline generation/validation remains unbounded. */
+  checkpointMemoryPolicy?: CheckpointMemoryPolicy;
 }
 
 export type DemoSeekCheckpoint = ReturnType<
@@ -467,11 +473,6 @@ export type DemoSeekCheckpoint = ReturnType<
 >;
 
 const log = createLogger("demoStreaming");
-
-interface ImportedCheckpoint {
-  checkpoint: DemoSeekCheckpoint;
-  onRestoreError?: (error: unknown) => void;
-}
 
 export class DemoStreamAdapter extends StreamEngine {
   lastStepStartTimeSec = 0;
@@ -481,11 +482,11 @@ export class DemoStreamAdapter extends StreamEngine {
   private readonly aimHistory: DemoAimFrame[] = [];
   private readonly aimLookahead = new DemoAimLookahead();
   private aimResult?: { tick: number; entityId: string; view: DemoPlayerAim };
-  private readonly checkpoints = new Map<
-    number,
-    ReturnType<DemoStreamAdapter["captureCheckpoint"]>
-  >();
-  private readonly persistedCheckpoints = new Map<number, ImportedCheckpoint>();
+  private readonly checkpointRepository: DemoCheckpointRepository;
+  private checkpointCaptures = 0;
+  private checkpointCaptureMs = 0;
+  private checkpointCaptureMaxMs = 0;
+  private checkpointImportMs = 0;
   private predictionModeChanged = false;
   private preferredInterpolation = DEFAULT_PLAYER_INTERPOLATION;
   private readonly interpolationOverrides = new Map<
@@ -539,19 +540,41 @@ export class DemoStreamAdapter extends StreamEngine {
   }
 
   get seekSceneSnapshot(): StreamSnapshot | null {
-    return this.pendingCheckpointCollision ? this.getSnapshot() : null;
+    return this.pendingCheckpointCollision || this.checkpointRepository.wait
+      ? this.getSnapshot()
+      : null;
+  }
+
+  get checkpointWait(): Promise<void> | undefined {
+    return this.checkpointRepository.wait;
   }
 
   get checkpointTicks(): readonly number[] {
-    return Array.from(this.checkpoints.keys());
+    return Array.from(this.checkpointRepository.ticks());
+  }
+
+  getDiagnosticMetrics(): Record<string, number | null> {
+    return {
+      ...this.checkpointRepository.getMetrics(),
+      demoInflatedBytes: this.parser.decompressedByteLength,
+      checkpointCaptures: this.checkpointCaptures,
+      checkpointCaptureMs: this.checkpointCaptureMs,
+      checkpointCaptureMaxMs: this.checkpointCaptureMaxMs,
+      checkpointImportMs: this.checkpointImportMs,
+    };
+  }
+
+  installCheckpointIndex(index: DemoCheckpointIndex): void {
+    this.checkpointRepository.installIndex(index);
+  }
+
+  /** Only the loader calls this once an unload/replacement is committed. */
+  disposeCheckpointIndex(): void {
+    this.checkpointRepository.dispose();
   }
 
   private clearSessionCheckpoints(): void {
-    this.checkpoints.clear();
-    if (this.playerPredictionEnabled) {
-      for (const [tick, { checkpoint }] of this.persistedCheckpoints)
-        this.checkpoints.set(tick, checkpoint);
-    }
+    this.checkpointRepository.clearSession(this.playerPredictionEnabled);
   }
 
   override setPlayerPredictionEnabled(enabled: boolean): void {
@@ -659,7 +682,8 @@ export class DemoStreamAdapter extends StreamEngine {
   }
 
   captureCheckpoint() {
-    return {
+    const started = performance.now();
+    const checkpoint = {
       parser: this.parser.createCheckpoint(),
       simulation: this.captureSimulationState(),
       cursor: structuredClone({
@@ -672,6 +696,18 @@ export class DemoStreamAdapter extends StreamEngine {
         lastAbsPitch: this.lastAbsPitch,
       }),
     };
+    const duration = performance.now() - started;
+    this.checkpointCaptures++;
+    this.checkpointCaptureMs += duration;
+    this.checkpointCaptureMaxMs = Math.max(
+      this.checkpointCaptureMaxMs,
+      duration,
+    );
+    markDiagnosticEvent("checkpoint-captured", {
+      tick: this.moveTicks,
+      durationMs: duration,
+    });
+    return checkpoint;
   }
 
   /** Exercise restoration in an offline reader before trusting a saved artifact. */
@@ -681,7 +717,7 @@ export class DemoStreamAdapter extends StreamEngine {
   ): void {
     const reader = new DemoStreamAdapter(parser, { checkpoints: false });
     reader.importCheckpoints(checkpoints);
-    for (const { checkpoint } of reader.persistedCheckpoints.values())
+    for (const { checkpoint } of reader.checkpointRepository.importedValues())
       reader.restoreCheckpoint(checkpoint);
   }
 
@@ -690,8 +726,9 @@ export class DemoStreamAdapter extends StreamEngine {
     checkpoints: readonly DemoSeekCheckpoint[],
     onRestoreError?: (error: unknown) => void,
   ): void {
+    const started = performance.now();
     const owner = this.parser.createCheckpoint().owner;
-    const current = this.captureSimulationState().state;
+    const current = this.simulationCheckpointFields();
     const imported = new Map<number, DemoSeekCheckpoint>();
     for (const checkpoint of checkpoints) {
       const tick = checkpoint.cursor.moveTicks;
@@ -720,24 +757,22 @@ export class DemoStreamAdapter extends StreamEngine {
         !(checkpoint.parser.ghosts instanceof Map)
       )
         throw new Error("Invalid seek checkpoint");
-      checkCheckpointFields("state", state, current);
+      checkCheckpointFields("state", state, current.state);
       // Earlier v24 writers omit matchPhase. ConnectionState.restore derives it
       // from the scoreboard when absent.
       checkCheckpointFields("conn", state.conn, current.conn, "matchPhase");
-      checkCheckpointFields(
-        "targets",
-        state.conn.targets,
-        current.conn.targets,
-      );
+      checkCheckpointFields("targets", state.conn.targets, current.targets);
       imported.set(tick, {
         ...checkpoint,
         parser: { ...checkpoint.parser, owner },
       });
     }
-    for (const [tick, checkpoint] of imported) {
-      this.persistedCheckpoints.set(tick, { checkpoint, onRestoreError });
-      if (this.playerPredictionEnabled) this.checkpoints.set(tick, checkpoint);
-    }
+    this.checkpointRepository.import(
+      imported,
+      this.playerPredictionEnabled,
+      onRestoreError,
+    );
+    this.checkpointImportMs += performance.now() - started;
   }
 
   /** Offline generation loads new collision geometry before simulating each tick. */
@@ -886,6 +921,10 @@ export class DemoStreamAdapter extends StreamEngine {
 
   constructor(parser: DemoParser, options: DemoStreamingOptions) {
     super();
+    this.checkpointRepository = new DemoCheckpointRepository(
+      (checkpoint) => this.importCheckpoints([checkpoint]),
+      options.checkpointMemoryPolicy,
+    );
     this.checkpointsEnabled = options.checkpoints !== false;
     this.groundEffectsEnabled = options.groundEffects !== false;
     this.playerViewsEnabled = options.playerViews !== false;
@@ -1527,6 +1566,7 @@ export class DemoStreamAdapter extends StreamEngine {
   // A change to the effective interpolation settings starts a new repair cycle.
   private collisionReplayComplete = false;
   get canStartSeek(): boolean {
+    if (this.checkpointRepository.wait) return false;
     if (!this.checkpointCollisionReady()) return false;
     // A failed download must not leave transport waiting forever. Prediction
     // stays disabled until real geometry arrives; recorded poses still work.
@@ -1572,6 +1612,17 @@ export class DemoStreamAdapter extends StreamEngine {
       this.resetToStart();
       didReset = true;
     }
+    if (
+      this.checkpointRepository.prepareIndexed(
+        targetTicks,
+        this.moveTicks,
+        allowForwardCheckpoint,
+        this.playerPredictionEnabled,
+      )
+    ) {
+      this.lastStepStartTimeSec = this.getTimeSec();
+      return this.getSnapshot();
+    }
 
     // A replacement seek can land immediately before a staged tick, after
     // the previous seek already passed that boundary without publishing it.
@@ -1582,14 +1633,7 @@ export class DemoStreamAdapter extends StreamEngine {
       this.snapshotBeforePendingTick !== null &&
       streamTimeToTick(this.snapshotBeforePendingTick.timeSec) < this.moveTicks;
     if (targetTicks < this.moveTicks || allowForwardCheckpoint) {
-      let checkpointTick: number | undefined;
-      for (const tick of this.checkpoints.keys()) {
-        if (
-          tick <= targetTicks &&
-          (checkpointTick === undefined || tick > checkpointTick)
-        )
-          checkpointTick = tick;
-      }
+      const checkpointTick = this.checkpointRepository.nearestTick(targetTicks);
       if (
         targetTicks < this.moveTicks ||
         missingSeekBoundary ||
@@ -1598,11 +1642,11 @@ export class DemoStreamAdapter extends StreamEngine {
         const checkpoint =
           checkpointTick === undefined
             ? undefined
-            : this.checkpoints.get(checkpointTick);
+            : this.checkpointRepository.get(checkpointTick);
         const imported =
           checkpointTick === undefined
             ? undefined
-            : this.persistedCheckpoints.get(checkpointTick);
+            : this.checkpointRepository.getImported(checkpointTick);
         const previousCollision = imported
           ? this.captureCollisionWorld()
           : null;
@@ -1611,10 +1655,12 @@ export class DemoStreamAdapter extends StreamEngine {
           try {
             this.restoreCheckpoint(checkpoint);
             restored = true;
+            if (imported && checkpointTick !== undefined) {
+              this.checkpointRepository.touchImported(checkpointTick);
+            }
           } catch (error) {
             if (!imported || checkpointTick === undefined) throw error;
-            this.checkpoints.delete(checkpointTick);
-            this.persistedCheckpoints.delete(checkpointTick);
+            this.checkpointRepository.rejectAnchor(checkpointTick);
             log.warn(
               { err: error, tick: checkpointTick },
               "Skipping unusable demo checkpoint",
@@ -1789,10 +1835,14 @@ export class DemoStreamAdapter extends StreamEngine {
     this.flushProjectileEvents();
     if (
       this.checkpointsEnabled &&
+      this.checkpointRepository.sessionCaptureEnabled &&
       this.moveTicks % DEMO_CHECKPOINT_TICKS === 0 &&
-      !this.checkpoints.has(this.moveTicks)
+      !this.checkpointRepository.has(this.moveTicks)
     ) {
-      this.checkpoints.set(this.moveTicks, this.captureCheckpoint());
+      this.checkpointRepository.addSession(
+        this.moveTicks,
+        this.captureCheckpoint(),
+      );
     }
   }
 

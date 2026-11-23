@@ -910,6 +910,8 @@ export type ProjectileLifecycleEvent =
     };
 
 export interface StreamingPlayback {
+  /** Cheap scalar probes. Must not clone snapshots or retain diagnostic graphs. */
+  getDiagnosticMetrics?(): Record<string, number | null>;
   /** Entity lifetimes were replaced by a mission reset or checkpoint restore. */
   readonly worldGeneration?: number;
   /** Authoritative hydration replaced the timeline; rebase render clocks/snapshots. */
@@ -928,6 +930,14 @@ export interface StreamingPlayback {
     checkpoints: readonly import("./demoStreaming").DemoSeekCheckpoint[],
     onRestoreError?: (error: unknown) => void,
   ): void;
+  /** Browser sidecars retain encoded anchors and decode on an explicit seek. */
+  installCheckpointIndex?(
+    index: import("./demoCheckpoints").DemoCheckpointIndex,
+  ): void;
+  /** Abort lazy work and release seek caches when a recording is discarded. */
+  disposeCheckpointIndex?(): void;
+  /** Settles after a lazy seek checkpoint is decoded or rejected. */
+  readonly checkpointWait?: Promise<void>;
   /** The initial pass preceded collision loading and can now be reconstructed. */
   readonly needsReplay?: boolean;
   /** False while startup collision assets are still loading before a seek.

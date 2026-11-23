@@ -1,5 +1,6 @@
 import {
   FrontSide,
+  MeshBasicMaterial,
   MeshLambertMaterial,
   NoColorSpace,
   type DataTexture,
@@ -48,6 +49,7 @@ export async function loadTerrainTextures(
   textureNames: string[],
   detailTextureName: string | undefined,
   renderer: WebGLRenderer,
+  signal?: AbortSignal,
 ): Promise<TerrainTextures> {
   const anisotropy = renderer.capabilities.getMaxAnisotropy();
   const detailTextureUrl = detailTextureName
@@ -63,6 +65,7 @@ export async function loadTerrainTextures(
       tex.colorSpace = NoColorSpace;
       setupTexture(tex, { anisotropy, noColorSpace: true });
     },
+    signal,
   );
   const detailTexture = textures.pop()!;
   return {
@@ -76,9 +79,9 @@ export async function loadTerrainTextures(
 /**
  * Shown until the terrain's textures load.
  */
-export function createTerrainFallbackMaterial(): MeshLambertMaterial {
+export function createTerrainFallbackMaterial(): MeshBasicMaterial {
   // Geometry is already CPU-displaced, so no displacementMap needed
-  return new MeshLambertMaterial({ color: "rgb(0, 109, 56)", wireframe: true });
+  return new MeshBasicMaterial({ color: "rgb(0, 109, 56)", wireframe: true });
 }
 
 export interface BlendedTerrainMaterial {

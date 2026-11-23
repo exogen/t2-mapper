@@ -1,4 +1,18 @@
 /** Portable graph encoding: checkpoints share data and contain Maps and undefined. */
+import { registerMetricSource } from "../diagnostics/resourceMetricRegistry";
+
+const decodeMetrics = {
+  active: 0,
+  activeCompressedBytes: 0,
+  activePlaintextBytes: 0,
+  decodedCount: 0,
+  failures: 0,
+  lastCompressedBytes: 0,
+  lastPlaintextBytes: 0,
+  lastDurationMs: 0,
+  totalDurationMs: 0,
+};
+registerMetricSource("checkpointDecode", () => ({ ...decodeMetrics }));
 type Value =
   null | boolean | string | number | { ref: number } | { special: string };
 type Node = { type: string; value: unknown };
@@ -15,7 +29,10 @@ export function bytesToBase64(bytes: Uint8Array): string {
 }
 
 export function base64ToBytes(text: string): Uint8Array<ArrayBuffer> {
-  return Uint8Array.from(atob(text), (char) => char.charCodeAt(0));
+  const binary = atob(text);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }
 
 export function encodeCheckpoint(value: unknown): string {
@@ -192,9 +209,47 @@ export function decodeCheckpoint(text: string): unknown {
 
 export async function decodeCompressedCheckpoint(
   base64: string,
+  signal?: AbortSignal,
 ): Promise<unknown> {
-  const stream = new Blob([base64ToBytes(base64)])
-    .stream()
-    .pipeThrough(new DecompressionStream("gzip"));
-  return decodeCheckpoint(await new Response(stream).text());
+  signal?.throwIfAborted();
+  const started = performance.now();
+  let compressedBytes = 0;
+  let plaintextBytes = 0;
+  decodeMetrics.active++;
+  try {
+    const bytes = base64ToBytes(base64);
+    compressedBytes = bytes.byteLength;
+    decodeMetrics.activeCompressedBytes += compressedBytes;
+    const stream = new Blob([bytes])
+      .stream()
+      .pipeThrough(new DecompressionStream("gzip"), { signal })
+      .pipeThrough(
+        new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, controller) {
+            signal?.throwIfAborted();
+            plaintextBytes += chunk.byteLength;
+            decodeMetrics.activePlaintextBytes += chunk.byteLength;
+            controller.enqueue(chunk);
+          },
+        }),
+        { signal },
+      );
+    const text = await new Response(stream).text();
+    signal?.throwIfAborted();
+    const checkpoint = decodeCheckpoint(text);
+    decodeMetrics.decodedCount++;
+    return checkpoint;
+  } catch (error) {
+    if (!signal?.aborted) decodeMetrics.failures++;
+    throw error;
+  } finally {
+    const duration = performance.now() - started;
+    decodeMetrics.active--;
+    decodeMetrics.activeCompressedBytes -= compressedBytes;
+    decodeMetrics.activePlaintextBytes -= plaintextBytes;
+    decodeMetrics.lastCompressedBytes = compressedBytes;
+    decodeMetrics.lastPlaintextBytes = plaintextBytes;
+    decodeMetrics.lastDurationMs = duration;
+    decodeMetrics.totalDurationMs += duration;
+  }
 }

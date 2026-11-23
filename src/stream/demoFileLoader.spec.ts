@@ -8,9 +8,19 @@ const mocks = vi.hoisted(() => ({
   commentary: vi.fn(),
   warn: vi.fn(),
   readCheckpoints: vi.fn(),
+  indexCheckpoints: vi.fn(),
   scan: vi.fn(),
   setMissionInfo: vi.fn(),
   current: null as StreamRecording | null,
+  createFromParser: vi.fn(),
+  incrementalLoad: vi.fn(),
+  incrementalPush: vi.fn(),
+  incrementalFinish: vi.fn(),
+  shareParser: vi.fn(),
+  refreshDuration: vi.fn(),
+  publishBuffer: vi.fn(),
+  downloadComplete: vi.fn(),
+  pendingSeek: vi.fn(),
 }));
 vi.mock("../logger", () => ({
   createLogger: () => ({ info: vi.fn(), error: vi.fn(), warn: mocks.warn }),
@@ -20,6 +30,10 @@ vi.mock("../state/engineStore", () => ({
     getState: () => ({
       setRecording: mocks.install,
       playback: { recording: mocks.current },
+      refreshRecordingDuration: mocks.refreshDuration,
+      setDemoBuffer: mocks.publishBuffer,
+      setDownloadComplete: mocks.downloadComplete,
+      fulfillPendingSeek: mocks.pendingSeek,
     }),
   },
 }));
@@ -48,10 +62,24 @@ vi.mock("../state/commentaryTracksStore", () => ({
 }));
 vi.mock("./demoStreaming", () => ({
   createDemoStreamingRecording: mocks.parse,
+  createRecordingFromParser: mocks.createFromParser,
+}));
+vi.mock("./loadDemoParser", () => ({ shareDemoParser: mocks.shareParser }));
+vi.mock("t2-demo-parser", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("t2-demo-parser")>()),
+  DemoParser: class {
+    static peekHeader() {
+      return { byteLength: 0, header: { initialBlockSize: 2 } };
+    }
+    load = mocks.incrementalLoad;
+    push = mocks.incrementalPush;
+    finish = mocks.incrementalFinish;
+  },
 }));
 vi.mock("./demoCheckpoints", () => ({
   DEMO_CHECKPOINT_SUFFIX: ".checkpoints.json",
   readDemoCheckpoints: mocks.readCheckpoints,
+  readDemoCheckpointIndex: mocks.indexCheckpoints,
 }));
 vi.mock("./demoTimelineScanner", () => ({
   scanDemoTimeline: mocks.scan,
@@ -67,6 +95,7 @@ import {
 import { demoLoadStore } from "../state/demoLoadStore";
 import { demoTimelineStore } from "../state/demoTimelineStore";
 import { casterStore } from "../state/casterStore";
+import { readResourceMetrics } from "../diagnostics/resourceMetricRegistry";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -83,11 +112,54 @@ const response = () =>
 const recording = (name: string) =>
   ({ source: "demo", recorderName: name }) as StreamRecording;
 
+function progressiveDownload(renderable = true) {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const body = new ReadableStream<Uint8Array>({
+    start(value) {
+      controller = value;
+    },
+  });
+  const demo = {
+    ...recording("progressive"),
+    streamingPlayback: {
+      findSceneReadyTime: vi.fn(),
+      getSnapshot: () => ({
+        entities: renderable
+          ? [{ sceneData: { className: "TerrainBlock" } }]
+          : [],
+      }),
+      bufferedSec: 1,
+      installCheckpointIndex: vi.fn(),
+      disposeCheckpointIndex: vi.fn(),
+    },
+  } as unknown as StreamRecording;
+  mocks.createFromParser.mockReturnValue(demo);
+  mocks.indexCheckpoints.mockResolvedValue({ ticks: [20] });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url) => {
+      const path = String(url);
+      if (path.endsWith(".rec")) return new Response(body);
+      if (path.endsWith(".checkpoints.json"))
+        return new Response("encoded sidecar");
+      return new Response(null, { status: 404 });
+    }),
+  );
+  const loading = loadDemoUrl("https://demos.example/progressive.rec");
+  controller.enqueue(new Uint8Array([1, 2]));
+  return { demo, controller, loading };
+}
+
 describe("demo loads during navigation", () => {
   beforeEach(() => {
     unloadDemo();
     setDemoTimelineScanEnabled(true);
     vi.clearAllMocks();
+    mocks.createFromParser.mockReset();
+    mocks.incrementalLoad.mockResolvedValue(undefined);
+    mocks.incrementalFinish.mockReset();
+    mocks.publishBuffer.mockReset();
+    mocks.pendingSeek.mockReset();
     mocks.readCheckpoints.mockResolvedValue([]);
     mocks.scan.mockResolvedValue({
       events: [],
@@ -104,6 +176,213 @@ describe("demo loads during navigation", () => {
     unloadDemo();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
+  });
+
+  it("does not republish source or whole-demo consumers after install ejects reentrantly", async () => {
+    const demo = recording("ejected-on-install");
+    mocks.parse.mockResolvedValueOnce(demo);
+    mocks.install.mockImplementationOnce((value) => {
+      mocks.current = value;
+      unloadDemo();
+    });
+    await loadDemoFile({
+      arrayBuffer: async () => buffer,
+      name: "ejected.rec",
+    } as File);
+    expect(mocks.current).toBeNull();
+    expect(demoLoadStore.getState().sourceFileName).toBeNull();
+    expect(demoTimelineStore.getState().scanProgress).toBeNull();
+    expect(mocks.scan).not.toHaveBeenCalled();
+  });
+
+  it("keeps old checkpoint ownership when a replacement is superseded before publication", async () => {
+    const disposeCheckpointIndex = vi.fn();
+    const first = {
+      ...recording("first"),
+      streamingPlayback: { disposeCheckpointIndex },
+    } as unknown as StreamRecording;
+    mocks.parse.mockResolvedValueOnce(first);
+    await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+    const candidate = recording("superseded");
+    mocks.parse
+      .mockResolvedValueOnce(candidate)
+      .mockRejectedValueOnce(new Error("bad newest source"));
+    let replacement: Promise<void> | undefined;
+    let triggered = false;
+    const stop = demoLoadStore.subscribe((state, previous) => {
+      if (triggered || state.phase !== "idle" || previous.phase !== "parsing")
+        return;
+      triggered = true;
+      replacement = loadDemoFile({ arrayBuffer: async () => buffer } as File);
+    });
+    try {
+      await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+      await replacement;
+      expect(mocks.current).toBe(first);
+      expect(disposeCheckpointIndex).not.toHaveBeenCalled();
+    } finally {
+      stop();
+    }
+  });
+
+  it("aborts pending checkpoint preparation when its local load is ejected", async () => {
+    const prepared = deferred<{ ticks: number[] }>();
+    const installCheckpointIndex = vi.fn();
+    const demo = {
+      ...recording("checkpoint-preparation"),
+      streamingPlayback: { installCheckpointIndex },
+    } as unknown as StreamRecording;
+    mocks.parse.mockResolvedValueOnce(demo);
+    mocks.indexCheckpoints.mockReturnValueOnce(prepared.promise);
+    const loading = loadDemoFile(
+      { arrayBuffer: async () => buffer } as File,
+      { text: async () => "sidecar" } as File,
+    );
+    try {
+      await vi.waitFor(() =>
+        expect(mocks.indexCheckpoints).toHaveBeenCalledOnce(),
+      );
+      const signal = mocks.indexCheckpoints.mock.calls[0][2] as
+        AbortSignal | undefined;
+      unloadDemo();
+      expect(signal?.aborted).toBe(true);
+      expect(installCheckpointIndex).not.toHaveBeenCalled();
+    } finally {
+      prepared.resolve({ ticks: [] });
+      await loading;
+    }
+  });
+
+  it("stops progressive EOF publication when publishing its buffer ejects the recording", async () => {
+    const { demo, controller, loading } = progressiveDownload();
+    await vi.waitFor(() => expect(mocks.current).toBe(demo));
+    mocks.publishBuffer.mockImplementationOnce(() => unloadDemo());
+    controller.close();
+    await loading;
+    expect(mocks.current).toBeNull();
+    expect(mocks.downloadComplete).not.toHaveBeenCalled();
+    expect(demoTimelineStore.getState().scanProgress).toBeNull();
+    expect(mocks.scan).not.toHaveBeenCalled();
+    expect(mocks.indexCheckpoints).not.toHaveBeenCalled();
+  });
+
+  it("preserves old seek resources when a replacement fails and disposes only on actual replacement", async () => {
+    const disposeCheckpointIndex = vi.fn();
+    const first = {
+      ...recording("first"),
+      streamingPlayback: { disposeCheckpointIndex },
+    } as unknown as StreamRecording;
+    mocks.parse.mockResolvedValueOnce(first);
+    await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+    mocks.parse.mockRejectedValueOnce(new Error("Bad replacement"));
+    await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+    expect(mocks.current).toBe(first);
+    expect(disposeCheckpointIndex).not.toHaveBeenCalled();
+    const next = recording("next");
+    mocks.parse.mockResolvedValueOnce(next);
+    await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+    expect(mocks.current).toBe(next);
+    expect(disposeCheckpointIndex).toHaveBeenCalledOnce();
+  });
+
+  it("publishes progressive EOF after releasing compressed chunks and before completing the pending seek", async () => {
+    const order: string[] = [];
+    mocks.incrementalFinish.mockImplementation(() => {
+      expect(readResourceMetrics()).toMatchObject({
+        "demoDownload.compressedChunkBytes": 0,
+        "demoDownload.compressedAssembledBytes": 4,
+      });
+      order.push("parser-finish");
+    });
+    mocks.publishBuffer.mockImplementation(() => order.push("buffer"));
+    mocks.pendingSeek.mockImplementation(() => order.push("seek"));
+    const { demo, controller, loading } = progressiveDownload();
+    await vi.waitFor(() => expect(mocks.current).toBe(demo));
+    expect(demoLoadStore.getState().sourceUrl).toBe(
+      "https://demos.example/progressive.rec",
+    );
+    controller.enqueue(new Uint8Array([3, 4]));
+    controller.close();
+    await loading;
+    await vi.waitFor(() =>
+      expect(mocks.indexCheckpoints).toHaveBeenCalledOnce(),
+    );
+    expect(order.slice(-3)).toEqual(["parser-finish", "buffer", "seek"]);
+    const final = mocks.publishBuffer.mock.calls[0][1] as ArrayBuffer;
+    expect([...new Uint8Array(final)]).toEqual([1, 2, 3, 4]);
+    expect(mocks.shareParser.mock.calls[0][0]).toBe(final);
+    expect(
+      readResourceMetrics()["demoDownload.compressedAssembledBytes"],
+    ).toBeUndefined();
+  });
+
+  it.each(["network failure", "failed replacement"])(
+    "preserves an installed prefix at partial EOF after %s without importing a whole-file sidecar",
+    async (cause) => {
+      const { demo, controller, loading } = progressiveDownload();
+      await vi.waitFor(() => expect(mocks.current).toBe(demo));
+      if (cause === "network failure")
+        controller.error(new Error("Disconnected"));
+      else {
+        mocks.parse.mockRejectedValueOnce(new Error("Bad replacement"));
+        await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+      }
+      await loading;
+      const final = mocks.publishBuffer.mock.calls[0][1] as ArrayBuffer;
+      expect([...new Uint8Array(final)]).toEqual([1, 2]);
+      expect(mocks.current).toBe(demo);
+      expect(mocks.incrementalFinish).toHaveBeenCalledOnce();
+      expect(mocks.downloadComplete).toHaveBeenCalledExactlyOnceWith(true);
+      expect(mocks.indexCheckpoints).not.toHaveBeenCalled();
+      expect(
+        demo.streamingPlayback!.disposeCheckpointIndex,
+      ).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(mocks.scan).toHaveBeenCalledOnce());
+    },
+  );
+
+  it("ejects a progressive download without finalizing or retaining its prefix", async () => {
+    const { demo, loading } = progressiveDownload();
+    await vi.waitFor(() => expect(mocks.current).toBe(demo));
+    unloadDemo();
+    await loading;
+    expect(mocks.current).toBeNull();
+    expect(mocks.incrementalFinish).not.toHaveBeenCalled();
+    expect(mocks.publishBuffer).not.toHaveBeenCalled();
+    expect(mocks.shareParser).not.toHaveBeenCalled();
+    expect(
+      demo.streamingPlayback!.disposeCheckpointIndex,
+    ).toHaveBeenCalledOnce();
+  });
+
+  it("installs a nonrenderable complete stream atomically with its final buffer and source", async () => {
+    const { demo, controller, loading } = progressiveDownload(false);
+    await vi.waitFor(() =>
+      expect(mocks.createFromParser).toHaveBeenCalledOnce(),
+    );
+    expect(mocks.install).not.toHaveBeenCalled();
+    mocks.publishBuffer.mockImplementation(() => {
+      expect(demoLoadStore.getState().sourceUrl).toBe(
+        "https://demos.example/progressive.rec",
+      );
+    });
+    controller.enqueue(new Uint8Array([3, 4]));
+    controller.close();
+    await loading;
+    const final = mocks.publishBuffer.mock.calls[0][1] as ArrayBuffer;
+    expect(mocks.install).toHaveBeenCalledExactlyOnceWith(demo, final);
+    expect([...new Uint8Array(final)]).toEqual([1, 2, 3, 4]);
+  });
+
+  it("disposes lazy checkpoint work when ejecting the installed recording", async () => {
+    const disposeCheckpointIndex = vi.fn();
+    mocks.parse.mockResolvedValueOnce({
+      ...recording("first"),
+      streamingPlayback: { disposeCheckpointIndex },
+    });
+    await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+    unloadDemo();
+    expect(disposeCheckpointIndex).toHaveBeenCalledOnce();
   });
 
   it("clears custom team names when ejecting a demo", () => {
@@ -416,12 +695,44 @@ describe("demo loads during navigation", () => {
     expect(mocks.readCheckpoints).toHaveBeenCalledWith(
       "checkpoint sidecar",
       buffer,
+      expect.any(AbortSignal),
     );
     expect(importCheckpoints).toHaveBeenCalledWith([]);
     expect(importCheckpoints.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.install.mock.invocationCallOrder[0],
     );
     expect(mocks.install).toHaveBeenCalledWith(demo, buffer);
+  });
+
+  it("installs a compressed browser index without eagerly decoding its graphs", async () => {
+    const installCheckpointIndex = vi.fn();
+    const loaded = {
+      ...recording("browser"),
+      streamingPlayback: { installCheckpointIndex },
+    } as unknown as StreamRecording;
+    const index = {
+      ticks: [1000, 2000],
+      encodedCharacters: 100,
+      load: vi.fn(),
+      discard: vi.fn(),
+    };
+    mocks.indexCheckpoints.mockResolvedValue(index);
+    mocks.parse.mockResolvedValue(loaded);
+    await loadDemoFile(
+      { arrayBuffer: async () => buffer, name: "browser.rec" } as File,
+      { text: async () => "encoded checkpoints" } as File,
+    );
+    expect(mocks.indexCheckpoints).toHaveBeenCalledWith(
+      "encoded checkpoints",
+      buffer,
+      expect.any(AbortSignal),
+    );
+    expect(mocks.readCheckpoints).not.toHaveBeenCalled();
+    expect(installCheckpointIndex).toHaveBeenCalledWith(index);
+    expect(index.load).not.toHaveBeenCalled();
+    expect(installCheckpointIndex.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.install.mock.invocationCallOrder[0],
+    );
   });
 
   it("loads a URL demo while its optional seek sidecar is still downloading", async () => {
@@ -1044,6 +1355,7 @@ describe("demo loads during navigation", () => {
     expect(mocks.readCheckpoints).toHaveBeenCalledWith(
       "saved checkpoints",
       buffer,
+      expect.any(AbortSignal),
     );
     expect(fetch).toHaveBeenCalledWith(`${cachedUrl}.checkpoints.json`, {
       signal: expect.any(AbortSignal),

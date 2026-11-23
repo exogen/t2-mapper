@@ -1,10 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DefaultLoadingManager } from "three";
 import {
-  loadTexture,
-  loadTextureAsync,
-  loadTextureInstance,
-} from "./textureUtils";
+  loadBitmapTexture,
+  loadBitmapTextureAsync,
+  loadBitmapTextureInstance,
+} from "./bitmapTextures";
+import { readResourceMetrics } from "../diagnostics/resourceMetricRegistry";
+
+vi.mock("../logger", () => ({
+  createLogger: () => ({ error: vi.fn() }),
+}));
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -84,9 +89,9 @@ async function fetchSucceeded() {
 describe("shared shape texture images", () => {
   it("shares checked image loads and keeps the manager busy through decoding", async () => {
     const loaded = vi.fn();
-    const original = loadTexture(url(), loaded);
-    const a = loadTextureInstance(url());
-    const b = loadTextureInstance(url());
+    const original = loadBitmapTexture(url(), loaded);
+    const a = loadBitmapTextureInstance(url());
+    const b = loadBitmapTextureInstance(url());
     expect(fetchImage).toHaveBeenCalledOnce();
     expect(a.source).toBe(original.source);
     expect(b.source).toBe(original.source);
@@ -114,9 +119,9 @@ describe("shared shape texture images", () => {
     expect(b.repeat.toArray()).toEqual([1, 1]);
     expect(b.anisotropy).toBe(1);
     const cached = vi.fn();
-    expect(loadTexture(url(), cached)).toBe(original);
+    expect(loadBitmapTexture(url(), cached)).toBe(original);
     expect(cached).toHaveBeenCalledExactlyOnceWith(original);
-    expect(loadTextureInstance(url()).source).toBe(original.source);
+    expect(loadBitmapTextureInstance(url()).source).toBe(original.source);
     expect(fetchImage).toHaveBeenCalledOnce();
     expect(decodeImage).toHaveBeenCalledOnce();
   });
@@ -127,10 +132,10 @@ describe("shared shape texture images", () => {
       const firstError = vi.fn();
       const samplerError = vi.fn();
       const loaded = vi.fn();
-      const original = loadTexture(url(), loaded, firstError);
-      loadTextureInstance(url(), samplerError);
-      const a = loadTextureAsync(url());
-      const b = loadTextureAsync(url());
+      const original = loadBitmapTexture(url(), loaded, firstError);
+      loadBitmapTextureInstance(url(), samplerError);
+      const a = loadBitmapTextureAsync(url());
+      const b = loadBitmapTextureAsync(url());
       const rejected = Promise.all([
         expect(a).rejects.toThrow(url()),
         expect(b).rejects.toThrow(url()),
@@ -151,14 +156,14 @@ describe("shared shape texture images", () => {
       expect(loaded).not.toHaveBeenCalled();
       expect(decodeImage).toHaveBeenCalledTimes(failure === "decode" ? 1 : 0);
 
-      const retry = loadTextureAsync(url());
+      const retry = loadBitmapTextureAsync(url());
       requests[1].resolve(new Response(png));
       const decodeCount = failure === "decode" ? 2 : 1;
       await vi.waitFor(() => expect(decodes).toHaveLength(decodeCount));
       decodes.at(-1)!.resolve(image);
       await expect(retry).resolves.not.toBe(original);
       await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(2));
-      expect(loadTexture(url()).image).toBe(image);
+      expect(loadBitmapTexture(url()).image).toBe(image);
       expect(fetchImage).toHaveBeenCalledTimes(2);
     },
   );
@@ -167,7 +172,7 @@ describe("shared shape texture images", () => {
     decodeImage.mockImplementationOnce(() => {
       throw new Error("decoder unavailable");
     });
-    const result = loadTextureAsync(url());
+    const result = loadBitmapTextureAsync(url());
     const rejected = expect(result).rejects.toThrow(url());
     requests[0].resolve(new Response(png));
     await rejected;
@@ -176,13 +181,13 @@ describe("shared shape texture images", () => {
   });
 
   it("keeps new retry waiters separate from the failed request's waiters", async () => {
-    let retry: Promise<ReturnType<typeof loadTexture>> | undefined;
-    loadTexture(url(), undefined, () => {
+    let retry: Promise<ReturnType<typeof loadBitmapTexture>> | undefined;
+    loadBitmapTexture(url(), undefined, () => {
       // Reentrant error callbacks must not discard this new load's waiters.
-      loadTexture(url());
-      retry = loadTextureAsync(url());
+      loadBitmapTexture(url());
+      retry = loadBitmapTextureAsync(url());
     });
-    const failed = loadTextureAsync(url());
+    const failed = loadBitmapTextureAsync(url());
     const rejected = expect(failed).rejects.toThrow(url());
     requests[0].reject(new Error("offline"));
     await rejected;
@@ -192,5 +197,85 @@ describe("shared shape texture images", () => {
     decodes[0].resolve(image);
     await expect(retry).resolves.toHaveProperty("image", image);
     await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce());
+  });
+
+  it("bounds in-flight fetching and decoding while keeping queued work visible to the manager", async () => {
+    const concurrency = readResourceMetrics()["imageWorkQueue.concurrency"]!;
+    const count = concurrency + 3;
+    const loads = Array.from({ length: count }, (_, index) =>
+      loadBitmapTextureAsync(`${url()}?concurrency=${index}`),
+    );
+    expect(fetchImage).toHaveBeenCalledTimes(concurrency);
+    expect(readResourceMetrics()).toMatchObject({
+      "imageWorkQueue.active": concurrency,
+      "imageWorkQueue.queued": 3,
+    });
+    for (let i = 0; i < concurrency; i++)
+      requests[i].resolve(new Response(png));
+    await vi.waitFor(() => expect(decodes).toHaveLength(concurrency));
+    expect(fetchImage).toHaveBeenCalledTimes(concurrency);
+    expect(complete).not.toHaveBeenCalled();
+    for (let i = 0; i < count; i++) {
+      if (i >= concurrency) {
+        await vi.waitFor(() => expect(requests.length).toBeGreaterThan(i));
+        requests[i].resolve(new Response(png));
+        await vi.waitFor(() => expect(decodes.length).toBeGreaterThan(i));
+      }
+      decodes[i].resolve({ width: i + 1, height: 1 } as ImageBitmap);
+      await loads[i];
+      if (i < count - 1) expect(complete).not.toHaveBeenCalled();
+    }
+    await Promise.all(loads);
+    await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    expect(readResourceMetrics()).toMatchObject({
+      "imageWorkQueue.active": 0,
+      "imageWorkQueue.queued": 0,
+      "imageWorkQueue.peakActive": concurrency,
+    });
+  });
+
+  it("notifies other owners and finishes manager work when a callback throws", async () => {
+    loadBitmapTexture(url(), () => {
+      throw new Error("disposed callback");
+    });
+    const ready = loadBitmapTextureAsync(url());
+    await fetchSucceeded();
+    decodes[0].resolve(image);
+    await expect(ready).resolves.toHaveProperty("image", image);
+    await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    expect(readResourceMetrics()["imageWorkQueue.active"]).toBe(0);
+  });
+
+  it("keeps retry and manager draining safe when an error callback throws", async () => {
+    loadBitmapTexture(url(), undefined, () => {
+      throw new Error("disposed error callback");
+    });
+    const failure = expect(loadBitmapTextureAsync(url())).rejects.toThrow(
+      url(),
+    );
+    requests[0].reject(new Error("offline"));
+    await failure;
+    await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    expect(readResourceMetrics()["imageWorkQueue.active"]).toBe(0);
+  });
+
+  it("releases the shared queue slot if a loading-manager error observer throws", async () => {
+    DefaultLoadingManager.onError = () => {
+      throw new Error("detached loading UI");
+    };
+    const result = loadBitmapTextureAsync(url());
+    const failure = expect(result).rejects.toThrow(url());
+    await fetchSucceeded();
+    decodes[0].reject(new Error("bad bitmap"));
+    await failure;
+    await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    expect(readResourceMetrics()["imageWorkQueue.active"]).toBe(0);
+
+    const retry = loadBitmapTextureAsync(url());
+    requests[1].resolve(new Response(png));
+    await vi.waitFor(() => expect(decodes).toHaveLength(2));
+    decodes[1].resolve(image);
+    await expect(retry).resolves.toHaveProperty("image", image);
+    await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(2));
   });
 });

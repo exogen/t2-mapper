@@ -1,9 +1,43 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SRGBColorSpace, Texture, TextureLoader, Vector3 } from "three";
+import {
+  LoadingManager,
+  SRGBColorSpace,
+  Texture,
+  TextureLoader,
+  Vector3,
+} from "three";
 import { createDIFModel, DIFLoader } from "./difLoader";
 import { createDIFTestBuffer } from "./difTestFixtures";
+import { imageWorkQueue } from "../assets/imageWorkQueue";
+import { loadBitmapTextureAsync } from "../assets/bitmapTextures";
+import { readResourceMetrics } from "../diagnostics/resourceMetricRegistry";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function lightmapModel(count: number) {
+  const model = createDIFModel(createDIFTestBuffer().buffer);
+  const map = model.interior.lightMaps[0];
+  model.interior.lightMaps = Array.from({ length: count }, () => ({ ...map }));
+  model.lightMaps = Array.from(
+    { length: count },
+    (_, index) => model.lightMaps[index] ?? new Texture(),
+  );
+  model.collisionLightMaps = model.lightMaps;
+  return model;
+}
 
 describe("native DIF meshes", () => {
   it("builds outward CCW strips and flat normals in scene coordinates", () => {
@@ -106,9 +140,138 @@ describe("native DIF meshes", () => {
       new Error("PNG decode failed"),
     );
     const revoke = vi.spyOn(URL, "revokeObjectURL");
+    const model = lightmapModel(1);
+    const geometry = vi.spyOn(model.surfaceMeshes[0].geometry, "dispose");
+    const material = vi.spyOn(model.surfaceMeshes[0].material, "dispose");
+    const lightmap = vi.spyOn(model.lightMaps[0], "dispose");
+    const collision = vi.spyOn(model.collision, "dispose");
+    const complete = vi.fn();
+    const manager = new LoadingManager(complete);
+    const loader = new DIFLoader(manager);
+    vi.spyOn(loader, "parse").mockReturnValue(model);
     await expect(
-      new DIFLoader().parseAsync(createDIFTestBuffer().buffer),
+      loader.parseAsync(createDIFTestBuffer().buffer),
     ).rejects.toThrow("PNG decode failed");
     expect(revoke).toHaveBeenCalledOnce();
+    expect(geometry).toHaveBeenCalledOnce();
+    expect(material).toHaveBeenCalledOnce();
+    expect(lightmap).toHaveBeenCalledOnce();
+    expect(collision).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledOnce();
+    expect(imageWorkQueue.active).toBe(0);
+  });
+
+  it("shares the concurrency budget with URL sources and allocates Blob URLs only inside active slots", async () => {
+    const fetchResult = deferred<Response>();
+    const bitmap = deferred<ImageBitmap>();
+    const fetchImage = vi.fn(() => fetchResult.promise);
+    const decode = vi.fn(() => bitmap.promise);
+    vi.stubGlobal("fetch", fetchImage);
+    vi.stubGlobal("createImageBitmap", decode);
+    vi.stubGlobal("ProgressEvent", Event);
+    const urlSource = loadBitmapTextureAsync(
+      "https://dif-images.test/shared-queue.png",
+    );
+    expect(fetchImage).toHaveBeenCalledOnce();
+    const started: Array<
+      ReturnType<typeof deferred<Texture<HTMLImageElement>>>
+    > = [];
+    vi.spyOn(TextureLoader.prototype, "loadAsync").mockImplementation(() => {
+      const job = deferred<Texture<HTMLImageElement>>();
+      started.push(job);
+      return job.promise;
+    });
+    const createURL = vi.spyOn(URL, "createObjectURL");
+    const revoke = vi.spyOn(URL, "revokeObjectURL");
+    const complete = vi.fn();
+    const manager = new LoadingManager(complete);
+    const loader = new DIFLoader(manager);
+    const count = imageWorkQueue.concurrency + 1;
+    const model = lightmapModel(count);
+    vi.spyOn(loader, "parse").mockReturnValue(model);
+    const loadedModel = loader.parseAsync(createDIFTestBuffer().buffer);
+    expect(started).toHaveLength(imageWorkQueue.concurrency - 1);
+    expect(createURL).toHaveBeenCalledTimes(imageWorkQueue.concurrency - 1);
+    expect(complete).not.toHaveBeenCalled();
+    fetchResult.resolve(new Response(new Blob([Uint8Array.of(1)])));
+    await vi.waitFor(() => expect(decode).toHaveBeenCalledOnce());
+    expect(imageWorkQueue.active).toBe(imageWorkQueue.concurrency);
+    expect(imageWorkQueue.queued).toBe(2);
+    bitmap.resolve({ width: 1, height: 1 } as ImageBitmap);
+    await urlSource;
+    expect(started).toHaveLength(imageWorkQueue.concurrency);
+    expect(complete).not.toHaveBeenCalled();
+    for (let index = 0; index < count; index++) {
+      await vi.waitFor(() => expect(started.length).toBeGreaterThan(index));
+      started[index].resolve(
+        new Texture({ width: 1, height: 1 } as HTMLImageElement),
+      );
+      if (index < count - 1) expect(complete).not.toHaveBeenCalled();
+    }
+    await expect(loadedModel).resolves.toBe(model);
+    expect(createURL).toHaveBeenCalledTimes(count);
+    expect(revoke).toHaveBeenCalledTimes(count);
+    expect(complete).toHaveBeenCalledOnce();
+    expect(imageWorkQueue.active).toBe(0);
+    expect(readResourceMetrics()).toMatchObject({
+      "imageWorkQueue.queued": 0,
+      "imageWorkQueue.peakActive": imageWorkQueue.concurrency,
+    });
+  });
+
+  it("balances LoadingManager activity for empty lightmaps and synchronous parse failures", async () => {
+    const complete = vi.fn();
+    const manager = new LoadingManager(complete);
+    const start = vi.spyOn(manager, "itemStart");
+    const end = vi.spyOn(manager, "itemEnd");
+    const loader = new DIFLoader(manager);
+    const model = lightmapModel(0);
+    const parse = vi.spyOn(loader, "parse").mockReturnValue(model);
+    await expect(loader.parseAsync(createDIFTestBuffer().buffer)).resolves.toBe(
+      model,
+    );
+    expect(start).toHaveBeenCalledOnce();
+    expect(end).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledOnce();
+    parse.mockImplementationOnce(() => {
+      throw new Error("bad DIF");
+    });
+    await expect(
+      loader.parseAsync(createDIFTestBuffer().buffer),
+    ).rejects.toThrow("bad DIF");
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(end).toHaveBeenCalledTimes(2);
+    expect(complete).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits for remaining queued decodes before disposing a failed model and completing its manager", async () => {
+    const started: Array<
+      ReturnType<typeof deferred<Texture<HTMLImageElement>>>
+    > = [];
+    vi.spyOn(TextureLoader.prototype, "loadAsync").mockImplementation(() => {
+      const job = deferred<Texture<HTMLImageElement>>();
+      started.push(job);
+      return job.promise;
+    });
+    const count = imageWorkQueue.concurrency + 1;
+    const model = lightmapModel(count);
+    const disposed = vi.spyOn(model.collision, "dispose");
+    const revoke = vi.spyOn(URL, "revokeObjectURL");
+    const complete = vi.fn();
+    const loader = new DIFLoader(new LoadingManager(complete));
+    vi.spyOn(loader, "parse").mockReturnValue(model);
+    const result = loader.parseAsync(createDIFTestBuffer().buffer);
+    const rejection = expect(result).rejects.toThrow("bad PNG");
+    started[0].reject(new Error("bad PNG"));
+    await vi.waitFor(() => expect(started).toHaveLength(count));
+    expect(disposed).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+    for (const job of started.slice(1))
+      job.resolve(new Texture({ width: 1, height: 1 } as HTMLImageElement));
+    await rejection;
+    expect(disposed).toHaveBeenCalledOnce();
+    expect(revoke).toHaveBeenCalledTimes(count);
+    expect(complete).toHaveBeenCalledOnce();
+    expect(imageWorkQueue.active).toBe(0);
   });
 });

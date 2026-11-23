@@ -31,7 +31,7 @@ import {
   insertBeforeChunk,
   type ShaderSource,
 } from "./shaderUtils";
-import { loadTexture } from "./textureUtils";
+import { loadBitmapTexture } from "./assets/bitmapTextures";
 
 /** Slots match the light pool size; unused slots carry radius 0. */
 export const EFFECT_LIGHT_COUNT = 8;
@@ -81,7 +81,7 @@ let falloffRequested = false;
 export function ensureEffectLightFalloff(): void {
   if (falloffRequested) return;
   falloffRequested = true;
-  const texture = loadTexture(textureToUrl("special/lightFalloffMono"));
+  const texture = loadBitmapTexture(textureToUrl("special/lightFalloffMono"));
   // A plain intensity ramp: no colour-space decode, and the edge texel (≈0)
   // is what the engine's clamped texcoords land on beyond the disc.
   texture.colorSpace = NoColorSpace;

@@ -7,13 +7,21 @@ import type { WebGLRenderer } from "three";
  * false`) and re-rendered once whenever a caster appears or moves.
  */
 let renderer: WebGLRenderer | null = null;
+let registration: object | undefined;
 
-export function registerShadowRenderer(gl: WebGLRenderer | null): void {
+export function registerShadowRenderer(gl: WebGLRenderer | null): () => void {
+  const owner = {};
+  registration = owner;
   renderer = gl;
   if (gl) {
     gl.shadowMap.autoUpdate = false;
     gl.shadowMap.needsUpdate = true;
   }
+  return () => {
+    if (registration !== owner) return;
+    registration = undefined;
+    renderer = null;
+  };
 }
 
 /**

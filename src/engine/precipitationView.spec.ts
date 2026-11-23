@@ -59,10 +59,10 @@ vi.mock("../loaders", () => ({
   textureToUrl: (name: string) => name,
   audioToUrl: (name: string) => name,
 }));
-vi.mock("../textureUtils", async () => {
+vi.mock("../assets/bitmapTextures", async () => {
   const { Texture } = await import("three");
   return {
-    loadTexture: (
+    loadBitmapTexture: (
       url: string,
       onLoad: (texture: import("three").Texture) => void,
     ) => {
