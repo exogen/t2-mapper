@@ -2,7 +2,6 @@ import {
   commandCircuitStore,
   useCommandCircuit,
 } from "../state/commandCircuitStore";
-import { useDataSource } from "../state/gameEntityStore";
 import { useSettings } from "./SettingsProvider";
 import { useTouchDevice } from "./useTouchDevice";
 import styles from "./ViewModeToggle.module.css";
@@ -12,8 +11,7 @@ import styles from "./ViewModeToggle.module.css";
  */
 export function ViewModeToggle({ className }: { className?: string }) {
   const active = useCommandCircuit((s) => s.active);
-  const dataSource = useDataSource();
-  const { setSidebarOpen, clipPlaybackActive } = useSettings();
+  const { setSidebarOpen } = useSettings();
   const isTouch = useTouchDevice();
 
   const setCommandCircuit = (command: boolean) => {
@@ -43,7 +41,6 @@ export function ViewModeToggle({ className }: { className?: string }) {
         aria-label="3D view"
         title="3D view (C to toggle)"
         onClick={() => setCommandCircuit(false)}
-        disabled={dataSource == null || clipPlaybackActive}
       >
         <span className={styles.Badge} aria-hidden>
           3D
@@ -57,7 +54,6 @@ export function ViewModeToggle({ className }: { className?: string }) {
         aria-label="Command circuit"
         title="Command circuit (C to toggle)"
         onClick={() => setCommandCircuit(true)}
-        disabled={dataSource == null || clipPlaybackActive}
       >
         <span className={styles.Badge} aria-hidden>
           CC

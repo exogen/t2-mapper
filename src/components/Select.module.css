@@ -168,8 +168,8 @@
 @media (pointer: coarse) {
   .Trigger,
   .Trigger[data-size="small"] {
-    min-height: 44px;
-    font-size: 16px;
+    min-height: 36px;
+    font-size: 14px;
   }
 }
 

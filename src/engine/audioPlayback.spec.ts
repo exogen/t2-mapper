@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { engineStore } from "../state/engineStore";
 import { gameEntityStore } from "../state/gameEntityStore";
 import type { StreamRecording } from "../stream/types";
+import { getAudioDevice } from "./audioDevice";
 import { connectAudioPlayback } from "./audioPlayback";
 import { createAudioPlaybackFade } from "./audioPlaybackFade";
 
@@ -271,6 +272,9 @@ describe("audio transport synchronization", () => {
     expect(context.resume).toHaveBeenCalledOnce();
     expect(context.suspend).not.toHaveBeenCalled();
     await context.flush();
+    expect(context.state).toBe("running");
+    await vi.advanceTimersByTimeAsync(250);
+    await context.flush();
     expect(context.state).toBe("suspended");
     expect(context.gain.linearRampToValueAtTime).not.toHaveBeenCalled();
 
@@ -280,6 +284,25 @@ describe("audio transport synchronization", () => {
     state().setPlaybackStatus("playing");
     await context.flush();
     expect(context.state).toBe("running");
+  });
+
+  it("keeps the device warm between the pointerdown and click that starts playback", async () => {
+    state().setPlaybackStatus("stopped");
+    connect();
+    connection.unlock();
+    await context.flush();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(context.suspend).not.toHaveBeenCalled();
+    expect(context.gain.linearRampToValueAtTime).not.toHaveBeenCalled();
+
+    state().togglePlayback(demo);
+    context.currentTime += 0.1;
+    await vi.advanceTimersByTimeAsync(250);
+    expect(context.suspend).not.toHaveBeenCalled();
+    expect(context.resume).toHaveBeenCalledOnce();
+
+    state().togglePlayback(demo);
+    expect(context.suspend).toHaveBeenCalledOnce();
   });
 
   it("retries a blocked resume in the gesture without racing a newer pause", async () => {
@@ -292,7 +315,27 @@ describe("audio transport synchronization", () => {
     expect(context.suspend).not.toHaveBeenCalled();
     expect(context.gain.linearRampToValueAtTime).not.toHaveBeenCalled();
     await context.flush();
+    await vi.advanceTimersByTimeAsync(250);
+    await context.flush();
     expect(context.state).toBe("suspended");
+  });
+
+  it("can play when Safari interrupts the device before playback starts", async () => {
+    state().setPlaybackStatus("paused");
+    context.state = "interrupted";
+    connect();
+
+    // An interrupted device may leave a suspend request pending indefinitely.
+    expect(context.suspend).not.toHaveBeenCalled();
+    connection.unlock();
+    state().setPlaybackStatus("playing");
+    expect(context.resume).toHaveBeenCalledOnce();
+    await context.flush();
+    expect(context.state).toBe("running");
+    expect(context.gain.linearRampToValueAtTime).toHaveBeenLastCalledWith(
+      1,
+      10.05,
+    );
   });
 
   it("resumes after a browser suspension while playback is still playing", async () => {
@@ -353,9 +396,104 @@ describe("audio transport synchronization", () => {
     expect(context.state).toBe("running");
   });
 
+  it("retries an interrupted resume when the gesture comes during a playback hold", async () => {
+    connect();
+    await context.flush();
+    context.state = "interrupted";
+    context.dispatchEvent(new Event("statechange"));
+    const [interrupted] = context.pending.splice(0, 1);
+    state().setPlaybackStatus("paused");
+    connection.unlock();
+    expect(context.resume).toHaveBeenCalledTimes(3);
+    state().setPlaybackStatus("playing");
+    await context.flush();
+    interrupted.resolve();
+    expect(context.state).toBe("running");
+  });
+
+  it("uses the audio clock to detect and recover when resume promises stay pending", async () => {
+    connect();
+    connection.unlock();
+    expect(context.resume).toHaveBeenCalledTimes(2);
+    const stale = context.pending.splice(0);
+    context.state = "running";
+    context.dispatchEvent(new Event("statechange"));
+    const device = getAudioDevice(context as unknown as AudioContext);
+    expect(device.needsAttention()).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(300);
+    expect(device.needsAttention()).toBe(true);
+    expect(context.suspend).toHaveBeenCalledOnce();
+    await context.flush();
+    stale.forEach((request) => request.resolve());
+    expect(context.state).toBe("running");
+    expect(context.resume).toHaveBeenCalledTimes(3);
+    const update = vi.fn();
+    const unsubscribe = device.subscribe(update);
+    context.currentTime += 0.1;
+    await vi.advanceTimersByTimeAsync(300);
+    expect(device.needsAttention()).toBe(false);
+    expect(update).toHaveBeenCalledOnce();
+    unsubscribe();
+  });
+
+  it.each(["before", "after"])(
+    "suspends when Pause arrives %s clock progress confirms a pending resume",
+    async (when) => {
+      connect();
+      connection.unlock();
+      expect(context.resume).toHaveBeenCalledTimes(2);
+      const stale = context.pending.splice(0);
+      context.state = "running";
+      context.dispatchEvent(new Event("statechange"));
+
+      if (when === "before") state().setPlaybackStatus("paused");
+      context.currentTime += 0.1;
+      await vi.advanceTimersByTimeAsync(300);
+      if (when === "after") state().setPlaybackStatus("paused");
+
+      expect(context.suspend).toHaveBeenCalledOnce();
+      await context.flush();
+      stale.forEach((request) => request.resolve());
+      await Promise.resolve();
+      expect(context.state).toBe("suspended");
+      expect(context.resume).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("checks the device clock when playback starts with an already running context", async () => {
+    context.state = "running";
+    connect();
+    expect(context.resume).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(context.suspend).toHaveBeenCalledOnce();
+  });
+
+  it("checks the device clock again after a native interruption", async () => {
+    connect();
+    const device = getAudioDevice(context as unknown as AudioContext);
+    expect(device.needsAttention()).toBe(true);
+    await context.flush();
+    context.currentTime += 0.1;
+    await vi.advanceTimersByTimeAsync(300);
+    expect(device.needsAttention()).toBe(false);
+
+    context.state = "interrupted";
+    context.dispatchEvent(new Event("statechange"));
+    expect(device.needsAttention()).toBe(true);
+    await context.flush();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(device.needsAttention()).toBe(true);
+    expect(context.suspend).toHaveBeenCalledOnce();
+  });
+
   it("restarts a frozen running clock after a gesture without repeated cycling", async () => {
     connect();
     await context.flush();
+    context.currentTime += 0.1;
+    await vi.advanceTimersByTimeAsync(300);
+    expect(context.suspend).not.toHaveBeenCalled();
+
     connection.unlock();
     connection.unlock();
     await vi.advanceTimersByTimeAsync(1000);
@@ -370,6 +508,24 @@ describe("audio transport synchronization", () => {
     expect(context.suspend).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(5000);
     expect(context.suspend).toHaveBeenCalledOnce();
+  });
+
+  it("lets an explicit retry restart a confirmed stall during the cooldown", async () => {
+    connect();
+    await context.flush();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(context.suspend).toHaveBeenCalledOnce();
+    await context.flush();
+    await vi.advanceTimersByTimeAsync(300);
+    const device = getAudioDevice(context as unknown as AudioContext);
+    expect(device.needsAttention()).toBe(true);
+
+    device.unlock(true);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(context.suspend).toHaveBeenCalledTimes(2);
+    await context.flush();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(context.suspend).toHaveBeenCalledTimes(2);
   });
 
   it("checks the clock after the native resume on foregrounding", async () => {
@@ -409,11 +565,14 @@ describe("audio transport synchronization", () => {
 
     document.visibilityState = "visible";
     connection.reconcile();
+    await vi.advanceTimersByTimeAsync(150);
     connect(); // Replaces the view before its probe fires.
     await context.flush();
     expect(context.state).toBe("running");
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(150);
     expect(context.suspend).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(context.suspend).toHaveBeenCalledTimes(2); // The new view's own probe.
   });
 
   it("resumes after native suspension when the suspend promise stays pending", async () => {
@@ -433,6 +592,81 @@ describe("audio transport synchronization", () => {
     expect(context.state).toBe("running");
     expect(context.suspend).toHaveBeenCalledOnce();
   });
+
+  it("can resume when a pause's suspend is interrupted without settling", async () => {
+    connect();
+    await context.flush();
+    state().setPlaybackStatus("paused");
+    const [stalled] = context.pending.splice(0, 1);
+    context.state = "interrupted";
+    context.dispatchEvent(new Event("statechange"));
+    expect(context.resume).toHaveBeenCalledTimes(1);
+
+    state().togglePlayback(demo);
+    expect(context.resume).toHaveBeenCalledTimes(2);
+    await context.flush();
+    stalled.resolve();
+    await Promise.resolve();
+    expect(context.state).toBe("running");
+    expect(context.suspend).toHaveBeenCalledOnce();
+  });
+
+  it("reconciles a stalled pause when an interruption starts and ends before Play", async () => {
+    connect();
+    await context.flush();
+    state().setPlaybackStatus("paused");
+    const [stale] = context.pending.splice(0, 1);
+
+    context.state = "interrupted";
+    context.dispatchEvent(new Event("statechange"));
+    context.state = "running";
+    context.dispatchEvent(new Event("statechange"));
+    expect(context.suspend).toHaveBeenCalledTimes(2);
+
+    await context.flush();
+    state().setPlaybackStatus("playing");
+    await context.flush();
+    stale.resolve();
+    await Promise.resolve();
+    expect(context.state).toBe("running");
+    expect(context.resume).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([true, false])(
+    "offers recovery during a frozen suspend and serializes its retry (original settles: %s)",
+    async (originalSettles) => {
+      connect();
+      await context.flush();
+      state().setPlaybackStatus("paused");
+      state().setPlaybackStatus("playing");
+      const device = getAudioDevice(context as unknown as AudioContext);
+
+      await vi.advanceTimersByTimeAsync(300);
+      expect(device.needsAttention()).toBe(true);
+      expect(context.suspend).toHaveBeenCalledOnce();
+      expect(context.resume).toHaveBeenCalledOnce();
+
+      connection.unlock(true);
+      connection.unlock(true);
+      expect(context.suspend).toHaveBeenCalledTimes(2);
+      expect(context.resume).toHaveBeenCalledOnce();
+
+      if (originalSettles) {
+        await context.finish(0, false);
+        context.dispatchEvent(new Event("statechange"));
+        expect(context.resume).toHaveBeenCalledOnce();
+      }
+      const stale = originalSettles ? undefined : context.pending.shift();
+      await context.flush();
+      stale?.resolve();
+      context.currentTime += 0.1;
+      await vi.advanceTimersByTimeAsync(300);
+      expect(device.needsAttention()).toBe(false);
+      expect(context.state).toBe("running");
+      expect(context.resume).toHaveBeenCalledTimes(2);
+      expect(context.suspend).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("suspends after a native resume whose promise stays pending", async () => {
     connect();

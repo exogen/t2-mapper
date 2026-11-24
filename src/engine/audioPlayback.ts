@@ -72,15 +72,17 @@ export function connectAudioPlayback(
   connections.set(context, dispose);
 
   return {
+    needsAttention: () => !disposed && device.needsAttention(),
+    subscribe: device.subscribe,
     reconcile() {
       if (disposed) return;
       syncPlayback();
       device.verifyClock();
     },
-    unlock() {
+    unlock(retryStalledClock = false) {
       if (disposed) return;
       updateFades();
-      device.unlock();
+      device.unlock(retryStalledClock);
     },
     dispose,
   };

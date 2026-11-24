@@ -27,6 +27,7 @@ export function StreamingClipInfo({ clipId }: { clipId: string }) {
     ? demos?.find((demo) => demo.filename === clip.sourceDemo)
     : undefined;
   const details = clip ? clipSummary(clip, demo) : null;
+  const clippedDate = details ? recordedDayLabel(details.createdAt) : undefined;
   const title =
     clip?.title ?? (query.error ? "Clip unavailable" : "Loading clip…");
   const profileUrl = clip
@@ -58,14 +59,12 @@ export function StreamingClipInfo({ clipId }: { clipId: string }) {
               />
               <span>{creator?.name ?? "Clip creator"}</span>
             </a>
-            <span className={styles.MetaItem}>
+            <span className={styles.Date} title={clippedDate}>
               <IoCalendarNumberOutline
                 className={styles.MetaIcon}
                 aria-hidden
               />
-              <time dateTime={details.createdAt}>
-                Clipped {recordedDayLabel(details.createdAt)}
-              </time>
+              <time dateTime={details.createdAt}>Clipped {clippedDate}</time>
             </span>
             {details.duration && (
               <span className={styles.MetaItem}>

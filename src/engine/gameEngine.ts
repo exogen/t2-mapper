@@ -1,4 +1,5 @@
 import type { Camera, Quaternion, Scene, Vector3, WebGLRenderer } from "three";
+import { createStore } from "zustand/vanilla";
 import { FramePriority } from "./framePriority";
 import { FrameScheduler, type FrameContext } from "./frameScheduler";
 import { TickClock } from "./tickClock";
@@ -79,6 +80,9 @@ export interface EngineFeatures {
 export class GameEngine {
   readonly scheduler = new FrameScheduler();
   readonly ticks = new TickClock();
+  readonly audioRecovery = createStore<{ enableSound: (() => void) | null }>(
+    () => ({ enableSound: null }),
+  );
   /** Camera input reported this frame, for the input consumer. */
   readonly input = new InputQueue();
   readonly cameras = new CameraRig();

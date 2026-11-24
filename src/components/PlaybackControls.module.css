@@ -2,7 +2,7 @@
   --playback-seek-height: 22px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   padding: var(--footer-padding-block, 8px) var(--footer-padding-inline, 10px);
   font-size: 13px;
   z-index: 2;

@@ -3,6 +3,7 @@ import { createLogger } from "../logger";
 const log = createLogger("audioDevice");
 const CLOCK_CHECK_MS = 300;
 const CLOCK_RECOVERY_INTERVAL_MS = 2000;
+const UNLOCK_IDLE_GRACE_MS = 200;
 const transitionTargets = {
   resume: "running",
   suspend: "suspended",
@@ -33,43 +34,96 @@ function createAudioDevice(context: AudioContext) {
     pending: number;
     latestRequest: number;
   } | null = null;
-  // A foreground or gesture check can be requested before resume completes.
-  let clockCheckRequested = false;
+  let unlockIdleGrace: ReturnType<typeof setTimeout> | undefined;
   let clockCheck: ReturnType<typeof setTimeout> | undefined;
+  let clockStalled = false;
+  let clockRecoveryAttempted = false;
   let lastClockRecovery = -Infinity;
   const listeners = new Set<() => void>();
 
   function clearTransition() {
-    if (transition?.kind === "resume") unlockRequested = false;
+    if (transition?.kind === "resume" && context.state !== "running")
+      unlockRequested = false;
     transition = null;
   }
 
+  function notify() {
+    for (const listener of listeners) listener();
+  }
+
+  function cancelUnlockIdleGrace() {
+    clearTimeout(unlockIdleGrace);
+    unlockIdleGrace = undefined;
+  }
+
+  function markUnlocked() {
+    unlocked = true;
+    if (!unlockRequested) return;
+    unlockRequested = false;
+    if (!wantsRunning && unlockIdleGrace === undefined) {
+      // Play can arrive on the click after a pointerdown unlocked the device.
+      // Give it a chance to reuse the already running, still-muted device.
+      unlockIdleGrace = setTimeout(() => {
+        unlockIdleGrace = undefined;
+        reconcile();
+      }, UNLOCK_IDLE_GRACE_MS);
+    }
+  }
+
   function cancelClockCheck() {
-    clockCheckRequested = false;
     clearTimeout(clockCheck);
     clockCheck = undefined;
   }
 
-  function canRequestClockCheck() {
-    return wantsRunning && globalThis.document?.visibilityState !== "hidden";
-  }
-
   function canCheckClockNow() {
-    return canRequestClockCheck() && !transition && context.state === "running";
+    return (
+      (wantsRunning || transition?.kind === "resume") &&
+      globalThis.document?.visibilityState !== "hidden" &&
+      context.state === "running"
+    );
   }
 
   function scheduleClockCheck() {
-    if (!clockCheckRequested || !canCheckClockNow()) return;
-    clockCheckRequested = false;
+    if (!canCheckClockNow()) {
+      cancelClockCheck();
+      return;
+    }
     if (clockCheck !== undefined) return;
 
     const start = context.currentTime;
+    const measuredTransition = transition;
+    const measuredRequest = transition?.latestRequest;
     clockCheck = setTimeout(() => {
       clockCheck = undefined;
+      if (!canCheckClockNow()) return;
+      if (
+        transition?.kind === "resume" &&
+        (transition !== measuredTransition ||
+          transition.latestRequest !== measuredRequest)
+      ) {
+        scheduleClockCheck();
+        return;
+      }
+
+      const stalled = context.currentTime <= start;
+      if (clockStalled !== stalled) {
+        clockStalled = stalled;
+        notify();
+      }
+      if (!stalled) {
+        // Rendering has caught up even if the resume promises never settle.
+        if (transition?.kind === "resume") {
+          clearTransition();
+          reconcile();
+        }
+        return;
+      }
       const now = performance.now();
       if (
+        !wantsRunning ||
         !canCheckClockNow() ||
-        context.currentTime > start ||
+        transition?.kind === "suspend" ||
+        clockRecoveryAttempted ||
         now - lastClockRecovery < CLOCK_RECOVERY_INTERVAL_MS
       )
         return;
@@ -77,18 +131,18 @@ function createAudioDevice(context: AudioContext) {
       // Some browsers report "running" after an interruption with a frozen
       // audio clock. Reconcile will resume once the native suspend completes,
       // provided the transport still wants audio.
+      clockRecoveryAttempted = true;
       lastClockRecovery = now;
+      // A running state and a stalled clock can both outlive a resume promise.
+      // Give pending resumes the measurement window before restarting.
+      if (transition?.kind === "resume") clearTransition();
       log.warn("Audio clock stalled while running; restarting the device");
       requestTransition("suspend");
     }, CLOCK_CHECK_MS);
   }
 
   function verifyClock() {
-    if (!canRequestClockCheck()) {
-      cancelClockCheck();
-      return;
-    }
-    clockCheckRequested = true;
+    clockRecoveryAttempted = false;
     scheduleClockCheck();
   }
 
@@ -102,20 +156,17 @@ function createAudioDevice(context: AudioContext) {
     current.pending++;
     const complete = (failed: boolean) => {
       if (transition !== current) return;
-      if (kind === "resume" && !failed) unlocked = true;
-      // A successful latest resume has completed the native transition.
-      // Earlier resume promises from the same burst may still be unresolved.
-      const resumed =
-        kind === "resume" &&
+      // Once the latest operation succeeds, earlier promises from the same
+      // burst no longer need to settle for us to move on.
+      const reachedTarget =
         !failed &&
         sequence === current.latestRequest &&
-        context.state === "running";
-      if (--current.pending === 0 || resumed) clearTransition();
+        context.state === transitionTargets[kind];
+      if (--current.pending === 0 || reachedTarget) clearTransition();
       // An OS interruption can outlast a successful resume request. Wait
       // for a state change or gesture if the device is still interrupted.
-      const interrupted =
-        kind === "resume" && wantsRunning && context.state === "interrupted";
-      syncContext(!failed && !interrupted);
+      const resumeIncomplete = kind === "resume" && context.state !== "running";
+      syncContext(!failed && !resumeIncomplete);
     };
     context[kind]().then(
       () => complete(false),
@@ -127,58 +178,88 @@ function createAudioDevice(context: AudioContext) {
   }
 
   function reconcile() {
-    if (transition || context.state === "closed") return;
-    const kind = wantsRunning || unlockRequested ? "resume" : "suspend";
-    if (context.state !== transitionTargets[kind]) requestTransition(kind);
+    if (context.state === "closed") return;
+    if (context.state === "interrupted" && transition?.kind === "suspend") {
+      // An interruption can stop the device while a suspend is still pending.
+      // WebKit may keep that promise waiting for a state it cannot reach.
+      clearTransition();
+    }
+    if (transition) return;
+    if (wantsRunning || unlockRequested) {
+      if (context.state !== "running") requestTransition("resume");
+    } else if (context.state === "running" && unlockIdleGrace === undefined) {
+      // Safari can leave suspend pending on an interrupted context, blocking
+      // the next playback gesture from resuming the device.
+      requestTransition("suspend");
+    }
   }
 
   function syncContext(continueTransition: boolean) {
-    for (const listener of listeners) listener();
+    if (context.state === "running") markUnlocked();
+    if (context.state === "closed") cancelUnlockIdleGrace();
+    notify();
     if (continueTransition) reconcile();
     scheduleClockCheck();
   }
 
   context.addEventListener("statechange", () => {
     // A single operation can reach its native target while its promise
-    // remains pending. Multiple outstanding resumes still use the promise
-    // path, since an earlier one can emit the running event.
+    // remains pending. With retries, an earlier operation may emit the event
+    // before the latest operation has taken effect.
     if (
-      transition?.pending === 1 &&
+      transition?.latestRequest === 1 &&
       context.state === transitionTargets[transition.kind]
-    ) {
-      if (transition.kind === "resume") unlocked = true;
+    )
       clearTransition();
-    }
-    if (context.state === "closed") cancelClockCheck();
     syncContext(true);
   });
 
   return {
     setRunning(running: boolean) {
+      const changed = running !== wantsRunning;
       wantsRunning = running;
-      if (!running) cancelClockCheck();
+      if (running && changed) cancelUnlockIdleGrace();
       reconcile();
+      if (changed) {
+        notify();
+        if (running) verifyClock();
+        else scheduleClockCheck();
+      }
     },
-    unlock() {
+    unlock(retryStalledClock = false) {
       if (context.state === "running") {
-        unlocked = true;
-        unlockRequested = false;
+        markUnlocked();
+        // An explicit retry can restart a confirmed stall without waiting
+        // out the cooldown that limits automatic recovery.
+        if (retryStalledClock && clockStalled) {
+          if (wantsRunning && transition?.kind === "suspend") {
+            // Retry only in the same direction, once, and let the normal
+            // completion path resume when the device has actually suspended.
+            if (transition.latestRequest === 1) {
+              clockRecoveryAttempted = true;
+              lastClockRecovery = performance.now();
+              requestTransition("suspend");
+            }
+            scheduleClockCheck();
+            return;
+          }
+          lastClockRecovery = -Infinity;
+        }
       } else if (context.state !== "closed") {
-        if (!unlocked) unlockRequested = true;
+        if (!unlocked || context.state === "interrupted")
+          unlockRequested = true;
         // WebKit can leave resume pending across an interruption. A new
         // user gesture can retry it even if this context was unlocked before.
-        if (
-          transition?.kind === "resume" &&
-          (!unlocked ||
-            (wantsRunning &&
-              globalThis.navigator?.userActivation?.isActive !== false))
-        )
+        if (transition?.kind === "resume" && (unlockRequested || wantsRunning))
           requestTransition("resume");
       }
       reconcile();
       verifyClock();
     },
     verifyClock,
+    needsAttention() {
+      return wantsRunning && (context.state !== "running" || clockStalled);
+    },
     subscribe(listener: () => void) {
       listeners.add(listener);
       return () => listeners.delete(listener);

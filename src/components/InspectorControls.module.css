@@ -312,9 +312,10 @@ fieldset.GraphicsEffects {
   box-sizing: border-box;
   width: 64px;
   min-height: 28px;
-  padding: 4px 5px 4px 7px;
+  padding: 4px 8px;
   font: inherit;
   font-size: 12px;
+  text-align: center;
 }
 
 .InterpolationInput:hover:not(:disabled) {
@@ -398,8 +399,10 @@ fieldset.GraphicsEffects {
 
 @media (pointer: coarse) {
   .ShortcutHelpButton {
-    min-height: 44px;
-    font-size: 14px;
+    min-height: 40px;
+    font-size: 13px;
+    padding-left: 10px;
+    padding-right: 16px;
   }
 
   .InterpolationPreset {
@@ -419,7 +422,7 @@ fieldset.GraphicsEffects {
   }
 
   .CheckboxField {
-    margin-bottom: 16px;
+    margin-bottom: 8px;
     font-size: 15px;
   }
 
@@ -433,7 +436,7 @@ fieldset.GraphicsEffects {
   }
 
   .CheckboxField .Label {
-    min-height: 44px;
+    min-height: 40px;
   }
 
   .CheckboxField .Label > label {
@@ -454,7 +457,7 @@ fieldset.GraphicsEffects {
   }
 
   .InterpolationInput {
-    min-height: 44px;
+    min-height: 36px;
     font-size: 16px;
   }
 }

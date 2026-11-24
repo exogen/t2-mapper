@@ -52,6 +52,7 @@ import { LoadingIndicator } from "./LoadingIndicator";
 import { StreamDelayNotice } from "./StreamDelayNotice";
 import { CommentarySubtitles } from "./CommentarySubtitles";
 import { DemoSeekFeedback } from "./DemoSeekFeedback";
+import { EnableSoundButton } from "./EnableSoundButton";
 import { QuickCamControls } from "./QuickCamControls";
 import { unloadDemo } from "../stream/demoFileLoader";
 import { useReplaySelector } from "../state/replayConnectionStore";
@@ -107,8 +108,13 @@ export function MapInspector() {
   useNavigationSync();
   useCommandCircuitUrlSync();
   const features = useFeatures();
-  const { clearFogEnabledOverride, renderScale, sidebarOpen, setSidebarOpen } =
-    useSettings();
+  const {
+    clearFogEnabledOverride,
+    clipPlaybackActive,
+    renderScale,
+    sidebarOpen,
+    setSidebarOpen,
+  } = useSettings();
   // Standard render resolution: devicePixelRatio clamped to [1, 2] (the
   // engine canvas's default). The render-scale preference
   // is a fraction of this, so 100% matches the default exactly and the
@@ -557,6 +563,9 @@ export function MapInspector() {
   // Demo mode without a recording: the content area shows the drag &
   // drop landing instead of an empty 3D view.
   const showDemoScreen = mode === "demo" && !recording && !hasStreamData;
+  const showReplayStatus =
+    mode === "replay" &&
+    (!replayState || (replayState.status === "ended" && !replayReady));
 
   // A session that ended — kicked, server gone, or a voluntary
   // disconnect — keeps the last frame rendered and offers rejoin/browse
@@ -654,7 +663,7 @@ export function MapInspector() {
           </Activity>
           {showJoinScreen && !choosingMap && <ServerBrowserHeader />}
           {isTourActive && <ExitTourButton />}
-          {dataSource != null && (
+          {dataSource != null && !clipId && !clipPlaybackActive && (
             <ViewModeToggle
               className={
                 isTourActive
@@ -663,6 +672,21 @@ export function MapInspector() {
               }
             />
           )}
+          {engine ? (
+            <EnableSoundButton
+              engine={engine}
+              available={
+                !showJoinScreen &&
+                !showDemoScreen &&
+                !showReplayStatus &&
+                !splashVisible &&
+                !loadingIndicatorUp &&
+                !mapInfoOpen &&
+                !scoreScreenOpen &&
+                !showDisconnectDialog
+              }
+            />
+          ) : null}
         </header>
         {sidebarOpen ? <div className={styles.Backdrop} /> : null}
         <Activity mode={sidebarOpen ? "visible" : "hidden"}>
@@ -740,9 +764,7 @@ export function MapInspector() {
                 />
               </Suspense>
             )
-          ) : mode === "replay" &&
-            (!replayState ||
-              (replayState.status === "ended" && !replayReady)) ? (
+          ) : showReplayStatus ? (
             <ReplaySessionStatus />
           ) : showDemoScreen ? (
             <DemoDropScreen />

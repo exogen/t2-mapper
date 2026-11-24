@@ -20,8 +20,7 @@
 .Metadata {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 12px;
+  gap: 12px;
   max-width: 100%;
   font-size: 12px;
   color: #eceae7;
@@ -38,8 +37,7 @@
 }
 .Creator {
   composes: MetaItem;
-  min-width: 0;
-  max-width: 100%;
+  min-width: 24px;
   gap: 6px;
   color: inherit;
   text-decoration: none;
@@ -61,19 +59,24 @@
 .AvatarFallback {
   color: #c7ccff;
 }
+.Date {
+  composes: MetaItem;
+  min-width: 20px;
+}
 .Server {
   composes: MetaItem;
-  min-width: 0;
-  max-width: 100%;
+  flex-shrink: 2;
+  min-width: 20px;
 }
 .Creator > span,
+.Date > time,
 .Server > span {
   overflow: hidden;
   text-overflow: ellipsis;
 }
 @media (max-width: 599px) {
   .Metadata {
-    gap: 4px 8px;
+    gap: 8px;
     font-size: 11px;
   }
 }

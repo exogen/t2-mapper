@@ -33,9 +33,8 @@
   view-transition-class: layout;
 }
 
-/* The 3D/CC toggle is always the toolbar's rightmost element. The auto
-   margin pushes it right when the preceding content doesn't stretch
-   (explore mode); the streaming header stretches on its own. */
+/* Push the right-side controls over when the preceding content doesn't
+   stretch (explore mode). The streaming header stretches on its own. */
 .ViewModeToggle {
   margin-left: auto;
   margin-right: 10px;
