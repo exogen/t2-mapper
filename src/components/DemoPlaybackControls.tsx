@@ -203,8 +203,8 @@ export function DemoPlaybackControls() {
   // The ghost may roam the whole timeline: a release beyond the
   // downloaded frontier becomes a PENDING seek in the store (executed
   // by the loader when the buffer reaches it). Keep the thumb at that target.
-  const downloadComplete = useEngineSelector(
-    (state) => state.playback.downloadComplete,
+  const downloadEnded = useEngineSelector(
+    (state) => state.playback.downloadStatus !== "downloading",
   );
   const pendingSeekSec = useEngineSelector(
     (state) => state.playback.pendingSeekSec,
@@ -254,7 +254,7 @@ export function DemoPlaybackControls() {
       directorQueued &&
       !activeClip &&
       !route.clip &&
-      downloadComplete &&
+      downloadEnded &&
       !isSeeking &&
       isCurrentPlayback(recording!)
     ) {
@@ -263,7 +263,7 @@ export function DemoPlaybackControls() {
     }
   }, [
     directorQueued,
-    downloadComplete,
+    downloadEnded,
     isSeeking,
     recording,
     activeClip,
@@ -474,7 +474,7 @@ export function DemoPlaybackControls() {
         onClick={() => {
           if (directorStatus === "playing") {
             exitDirector();
-          } else if (!downloadComplete) {
+          } else if (!downloadEnded) {
             setQueuedRecording((queued) =>
               queued === recording ? null : recording,
             );
@@ -507,7 +507,7 @@ export function DemoPlaybackControls() {
         onValueChange={handleSeekChange}
         onValueCommit={handleSeekCommit}
         seeking={isSeeking}
-        bufferedTime={downloadComplete ? duration : (downloadedSec ?? 0)}
+        bufferedTime={downloadEnded ? duration : (downloadedSec ?? 0)}
         progress={{
           time: replayTime,
           ratio: progress,

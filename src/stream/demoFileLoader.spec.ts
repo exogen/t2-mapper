@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
   shareParser: vi.fn(),
   refreshDuration: vi.fn(),
   publishBuffer: vi.fn(),
-  downloadComplete: vi.fn(),
+  downloadStatus: vi.fn(),
   pendingSeek: vi.fn(),
 }));
 vi.mock("../logger", () => ({
@@ -32,7 +32,7 @@ vi.mock("../state/engineStore", () => ({
       playback: { recording: mocks.current },
       refreshRecordingDuration: mocks.refreshDuration,
       setDemoBuffer: mocks.publishBuffer,
-      setDownloadComplete: mocks.downloadComplete,
+      setDemoDownloadStatus: mocks.downloadStatus,
       fulfillPendingSeek: mocks.pendingSeek,
     }),
   },
@@ -89,6 +89,7 @@ import {
   loadDemoFile,
   loadDemoUrl,
   loadDemoReference,
+  getDemoLoadGeneration,
   setDemoTimelineScanEnabled,
   unloadDemo,
 } from "./demoFileLoader";
@@ -112,7 +113,7 @@ const response = () =>
 const recording = (name: string) =>
   ({ source: "demo", recorderName: name }) as StreamRecording;
 
-function progressiveDownload(renderable = true) {
+function progressiveDownload(renderable = true, headers?: HeadersInit) {
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   const body = new ReadableStream<Uint8Array>({
     start(value) {
@@ -139,7 +140,7 @@ function progressiveDownload(renderable = true) {
     "fetch",
     vi.fn(async (url) => {
       const path = String(url);
-      if (path.endsWith(".rec")) return new Response(body);
+      if (path.endsWith(".rec")) return new Response(body, { headers });
       if (path.endsWith(".checkpoints.json"))
         return new Response("encoded sidecar");
       return new Response(null, { status: 404 });
@@ -260,7 +261,7 @@ describe("demo loads during navigation", () => {
     controller.close();
     await loading;
     expect(mocks.current).toBeNull();
-    expect(mocks.downloadComplete).not.toHaveBeenCalled();
+    expect(mocks.downloadStatus).not.toHaveBeenCalled();
     expect(demoTimelineStore.getState().scanProgress).toBeNull();
     expect(mocks.scan).not.toHaveBeenCalled();
     expect(mocks.indexCheckpoints).not.toHaveBeenCalled();
@@ -332,7 +333,10 @@ describe("demo loads during navigation", () => {
       expect([...new Uint8Array(final)]).toEqual([1, 2]);
       expect(mocks.current).toBe(demo);
       expect(mocks.incrementalFinish).toHaveBeenCalledOnce();
-      expect(mocks.downloadComplete).toHaveBeenCalledExactlyOnceWith(true);
+      expect(mocks.downloadStatus).toHaveBeenCalledExactlyOnceWith(
+        demo,
+        "interrupted",
+      );
       expect(mocks.indexCheckpoints).not.toHaveBeenCalled();
       expect(
         demo.streamingPlayback!.disposeCheckpointIndex,
@@ -353,6 +357,46 @@ describe("demo loads during navigation", () => {
     expect(
       demo.streamingPlayback!.disposeCheckpointIndex,
     ).toHaveBeenCalledOnce();
+  });
+
+  it.each<Record<string, string>>([
+    { "Content-Length": "4" },
+    { "Content-Length": "1" },
+    { "Content-Length": "1", "Content-Encoding": "br" },
+  ])(
+    "treats HTTP headers as transfer hints, not file verification: %j",
+    async (headers) => {
+      const { demo, controller, loading } = progressiveDownload(true, headers);
+      await vi.waitFor(() => expect(mocks.current).toBe(demo));
+      controller.close();
+      await loading;
+      expect(mocks.downloadStatus).toHaveBeenCalledExactlyOnceWith(
+        demo,
+        "complete",
+      );
+      expect([...new Uint8Array(mocks.publishBuffer.mock.calls[0][1])]).toEqual(
+        [1, 2],
+      );
+    },
+  );
+
+  it("does not let stale recovery replace the current or pending recording", async () => {
+    const { demo, loading } = progressiveDownload();
+    await vi.waitFor(() => expect(mocks.current).toBe(demo));
+    const expectedGeneration = getDemoLoadGeneration();
+    await expect(
+      loadDemoReference("test.rec", { expectedRecording: recording("stale") }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(getDemoLoadGeneration()).toBe(expectedGeneration);
+    await expect(
+      loadDemoReference("test.rec", {
+        expectedRecording: demo,
+        expectedGeneration: expectedGeneration - 1,
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(getDemoLoadGeneration()).toBe(expectedGeneration);
+    unloadDemo();
+    await loading;
   });
 
   it("installs a nonrenderable complete stream atomically with its final buffer and source", async () => {
@@ -1227,6 +1271,48 @@ describe("demo loads during navigation", () => {
     });
   });
 
+  it("rejects an owned recovery download superseded by a newer load", async () => {
+    const pending = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => pending.promise),
+    );
+    const downloading = loadDemoReference("tribesforever:22945", {
+      signal: new AbortController().signal,
+    });
+    const replacement = recording("replacement");
+    mocks.parse.mockResolvedValueOnce(replacement);
+    await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+    pending.resolve(response());
+    await expect(downloading).rejects.toMatchObject({ name: "AbortError" });
+    expect(mocks.current).toBe(replacement);
+  });
+
+  it("publishes new request intent and clears the previous request's error atomically", async () => {
+    demoLoadStore.setState({
+      requestedDemo: "previous.rec",
+      phase: "error",
+      error: "Previous download failed",
+    });
+    const observed: Array<{ phase: string; error: string | null }> = [];
+    const stop = demoLoadStore.subscribe((state) => {
+      if (state.requestedDemo === "tribesforever:22945")
+        observed.push({ phase: state.phase, error: state.error });
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => response()),
+    );
+    mocks.parse.mockResolvedValueOnce(recording("next"));
+    try {
+      await loadDemoReference("tribesforever:22945");
+      expect(observed[0]).toEqual({ phase: "downloading", error: null });
+      expect(observed.every((state) => state.error === null)).toBe(true);
+    } finally {
+      stop();
+    }
+  });
+
   it("reports missing relay configuration without downloading or parsing", async () => {
     vi.stubEnv("RELAY_URL", undefined);
     vi.stubGlobal("fetch", vi.fn());
@@ -1303,9 +1389,10 @@ describe("demo loads during navigation", () => {
     const cancel = vi.fn();
     vi.stubGlobal(
       "fetch",
-      vi.fn(
-        async () =>
-          new Response(new ReadableStream({ cancel }), { status: 502 }),
+      vi.fn(async (url) =>
+        String(url).endsWith("failed.rec")
+          ? new Response(new ReadableStream({ cancel }), { status: 502 })
+          : new Response(null, { status: 404 }),
       ),
     );
     await loadDemoUrl("failed.rec");

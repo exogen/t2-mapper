@@ -1,3 +1,5 @@
+import { cachedDemoSha256 } from "./demoSourceIdentity";
+export { demoSha256 } from "./demoSourceIdentity";
 import type { TimelineEvent } from "../state/demoTimelineStore";
 import type { DemoSeekCheckpoint } from "./demoStreaming";
 import { decodeCompressedCheckpoint } from "./checkpointCodec";
@@ -116,13 +118,6 @@ export function demoCheckpointTargets(
   return targets;
 }
 
-export async function demoSha256(buffer: ArrayBuffer): Promise<string> {
-  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", buffer));
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(
-    "",
-  );
-}
-
 export async function readDemoCheckpoints(
   text: string,
   buffer: ArrayBuffer,
@@ -224,7 +219,7 @@ async function readSidecar(
     !isSupportedDemoCheckpointVersion(sidecar.version) ||
     sidecar.demoBytes !== buffer.byteLength ||
     !Array.isArray(sidecar.checkpoints) ||
-    sidecar.demoSha256 !== (await demoSha256(buffer))
+    sidecar.demoSha256 !== (await cachedDemoSha256(buffer))
   )
     throw new Error(
       "Seek checkpoints do not match this demo or engine version",

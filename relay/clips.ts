@@ -30,10 +30,7 @@ import {
   type ClipTake,
   type ClipView,
 } from "./clipTypes.js";
-import {
-  DEMO_CHECKPOINT_VERSION,
-  isSupportedDemoCheckpointVersion,
-} from "../src/stream/demoCheckpoints.js";
+import { DEMO_CHECKPOINT_VERSION } from "../src/stream/demoCheckpoints.js";
 import type { DemoUploadConfig } from "./demoUpload.js";
 import {
   clipCheckpointVersion,
@@ -419,26 +416,21 @@ export class Clips {
               res.writeHead(204, { "Cache-Control": "no-store" }).end();
               return true;
             }
-            if (
-              row.state !== "ready" ||
-              !isSupportedDemoCheckpointVersion(row.checkpointVersion ?? 0)
-            ) {
-              const version = clipCheckpointVersion(
-                checkpoint.metadata,
-                row.sourceETag,
-                row.startSec,
-                row.sourceSha256,
-              );
-              if (version === undefined) {
-                this.rebuildCheckpoint(row.id);
-                res.writeHead(204, { "Cache-Control": "no-store" }).end();
-                return true;
-              }
-              if (row.state === "ready")
-                this.db
-                  .prepare("UPDATE clip SET checkpointVersion=? WHERE id=?")
-                  .run(version, row.id);
+            const version = clipCheckpointVersion(
+              checkpoint.metadata,
+              row.sourceETag,
+              row.startSec,
+              row.sourceSha256,
+            );
+            if (version === undefined) {
+              this.rebuildCheckpoint(row.id);
+              res.writeHead(204, { "Cache-Control": "no-store" }).end();
+              return true;
             }
+            if (row.checkpointVersion !== version)
+              this.db
+                .prepare("UPDATE clip SET checkpointVersion=? WHERE id=?")
+                .run(version, row.id);
             res.writeHead(200, {
               "Content-Type": "application/json; charset=utf-8",
               "Cache-Control": "no-store",

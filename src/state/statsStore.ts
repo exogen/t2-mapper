@@ -55,7 +55,7 @@ export function setStatsEnabled(value: boolean): void {
       if (
         state.playback.recording !== previous.playback.recording ||
         state.playback.demoBuffer !== previous.playback.demoBuffer ||
-        state.playback.downloadComplete !== previous.playback.downloadComplete
+        state.playback.downloadStatus !== previous.playback.downloadStatus
       )
         syncRecording();
       else if (
@@ -88,7 +88,7 @@ function syncRecording(): void {
     recording = nextRecording;
     demoBuffer = nextBuffer;
   }
-  if (recording && !demoBuffer && playback.downloadComplete) {
+  if (recording && !demoBuffer && playback.downloadStatus !== "downloading") {
     statsStore.setState({
       error:
         "Demo source data is unavailable. Reload the demo to scan its stats.",

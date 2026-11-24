@@ -15,7 +15,7 @@ import { casterStore } from "../state/casterStore";
 import { demoLoadStore } from "../state/demoLoadStore";
 import { clipStore } from "../state/clipStore";
 import { demoTimelineStore } from "../state/demoTimelineStore";
-import { engineStore } from "../state/engineStore";
+import { engineStore, type DemoDownloadStatus } from "../state/engineStore";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import type { StreamRecording } from "./types";
@@ -25,6 +25,7 @@ import {
   directDemoSource,
   resolveDemoSource,
   type DemoSource,
+  type DemoSourceCacheMode,
   DemoSourceLoadError,
 } from "./demoSources";
 import type { SourceDemoMetadata } from "../../relay/demoSourceMetadata";
@@ -56,6 +57,12 @@ interface LoadedDemoSource {
 const log = createLogger("demoFileLoader");
 
 let loadAttempt: DemoLoadAttempt | undefined;
+let loadGeneration = 0;
+
+/** Includes downloads that have started but have not installed a recording yet. */
+export function getDemoLoadGeneration(): number {
+  return loadGeneration;
+}
 let scanAbort: AbortController | null = null;
 let timelineScanEnabled = true;
 let timelineScan: {
@@ -88,6 +95,7 @@ function isInstalledSource(source: LoadedDemoSource): boolean {
 }
 
 function cancelLoad(preserveRecording = true): DemoLoadAttempt {
+  loadGeneration++;
   const clip = clipStore.getState();
   if (clip.recording || clip.draft) clip.discard();
   else if (clip.active) clip.stopPlayback();
@@ -179,21 +187,70 @@ export async function loadDemoUrl(url: string): Promise<void> {
 }
 
 /** Load a filename or a qualified reference from the demo URL parameter. */
-export async function loadDemoReference(reference: string): Promise<void> {
-  await loadRemoteDemo(() => resolveDemoSource(reference), reference);
+interface DemoLoadOptions {
+  cache?: DemoSourceCacheMode;
+  signal?: AbortSignal;
+  /** Recovery must not replace a recording selected by a newer user action. */
+  expectedRecording?: StreamRecording | null;
+  expectedGeneration?: number;
+}
+
+export async function loadDemoReference(
+  reference: string,
+  options: DemoLoadOptions = {},
+): Promise<void> {
+  await loadRemoteDemo(
+    () => resolveDemoSource(reference, options.cache),
+    reference,
+    options,
+  );
 }
 
 async function loadRemoteDemo(
   resolve: () => DemoSource,
   reference: string | null = null,
+  options: DemoLoadOptions = {},
 ): Promise<void> {
+  options.signal?.throwIfAborted();
+  if (
+    (options.expectedRecording !== undefined &&
+      engineStore.getState().playback.recording !==
+        options.expectedRecording) ||
+    (options.expectedGeneration !== undefined &&
+      options.expectedGeneration !== loadGeneration)
+  )
+    throw new DOMException("The recording was replaced", "AbortError");
   const attempt = cancelLoad();
+  if (!attempt.isCurrent) return;
+  const cancel = () => attempt.cancel(true);
+  options.signal?.addEventListener("abort", cancel, { once: true });
+  try {
+    if (options.signal?.aborted) cancel();
+    options.signal?.throwIfAborted();
+    await loadRemoteDemoAttempt(resolve, reference, attempt);
+    options.signal?.throwIfAborted();
+    if (options.signal && !attempt.isCurrent)
+      throw new DOMException("The download was replaced", "AbortError");
+  } finally {
+    options.signal?.removeEventListener("abort", cancel);
+  }
+}
+
+async function loadRemoteDemoAttempt(
+  resolve: () => DemoSource,
+  reference: string | null,
+  attempt: DemoLoadAttempt,
+): Promise<void> {
   const abort = attempt.abortController;
   demoLoadStore.setState({
     requestedUrl: null,
     requestedDemo: reference,
+    phase: "downloading",
+    progress: null,
+    error: null,
+    downloadedSec: null,
   });
-  demoLoadStore.getState().begin("downloading");
+  if (!attempt.isCurrent) return;
   let source: DemoSource;
   try {
     source = resolve();
@@ -322,6 +379,8 @@ async function loadRemoteDemo(
       if (!(await loadDemoBuffer(buffer, loadedSource, attempt))) abort.abort();
       return;
     }
+    // A transfer-size hint for progress and bounded preallocation only.
+    // Encoding and CORS filtering make headers unsuitable for file integrity.
     const totalBytes = Number(response.headers.get("content-length")) || 0;
     await streamDemoResponse(response.body, loadedSource, attempt, totalBytes);
     if (!loadedSource.recording) abort.abort();
@@ -440,7 +499,12 @@ async function streamDemoResponseBytes(
       engineStore.getState().playback.recording !== recording
     )
       return;
-    publishDownloadedDemo(finishParsedBuffer(parser), recording);
+    publishDownloadedDemo(
+      finishParsedBuffer(parser),
+      recording,
+      undefined,
+      "interrupted",
+    );
   };
   const cancel = (preserveRecording: boolean) => {
     void reader.cancel().catch(() => {});
@@ -684,13 +748,14 @@ function publishDownloadedDemo(
     pending: Promise<string | null> | undefined;
     attempt: DemoLoadAttempt;
   },
+  status: DemoDownloadStatus = "complete",
 ): void {
   if (!isInstalledRecording(recording)) return;
   engineStore.getState().refreshRecordingDuration(recording);
   if (!isInstalledRecording(recording)) return;
   engineStore.getState().setDemoBuffer(recording, buffer);
   if (!isInstalledRecording(recording)) return;
-  engineStore.getState().setDownloadComplete(true);
+  engineStore.getState().setDemoDownloadStatus(recording, status);
   if (!isInstalledRecording(recording)) return;
   if (checkpoints)
     void installCheckpoints(

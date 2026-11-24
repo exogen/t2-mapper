@@ -196,7 +196,7 @@ describe("frame publication and transport", () => {
   });
 
   it("does no work while waiting for bytes or after unload", () => {
-    state().setDownloadComplete(false);
+    state().setDemoDownloadStatus(state().playback.recording!, "downloading");
     demoLoadStore.setState({ downloadedSec: 2 });
     state().seekPlayback(10);
     frame();

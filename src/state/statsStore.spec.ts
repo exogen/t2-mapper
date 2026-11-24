@@ -243,7 +243,12 @@ describe("demo stats lifecycle", () => {
     expect(mocks.scan).not.toHaveBeenCalled();
     const buffer = new ArrayBuffer(4);
     engineStore.getState().setDemoBuffer(demo, buffer);
-    engineStore.getState().setDownloadComplete(true);
+    engineStore
+      .getState()
+      .setDemoDownloadStatus(
+        engineStore.getState().playback.recording!,
+        "complete",
+      );
     await vi.waitFor(() => expect(statsStore.getState().data).toBe(data));
     expect(mocks.scan.mock.calls[0][0]).toBe(buffer);
   });

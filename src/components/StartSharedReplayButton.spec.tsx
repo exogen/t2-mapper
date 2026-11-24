@@ -99,12 +99,22 @@ it("uploads the installed local bytes/name even while another hosted demo is req
 
 it("disables local sharing until all bytes are ready and enforces the upload limit", () => {
   demoLoadStore.setState({ sourceReference: null, sourceUrl: null });
-  engineStore.getState().setDownloadComplete(false);
+  engineStore
+    .getState()
+    .setDemoDownloadStatus(
+      engineStore.getState().playback.recording!,
+      "downloading",
+    );
   let button = StartSharedReplayButton()!;
   expect(button.props.disabled).toBe(true);
   button.props.onClick();
   expect(fixture.createLocal).not.toHaveBeenCalled();
-  engineStore.getState().setDownloadComplete(true);
+  engineStore
+    .getState()
+    .setDemoDownloadStatus(
+      engineStore.getState().playback.recording!,
+      "complete",
+    );
   engineStore.getState().setDemoBuffer(fixture.recording!, {
     byteLength: MAX_REPLAY_UPLOAD_BYTES + 1,
   } as ArrayBuffer);

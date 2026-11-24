@@ -22,8 +22,8 @@ const SCHEMES: Array<{ value: HeatmapScheme; label: string }> = [
 /** Whole-match heatmaps for the game at the current playback position. */
 export function StatsPanel() {
   const recording = useRecording();
-  const downloadComplete = useEngineSelector(
-    (s) => s.playback.downloadComplete,
+  const downloadEnded = useEngineSelector(
+    (s) => s.playback.downloadStatus !== "downloading",
   );
   const data = useStats((s) => s.activeMatch);
   const matchCount = useStats((s) => s.data?.matches.length ?? 0);
@@ -51,7 +51,7 @@ export function StatsPanel() {
     return (
       <div className={accordionStyles.Body}>
         <p className={styles.Description} role="status">
-          {downloadComplete
+          {downloadEnded
             ? "Preparing stats…"
             : "Waiting for the demo to finish downloading…"}
         </p>

@@ -7,11 +7,7 @@ import { publishedDemoFilename } from "../state/editableGame";
 import { graphicsEffectsStore } from "../state/graphicsEffectsStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { ClipApiError } from "../stream/clipApi";
-import {
-  readClipCheckpoint,
-  recoverClipCheckpoint,
-} from "../stream/clipCheckpointApi";
-import { startClipPlayback } from "../stream/clipPlayback";
+import { prepareClipPlayback } from "../stream/clipPreparation";
 import { navigationMode, useNavigationQueryState } from "./useQueryParams";
 import { useAppNavigation } from "./useAppNavigation";
 import { useClipQuery } from "./useClipQuery";
@@ -31,9 +27,8 @@ export function ClipLoader() {
     (effects) => effects.awaitingFirstFrame,
   );
   const recording = useEngineSelector((state) => state.playback.recording);
-  const buffer = useEngineSelector((state) => state.playback.demoBuffer);
   const complete = useEngineSelector(
-    (state) => state.playback.downloadComplete,
+    (state) => state.playback.downloadStatus === "complete",
   );
   const source = publishedDemoFilename(useDemoLoad((state) => state.sourceUrl));
   const attached = useStore(
@@ -107,31 +102,17 @@ export function ClipLoader() {
       view.id !== id ||
       view.state !== "ready" ||
       !view.timeline ||
-      !recording ||
-      !complete ||
-      !buffer ||
-      !attached ||
-      source !== view.sourceDemo ||
-      (prepared?.id === id && prepared.recording === recording)
+      clip.error ||
+      route.demo !== view.sourceDemo
     )
       return;
     const abort = new AbortController();
-    const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(60_000)]);
+    const signal = abort.signal;
     setPreparing(true);
     setError(null);
     void (async () => {
       try {
-        const checkpoint = await readClipCheckpoint(view, buffer, signal);
-        signal.throwIfAborted();
-        await startClipPlayback(
-          view.timeline!,
-          recording,
-          signal,
-          checkpoint?.text,
-          checkpoint
-            ? () => recoverClipCheckpoint(view, buffer, checkpoint.etag, signal)
-            : undefined,
-        );
+        const recording = await prepareClipPlayback(view, signal);
         setPrepared({ id, recording });
       } catch (cause) {
         if (!abort.signal.aborted)
@@ -145,17 +126,7 @@ export function ClipLoader() {
       }
     })();
     return () => abort.abort();
-  }, [
-    id,
-    view,
-    recording,
-    complete,
-    buffer,
-    attached,
-    source,
-    retry,
-    prepared,
-  ]);
+  }, [id, view, clip.error, route.demo, retry]);
 
   if (!id) return null;
   const failed =
@@ -193,8 +164,9 @@ export function ClipLoader() {
                 className={styles.UtilityButton}
                 onClick={() => {
                   setError(null);
-                  setRetry((value) => value + 1);
-                  void clip.refetch();
+                  if (!clip.error && view?.state === "ready" && view.timeline)
+                    setRetry((value) => value + 1);
+                  else void clip.refetch();
                 }}
               >
                 Retry

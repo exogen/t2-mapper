@@ -18,7 +18,7 @@ export function StartSharedReplayButton() {
   const fileName = useDemoLoad((state) => state.sourceFileName);
   const buffer = useEngineSelector((state) => state.playback.demoBuffer);
   const complete = useEngineSelector(
-    (state) => state.playback.downloadComplete,
+    (state) => state.playback.downloadStatus === "complete",
   );
   const navigation = useAppNavigation();
   if (recording?.source !== "demo") return null;
@@ -56,7 +56,7 @@ export function StartSharedReplayButton() {
           canUpload &&
           buffer &&
           engineStore.getState().playback.demoBuffer === buffer &&
-          engineStore.getState().playback.downloadComplete &&
+          engineStore.getState().playback.downloadStatus === "complete" &&
           demoLoadStore.getState().sourceFileName === fileName
         )
           navigation.createLocalReplay(

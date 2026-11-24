@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { Children, isValidElement, type ReactNode } from "react";
 import type { ClipTake, ClipView } from "../../relay/clipTypes";
 import type { StreamRecording } from "../stream/types";
 import type { NavigationQuery } from "./useQueryParams";
@@ -14,10 +15,13 @@ const fixture = vi.hoisted(() => ({
   active: null as ClipTake | null,
   status: "paused",
   view: undefined as ClipView | undefined,
+  error: null as Error | null,
+  refetch: vi.fn(),
+  retry: vi.fn(),
   source: null as string | null,
   recording: null as StreamRecording | null,
   demoBuffer: null as ArrayBuffer | null,
-  downloadComplete: false,
+  downloadStatus: "downloading",
   route: {
     mode: "demo",
     clip: "clip-one",
@@ -34,12 +38,19 @@ vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
   useEffect: (effect: () => void | (() => void)) =>
     fixture.effects.push(effect),
-  useState: (initial: unknown) => [initial, vi.fn()],
+  useState: (initial: unknown) => [
+    initial,
+    typeof initial === "number" ? fixture.retry : vi.fn(),
+  ],
 }));
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (options: NonNullable<typeof fixture.queryOptions>) => {
     fixture.queryOptions = options;
-    return { data: fixture.view, error: null, refetch: vi.fn() };
+    return {
+      data: fixture.view,
+      error: fixture.error,
+      refetch: fixture.refetch,
+    };
   },
 }));
 vi.mock("zustand", () => ({
@@ -73,7 +84,7 @@ vi.mock("../state/engineStore", () => ({
       playback: {
         recording: fixture.recording,
         demoBuffer: fixture.demoBuffer,
-        downloadComplete: fixture.downloadComplete,
+        downloadStatus: fixture.downloadStatus,
       },
     }),
 }));
@@ -89,11 +100,7 @@ vi.mock("../stream/clipApi", async (original) => ({
   ...(await original<typeof import("../stream/clipApi")>()),
   readClip: vi.fn(),
 }));
-vi.mock("../stream/clipCheckpointApi", () => ({
-  readClipCheckpoint: vi.fn(),
-  recoverClipCheckpoint: vi.fn(),
-}));
-vi.mock("../stream/clipPlayback", () => ({ startClipPlayback: vi.fn() }));
+vi.mock("../stream/clipPreparation", () => ({ prepareClipPlayback: vi.fn() }));
 vi.mock("./useQueryParams", () => ({
   navigationMode: () => "demo",
   useNavigationQueryState: () => [fixture.route, fixture.setRoute],
@@ -104,11 +111,7 @@ vi.mock("./useAppNavigation", () => ({
 
 import { ClipLoader } from "./ClipLoader";
 import { ClipApiError } from "../stream/clipApi";
-import {
-  readClipCheckpoint,
-  recoverClipCheckpoint,
-} from "../stream/clipCheckpointApi";
-import { startClipPlayback } from "../stream/clipPlayback";
+import { prepareClipPlayback } from "../stream/clipPreparation";
 
 const cleanups: Array<() => void> = [];
 function stopActive() {
@@ -122,10 +125,12 @@ beforeEach(() => {
   fixture.status = "paused";
   fixture.active = null;
   fixture.view = undefined;
+  fixture.error = null;
+  fixture.effects.length = 0;
   fixture.source = null;
   fixture.recording = null;
   fixture.demoBuffer = null;
-  fixture.downloadComplete = false;
+  fixture.downloadStatus = "downloading";
   fixture.queryOptions = null;
   fixture.route = {
     mode: "demo",
@@ -149,7 +154,19 @@ function mountLoader() {
 afterEach(() => {
   cleanups.splice(0).forEach((cleanup) => cleanup());
   fixture.listeners.clear();
+  fixture.effects.length = 0;
 });
+
+function findRetry(node: ReactNode): (() => void) | undefined {
+  if (!isValidElement<{ children?: ReactNode; onClick?: () => void }>(node))
+    return;
+  if (node.type === "button" && node.props.children === "Retry")
+    return node.props.onClick;
+  for (const child of Children.toArray(node.props.children)) {
+    const retry = findRetry(child);
+    if (retry) return retry;
+  }
+}
 
 it("turns a seek out of a clip into an ordinary demo route", () => {
   mountLoader();
@@ -191,50 +208,20 @@ it("preserves a pending source seek while preparing the initial clip view", () =
   expect(fixture.pause).not.toHaveBeenCalled();
 });
 
-it("starts a ready clip with its checkpoint and reports a failed restore with its ETag", async () => {
-  const buffer = new ArrayBuffer(1);
+it("delegates preparation without binding its lifetime to the current recording", async () => {
   const recording = { streamingPlayback: {} } as StreamRecording;
-  const timeline = { sourceDemo: "test.rec" } as ClipTake;
   const view = {
     id: "clip-one",
     sourceDemo: "test.rec",
     state: "ready",
-    timeline,
+    timeline: { sourceDemo: "test.rec" },
   } as ClipView;
-  fixture.source = view.sourceDemo;
-  fixture.recording = recording;
   fixture.view = view;
-  fixture.demoBuffer = buffer;
-  fixture.downloadComplete = true;
-  vi.mocked(readClipCheckpoint).mockResolvedValueOnce({
-    text: "checkpoint",
-    etag: '"cached"',
-  });
-
+  vi.mocked(prepareClipPlayback).mockResolvedValueOnce(recording);
   mountLoader();
-
-  expect(readClipCheckpoint).toHaveBeenCalledWith(
+  expect(prepareClipPlayback).toHaveBeenCalledWith(
     view,
-    buffer,
     expect.any(AbortSignal),
-  );
-  const [, , signal] = vi.mocked(readClipCheckpoint).mock.calls[0];
-  await vi.waitFor(() => {
-    expect(startClipPlayback).toHaveBeenCalledWith(
-      timeline,
-      recording,
-      signal,
-      "checkpoint",
-      expect.any(Function),
-    );
-  });
-  const recover = vi.mocked(startClipPlayback).mock.calls[0][4]!;
-  await recover(new Error("Could not restore the checkpoint"));
-  expect(recoverClipCheckpoint).toHaveBeenCalledWith(
-    view,
-    buffer,
-    '"cached"',
-    signal,
   );
 });
 
@@ -264,4 +251,34 @@ it("offers an exit for a permanently failed clip instead of a retry that cannot 
   expect(markup).toContain("Could not prepare this clip.");
   expect(markup).toContain("Exit clip");
   expect(markup).not.toContain("Retry");
+});
+
+it("refetches a failed metadata query even when its cached clip is ready", () => {
+  fixture.view = {
+    id: "clip-one",
+    sourceDemo: "test.rec",
+    state: "ready",
+    timeline: { sourceDemo: "test.rec" },
+  } as ClipView;
+  fixture.error = new Error("Metadata request failed");
+  const retry = findRetry(ClipLoader());
+  expect(retry).toBeTypeOf("function");
+  retry!();
+  expect(fixture.refetch).toHaveBeenCalledOnce();
+  expect(fixture.retry).not.toHaveBeenCalled();
+});
+
+it("prepares once after a metadata retry clears the error with the same cached data", () => {
+  fixture.view = {
+    id: "clip-one",
+    sourceDemo: "test.rec",
+    state: "ready",
+    timeline: { sourceDemo: "test.rec" },
+  } as ClipView;
+  fixture.error = new Error("Metadata request failed");
+  mountLoader();
+  expect(prepareClipPlayback).not.toHaveBeenCalled();
+  fixture.error = null;
+  mountLoader();
+  expect(prepareClipPlayback).toHaveBeenCalledOnce();
 });

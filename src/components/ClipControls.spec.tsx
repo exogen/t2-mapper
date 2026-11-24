@@ -16,7 +16,7 @@ const fixture = vi.hoisted(() => ({
   playback: {
     recording: { source: "demo" },
     status: "paused",
-    downloadComplete: true,
+    downloadStatus: "complete",
     demoBuffer: new ArrayBuffer(4),
   },
 }));
@@ -155,7 +155,7 @@ beforeEach(() => {
   fixture.effects = [];
   fixture.playback.recording = { source: "demo" };
   fixture.playback.status = "paused";
-  fixture.playback.downloadComplete = true;
+  fixture.playback.downloadStatus = "complete";
 });
 
 afterEach(() => {
@@ -338,7 +338,7 @@ it("offers smoothing and save/discard in the default-open clip accordion", () =>
   expect(render()).toContain('aria-valuetext="High"');
   expect(render()).toContain('aria-valuemax="2"');
   expect(render()).not.toContain("Medium");
-  fixture.playback.downloadComplete = false;
+  fixture.playback.downloadStatus = "downloading";
   expect(render()).toMatch(/<button[^>]*disabled=""[^>]*>Save clip<\/button>/);
 });
 

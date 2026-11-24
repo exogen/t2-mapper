@@ -32,7 +32,7 @@ export function installPlaybackMetrics(): () => void {
       playheadSec: streamClock.time,
       downloadedSec: demoLoadStore.getState().downloadedSec,
       seeking: playback.status === "seeking" ? 1 : 0,
-      downloadComplete: playback.downloadComplete ? 1 : 0,
+      downloadComplete: playback.downloadStatus === "complete" ? 1 : 0,
       rate: playback.rate,
       missionEntities: game.missionEntities.size,
       streamEntities: game.streamEntities.size,
@@ -67,8 +67,8 @@ export function installPlaybackMetrics(): () => void {
       });
     if (next.status !== before.status)
       markDiagnosticEvent(`playback-${next.status}`);
-    if (next.downloadComplete && !before.downloadComplete)
-      markDiagnosticEvent("demo-download-complete");
+    if (next.downloadStatus !== before.downloadStatus)
+      markDiagnosticEvent(`demo-download-${next.downloadStatus}`);
   });
   const stopGame = gameEntityStore.subscribe((state, previous) => {
     if (

@@ -1222,6 +1222,30 @@ it("keeps a published clip playable after exhausting checkpoint repairs", async 
   expect(f.prepare).toHaveBeenCalledTimes(4);
 });
 
+it.each([
+  ["checkpoint-version", "23"],
+  ["demo-etag", '"another-source"'],
+  ["demo-sha256", "b".repeat(64)],
+  ["clip-start-tick", "1"],
+  ["missing", ""],
+])(
+  "checks %s metadata even when the database already marks the checkpoint current",
+  async (field, value) => {
+    const f = await fixture();
+    const clip = await save(f);
+    const object = f.objects.get(`demos/clips/${clip.id}/checkpoint.json`)!;
+    if (field === "missing") object.metadata = undefined;
+    else object.metadata![field] = value;
+    expect(f.rows()[0].checkpointVersion).toBe(DEMO_CHECKPOINT_VERSION);
+    const response = await f.request("GET", clip.checkpointUrl);
+    expect(response.status).toBe(204);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    await f.service.idle();
+    expect(f.prepare).toHaveBeenCalledTimes(2);
+    expect((await f.request("GET", clip.checkpointUrl)).status).toBe(200);
+  },
+);
+
 it("repairs the reported cached checkpoint once, even if the rebuilt bytes have the same ETag", async () => {
   const f = await fixture();
   const clip = await save(f);

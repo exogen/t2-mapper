@@ -31,7 +31,7 @@ import {
   saveClip,
   clipShareUrl,
 } from "../stream/clipApi";
-import { demoSha256 } from "../stream/demoCheckpoints";
+import { cachedDemoSha256 } from "../stream/demoSourceIdentity";
 import { useAppNavigation } from "./useAppNavigation";
 import { ClipControlsContext } from "./clipControlsContext";
 import { Checkbox } from "./Checkbox";
@@ -109,7 +109,8 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
   );
   const sourceReady = useEngineSelector(
     (state) =>
-      state.playback.downloadComplete && state.playback.demoBuffer !== null,
+      state.playback.downloadStatus === "complete" &&
+      state.playback.demoBuffer !== null,
   );
   const captureReady = useStreamSnapshot(() => canStartClipRecording());
   const hud = useStoreWithEqualityFn(settingsStore, selectClipHud, shallow);
@@ -260,11 +261,11 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
     setError(null);
     try {
       const snapshot = engineStore.getState().playback;
-      if (!snapshot.downloadComplete || !snapshot.demoBuffer)
+      if (snapshot.downloadStatus !== "complete" || !snapshot.demoBuffer)
         throw new Error(
           "Wait for the source demo to finish downloading before saving.",
         );
-      const sourceSha256 = await demoSha256(snapshot.demoBuffer);
+      const sourceSha256 = await cachedDemoSha256(snapshot.demoBuffer);
       controller.signal.throwIfAborted();
       const stillCurrent = () => {
         const current = engineStore.getState().playback;

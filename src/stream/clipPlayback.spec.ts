@@ -11,7 +11,7 @@ const fixture = vi.hoisted(() => ({
       seekNonce: number;
       seekIntentNonce: number;
       seekFailed: boolean;
-      downloadComplete: boolean;
+      downloadStatus: "downloading" | "complete" | "interrupted";
       demoBuffer: ArrayBuffer | null;
     };
   },
@@ -97,7 +97,7 @@ beforeEach(() => {
       seekNonce: 1,
       seekIntentNonce: 1,
       seekFailed: false,
-      downloadComplete: true,
+      downloadStatus: "complete",
       demoBuffer: new ArrayBuffer(4),
     },
   };
@@ -333,7 +333,7 @@ it("rejects a failed starting seek and releases the interpolation hold", async (
 });
 
 it("waits for complete source bytes and rejects previews from a different source", async () => {
-  fixture.state.playback.downloadComplete = false;
+  fixture.state.playback.downloadStatus = "downloading";
   await expect(
     startClipPlayback(
       take,
@@ -342,7 +342,7 @@ it("waits for complete source bytes and rejects previews from a different source
       "checkpoint",
     ),
   ).rejects.toThrow(/finish downloading/);
-  fixture.state.playback.downloadComplete = true;
+  fixture.state.playback.downloadStatus = "complete";
   fixture.source = "other.rec";
   await expect(
     startClipPlayback(take, recording, new AbortController().signal),

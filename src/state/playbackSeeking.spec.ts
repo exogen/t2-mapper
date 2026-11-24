@@ -155,7 +155,7 @@ describe("seek transport state", () => {
   });
 
   it("stays suspended through downloading and reconstruction", () => {
-    state().setDownloadComplete(false);
+    state().setDemoDownloadStatus(state().playback.recording!, "downloading");
     demoLoadStore.setState({ downloadedSec: 50 });
     state().seekPlayback(1000);
     const { seekNonce } = state().playback;
@@ -180,7 +180,7 @@ describe("seek transport state", () => {
   it("retains a timestamp beyond the growing duration until its data arrives", () => {
     demo.duration = 2;
     state().refreshRecordingDuration(demo);
-    state().setDownloadComplete(false);
+    state().setDemoDownloadStatus(state().playback.recording!, "downloading");
     demoLoadStore.setState({ downloadedSec: 2 });
     state().seekPlayback(500);
     const { seekNonce } = state().playback;
@@ -204,12 +204,12 @@ describe("seek transport state", () => {
   it("clamps a pending timestamp when a short recording finishes downloading", () => {
     demo.duration = 2;
     state().refreshRecordingDuration(demo);
-    state().setDownloadComplete(false);
+    state().setDemoDownloadStatus(state().playback.recording!, "downloading");
     demoLoadStore.setState({ downloadedSec: 2 });
     state().seekPlayback(500);
     demo.duration = 200.032;
     state().refreshRecordingDuration(demo);
-    state().setDownloadComplete(true);
+    state().setDemoDownloadStatus(state().playback.recording!, "complete");
     state().fulfillPendingSeek();
     expect(state().playback).toMatchObject({
       status: "seeking",
@@ -219,7 +219,7 @@ describe("seek transport state", () => {
   });
 
   it("replaces a downloading target with an available target", () => {
-    state().setDownloadComplete(false);
+    state().setDemoDownloadStatus(state().playback.recording!, "downloading");
     demoLoadStore.setState({ downloadedSec: 50 });
     state().seekPlayback(1000);
     state().seekPlayback(20);
@@ -231,6 +231,26 @@ describe("seek transport state", () => {
     state().fulfillPendingSeek();
     state().completePlaybackSeek(demo, state().playback.seekNonce);
     expect(state().playback.status).toBe("playing");
+  });
+
+  it("clamps seeks to an interrupted recording's final frontier without waiting for more bytes", () => {
+    demo.duration = 2;
+    state().refreshRecordingDuration(demo);
+    state().setDemoDownloadStatus(demo, "interrupted");
+    state().seekPlayback(100);
+    expect(state().playback).toMatchObject({
+      seekTime: 2,
+      pendingSeekSec: null,
+      downloadStatus: "interrupted",
+    });
+  });
+
+  it("ignores download completion from a replaced recording", () => {
+    const replacement = recording();
+    state().setRecording(replacement);
+    state().setDemoDownloadStatus(replacement, "downloading");
+    state().setDemoDownloadStatus(demo, "complete");
+    expect(state().playback.downloadStatus).toBe("downloading");
   });
 
   it("discards pending state on unload and rejects completion from another recording", () => {

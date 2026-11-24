@@ -17,6 +17,8 @@ export type PlaybackStatus =
   | "seeking"
   /** Natural EOF: the playhead is stopped while final chat sounds finish. */
   | "ending";
+export type DemoDownloadStatus = "downloading" | "complete" | "interrupted";
+
 type SettledPlaybackStatus = Exclude<PlaybackStatus, "seeking" | "ending">;
 
 export interface RuntimeSliceState {
@@ -51,11 +53,11 @@ export interface PlaybackSliceState {
   rate: number;
   durationMs: number;
   /**
-   * False while a progressive demo download is still running. Seeks
-   * into the not-yet-downloaded region become pending (below) instead
-   * of executing; seeks within the buffered region work normally.
+   * Interrupted sources remain playable up to their final buffered frontier,
+   * but must never be used as complete source files for clips or sharing.
+   * Only downloading sources can fulfill future beyond-frontier seeks.
    */
-  downloadComplete: boolean;
+  downloadStatus: DemoDownloadStatus;
   /**
    * A seek requested beyond the downloaded frontier, waiting for the
    * buffer to reach it — fulfilled by fulfillPendingSeek() as the
@@ -83,7 +85,10 @@ export interface EngineStoreState {
   ): void;
   refreshRecordingDuration(recording: StreamRecording): void;
   setDemoBuffer(recording: StreamRecording, demoBuffer: ArrayBuffer): void;
-  setDownloadComplete(complete: boolean): void;
+  setDemoDownloadStatus(
+    recording: StreamRecording,
+    status: DemoDownloadStatus,
+  ): void;
   /** False when the seek is invalid or canceled by a guard. */
   seekPlayback(timeSec: number, reason?: "reconstruction"): boolean;
   /** Execute the pending beyond-the-buffer seek once fulfillable. */
@@ -186,7 +191,7 @@ const initialState: Omit<
   | "setRecording"
   | "refreshRecordingDuration"
   | "setDemoBuffer"
-  | "setDownloadComplete"
+  | "setDemoDownloadStatus"
   | "seekPlayback"
   | "fulfillPendingSeek"
   | "updateSeekProgress"
@@ -216,7 +221,7 @@ const initialState: Omit<
     seekIntentNonce: 0,
     rate: 1,
     durationMs: 0,
-    downloadComplete: true,
+    downloadStatus: "complete",
     pendingSeekSec: null,
   },
 };
@@ -374,10 +379,10 @@ export const engineStore = createStore<EngineStoreState>()(
           seekIntentNonce: state.playback.seekIntentNonce + 1,
           rate: recording ? 1 : state.playback.rate,
           durationMs,
-          // A progressively-loading recording reports incomplete; the
-          // loader flips this via setDownloadComplete when it finishes.
-          downloadComplete:
-            recording?.streamingPlayback?.streamComplete !== false,
+          downloadStatus:
+            recording?.streamingPlayback?.streamComplete === false
+              ? "downloading"
+              : "complete",
           pendingSeekSec: null,
         },
       }));
@@ -400,11 +405,12 @@ export const engineStore = createStore<EngineStoreState>()(
       );
     },
 
-    setDownloadComplete(complete: boolean) {
-      set((state) => ({
-        ...state,
-        playback: { ...state.playback, downloadComplete: complete },
-      }));
+    setDemoDownloadStatus(recording, status) {
+      set((state) =>
+        state.playback.recording === recording
+          ? { playback: { ...state.playback, downloadStatus: status } }
+          : state,
+      );
     },
 
     seekPlayback(timeSec: number, reason?: "reconstruction") {
@@ -417,9 +423,10 @@ export const engineStore = createStore<EngineStoreState>()(
         accepted = true;
         // With no header duration, the total grows as bytes arrive. Preserve
         // timestamp links beyond that prefix until the actual end is known.
-        const target = state.playback.downloadComplete
-          ? clamp(timeSec, 0, state.playback.durationMs / 1000)
-          : Math.max(0, timeSec);
+        const target =
+          state.playback.downloadStatus !== "downloading"
+            ? clamp(timeSec, 0, state.playback.durationMs / 1000)
+            : Math.max(0, timeSec);
         const playback: PlaybackSliceState = {
           ...state.playback,
           status: "seeking",
@@ -442,7 +449,7 @@ export const engineStore = createStore<EngineStoreState>()(
         // it as pending; the loader fulfills it as the buffer catches
         // up. Seeks within the buffered region run immediately (and
         // supersede any pending request).
-        if (!state.playback.downloadComplete) {
+        if (state.playback.downloadStatus === "downloading") {
           const buffered = demoLoadStore.getState().downloadedSec ?? 0;
           if (target > buffered) {
             return {
@@ -464,16 +471,20 @@ export const engineStore = createStore<EngineStoreState>()(
         const pending = state.playback.pendingSeekSec;
         if (pending == null) return state;
         const buffered = demoLoadStore.getState().downloadedSec ?? 0;
-        if (!state.playback.downloadComplete && buffered < pending) {
+        if (
+          state.playback.downloadStatus === "downloading" &&
+          buffered < pending
+        ) {
           return state;
         }
         return {
           ...state,
           playback: {
             ...state.playback,
-            seekTime: state.playback.downloadComplete
-              ? clamp(pending, 0, state.playback.durationMs / 1000)
-              : pending,
+            seekTime:
+              state.playback.downloadStatus !== "downloading"
+                ? clamp(pending, 0, state.playback.durationMs / 1000)
+                : pending,
             pendingSeekSec: null,
           },
         };

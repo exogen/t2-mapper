@@ -53,8 +53,8 @@ export async function startClipPlayback(
   let holdingForPlayback = false;
   try {
     if (checkpointText !== undefined) {
-      const { demoBuffer, downloadComplete } = engineStore.getState().playback;
-      if (!demoBuffer || !downloadComplete)
+      const { demoBuffer, downloadStatus } = engineStore.getState().playback;
+      if (!demoBuffer || downloadStatus !== "complete")
         throw new Error("Wait for the source demo to finish downloading.");
       try {
         const checkpoints = await readDemoCheckpoints(

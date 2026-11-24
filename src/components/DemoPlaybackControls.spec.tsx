@@ -33,7 +33,7 @@ const state = vi.hoisted(() => ({
     rate: 1,
     status: "paused",
     resumeAfterSeek: null,
-    downloadComplete: true,
+    downloadStatus: "complete",
     pendingSeekSec: null,
     seekProgress: null,
   },

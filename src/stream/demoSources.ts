@@ -10,6 +10,7 @@ import {
 } from "../../relay/demoSourceMetadata";
 
 export class DemoSourceLoadError extends Error {}
+export type DemoSourceCacheMode = "no-cache" | "no-store";
 
 export interface DemoSource {
   /** Stable, public source URL, even when the bytes need a relay. */
@@ -120,18 +121,23 @@ export const demoSourceLoaders: ReadonlyMap<string, DemoSourceLoader> = new Map(
   ],
 );
 
-export function directDemoSource(url: string): DemoSource {
+export function directDemoSource(
+  url: string,
+  cache: DemoSourceCacheMode = "no-cache",
+): DemoSource {
   return {
     url,
     sidecarSourceUrl: url,
-    // Demos are served immutable but have been rewritten in place
-    // (scripts/migrate-relay-demos.ts): revalidate any cached copy, which
-    // also refreshes the one the download button saves.
-    load: (signal) => fetch(url, { signal, cache: "no-cache" }),
+    // Published recordings are immutable. Recovery bypasses a cached response
+    // to replace an interrupted or otherwise unverified local download.
+    load: (signal) => fetch(url, { signal, cache }),
   };
 }
 
-export function resolveDemoSource(reference: string): DemoSource {
+export function resolveDemoSource(
+  reference: string,
+  cache?: DemoSourceCacheMode,
+): DemoSource {
   const separator = reference.indexOf(":");
   if (separator >= 0) {
     const qualifier = reference.slice(0, separator).toLowerCase();
@@ -143,7 +149,7 @@ export function resolveDemoSource(reference: string): DemoSource {
     throw new Error("Demo index not configured (DEMOS_BASE_URL)");
   if (!isPublishedDemoKey(reference))
     throw new Error("Invalid published demo key");
-  return directDemoSource(demoDownloadUrl(reference));
+  return directDemoSource(demoDownloadUrl(reference), cache);
 }
 
 /** Safe to use while matching a URL param against a loaded recording. */

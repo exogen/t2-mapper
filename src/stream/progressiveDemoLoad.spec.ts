@@ -126,7 +126,7 @@ describe("installed progressive demos", () => {
       finishMetadata = resolve;
     });
     const { loading, controller } = await installPrefix(metadata);
-    expect(state().playback.downloadComplete).toBe(false);
+    expect(state().playback.downloadStatus).toBe("downloading");
     expect(demoLoadStore.getState().publishedGames).toBeNull();
     expect(fetch).toHaveBeenCalledWith("http://localhost/first.rec.json", {
       signal: expect.any(AbortSignal),
@@ -151,7 +151,7 @@ describe("installed progressive demos", () => {
     await vi.waitFor(() => expect(mocks.push).toHaveBeenCalledOnce());
     controller.close();
     await loading;
-    expect(state().playback.downloadComplete).toBe(true);
+    expect(state().playback.downloadStatus).toBe("complete");
     expect(state().playback.recording).toBe(mocks.recording);
   });
 
@@ -185,7 +185,7 @@ describe("installed progressive demos", () => {
     controller.close();
     await loading;
     expect(state().playback.durationMs).toBe(5_312);
-    expect(state().playback.downloadComplete).toBe(true);
+    expect(state().playback.downloadStatus).toBe("complete");
   });
 
   it.each(["network failure", "replacement failure"])(
@@ -207,7 +207,7 @@ describe("installed progressive demos", () => {
       expect(state().playback).toMatchObject({
         recording: mocks.recording,
         durationMs: 2_048,
-        downloadComplete: true,
+        downloadStatus: "interrupted",
       });
     },
   );
@@ -224,7 +224,7 @@ describe("installed progressive demos", () => {
     expect(mocks.finish).toHaveBeenCalledOnce();
     expect(state().playback).toMatchObject({
       recording: mocks.recording,
-      downloadComplete: true,
+      downloadStatus: "interrupted",
       pendingSeekSec: null,
       status: "seeking",
     });
@@ -259,7 +259,7 @@ describe("installed progressive demos", () => {
     controller.error(new Error("connection lost"));
     await loading;
     expect(mocks.finish).toHaveBeenCalledOnce();
-    expect(state().playback.downloadComplete).toBe(true);
+    expect(state().playback.downloadStatus).toBe("interrupted");
     expect(mocks.directorBuffer).toHaveBeenCalledOnce();
     await vi.waitFor(() => expect(mocks.scan).toHaveBeenCalledOnce());
   });

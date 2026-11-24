@@ -99,7 +99,7 @@ describe("demo source registry", () => {
     await source.load(signal);
     expect(source.url).toBe("https://demos.example/demos/my%20demo%20%231.rec");
     expect(source.sidecarSourceUrl).toBe(source.url);
-    // Rewritten demos must not come from a stale immutable cache entry.
+    // Normal loads retain their existing revalidation policy.
     expect(fetch).toHaveBeenCalledWith(source.url, {
       signal,
       cache: "no-cache",
@@ -118,6 +118,17 @@ describe("demo source registry", () => {
     expect(fetch).toHaveBeenCalledExactlyOnceWith(source.url, {
       signal,
       cache: "no-cache",
+    });
+  });
+
+  it("bypasses the cached response during recovery of an unverified recording", async () => {
+    const { resolveDemoSource } = await import("./demoSources");
+    const source = resolveDemoSource("test.rec", "no-store");
+    const signal = new AbortController().signal;
+    await source.load(signal);
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(source.url, {
+      signal,
+      cache: "no-store",
     });
   });
 

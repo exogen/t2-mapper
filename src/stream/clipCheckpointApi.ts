@@ -2,13 +2,43 @@ import type { ClipView } from "../../relay/clipTypes";
 import { appApiBaseUrl } from "../account/authClient";
 import { createLogger } from "../logger";
 import { ClipApiError, readClipResponse } from "./clipApi";
-import { DEMO_CHECKPOINT_VERSION, demoSha256 } from "./demoCheckpoints";
+import { DEMO_CHECKPOINT_VERSION } from "./demoCheckpoints";
+import { cachedDemoSha256 } from "./demoSourceIdentity";
+
+export class ClipSourceError extends Error {
+  readonly reason: "interrupted" | "mismatch";
+  constructor(reason: "interrupted" | "mismatch") {
+    super(
+      reason === "interrupted"
+        ? "The source demo download was interrupted. Please retry the download."
+        : "The downloaded recording could not be verified. Please retry the download.",
+    );
+    this.reason = reason;
+  }
+}
+
+/** Both checkpoint restoration and normal seeking require these exact bytes. */
+export async function verifyClipSource(
+  clip: ClipView,
+  buffer: ArrayBuffer,
+  signal: AbortSignal,
+): Promise<void> {
+  signal.throwIfAborted();
+  if (!clip.sourceSha256)
+    throw new Error(
+      "Could not verify the clip’s source recording. Please try again.",
+    );
+  const actual = await cachedDemoSha256(buffer);
+  signal.throwIfAborted();
+  if (actual !== clip.sourceSha256) throw new ClipSourceError("mismatch");
+}
 
 export async function readClipCheckpoint(
   clip: ClipView,
   buffer: ArrayBuffer,
   signal: AbortSignal,
 ): Promise<{ text: string; etag: string | null } | null> {
+  await verifyClipSource(clip, buffer, signal);
   try {
     const response = await fetch(new URL(clip.checkpointUrl, appApiBaseUrl), {
       signal: AbortSignal.any([signal, AbortSignal.timeout(12_000)]),
@@ -30,7 +60,6 @@ export async function readClipCheckpoint(
     )
       throw cause;
   }
-  await recoverClipCheckpoint(clip, buffer, null, signal);
   return null;
 }
 
@@ -43,13 +72,7 @@ export async function recoverClipCheckpoint(
   etag: string | null,
   signal: AbortSignal,
 ): Promise<void> {
-  if (!clip.sourceSha256)
-    throw new Error(
-      "Could not verify the clip’s source recording. Please try again.",
-    );
-  if ((await demoSha256(buffer)) !== clip.sourceSha256)
-    throw new Error("The downloaded recording does not match this clip.");
-  signal.throwIfAborted();
+  await verifyClipSource(clip, buffer, signal);
   if (!etag) return;
   const url = new URL(clip.checkpointUrl, appApiBaseUrl);
   url.searchParams.set("rejected", etag);
