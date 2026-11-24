@@ -2,6 +2,7 @@ import { FileLoader, Texture } from "three";
 import { estimateDecodedImageBytes } from "../diagnostics/resourceEstimates";
 import { registerMetricSource } from "../diagnostics/resourceMetricRegistry";
 import { createLogger } from "../logger";
+import { markTextureSamplerUpdate } from "../textureUtils";
 import { createImageLoadingManager, loadQueuedImage } from "./imageLoading";
 import { PendingRequests } from "./pendingRequests";
 import { observeFailedBitmapTexture } from "./bitmapSourceRecovery";
@@ -146,7 +147,7 @@ export function loadBitmapTextureInstance(
         texture.removeEventListener("dispose", markDisposed);
         if (disposed) return;
         texture.source = loaded.source;
-        texture.needsUpdate = true;
+        markTextureSamplerUpdate(texture);
       },
       (failedUrl) => {
         if (!disposed && nextFallback < fallbackUrls.length) {

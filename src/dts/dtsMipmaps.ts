@@ -54,4 +54,6 @@ export function installDTSZeroBorderMipmaps(texture: Texture): void {
     texture.generateMipmaps = false;
     texture.needsUpdate = true;
   };
+  // Configuring a cached bitmap still has to trigger the hook on first use.
+  if (texture.image) texture.needsUpdate = true;
 }

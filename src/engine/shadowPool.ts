@@ -11,9 +11,18 @@ export function installShadowPool(engine: GameEngine): () => void {
   const runtime = new ShadowPoolRuntime();
   return combineCleanups(
     () => runtime.dispose(),
-    engine.withHost(({ scene }) => {
+    engine.withHost(({ scene, renderer }) => {
+      const restore = () => runtime.invalidateAtlases();
+      restore();
+      renderer.domElement.addEventListener("webglcontextrestored", restore);
       scene.add(runtime.decals);
-      return () => scene.remove(runtime.decals);
+      return () => {
+        renderer.domElement.removeEventListener(
+          "webglcontextrestored",
+          restore,
+        );
+        scene.remove(runtime.decals);
+      };
     }),
     engine.scheduler.add(FramePriority.ShadowAtlas, ({ renderer }) =>
       runtime.renderPending(renderer),

@@ -20,6 +20,7 @@ import {
 } from "three";
 import { audioToUrl, loadDetailMapList, textureToUrl } from "../loaders";
 import { loadBitmapTexture } from "../assets/bitmapTextures";
+import { markTextureSamplerUpdate } from "../textureUtils";
 import { threeToTorque, torqueVecToThree } from "../scene/coordinates";
 import { engineStore, worldDeltaSec } from "../state/engineStore";
 import { gameEntityStore, selectSkyData } from "../state/gameEntityStore";
@@ -281,7 +282,7 @@ export function createPrecipitationView(
       const shared = loadBitmapTexture(url, (loaded) => {
         if (disposed || token !== textureToken) return;
         instance.source = loaded.source;
-        instance.needsUpdate = true;
+        markTextureSamplerUpdate(instance);
         quadMaterial.uniforms.weatherTexture.value = instance;
         engine.invalidate();
       });

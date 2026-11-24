@@ -113,7 +113,11 @@ const response = () =>
 const recording = (name: string) =>
   ({ source: "demo", recorderName: name }) as StreamRecording;
 
-function progressiveDownload(renderable = true, headers?: HeadersInit) {
+function progressiveDownload(
+  renderable = true,
+  headers?: HeadersInit,
+  signal?: AbortSignal,
+) {
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   const body = new ReadableStream<Uint8Array>({
     start(value) {
@@ -136,17 +140,22 @@ function progressiveDownload(renderable = true, headers?: HeadersInit) {
   } as unknown as StreamRecording;
   mocks.createFromParser.mockReturnValue(demo);
   mocks.indexCheckpoints.mockResolvedValue({ ticks: [20] });
+  const downloadUrl = signal
+    ? "https://relay.example/demo-download/tribesforever/22945"
+    : "https://demos.example/progressive.rec";
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url) => {
       const path = String(url);
-      if (path.endsWith(".rec")) return new Response(body, { headers });
+      if (path === downloadUrl) return new Response(body, { headers });
       if (path.endsWith(".checkpoints.json"))
         return new Response("encoded sidecar");
       return new Response(null, { status: 404 });
     }),
   );
-  const loading = loadDemoUrl("https://demos.example/progressive.rec");
+  const loading = signal
+    ? loadDemoReference("tribesforever:22945", { signal })
+    : loadDemoUrl(downloadUrl);
   controller.enqueue(new Uint8Array([1, 2]));
   return { demo, controller, loading };
 }
@@ -344,6 +353,27 @@ describe("demo loads during navigation", () => {
       await vi.waitFor(() => expect(mocks.scan).toHaveBeenCalledOnce());
     },
   );
+
+  it("keeps an installed progressive prefix when its recovery is canceled", async () => {
+    const controller = new AbortController();
+    const { demo, loading } = progressiveDownload(
+      true,
+      undefined,
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(mocks.current).toBe(demo));
+    controller.abort();
+    await expect(loading).rejects.toMatchObject({ name: "AbortError" });
+    expect(mocks.current).toBe(demo);
+    expect(mocks.downloadStatus).toHaveBeenCalledExactlyOnceWith(
+      demo,
+      "interrupted",
+    );
+    expect(demoLoadStore.getState()).toMatchObject({
+      phase: "idle",
+      error: null,
+    });
+  });
 
   it("ejects a progressive download without finalizing or retaining its prefix", async () => {
     const { demo, loading } = progressiveDownload();
@@ -1271,22 +1301,66 @@ describe("demo loads during navigation", () => {
     });
   });
 
-  it("rejects an owned recovery download superseded by a newer load", async () => {
+  it("settles a canceled recovery before installation and permits a retry", async () => {
     const pending = deferred<Response>();
     vi.stubGlobal(
       "fetch",
-      vi.fn(() => pending.promise),
+      vi
+        .fn()
+        .mockReturnValueOnce(pending.promise)
+        .mockResolvedValue(response()),
     );
+    const controller = new AbortController();
     const downloading = loadDemoReference("tribesforever:22945", {
-      signal: new AbortController().signal,
+      signal: controller.signal,
     });
-    const replacement = recording("replacement");
-    mocks.parse.mockResolvedValueOnce(replacement);
-    await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+    expect(demoLoadStore.getState().phase).toBe("downloading");
+    controller.abort();
+    expect(demoLoadStore.getState()).toMatchObject({
+      requestedDemo: "tribesforever:22945",
+      phase: "error",
+      error: "The demo download was canceled. Please retry.",
+    });
     pending.resolve(response());
     await expect(downloading).rejects.toMatchObject({ name: "AbortError" });
-    expect(mocks.current).toBe(replacement);
+    expect(mocks.current).toBeNull();
+    const restored = recording("retried");
+    mocks.parse.mockResolvedValueOnce(restored);
+    await loadDemoReference("tribesforever:22945");
+    expect(demoLoadStore.getState().phase).toBe("idle");
+    expect(mocks.current).toBe(restored);
   });
+
+  it.each([false, true])(
+    "rejects a superseded recovery and leaves the newer load alone (abort signal: %s)",
+    async (abort) => {
+      const pending = deferred<Response>();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(() => pending.promise),
+      );
+      const controller = new AbortController();
+      const downloading = loadDemoReference("tribesforever:22945", {
+        signal: controller.signal,
+      });
+      const pendingFile = deferred<ArrayBuffer>();
+      const replacement = recording("replacement");
+      mocks.parse.mockResolvedValueOnce(replacement);
+      const reading = loadDemoFile({
+        arrayBuffer: () => pendingFile.promise,
+      } as File);
+      if (abort) controller.abort();
+      expect(demoLoadStore.getState()).toMatchObject({
+        phase: "parsing",
+        error: null,
+      });
+      pending.resolve(response());
+      await expect(downloading).rejects.toMatchObject({ name: "AbortError" });
+      pendingFile.resolve(buffer);
+      await reading;
+      expect(mocks.current).toBe(replacement);
+    },
+  );
 
   it("publishes new request intent and clears the previous request's error atomically", async () => {
     demoLoadStore.setState({

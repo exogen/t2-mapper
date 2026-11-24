@@ -334,6 +334,13 @@ export class DTSAnimatedInstancePool {
     this.collecting = false;
     this.lists.restore();
   }
+
+  invalidateSkinUploads(): void {
+    for (const bucket of this.buckets.values())
+      for (const pages of bucket.pages.values())
+        for (const draw of pages) draw.invalidateSkinUploads();
+  }
+
   dispose(): void {
     this.restore();
     for (const bucket of this.buckets.values()) this.disposeBucket(bucket);
@@ -393,6 +400,8 @@ export function installDTSAnimatedInstances(
     pool.restore();
     after.apply(this, args);
   };
+  const restoreSkins = () => pool.invalidateSkinUploads();
+  renderer.domElement.addEventListener("webglcontextrestored", restoreSkins);
   scene.add(pool.root);
   scene.onBeforeRender = prepare;
   scene.onAfterRender = restore;
@@ -401,6 +410,10 @@ export function installDTSAnimatedInstances(
     dispose() {
       if (disposed) return;
       disposed = true;
+      renderer.domElement.removeEventListener(
+        "webglcontextrestored",
+        restoreSkins,
+      );
       if (scene.onBeforeRender === prepare) scene.onBeforeRender = before;
       if (scene.onAfterRender === restore) scene.onAfterRender = after;
       pool.dispose();
@@ -466,6 +479,11 @@ class AnimatedDraw {
     this.sources.length = 0;
     this.activeSkins.clear();
     this.memory.setActive(false);
+  }
+
+  /** The texture array has GPU-only contents, independent of source versions. */
+  invalidateSkinUploads(): void {
+    for (const entry of this.skinEntries.values()) entry.version = -1;
   }
 
   constructor(
@@ -649,7 +667,7 @@ class AnimatedDraw {
       this.skins.value = array;
       this.skinTextureBytes = estimateTextureBytes(array) ?? 0;
       this.updateMemory();
-      for (const existing of this.skinEntries.values()) existing.version = -1;
+      this.invalidateSkinUploads();
     }
     // Native GPU texture copies preserve RGB under zero alpha, which a canvas
     // readback would destroy. No image resampling or CPU pixel/mipmap copies.

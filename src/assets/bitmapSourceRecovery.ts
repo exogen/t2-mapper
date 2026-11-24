@@ -1,4 +1,5 @@
 import type { Texture } from "three";
+import { markTextureSamplerUpdate } from "../textureUtils";
 
 type BitmapSource = Texture["source"];
 
@@ -66,6 +67,6 @@ export function repairBitmapSource(
     // Preserve samplers retargeted to a skin/fallback since the failed load.
     if (!texture || texture.source !== source) continue;
     texture.source = loaded.source;
-    texture.needsUpdate = true;
+    markTextureSamplerUpdate(texture);
   }
 }

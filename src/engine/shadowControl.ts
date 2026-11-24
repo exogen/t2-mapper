@@ -13,11 +13,16 @@ export function registerShadowRenderer(gl: WebGLRenderer | null): () => void {
   const owner = {};
   registration = owner;
   renderer = gl;
+  const restore = () => {
+    if (gl && registration === owner) gl.shadowMap.needsUpdate = true;
+  };
   if (gl) {
     gl.shadowMap.autoUpdate = false;
-    gl.shadowMap.needsUpdate = true;
+    restore();
+    gl.domElement.addEventListener("webglcontextrestored", restore);
   }
   return () => {
+    gl?.domElement.removeEventListener("webglcontextrestored", restore);
     if (registration !== owner) return;
     registration = undefined;
     renderer = null;

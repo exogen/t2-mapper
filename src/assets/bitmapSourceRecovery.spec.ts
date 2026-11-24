@@ -17,6 +17,7 @@ it("repairs independent failed samplers and their upload versions without changi
   for (const texture of [model, first, second])
     observeFailedBitmapTexture(texture);
   const loaded = new Texture({ width: 16, height: 16 });
+  loaded.needsUpdate = true;
   const oldSource = model.source;
   repairBitmapSource(oldSource, loaded);
   for (const texture of [model, first, second]) {
@@ -25,6 +26,8 @@ it("repairs independent failed samplers and their upload versions without changi
     expect(texture.version).toBeGreaterThan(0);
   }
   expect(oldSource.data).toBe(loaded.image);
+  expect(oldSource.version).toBe(1);
+  expect(loaded.source.version).toBe(1);
   expect(first.repeat.toArray()).toEqual([3, 4]);
   expect(first.anisotropy).toBe(8);
   expect(first.colorSpace).toBe(SRGBColorSpace);

@@ -33,8 +33,13 @@ const _slotByIndexScratch: Array<SoundSlot | undefined> = new Array(
   MAX_SOUND_SLOTS,
 ).fill(undefined);
 
+interface PendingSlotLoad {
+  unsubscribe?: () => void;
+}
+
 interface SlotState {
   sound: PositionalAudio | null;
+  pending?: PendingSlotLoad;
   profileId: number;
   revision: number;
   /** Remember consumption separately from the lifetime of the audio node. */
@@ -43,16 +48,21 @@ interface SlotState {
   gen: number;
 }
 
-interface ProfileBuffer {
+interface SlotProfile {
   profile: ResolvedAudioProfile;
-  buffer: AudioBuffer | null;
-  loading: boolean;
+  url: string;
 }
 
-function stopSlotSound(slot: SlotState | null): void {
-  if (!slot?.sound) return;
-  stopAndDetachSound(slot.sound);
-  slot.sound = null;
+function stopSlot(slot: SlotState | null): void {
+  if (!slot) return;
+  slot.pending?.unsubscribe?.();
+  slot.pending = undefined;
+  const sound = slot.sound;
+  if (sound) {
+    slot.sound = null;
+    stopAndDetachSound(sound);
+    sound.gain.disconnect();
+  }
 }
 
 /**
@@ -68,8 +78,11 @@ export function createEntitySoundSlots(
     { length: MAX_SOUND_SLOTS },
     () => null,
   );
-  let profileCache = new Map<number, ProfileBuffer>();
+  // Cache only datablock metadata per model. Idle slots do not own PCM.
+  const profiles = new Map<number, SlotProfile | null>();
   let stream = engineStore.getState().playback.recording?.streamingPlayback;
+  let streamRevision = stream?.playbackRevision;
+  let disposed = false;
 
   // Turning audio off must silence loops that are already playing — the
   // frame callbacks may not run while the canvas is inactive.
@@ -79,30 +92,131 @@ export function createEntitySoundSlots(
     (audioEnabled) => {
       if (audioEnabled) return;
       for (const slot of slots) {
-        stopSlotSound(slot);
+        stopSlot(slot);
         if (slot) slot.handled = true;
       }
     },
   );
 
+  type Transport = ReturnType<typeof engineStore.getState>["playback"];
+  const suppressOneShot = (activation: SoundSlot, transport: Transport) =>
+    !audioContextRunning(audioListener) ||
+    streamClock.time - activation.changedAtSec > MAX_ONE_SHOT_AGE_SEC ||
+    // A seek destination may contain latched state, even on a new model.
+    (transport.recording?.source === "demo" &&
+      transport.seekTime > 0 &&
+      streamTimeToTick(activation.changedAtSec) <=
+        streamTimeToTick(transport.seekTime));
+
+  function startSlot(
+    slot: SlotState,
+    profile: ResolvedAudioProfile,
+    buffer: AudioBuffer,
+  ) {
+    const sound = createPositionalAudio(audioListener, profile);
+    sound.setBuffer(buffer);
+    sound.setLoop(profile.isLooping);
+    sound.setPlaybackRate(getEffectiveSoundRate());
+    const baseOnEnded = sound.onEnded.bind(sound);
+    sound.onEnded = () => {
+      baseOnEnded();
+      if (slot.sound === sound) stopSlot(slot);
+    };
+    parentObject.add(sound);
+    slot.sound = sound;
+    slot.handled = true;
+    try {
+      sound.play();
+      trackSound(sound);
+    } catch {
+      stopSlot(slot);
+    }
+  }
+
+  function loadSlot(
+    index: number,
+    slot: SlotState,
+    { profile, url }: SlotProfile,
+    transport: Transport,
+  ): void {
+    const { recording, seekNonce } = transport;
+    const ownerStream = stream;
+    const revision = streamRevision;
+    const worldGeneration = ownerStream?.worldGeneration;
+    const generation = slot.gen;
+    const pending: PendingSlotLoad = {};
+    slot.pending = pending;
+    const settle = () => {
+      if (slot.pending !== pending) return false;
+      slot.pending = undefined;
+      return true;
+    };
+    const onError = () => {
+      if (settle() && !profile.isLooping) slot.handled = true;
+    };
+    try {
+      const unsubscribe = getCachedAudioBuffer(
+        url,
+        audioLoader,
+        (buffer) => {
+          if (!settle() || disposed) return;
+          const latest = engineStore.getState().playback;
+          if (
+            latest.recording !== recording ||
+            latest.recording?.streamingPlayback !== ownerStream ||
+            ownerStream?.playbackRevision !== revision ||
+            ownerStream?.worldGeneration !== worldGeneration ||
+            latest.seekNonce !== seekNonce ||
+            latest.status !== "playing" ||
+            getSoundGeneration() !== generation ||
+            !settingsStore.getState().audioEnabled
+          )
+            return;
+          const activation = read()?.soundSlots?.find((s) => s.index === index);
+          if (
+            !activation?.playing ||
+            activation.profileId !== slot.profileId ||
+            activation.revision !== slot.revision
+          )
+            return;
+          if (!profile.isLooping && suppressOneShot(activation, latest)) {
+            slot.handled = true;
+            return;
+          }
+          startSlot(slot, profile, buffer);
+        },
+        onError,
+      );
+      if (slot.pending === pending) pending.unsubscribe = unsubscribe;
+      else unsubscribe?.();
+    } catch {
+      onError();
+    }
+  }
+
   function update(): void {
+    if (disposed) return;
     const soundSlots = read()?.soundSlots;
     const audioEnabled = settingsStore.getState().audioEnabled;
     const playback = engineStore.getState().playback;
     const nextStream = playback.recording?.streamingPlayback;
     const isPlaying = playback.status === "playing";
     const gen = getSoundGeneration();
-    if (nextStream !== stream) {
-      for (const slot of slots) stopSlotSound(slot);
+    if (
+      nextStream !== stream ||
+      nextStream?.playbackRevision !== streamRevision
+    ) {
+      for (const slot of slots) stopSlot(slot);
       slots.fill(null);
-      profileCache = new Map();
+      profiles.clear();
       stream = nextStream;
+      streamRevision = stream?.playbackRevision;
     }
 
     // Reconstruction isn't a sequence of audible gameplay events.
     if (playback.status === "seeking") {
       for (const slot of slots) {
-        stopSlotSound(slot);
+        stopSlot(slot);
         if (slot) slot.handled = true;
       }
       return;
@@ -118,119 +232,73 @@ export function createEntitySoundSlots(
 
     for (let i = 0; i < MAX_SOUND_SLOTS; i++) {
       const slotData = slotByIndex[i];
-      const shouldPlay = !!slotData?.playing && slotData.profileId != null;
-      const profileId = slotData?.profileId ?? -1;
+      const profileId = slotData?.profileId;
       let current = slots[i];
-      if (!shouldPlay) {
-        stopSlotSound(current);
+      if (!slotData?.playing || profileId == null) {
+        stopSlot(current);
         slots[i] = null;
         continue;
       }
       if (
         !current ||
-        current.revision !== slotData!.revision ||
+        current.revision !== slotData.revision ||
         current.profileId !== profileId
       ) {
-        stopSlotSound(current);
+        stopSlot(current);
         current = slots[i] = {
           sound: null,
           profileId,
-          revision: slotData!.revision,
+          revision: slotData.revision,
           handled: false,
           gen,
         };
       }
       if (current.gen !== gen || !audioEnabled || !isPlaying) {
-        stopSlotSound(current);
+        stopSlot(current);
         current.handled = true;
         current.gen = gen;
       }
-      if (!audioEnabled || !isPlaying || !audioListener || !audioLoader)
-        continue;
-      if (current.sound) continue;
+      if (!audioEnabled || !isPlaying) continue;
+      if (current.sound || current.pending) continue;
       if (current.handled && current.isLooping === false) continue;
 
-      const cache = profileCache;
-      let cached = cache.get(profileId);
-      if (!cached) {
+      let cached = profiles.get(profileId);
+      if (cached === undefined) {
         if (!stream) continue;
         const profile = resolveAudioProfile(
           profileId,
           stream.getDataBlockData.bind(stream),
         );
         if (!profile) continue;
-        cached = { profile, buffer: null, loading: false };
-        cache.set(profileId, cached);
+        try {
+          cached = { profile, url: audioToUrl(profile.filename) };
+        } catch {
+          // File not in manifest — don't retry it every frame.
+          cached = null;
+        }
+        profiles.set(profileId, cached);
       }
+      if (!cached) continue;
       const { profile } = cached;
       current.isLooping = profile.isLooping;
       if (!profile.isLooping) {
-        // Latched state at a seek target (including a newly mounted model)
-        // restores loops, but isn't another one-shot trigger.
-        if (
-          !audioContextRunning(audioListener) ||
-          streamClock.time - slotData!.changedAtSec > MAX_ONE_SHOT_AGE_SEC ||
-          (playback.recording?.source === "demo" &&
-            playback.seekTime > 0 &&
-            streamTimeToTick(slotData!.changedAtSec) <=
-              streamTimeToTick(playback.seekTime))
-        )
-          current.handled = true;
+        if (suppressOneShot(slotData, playback)) current.handled = true;
         if (current.handled) continue;
       }
-      if (!cached.buffer) {
-        if (cached.loading) continue;
-        cached.loading = true;
-        const entry = cached;
-        const slot = current;
-        try {
-          getCachedAudioBuffer(
-            audioToUrl(profile.filename),
-            audioLoader,
-            (buffer) => {
-              entry.buffer = buffer;
-              entry.loading = false;
-            },
-            () => {
-              cache.delete(profileId);
-              if (!profile.isLooping) slot.handled = true;
-            },
-          );
-        } catch {
-          // File not in manifest — don't retry it every frame.
-        }
-        continue;
-      }
-
-      const sound = createPositionalAudio(audioListener, profile);
-      sound.setBuffer(cached.buffer);
-      sound.setLoop(profile.isLooping);
-      sound.setPlaybackRate(getEffectiveSoundRate());
-      const baseOnEnded = sound.onEnded.bind(sound);
-      const slot = current;
-      sound.onEnded = () => {
-        baseOnEnded();
-        stopAndDetachSound(sound);
-        if (slot.sound === sound) slot.sound = null;
-      };
-      parentObject.add(sound);
-      current.sound = sound;
-      current.handled = true;
-      try {
-        sound.play();
-        trackSound(sound, 1);
-      } catch {
-        stopSlotSound(current);
-      }
+      loadSlot(i, current, cached, playback);
     }
   }
 
   return {
     update,
     dispose() {
+      if (disposed) return;
+      disposed = true;
       stopAudioReaction();
       // A model or listener replacement also retires its audio nodes.
-      for (const slot of slots) stopSlotSound(slot);
+      for (const slot of slots) stopSlot(slot);
+      slots.fill(null);
+      profiles.clear();
     },
   };
 }

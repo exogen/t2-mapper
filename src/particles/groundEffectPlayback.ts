@@ -49,9 +49,10 @@ export class GroundEffectPlayback {
       return;
     this.suspended = suspended;
     this.resetPending = true;
+    // Disabling active capture clears the queue as part of the transition.
+    if (suspended && !this.queue.capturing) this.queue.clear();
     this.connection.setCapturing(!suspended && this.terrain !== null);
     if (suspended) {
-      this.queue.clear();
       this.simulation.clear();
       this.onReset();
     }

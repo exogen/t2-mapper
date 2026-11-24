@@ -1,10 +1,11 @@
 import {
   AdditiveBlending,
-  BufferGeometry,
+  BufferAttribute,
   DataTexture,
   DoubleSide,
   DynamicDrawUsage,
-  Float32BufferAttribute,
+  InstancedBufferAttribute,
+  InstancedBufferGeometry,
   LinearMipmapNearestFilter,
   NoColorSpace,
   NormalBlending,
@@ -12,27 +13,34 @@ import {
   RGBAFormat,
   ShaderMaterial,
   Texture,
-  Uint16BufferAttribute,
   UnsignedByteType,
 } from "three";
 import { textureToUrl } from "../loaders";
 import { loadBitmapTexture } from "../assets/bitmapTextures";
 import { setupEffectTexture } from "../stream/playbackUtils";
+import { markTextureSamplerUpdate } from "../textureUtils";
 import { particleVertexShader, particleFragmentShader } from "./shaders";
 import type { EmitterInstance } from "./ParticleSystem";
 export interface ParticleBuffers {
   emitter: EmitterInstance;
-  geometry: BufferGeometry;
+  geometry: InstancedBufferGeometry;
   uploadedRevision?: number;
 }
 export const MAX_PARTICLES_PER_EMITTER = 256;
 const QUAD_CORNERS = new Float32Array([
   -0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5,
 ]);
+const QUAD_INDICES = new Uint16Array([0, 1, 2, 0, 2, 3]);
 
 // ── Texture cache ──
 
-const _textureCache = new Map<string, Texture>();
+interface ParticleTextureEntry {
+  texture: Texture;
+  retryAfter?: number;
+}
+
+const PARTICLE_TEXTURE_RETRY_MS = 5_000;
+const _textureCache = new Map<string, ParticleTextureEntry>();
 /** Set of textures whose image data has finished loading. */
 export const particleTexturesReady = new Set<Texture>();
 
@@ -65,88 +73,75 @@ function setupParticleTexture(tex: Texture): void {
 export function getParticleTexture(textureName: string): Texture {
   if (!textureName) return _placeholderTexture;
   const cached = _textureCache.get(textureName);
-  if (cached) return cached;
+  if (
+    cached &&
+    (cached.retryAfter === undefined || performance.now() < cached.retryAfter)
+  )
+    return cached.texture;
   try {
     const url = textureToUrl(textureName);
     // Share decoded pixels, not sampler/color-space settings with other effects.
-    const tex = new Texture();
-    setupParticleTexture(tex);
-    const source = loadBitmapTexture(url, (loaded) => {
-      tex.source = loaded.source;
-      tex.needsUpdate = true;
-      particleTexturesReady.add(tex);
-    });
+    const tex = cached?.texture ?? new Texture();
+    const entry: ParticleTextureEntry = cached ?? { texture: tex };
+    if (!cached) setupParticleTexture(tex);
+    entry.retryAfter = undefined;
+    const source = loadBitmapTexture(
+      url,
+      (loaded) => {
+        tex.source = loaded.source;
+        markTextureSamplerUpdate(tex);
+        particleTexturesReady.add(tex);
+      },
+      () => {
+        entry.retryAfter = performance.now() + PARTICLE_TEXTURE_RETRY_MS;
+      },
+    );
     tex.source = source.source;
-    _textureCache.set(textureName, tex);
+    _textureCache.set(textureName, entry);
     return tex;
   } catch {
+    if (cached) {
+      cached.retryAfter = performance.now() + PARTICLE_TEXTURE_RETRY_MS;
+      return cached.texture;
+    }
     return _placeholderTexture;
   }
 }
 
 // ── Geometry builder ──
 
+function particleAttribute(capacity: number, itemSize: number) {
+  return new InstancedBufferAttribute(
+    new Float32Array(capacity * itemSize),
+    itemSize,
+  ).setUsage(DynamicDrawUsage);
+}
+
 export function createParticleGeometry(
   maxParticles: number,
   interpolate = false,
-): BufferGeometry {
-  const geo = new BufferGeometry();
-  const vertCount = maxParticles * 4;
-  const indexCount = maxParticles * 6;
-
-  // Per-vertex quad corner offsets.
-  const corners = new Float32Array(vertCount * 2);
-  for (let i = 0; i < maxParticles; i++) {
-    corners.set(QUAD_CORNERS, i * 8);
-  }
-
-  // Index buffer.
-  const indices = new Uint16Array(indexCount);
-  for (let i = 0; i < maxParticles; i++) {
-    const vBase = i * 4;
-    const iBase = i * 6;
-    indices[iBase] = vBase;
-    indices[iBase + 1] = vBase + 1;
-    indices[iBase + 2] = vBase + 2;
-    indices[iBase + 3] = vBase;
-    indices[iBase + 4] = vBase + 2;
-    indices[iBase + 5] = vBase + 3;
-  }
-
-  // Per-particle attributes (4 verts share the same value).
-  const positions = new Float32Array(vertCount * 3);
-  const colors = new Float32Array(vertCount * 4);
-  const sizes = new Float32Array(vertCount);
-  const spins = new Float32Array(vertCount);
-  const orientDirs = new Float32Array(vertCount * 3);
-
-  geo.setIndex(new Uint16BufferAttribute(indices, 1));
-  geo.setAttribute("quadCorner", new Float32BufferAttribute(corners, 2));
-  geo.setAttribute("position", new Float32BufferAttribute(positions, 3));
-  geo.setAttribute("particleColor", new Float32BufferAttribute(colors, 4));
-  geo.setAttribute("particleSize", new Float32BufferAttribute(sizes, 1));
-  geo.setAttribute("particleSpin", new Float32BufferAttribute(spins, 1));
-  geo.setAttribute("orientDir", new Float32BufferAttribute(orientDirs, 3));
+): InstancedBufferGeometry {
+  const geo = new InstancedBufferGeometry();
+  // Share the immutable quad arrays. Each wrapper owns its own GPU buffer,
+  // since Three.js deletes a geometry's attributes when it is disposed.
+  geo.setIndex(new BufferAttribute(QUAD_INDICES, 1));
+  geo.setAttribute("quadCorner", new BufferAttribute(QUAD_CORNERS, 2));
+  // Three.js reads position when computing the depth for transparent sorting.
+  geo.setAttribute("position", particleAttribute(maxParticles, 3));
+  geo.setAttribute("particleColor", particleAttribute(maxParticles, 4));
+  geo.setAttribute("particleSize", particleAttribute(maxParticles, 1));
+  geo.setAttribute("particleSpin", particleAttribute(maxParticles, 1));
+  geo.setAttribute("orientDir", particleAttribute(maxParticles, 3));
   if (interpolate) {
-    geo.setAttribute(
-      "particleVelocity",
-      new Float32BufferAttribute(new Float32Array(vertCount * 3), 3),
-    );
+    geo.setAttribute("particleVelocity", particleAttribute(maxParticles, 3));
     geo.setAttribute(
       "particleAcceleration",
-      new Float32BufferAttribute(new Float32Array(vertCount * 3), 3),
+      particleAttribute(maxParticles, 3),
     );
-    geo.setAttribute(
-      "particleSpinRate",
-      new Float32BufferAttribute(new Float32Array(vertCount), 1),
-    );
+    geo.setAttribute("particleSpinRate", particleAttribute(maxParticles, 1));
   }
 
-  for (const [name, attribute] of Object.entries(geo.attributes)) {
-    if (name !== "quadCorner")
-      (attribute as Float32BufferAttribute).setUsage(DynamicDrawUsage);
-  }
-  geo.setDrawRange(0, 0);
+  geo.instanceCount = 0;
   return geo;
 }
 
@@ -184,17 +179,17 @@ export function syncBuffers(active: ParticleBuffers): void {
   active.uploadedRevision = active.emitter.revision;
   const particles = active.emitter.particles;
   const geo = active.geometry;
-  const posAttr = geo.getAttribute("position") as Float32BufferAttribute;
-  const colorAttr = geo.getAttribute("particleColor") as Float32BufferAttribute;
-  const sizeAttr = geo.getAttribute("particleSize") as Float32BufferAttribute;
-  const spinAttr = geo.getAttribute("particleSpin") as Float32BufferAttribute;
-  const orientAttr = geo.getAttribute("orientDir") as Float32BufferAttribute;
+  const posAttr = geo.getAttribute("position") as BufferAttribute;
+  const colorAttr = geo.getAttribute("particleColor") as BufferAttribute;
+  const sizeAttr = geo.getAttribute("particleSize") as BufferAttribute;
+  const spinAttr = geo.getAttribute("particleSpin") as BufferAttribute;
+  const orientAttr = geo.getAttribute("orientDir") as BufferAttribute;
   const velocity = geo.getAttribute("particleVelocity") as
-    Float32BufferAttribute | undefined;
+    BufferAttribute | undefined;
   const acceleration = geo.getAttribute("particleAcceleration") as
-    Float32BufferAttribute | undefined;
+    BufferAttribute | undefined;
   const spinRate = geo.getAttribute("particleSpinRate") as
-    Float32BufferAttribute | undefined;
+    BufferAttribute | undefined;
 
   const posArr = posAttr.array as Float32Array;
   const colArr = colorAttr.array as Float32Array;
@@ -202,8 +197,9 @@ export function syncBuffers(active: ParticleBuffers): void {
   const spinArr = spinAttr.array as Float32Array;
   const orientArr = orientAttr.array as Float32Array;
 
-  const count = Math.min(particles.length, active.emitter.maxParticles);
+  const count = Math.min(particles.length, posAttr.count);
   const useVelocity = active.emitter.data.orientOnVelocity;
+  const data = active.emitter.data.particles;
 
   for (let i = 0; i < count; i++) {
     const p = particles[i];
@@ -223,72 +219,55 @@ export function syncBuffers(active: ParticleBuffers): void {
     // not get automatic linear→sRGB output encoding, so linearizing here
     // would darken colors without compensation — matching V12's direct
     // gamma-space rendering.
-    const lr = p.r;
-    const lg = p.g;
-    const lb = p.b;
-    const la = p.a;
+    const ci = i * 4;
+    colArr[ci] = p.r;
+    colArr[ci + 1] = p.g;
+    colArr[ci + 2] = p.b;
+    colArr[ci + 3] = p.a;
 
-    // Write the same values to all 4 vertices of the quad.
-    for (let v = 0; v < 4; v++) {
-      const vi = i * 4 + v;
-      const pi = vi * 3;
-      posArr[pi] = tx;
-      posArr[pi + 1] = ty;
-      posArr[pi + 2] = tz;
+    const pi = i * 3;
+    posArr[pi] = tx;
+    posArr[pi + 1] = ty;
+    posArr[pi + 2] = tz;
+    orientArr[pi] = odx;
+    orientArr[pi + 1] = ody;
+    orientArr[pi + 2] = odz;
 
-      const ci = vi * 4;
-      colArr[ci] = lr;
-      colArr[ci + 1] = lg;
-      colArr[ci + 2] = lb;
-      colArr[ci + 3] = la;
-
-      const oi = vi * 3;
-      orientArr[oi] = odx;
-      orientArr[oi + 1] = ody;
-      orientArr[oi + 2] = odz;
-
-      sizeArr[vi] = p.size;
-      spinArr[vi] = p.currentSpin;
-      if (velocity && acceleration && spinRate) {
-        const data = active.emitter.data.particles;
-        velocity.setXYZ(vi, p.vel[1], p.vel[2], p.vel[0]);
-        acceleration.setXYZ(
-          vi,
-          p.acc[1] - p.vel[1] * data.dragCoefficient,
-          p.acc[2] -
-            p.vel[2] * data.dragCoefficient +
-            active.emitter.worldGravity * data.gravityCoefficient,
-          p.acc[0] - p.vel[0] * data.dragCoefficient,
-        );
-        spinRate.setX(vi, (p.spinSpeed * Math.PI) / 180);
-      }
+    sizeArr[i] = p.size;
+    spinArr[i] = p.currentSpin;
+    if (velocity && acceleration && spinRate) {
+      velocity.setXYZ(i, p.vel[1], p.vel[2], p.vel[0]);
+      acceleration.setXYZ(
+        i,
+        p.acc[1] - p.vel[1] * data.dragCoefficient,
+        p.acc[2] -
+          p.vel[2] * data.dragCoefficient +
+          active.emitter.worldGravity * data.gravityCoefficient,
+        p.acc[0] - p.vel[0] * data.dragCoefficient,
+      );
+      spinRate.setX(i, (p.spinSpeed * Math.PI) / 180);
     }
   }
 
-  // drawRange excludes dead quads, so only live particles need buffer writes.
-  const quads = count;
-  setPrefixUpdateRange(posAttr, quads * 4 * 3);
-  setPrefixUpdateRange(colorAttr, quads * 4 * 4);
-  setPrefixUpdateRange(sizeAttr, quads * 4);
-  setPrefixUpdateRange(spinAttr, quads * 4);
-  setPrefixUpdateRange(orientAttr, quads * 4 * 3);
+  setPrefixUpdateRange(posAttr, count);
+  setPrefixUpdateRange(colorAttr, count);
+  setPrefixUpdateRange(sizeAttr, count);
+  setPrefixUpdateRange(spinAttr, count);
+  setPrefixUpdateRange(orientAttr, count);
   if (velocity && acceleration && spinRate) {
-    setPrefixUpdateRange(velocity, quads * 12);
-    setPrefixUpdateRange(acceleration, quads * 12);
-    setPrefixUpdateRange(spinRate, quads * 4);
+    setPrefixUpdateRange(velocity, count);
+    setPrefixUpdateRange(acceleration, count);
+    setPrefixUpdateRange(spinRate, count);
   }
 
-  geo.setDrawRange(0, count * 6);
+  geo.instanceCount = count;
 }
 
-/** Mark only the first `floatCount` floats of the attribute for upload. */
-function setPrefixUpdateRange(
-  attr: Float32BufferAttribute,
-  floatCount: number,
-): void {
+/** Mark only the live instances for upload. */
+function setPrefixUpdateRange(attr: BufferAttribute, count: number): void {
   attr.clearUpdateRanges();
-  if (floatCount > 0) {
-    attr.addUpdateRange(0, floatCount);
+  if (count > 0) {
+    attr.addUpdateRange(0, count * attr.itemSize);
     attr.needsUpdate = true;
   }
 }

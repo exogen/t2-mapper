@@ -6,7 +6,7 @@ import {
   Scene,
   ShaderMaterial,
   Vector3,
-  type BufferGeometry,
+  type InstancedBufferGeometry,
 } from "three";
 import type { EmitterDataResolved } from "../particles/types";
 import type { ParticleEmissionDummyEntity } from "../state/gameEntityTypes";
@@ -71,7 +71,7 @@ vi.mock("../particles/particleRenderer", async (importOriginal) => {
   return { ...original, getParticleTexture: () => new Texture() };
 });
 
-type ParticleMesh = Mesh<BufferGeometry, ShaderMaterial>;
+type ParticleMesh = Mesh<InstancedBufferGeometry, ShaderMaterial>;
 
 function data(
   overrides: Partial<EmitterDataResolved> = {},
@@ -179,9 +179,9 @@ function harness() {
 function position(mesh: ParticleMesh, particle = 0): number[] {
   const attribute = mesh.geometry.getAttribute("position");
   return [
-    attribute.getX(particle * 4),
-    attribute.getY(particle * 4),
-    attribute.getZ(particle * 4),
+    attribute.getX(particle),
+    attribute.getY(particle),
+    attribute.getZ(particle),
   ];
 }
 
@@ -272,7 +272,7 @@ describe("standalone world emission", () => {
     w.frame();
     const mesh = w.meshes()[0];
     expect(mesh.parent).toBe(w.particles.group);
-    expect(mesh.geometry.drawRange.count).toBe(6);
+    expect(mesh.geometry.instanceCount).toBe(1);
     // 10 m/s ejection + 0.5 * 3 m/s driver velocity, for 100 ms.
     const result = position(mesh);
     expect(result[0]).toBeCloseTo(10 - 1.15);
@@ -324,8 +324,8 @@ describe("standalone world emission", () => {
     w.particles.add(new Group(), fast);
     w.frame();
     const [slowMesh, fastMesh] = w.meshes();
-    expect(slowMesh.geometry.drawRange.count).toBe(6);
-    expect(fastMesh.geometry.drawRange.count).toBe(12);
+    expect(slowMesh.geometry.instanceCount).toBe(1);
+    expect(fastMesh.geometry.instanceCount).toBe(2);
     expect(position(slowMesh)).toEqual([0, 1, 0]);
     expect(position(fastMesh)).toEqual([0, 1, 0]);
     expect(position(fastMesh, 1)).toEqual([0, 1, 0]);
@@ -340,13 +340,13 @@ describe("standalone world emission", () => {
     registration.update({ ...driver, timeMultiple: 2 });
     w.frame();
     expect(w.meshes()).toEqual([mesh]);
-    expect(mesh.geometry.drawRange.count).toBe(18);
+    expect(mesh.geometry.instanceCount).toBe(3);
     expect(position(mesh)).toEqual([0, 2, 0]);
     expect(position(mesh, 1)).toEqual([0, 1, 0]);
     registration.dispose(true);
     w.frame(0.8);
     // The original reaches its 1000 ms lifetime; the two later births are 900 ms old.
-    expect(mesh.geometry.drawRange.count).toBe(12);
+    expect(mesh.geometry.instanceCount).toBe(2);
     expect(position(mesh)).toEqual([0, 9, 0]);
     expect(position(mesh, 1)).toEqual([0, 9, 0]);
   });
@@ -358,17 +358,17 @@ describe("standalone world emission", () => {
     w.frame(0.01);
     const mesh = w.meshes()[0];
     const originalGeometry = mesh.geometry;
-    expect(originalGeometry.getAttribute("position").count / 4).toBe(256);
+    expect(originalGeometry.getAttribute("position").count).toBe(256);
     const disposed = vi.spyOn(originalGeometry, "dispose");
     registration.update({ ...driver, timeMultiple: 100 });
     w.frame(0.1);
     expect(w.meshes()).toEqual([mesh]);
     expect(mesh.geometry).not.toBe(originalGeometry);
     expect(disposed).toHaveBeenCalledOnce();
-    expect(mesh.geometry.drawRange.count / 6).toBe(1001);
-    expect(
-      mesh.geometry.getAttribute("position").count / 4,
-    ).toBeGreaterThanOrEqual(1001);
+    expect(mesh.geometry.instanceCount).toBe(1001);
+    expect(mesh.geometry.getAttribute("position").count).toBeGreaterThanOrEqual(
+      1001,
+    );
     expect(position(mesh)[1]).toBeCloseTo(1.1);
   });
 
@@ -380,10 +380,8 @@ describe("standalone world emission", () => {
     w.particles.add(new Group(), entity(haze));
     for (let i = 0; i < 40; i++) w.frame(0.1);
     const mesh = w.meshes()[0];
-    expect(mesh.geometry.drawRange.count / 6).toBeGreaterThan(1500);
-    expect(mesh.geometry.getAttribute("position").count / 4).toBeGreaterThan(
-      2000,
-    );
+    expect(mesh.geometry.instanceCount).toBeGreaterThan(1500);
+    expect(mesh.geometry.getAttribute("position").count).toBeGreaterThan(2000);
     const maximum = ambientParticleCapacity(haze, 100);
     expect(maximum).toBe(16383);
     expect(emissionTimeMultiple(-1)).toBe(0.01);
@@ -391,24 +389,24 @@ describe("standalone world emission", () => {
     expect(emissionTimeMultiple(NaN)).toBe(1);
   });
 
-  it("keeps saturated geometry below WebGL's reserved Uint16 restart index", () => {
+  it("draws up to the ambient particle cap with one indexed quad", () => {
     const w = world();
     const dense = entity(data({ ejectionPeriodMS: 1 }));
     dense.timeMultiple = 100;
     w.particles.add(new Group(), dense);
     w.frame(0.25);
     const mesh = w.meshes()[0];
-    expect(mesh.geometry.drawRange.count / 6).toBe(16383);
+    expect(mesh.geometry.instanceCount).toBe(16383);
     const indices = mesh.geometry.getIndex()!;
     expect(indices.array).toBeInstanceOf(Uint16Array);
-    expect(indices.getX(indices.count - 1)).toBeLessThan(65535);
+    expect(Array.from(indices.array)).toEqual([0, 1, 2, 0, 2, 3]);
   });
 
   it("animates exploration and honors demo pause, playback rate and server world pause", () => {
     const w = world();
     w.particles.add(new Group(), entity());
     w.frame();
-    expect(w.meshes()[0].geometry.drawRange.count).toBe(6);
+    expect(w.meshes()[0].geometry.instanceCount).toBe(1);
     test.playback.recording = { streamingPlayback: { worldGeneration: 0 } };
     test.playback.status = "playing";
     w.frame();
@@ -419,15 +417,15 @@ describe("standalone world emission", () => {
     expect(Array.from(mesh.geometry.getAttribute("position").array)).toEqual(
       initial,
     );
-    expect(mesh.geometry.drawRange.count).toBe(6);
+    expect(mesh.geometry.instanceCount).toBe(1);
     test.playback.status = "playing";
     test.playback.rate = 2;
     w.frame();
-    expect(mesh.geometry.drawRange.count).toBe(18);
+    expect(mesh.geometry.instanceCount).toBe(3);
     expect(position(mesh)).toEqual([0, 3, 0]);
     test.worldPaused = true;
     w.frame();
-    expect(mesh.geometry.drawRange.count).toBe(18);
+    expect(mesh.geometry.instanceCount).toBe(3);
     expect(position(mesh)).toEqual([0, 3, 0]);
   });
 
@@ -448,7 +446,7 @@ describe("standalone world emission", () => {
     w.frame();
     expect(w.meshes()).toHaveLength(1);
     expect(w.meshes()[0]).not.toBe(oldMesh);
-    expect(w.meshes()[0].geometry.drawRange.count).toBe(6);
+    expect(w.meshes()[0].geometry.instanceCount).toBe(1);
   });
 
   it("rebuilds ambient particles at a paused timestamp and after a paused seek", () => {
@@ -459,7 +457,7 @@ describe("standalone world emission", () => {
     w.particles.add(new Group(), driver);
     w.frame();
     const mesh = w.meshes()[0];
-    expect(mesh.geometry.drawRange.count).toBeGreaterThan(0);
+    expect(mesh.geometry.instanceCount).toBeGreaterThan(0);
     expect(position(mesh)[1]).toBeGreaterThan(0);
     const initial = Array.from(mesh.geometry.getAttribute("position").array);
     w.frame();
@@ -475,12 +473,12 @@ describe("standalone world emission", () => {
     w.frame();
     expect(w.meshes()).toHaveLength(1);
     expect(w.meshes()[0]).not.toBe(mesh);
-    expect(w.meshes()[0].geometry.drawRange.count).toBeGreaterThan(0);
+    expect(w.meshes()[0].geometry.instanceCount).toBeGreaterThan(0);
     // A later emitter configuration begins a new lifetime at the edit.
     driver.particleEmitter = data({ lifetimeMS: 100 });
     w.frame();
     expect(w.meshes()).toHaveLength(2);
-    expect(w.meshes()[1].geometry.drawRange.count).toBe(0);
+    expect(w.meshes()[1].geometry.instanceCount).toBe(0);
   });
 
   it("does not restart a finite effect that expired before the paused timestamp", () => {
@@ -506,12 +504,12 @@ describe("standalone world emission", () => {
     driver.particleEmitter = data({ ejectionVelocity: 20 });
     w.frame();
     expect(w.meshes()).toHaveLength(2);
-    expect(oldMesh.geometry.drawRange.count).toBe(6);
+    expect(oldMesh.geometry.instanceCount).toBe(1);
     const newMesh = w.meshes()[1];
-    expect(newMesh.geometry.drawRange.count).toBe(6);
+    expect(newMesh.geometry.instanceCount).toBe(1);
     w.frame();
-    expect(oldMesh.geometry.drawRange.count).toBe(6);
-    expect(newMesh.geometry.drawRange.count).toBe(12);
+    expect(oldMesh.geometry.instanceCount).toBe(1);
+    expect(newMesh.geometry.instanceCount).toBe(2);
     expect(position(oldMesh)).toEqual([0, 3, 0]);
     expect(position(newMesh)).toEqual([0, 4, 0]);
   });
@@ -526,7 +524,7 @@ describe("standalone world emission", () => {
     registration.dispose(true);
     w.frame();
     expect(w.meshes()).toEqual([mesh]);
-    expect(mesh.geometry.drawRange.count).toBe(6);
+    expect(mesh.geometry.instanceCount).toBe(1);
     expect(position(mesh)).toEqual([0, 2, 0]);
     w.frame(0.8);
     expect(w.meshes()).toHaveLength(0);
@@ -599,7 +597,7 @@ describe("standalone world emission", () => {
     driver.particleEmitter = data();
     w.frame();
     expect(w.meshes()).toHaveLength(1);
-    expect(w.meshes()[0].geometry.drawRange.count).toBe(6);
+    expect(w.meshes()[0].geometry.instanceCount).toBe(1);
   });
 
   it("discards old-world tails on mission changes and fully cleans up on host disconnect", () => {
@@ -629,7 +627,7 @@ describe("standalone world emission", () => {
     w.frame();
     expect(w.particles.group.parent).toBe(w.scene);
     expect(w.meshes()).toHaveLength(1);
-    expect(w.meshes()[0].geometry.drawRange.count).toBe(6);
+    expect(w.meshes()[0].geometry.instanceCount).toBe(1);
     w.uninstall();
     w.reconnect();
     w.frame();

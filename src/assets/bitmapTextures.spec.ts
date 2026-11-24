@@ -6,6 +6,7 @@ import {
   loadBitmapTextureInstance,
 } from "./bitmapTextures";
 import { readResourceMetrics } from "../diagnostics/resourceMetricRegistry";
+import { setupTexture } from "../textureUtils";
 
 vi.mock("../logger", () => ({
   createLogger: () => ({ error: vi.fn() }),
@@ -113,6 +114,8 @@ describe("shared shape texture images", () => {
     expect(loaded).toHaveBeenCalledExactlyOnceWith(original);
     expect(a.image).toBe(image);
     expect(b.image).toBe(image);
+    // Decoding bumps the pixel revision once, regardless of sampler count.
+    expect(original.source.version).toBe(1);
     expect(a.version).toBeGreaterThan(0);
     expect(b.version).toBeGreaterThan(0);
     expect(a.repeat.toArray()).toEqual([3, 4]);
@@ -121,7 +124,13 @@ describe("shared shape texture images", () => {
     const cached = vi.fn();
     expect(loadBitmapTexture(url(), cached)).toBe(original);
     expect(cached).toHaveBeenCalledExactlyOnceWith(original);
-    expect(loadBitmapTextureInstance(url()).source).toBe(original.source);
+    const cachedSampler = loadBitmapTextureInstance(url());
+    expect(cachedSampler.source).toBe(original.source);
+    const samplerVersion = cachedSampler.version;
+    expect(samplerVersion).toBeGreaterThan(0);
+    setupTexture(cachedSampler, { disableMipmaps: true });
+    expect(cachedSampler.version).toBe(samplerVersion + 1);
+    expect(original.source.version).toBe(1);
     expect(fetchImage).toHaveBeenCalledOnce();
     expect(decodeImage).toHaveBeenCalledOnce();
   });

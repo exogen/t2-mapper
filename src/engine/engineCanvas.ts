@@ -107,6 +107,7 @@ export function mountEngineCanvas(
   scene.matrixAutoUpdate = false;
 
   let disposed = false;
+  let contextLost = false;
   let raf = 0;
   let pendingFrames = 0;
   let lastLimitedFrame = 0;
@@ -132,13 +133,16 @@ export function mountEngineCanvas(
     });
     engine.runFrame(frame);
     flushTransformChanges(scene);
-    // The command circuit can switch cameras mid-frame.
-    const camera = engine.cameras.active;
-    setDTSCullCamera(camera);
-    try {
-      if (!effects.render(camera, frame.delta)) renderer.render(scene, camera);
-    } finally {
-      setDTSCullCamera(null);
+    if (!contextLost) {
+      // The command circuit can switch cameras mid-frame.
+      const camera = engine.cameras.active;
+      setDTSCullCamera(camera);
+      try {
+        if (!effects.render(camera, frame.delta))
+          renderer.render(scene, camera);
+      } finally {
+        setDTSCullCamera(null);
+      }
     }
     engine.endFrame();
   };
@@ -218,6 +222,15 @@ export function mountEngineCanvas(
   );
 
   const releaseShadowRenderer = registerShadowRenderer(renderer);
+  const loseContext = () => {
+    contextLost = true;
+  };
+  const restoreContext = () => {
+    contextLost = false;
+    invalidate();
+  };
+  canvas.addEventListener("webglcontextlost", loseContext);
+  canvas.addEventListener("webglcontextrestored", restoreContext);
   const disconnect = engine.connect({
     renderer,
     scene,
@@ -256,6 +269,9 @@ export function mountEngineCanvas(
         () => flushTransformChanges(scene),
         disconnect,
         releaseShadowRenderer,
+        () => canvas.removeEventListener("webglcontextlost", loseContext),
+        () =>
+          canvas.removeEventListener("webglcontextrestored", restoreContext),
         stopDiagnostics,
         () => renderer.dispose(),
         () => renderer.forceContextLoss(),

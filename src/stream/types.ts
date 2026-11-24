@@ -762,6 +762,7 @@ export interface StreamSnapshot {
   missionReadySec: number;
   exhausted: boolean;
   camera: StreamCamera | null;
+  /** Read-only playback state. Unchanged map ghosts may share rows across ticks. */
   entities: StreamEntity[];
   /** Demo-only aim endpoints from the preceding tick, keyed by body lifetime ID. */
   previousPlayerViews?: ReadonlyMap<string, PlayerTickView>;

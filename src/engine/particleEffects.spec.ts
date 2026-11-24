@@ -6,6 +6,7 @@ import {
   ShaderMaterial,
   Sprite,
   type Group,
+  type InstancedBufferGeometry,
 } from "three";
 import type { StreamSnapshot, StreamingPlayback } from "../stream/types";
 import { createParticleEffects } from "./particleEffects";
@@ -111,6 +112,7 @@ const initialSnapshot = {
 const snapshotRef = { current: initialSnapshot };
 let root: Group;
 let effects: ReturnType<typeof createParticleEffects> | null = null;
+type ParticleMesh = Mesh<InstancedBufferGeometry, ShaderMaterial>;
 
 function frame(elapsedSec = test.delta) {
   test.now += elapsedSec * 1000;
@@ -144,7 +146,7 @@ function spawnExplosion() {
   const particles = root.children.find(
     (child) =>
       child instanceof Mesh && child.material instanceof ShaderMaterial,
-  ) as Mesh<import("three").BufferGeometry, ShaderMaterial>;
+  ) as ParticleMesh;
   const textureDisposed = vi.spyOn(label.material.map!, "dispose");
   const sharedGeometryDisposed = vi.spyOn(sphere.geometry, "dispose");
   return { label, sphere, particles, textureDisposed, sharedGeometryDisposed };
@@ -197,13 +199,12 @@ it("spreads explosion bursts over their authored particle radius", () => {
   ]);
 });
 
-it("reports owned slots and exact particle geometry arrays, then unregisters on disposal", () => {
+it("counts owned particle arrays without shared quad data, then unregisters on disposal", () => {
   const { particles } = spawnExplosion();
   const geometry = particles.geometry;
-  const bytes = Object.values(geometry.attributes).reduce(
-    (total, attribute) => total + attribute.array.byteLength,
-    geometry.index?.array.byteLength ?? 0,
-  );
+  const bytes = Object.entries(geometry.attributes)
+    .filter(([name]) => name !== "quadCorner")
+    .reduce((total, [, attribute]) => total + attribute.array.byteLength, 0);
   const metrics = readResourceMetrics();
   expect(metrics).toMatchObject({
     "streamParticleEffects.activeEmitters": 1,
@@ -313,12 +314,12 @@ it("starts a splash on its stream tick and rebuilds its particles after a seek",
   // The same snapshot is still current when the render clock reaches it.
   streamClock.time = 1.064;
   frame();
-  const particles = effects.group.children[0] as Mesh;
-  expect(particles.geometry.drawRange.count).toBeGreaterThan(0);
+  const particles = effects.group.children[0] as ParticleMesh;
+  expect(particles.geometry.instanceCount).toBeGreaterThan(0);
   const positions = particles.geometry.getAttribute("position").array.slice();
   test.transport.seekNonce++;
   frame();
-  const restored = effects.group.children[0] as Mesh;
+  const restored = effects.group.children[0] as ParticleMesh;
   expect(particles.parent).toBeNull();
   expect(restored.geometry.getAttribute("position").array).toEqual(positions);
   expect(effects.group.children).toHaveLength(1);
@@ -353,19 +354,19 @@ it("emits air and bubble trails only in their own medium and resumes on exit", (
   };
   effects = createParticleEffects(engine, playback, snapshotRef);
   publish(false, 1);
-  const air = effects.group.children[0] as Mesh;
-  const dryCount = air.geometry.drawRange.count;
+  const air = effects.group.children[0] as ParticleMesh;
+  const dryCount = air.geometry.instanceCount;
   expect(dryCount).toBeGreaterThan(0);
 
   publish(true, -0.1);
-  const bubbles = effects.group.children[1] as Mesh;
-  const wetCount = bubbles.geometry.drawRange.count;
+  const bubbles = effects.group.children[1] as ParticleMesh;
+  const wetCount = bubbles.geometry.instanceCount;
   expect(wetCount).toBeGreaterThan(0);
-  expect(air.geometry.drawRange.count).toBe(dryCount);
+  expect(air.geometry.instanceCount).toBe(dryCount);
 
   publish(false, 0.1);
-  expect(air.geometry.drawRange.count).toBeGreaterThan(dryCount);
-  expect(bubbles.geometry.drawRange.count).toBe(wetCount);
+  expect(air.geometry.instanceCount).toBeGreaterThan(dryCount);
+  expect(bubbles.geometry.instanceCount).toBe(wetCount);
 });
 
 it("starts and moves trail particles at the interpolated projectile position, including after a seek", () => {
@@ -393,24 +394,24 @@ it("starts and moves trail particles at the interpolated projectile position, in
 
   streamRenderFrame.interpT = 0.25;
   frame();
-  const trail = effects.group.children[0] as Mesh;
+  const trail = effects.group.children[0] as ParticleMesh;
   const positions = trail.geometry.getAttribute("position");
-  expect(trail.geometry.drawRange.count).toBe(6);
+  expect(trail.geometry.instanceCount).toBe(1);
   expect(positions.getY(0)).toBeCloseTo(0.75);
 
   streamRenderFrame.interpT = 0.5;
   frame();
-  expect(trail.geometry.drawRange.count).toBe(12);
-  expect(positions.getY(4)).toBeCloseTo(0.5);
+  expect(trail.geometry.instanceCount).toBe(2);
+  expect(positions.getY(1)).toBeCloseTo(0.5);
 
   test.transport.seekNonce++;
   streamRenderFrame.interpT = 0.875;
   frame();
-  const restored = effects.group.children[0] as Mesh;
+  const restored = effects.group.children[0] as ParticleMesh;
   expect(trail.parent).toBeNull();
-  expect(restored.geometry.drawRange.count).toBe(0);
+  expect(restored.geometry.instanceCount).toBe(0);
   frame();
-  expect(restored.geometry.drawRange.count).toBe(6);
+  expect(restored.geometry.instanceCount).toBe(1);
   expect(restored.geometry.getAttribute("position").getY(0)).toBeCloseTo(0.125);
 });
 
@@ -444,14 +445,14 @@ it("emits a missile from its current render position back to its previous one", 
   streamRenderFrame.interpT = 0.25;
   effects = createParticleEffects(engine, playback, snapshotRef);
   frame();
-  const trail = effects.group.children[0] as Mesh;
+  const trail = effects.group.children[0] as ParticleMesh;
   const positions = trail.geometry.getAttribute("position");
 
   streamRenderFrame.interpT = 0.5;
   frame();
-  expect(trail.geometry.drawRange.count).toBe(12);
+  expect(trail.geometry.instanceCount).toBe(2);
   expect(positions.getZ(0)).toBeCloseTo(1);
-  expect(positions.getZ(4)).toBeCloseTo(1);
+  expect(positions.getZ(1)).toBeCloseTo(1);
 });
 
 it("holds forward-moving particles when playback time is frozen", () => {
@@ -473,16 +474,16 @@ it("holds forward-moving particles when playback time is frozen", () => {
   };
   effects = createParticleEffects(engine, playback, snapshotRef);
   frame();
-  const trail = effects.group.children[0] as Mesh;
+  const trail = effects.group.children[0] as ParticleMesh;
   const positions = trail.geometry.getAttribute("position");
   const initial = positions.getZ(0);
   expect(initial).toBeGreaterThan(0);
   for (let i = 0; i < 6; i++) frame(0);
-  expect(trail.geometry.drawRange.count).toBe(6);
+  expect(trail.geometry.instanceCount).toBe(1);
   expect(positions.getZ(0)).toBe(initial);
 
   frame();
-  expect(trail.geometry.drawRange.count).toBe(12);
+  expect(trail.geometry.instanceCount).toBe(2);
   expect(positions.getZ(0)).toBeGreaterThan(initial);
 });
 
@@ -524,28 +525,28 @@ it("emits each published trail tick once and warms retained ticks after a seek",
   publish(1, 0.008);
   effects = createParticleEffects(engine, playback, snapshotRef);
   frame();
-  const trail = effects.group.children[0] as Mesh;
+  const trail = effects.group.children[0] as ParticleMesh;
   expect(effects.group.children).toHaveLength(1);
-  expect(trail.geometry.drawRange.count).toBe(24);
+  expect(trail.geometry.instanceCount).toBe(4);
   const positions = trail.geometry.getAttribute("position");
-  expect(positions.getZ(12)).toBeCloseTo(4);
+  expect(positions.getZ(3)).toBeCloseTo(4);
   frame(0);
-  expect(trail.geometry.drawRange.count).toBe(24);
+  expect(trail.geometry.instanceCount).toBe(4);
 
   record(2);
   record(3);
   frame(0);
-  expect(trail.geometry.drawRange.count).toBe(24);
+  expect(trail.geometry.instanceCount).toBe(4);
   publish(3, 0.08);
   frame(0.072);
-  expect(trail.geometry.drawRange.count).toBe(72);
+  expect(trail.geometry.instanceCount).toBe(12);
 
   test.transport.seekNonce++;
   publish(2, 0.05);
   frame(0);
-  const restored = effects.group.children[0] as Mesh;
+  const restored = effects.group.children[0] as ParticleMesh;
   expect(trail.parent).toBeNull();
-  expect(restored.geometry.drawRange.count).toBe(48);
+  expect(restored.geometry.instanceCount).toBe(8);
 });
 
 it("starts bubbles at the previous rendered pose and ends at the current simulation pose", () => {
@@ -577,11 +578,11 @@ it("starts bubbles at the previous rendered pose and ends at the current simulat
   expect(effects.group.children).toHaveLength(0);
   publish(-2, true);
   frame();
-  const bubbles = effects.group.children[0] as Mesh;
+  const bubbles = effects.group.children[0] as ParticleMesh;
   const positions = bubbles.geometry.getAttribute("position");
-  expect(bubbles.geometry.drawRange.count).toBe(12);
+  expect(bubbles.geometry.instanceCount).toBe(2);
   expect(positions.getY(0)).toBeCloseTo(0);
-  expect(positions.getY(4)).toBeCloseTo(-2);
+  expect(positions.getY(1)).toBeCloseTo(-2);
 });
 
 it("plays one flechette ignition puff and delays both authored trails", () => {
@@ -611,9 +612,9 @@ it("plays one flechette ignition puff and delays both authored trails", () => {
   effects = createParticleEffects(engine, playback, snapshotRef);
   streamClock.time = 1.224;
   frame();
-  const trails = effects.group.children.slice() as Mesh[];
+  const trails = effects.group.children.slice() as ParticleMesh[];
   expect(trails).toHaveLength(2);
-  expect(trails.every((trail) => trail.geometry.drawRange.count === 0)).toBe(
+  expect(trails.every((trail) => trail.geometry.instanceCount === 0)).toBe(
     true,
   );
 
@@ -621,8 +622,8 @@ it("plays one flechette ignition puff and delays both authored trails", () => {
   // same timestamp must give the puff the same age.
   streamClock.time = 1.264;
   frame();
-  const puff = effects.group.children[2] as Mesh;
-  expect(puff.geometry.drawRange.count).toBeGreaterThan(0);
+  const puff = effects.group.children[2] as ParticleMesh;
+  expect(puff.geometry.instanceCount).toBeGreaterThan(0);
   const positions = puff.geometry.getAttribute("position").array.slice();
   frame();
   expect(effects.group.children).toHaveLength(3);
@@ -630,17 +631,15 @@ it("plays one flechette ignition puff and delays both authored trails", () => {
 
   streamClock.time = 1.576;
   frame();
-  expect(trails.every((trail) => trail.geometry.drawRange.count > 0)).toBe(
-    true,
-  );
+  expect(trails.every((trail) => trail.geometry.instanceCount > 0)).toBe(true);
   test.transport.seekNonce++;
   test.transport.status = "paused";
   test.delta = 0;
   streamClock.time = 1.264;
   frame();
   const restoredPuff = effects.group.children.find(
-    (child) => (child as Mesh).geometry.drawRange.count > 0,
-  ) as Mesh;
+    (child) => (child as ParticleMesh).geometry.instanceCount > 0,
+  ) as ParticleMesh;
   expect(restoredPuff.geometry.getAttribute("position").array).toEqual(
     positions,
   );
@@ -668,8 +667,8 @@ it("clears point-emitted sparks on a seek and resumes at the new contact", () =>
   try {
     effects = createParticleEffects(engine, playback, snapshotRef);
     frame();
-    const oldSparks = effects.group.children[0] as Mesh;
-    expect(oldSparks.geometry.drawRange.count).toBeGreaterThan(0);
+    const oldSparks = effects.group.children[0] as ParticleMesh;
+    expect(oldSparks.geometry.instanceCount).toBeGreaterThan(0);
 
     test.transport.seekNonce++;
     test.transport.status = "paused";
@@ -678,14 +677,14 @@ it("clears point-emitted sparks on a seek and resumes at the new contact", () =>
     node.anchor.position.x = 20;
     frame();
     expect(oldSparks.parent).toBeNull();
-    const newSparks = effects.group.children[0] as Mesh;
-    expect(newSparks.geometry.drawRange.count).toBe(0);
+    const newSparks = effects.group.children[0] as ParticleMesh;
+    expect(newSparks.geometry.instanceCount).toBe(0);
 
     test.transport.status = "playing";
     test.delta = 0.032;
     streamClock.time += test.delta;
     frame();
-    expect(newSparks.geometry.drawRange.count).toBeGreaterThan(0);
+    expect(newSparks.geometry.instanceCount).toBeGreaterThan(0);
     expect(newSparks.geometry.getAttribute("position").getX(0)).toBeCloseTo(20);
   } finally {
     removeNodeEmitter(node);
@@ -728,8 +727,8 @@ it("emits launcher backblast at the named node and stops on its authored boundar
     effects = createParticleEffects(engine, playback, snapshotRef);
     streamClock.time = 1.032;
     frame();
-    const exhaust = effects.group.children[0] as Mesh;
-    expect(exhaust.geometry.drawRange.count).toBeGreaterThan(0);
+    const exhaust = effects.group.children[0] as ParticleMesh;
+    expect(exhaust.geometry.instanceCount).toBeGreaterThan(0);
     const position = exhaust.geometry.getAttribute("position");
     expect(position.getX(0)).toBeCloseTo(2);
     expect(position.getY(0)).toBeCloseTo(3);
@@ -737,10 +736,10 @@ it("emits launcher backblast at the named node and stops on its authored boundar
 
     streamClock.time = 1.064;
     frame();
-    const count = exhaust.geometry.drawRange.count;
+    const count = exhaust.geometry.instanceCount;
     streamClock.time = 1.096;
     frame();
-    expect(exhaust.geometry.drawRange.count).toBe(count);
+    expect(exhaust.geometry.instanceCount).toBe(count);
   } finally {
     unregister();
   }

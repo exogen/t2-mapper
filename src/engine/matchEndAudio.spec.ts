@@ -178,7 +178,7 @@ function startEntitySoundSlots(
   root: Group,
 ) {
   const slots = createEntitySoundSlots(() => ref.current, root);
-  start(slots, () => slots.update());
+  return start(slots, () => slots.update());
 }
 function endMatch() {
   streamClock.matchEndedAtSec = streamClock.time;
@@ -515,6 +515,64 @@ it("requests a slot buffer once while it is loading", () => {
   expect(trackSound).toHaveBeenCalledOnce();
 });
 
+it("requests the shared buffer again when an idle slot is reactivated", () => {
+  test.looping = false;
+  test.defer = true;
+  const root = new Group();
+  const entity = { soundSlots: [soundSlot()] };
+  startEntitySoundSlots({ current: entity }, root);
+  frame();
+  expect(test.pending).toHaveLength(1);
+  test.pending.shift()!();
+  frame();
+  const first = root.children[0] as Audio;
+  first.onEnded();
+  expect(first.gain.disconnect).toHaveBeenCalledOnce();
+  entity.soundSlots = [];
+  frame();
+
+  // Simulate a cache miss on the next activation.
+  entity.soundSlots = [soundSlot(1, 2)];
+  frame();
+  expect(root.children).toHaveLength(0);
+  expect(test.pending).toHaveLength(1);
+  test.pending.shift()!();
+  expect(trackSound).toHaveBeenCalledTimes(2);
+});
+
+it("does not start a pending slot whose activation changed before the next frame", () => {
+  test.defer = true;
+  const root = new Group();
+  const entity = { soundSlots: [soundSlot()] };
+  startEntitySoundSlots({ current: entity }, root);
+  frame();
+  expect(test.pending).toHaveLength(1);
+  entity.soundSlots = [soundSlot(1, 2)];
+  test.pending.shift()!();
+  expect(root.children).toHaveLength(0);
+  frame();
+  expect(test.pending).toHaveLength(1);
+  test.pending.shift()!();
+  expect(trackSound).toHaveBeenCalledOnce();
+});
+
+it("does not start a pending slot after its model is disposed", () => {
+  test.defer = true;
+  const root = new Group();
+  const { dispose } = startEntitySoundSlots(
+    { current: { soundSlots: [soundSlot()] } },
+    root,
+  );
+  frame();
+  expect(test.pending).toHaveLength(1);
+  dispose();
+  test.pending.shift()!();
+  frame();
+  expect(root.children).toHaveLength(0);
+  expect(test.pending).toHaveLength(0);
+  expect(trackSound).not.toHaveBeenCalled();
+});
+
 it("does not reuse a previous recording's pending profile load", () => {
   test.defer = true;
   const root = new Group();
@@ -598,6 +656,8 @@ it("drops a slot one-shot that became stale while loading", () => {
   expect(trackSound).not.toHaveBeenCalled();
   entity.soundSlots = [soundSlot(1, 2, 13)];
   frame();
+  expect(test.pending).toHaveLength(1);
+  test.pending.shift()!();
   expect(trackSound).toHaveBeenCalledOnce();
 });
 
@@ -679,7 +739,7 @@ it.each([false, true])(
   },
 );
 
-it("does not play a pending station sound after a seek, but keeps its buffer for future activations", () => {
+it("does not play a pending station sound after a seek and requests the next activation", () => {
   test.looping = false;
   test.defer = true;
   const root = new Group();
@@ -703,6 +763,8 @@ it("does not play a pending station sound after a seek, but keeps its buffer for
   streamClock.time = 50.032;
   entity.soundSlots = [soundSlot(1, 7, 50.032)];
   frame();
+  expect(test.pending).toHaveLength(1);
+  test.pending.shift()!();
   expect(trackSound).toHaveBeenCalledOnce();
 });
 

@@ -678,6 +678,11 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   // ── Entities ──
   protected entities = new Map<string, MutableEntity>();
+  /** Share map ghost projections within the same simulation object lifetime. */
+  private readonly sceneEntitySnapshots = new WeakMap<
+    MutableEntity,
+    StreamEntity
+  >();
   private readonly playerForceFieldBoxes = new Map<string, ForceFieldBox>();
   private readonly physicalZones = new Map<string, PhysicalZone>();
   private readonly physicalZoneSweep = new PhysicalZoneSweep();
@@ -2588,6 +2593,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     const existingEntity = this.entities.get(entityId);
     if (existingEntity) {
       entity = existingEntity;
+      if (entity.sceneData) this.sceneEntitySnapshots.delete(entity);
     } else {
       entity = {
         id: entityId,
@@ -2823,8 +2829,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.advanceShapeAnimations();
     this.advanceForceFields();
     this.advanceControlEnergy();
-    if (this.presentationEffectsEnabled && this.groundEffectsEnabled)
-      this.recordGroundEffects();
+    this.recordGroundEffects();
     this.updateCameraAndHud();
   }
 
@@ -2856,6 +2861,8 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (triggers && this.controlPlayerGhostId) {
       const entity = this.entities.get(this.controlPlayerGhostId);
       if (entity) {
+        // The control slot can temporarily refer to a different ghost lifetime.
+        if (entity.sceneData) this.sceneEntitySnapshots.delete(entity);
         entity.jetting = !!triggers[3];
       }
     }
@@ -5818,6 +5825,8 @@ export abstract class StreamEngine implements StreamingPlayback {
       } else if (this.controlPlayerGhostId) {
         const ghostEntity = this.entities.get(this.controlPlayerGhostId);
         if (ghostEntity && !ghostEntity.playerPrediction?.hasPosition) {
+          if (ghostEntity.sceneData)
+            this.sceneEntitySnapshots.delete(ghostEntity);
           ghostEntity.position = [
             control.position.x,
             control.position.y,
@@ -6295,6 +6304,13 @@ export abstract class StreamEngine implements StreamingPlayback {
         this.entities.has(missileTargetId)
       )
         inboundMissileTargetIds.add(missileTargetId);
+      if (entity.sceneData) {
+        const cached = this.sceneEntitySnapshots.get(entity);
+        if (cached) {
+          entities.push(cached);
+          continue;
+        }
+      }
       this.refreshWeather(entity);
       const renderFlags = entity.targetRenderFlags;
       const snapshot: EveryField<StreamEntity> = {
@@ -6434,6 +6450,31 @@ export abstract class StreamEngine implements StreamingPlayback {
               )
             : undefined,
       };
+      // Map ghosts have packet-owned state. Leave rows with independently
+      // updated state or references to other ghost lifetimes on the live path.
+      if (
+        entity.sceneData &&
+        entity.className === entity.sceneData.className &&
+        entity.type === "Ghost" &&
+        entity.dataBlockId == null &&
+        entity.targetId == null &&
+        ((renderFlags ?? 0) & 0x2) === 0 &&
+        entity.sourceGhostIndex == null &&
+        entity.linkTargetGhostIndex == null &&
+        entity.beamSourceId == null &&
+        entity.beamTargetId == null &&
+        entity.mountObjectGhostIndex == null &&
+        entity.mountParentId == null &&
+        !entity.imageSlots &&
+        !entity.fadeState &&
+        entity.cloakLevel == null &&
+        entity.forceFieldState == null &&
+        !entity.playerPrediction &&
+        !entity.playerDelta &&
+        !entity.simulatedVelocity &&
+        !entity.itemPhysics
+      )
+        this.sceneEntitySnapshots.set(entity, snapshot);
       entities.push(snapshot);
     }
     return entities;

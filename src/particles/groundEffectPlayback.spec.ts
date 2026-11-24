@@ -59,15 +59,29 @@ it("releases live effects immediately when capture is suspended without another 
   expect(simulation.inputs).toHaveLength(1);
   const clears = simulation.clear.mock.calls.length;
   const resets = reset.mock.calls.length;
+  const generation = queue.generation;
 
   // A hidden tab may receive no more rAF callbacks, so update cannot own this.
   playback.setCaptureSuspended(true);
   expect(queue.capturing).toBe(false);
   expect(queue.getMetrics().groundEffectPendingFrames).toBe(0);
+  expect(queue.generation).toBe(generation + 1);
   expect(simulation.inputs).toEqual([]);
   expect(simulation.clear).toHaveBeenCalledTimes(clears + 1);
   expect(reset).toHaveBeenCalledTimes(resets + 1);
   playback.dispose();
+});
+
+it("clears pending inputs on suspension even while terrain is absent", () => {
+  const f = fixture();
+  f.playback.update(0, 0, null);
+  expect(f.queue.capturing).toBe(false);
+  f.queue.append({ timeSec: 0.032, gravity: -9.81, actors: [] });
+  const generation = f.queue.generation;
+  f.playback.setCaptureSuspended(true);
+  expect(f.queue.getMetrics().groundEffectPendingFrames).toBe(0);
+  expect(f.queue.generation).toBe(generation + 1);
+  f.playback.dispose();
 });
 
 it("consumes batched forward ticks identically to individual updates, including empty actor ticks", () => {

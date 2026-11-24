@@ -37,6 +37,7 @@ import { DTSInstanceRenderList, getRenderList } from "./dtsInstanceRenderList";
 
 function createRenderer(maxArrayLayers = 128): WebGLRenderer {
   return {
+    domElement: new EventTarget(),
     capabilities: { maxTextureSize: 1024 },
     renderLists: new WebGLRenderLists(undefined!),
     getContext: () => ({
@@ -476,7 +477,7 @@ describe("animated DTS instancing", () => {
     expect(geometry.getAttribute("position")).toBe(position);
   });
 
-  it("refreshes changed skin images and restores scene callbacks on teardown", () => {
+  it("refreshes changed and lost skin layers and restores scene callbacks on teardown", () => {
     const { pool, renderer, world, camera, bodies } = fixture();
     pool.dispose();
     const before = vi.fn(),
@@ -501,6 +502,13 @@ describe("animated DTS instancing", () => {
     (bodies[0].material as MeshLambertMaterial).map!.needsUpdate = true;
     frame();
     expect(copies).toHaveBeenCalledTimes(3);
+    Reflect.apply(world.onAfterRender, world, [renderer, world, camera]);
+    renderer.domElement.dispatchEvent(new Event("webglcontextrestored"));
+    frame();
+    expect(copies).toHaveBeenCalledTimes(5);
+    Reflect.apply(world.onAfterRender, world, [renderer, world, camera]);
+    frame();
+    expect(copies).toHaveBeenCalledTimes(5);
     adapter.dispose();
     expect(world.onBeforeRender).toBe(before);
     expect(world.onAfterRender).toBe(after);

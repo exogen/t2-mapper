@@ -13,6 +13,7 @@ import type { EngineHost, GameEngine } from "./gameEngine";
 const renderers = vi.hoisted(() => [] as MockRenderer[]);
 
 interface MockRenderer {
+  domElement: EventTarget;
   render: ReturnType<typeof vi.fn>;
   displayed: unknown[];
 }
@@ -205,6 +206,24 @@ it("wakes an idle canvas for a late bitmap while other queued image work remains
     expect(current.currentHost!.assetsLoading()).toBe(false),
   );
   drainFrames();
+});
+
+it("wakes an idle canvas after context restoration and skips draws during loss", () => {
+  const current = engine(() => true);
+  const canvas = mount(current);
+  drainFrames();
+  const renderer = renderers[0];
+  renderer.render.mockClear();
+  renderer.domElement.dispatchEvent(new Event("webglcontextlost"));
+  current.currentHost!.invalidate();
+  drainFrames();
+  expect(renderer.render).not.toHaveBeenCalled();
+  renderer.domElement.dispatchEvent(new Event("webglcontextrestored"));
+  drainFrames();
+  expect(renderer.render).toHaveBeenCalledTimes(1);
+  canvas.dispose();
+  renderer.domElement.dispatchEvent(new Event("webglcontextrestored"));
+  expect(callbacks.size).toBe(0);
 });
 
 it("renders an IFL published by promise continuations after the last image item ends", async () => {

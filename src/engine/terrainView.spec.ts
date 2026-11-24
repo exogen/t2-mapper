@@ -59,6 +59,7 @@ it("refreshes frozen shadows when terrain changes from wireframe to solid and ba
     }),
   );
   const renderer = {
+    domElement: new EventTarget(),
     capabilities: { getMaxAnisotropy: () => 4 },
     shadowMap: { autoUpdate: true, needsUpdate: false },
     getSize: (size: import("three").Vector2) => size.set(390, 844),

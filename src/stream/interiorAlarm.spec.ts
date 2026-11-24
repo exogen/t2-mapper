@@ -35,9 +35,14 @@ class InteriorStream extends TestLiveStream {
 it("propagates sparse power transitions without losing placement or changing entity identity", () => {
   const engine = new InteriorStream();
   const initial = engine.entity();
+  expect(engine.entity()).toBe(initial);
   const render = streamEntityToGameEntity(initial);
   engine.alarm(true, 100);
-  expect(engine.entity().id).toBe(initial.id);
+  const poweredDown = engine.entity();
+  expect(poweredDown).not.toBe(initial);
+  expect(poweredDown.id).toBe(initial.id);
+  expect(initial.sceneData).toMatchObject({ alarmState: false });
+  expect(engine.entity()).toBe(poweredDown);
   expect(engine.scene()).toMatchObject({
     alarmState: true,
     interiorFile: "sbunk2.dif",
@@ -56,6 +61,7 @@ it("propagates sparse power transitions without losing placement or changing ent
 
 it("preserves immutable checkpoints and accumulated alarm time through restoration and rewinds", () => {
   const engine = new InteriorStream();
+  const initial = engine.entity();
   const normal = engine.checkpoint();
   engine.alarm(true, 100);
   const alarm = engine.checkpoint();
@@ -66,10 +72,36 @@ it("preserves immutable checkpoints and accumulated alarm time through restorati
   expect(interiorAlarmTime(engine.scene(), 6.72)).toBeCloseTo(0.96);
   expect(oldScene.alarmState).toBe(true);
   engine.restore(normal);
+  const restored = engine.entity();
+  expect(restored).not.toBe(initial);
+  expect(engine.entity()).toBe(restored);
   expect(engine.scene().alarmState).toBe(false);
   engine.restore(alarm);
   expect(engine.scene().alarmState).toBe(true);
   expect(interiorAlarmTime(engine.scene(), 3.52)).toBeCloseTo(0.32);
+});
+
+it("projects a new row when an interior's ghost slot is reused", () => {
+  const engine = new InteriorStream();
+  const first = engine.entity();
+  engine.ghost({ index: 0, type: "delete" });
+  expect(engine.entityAt(0)).toBeUndefined();
+  engine.createGhost(0, 1, { interiorFile: "repurposed.dif" });
+  const replacement = engine.entity();
+  expect(replacement.id).not.toBe(first.id);
+  expect(replacement.sceneData).toMatchObject({ interiorFile: "repurposed.dif" });
+  expect(engine.entity()).toBe(replacement);
+});
+
+it("invalidates the projection when a packet changes fields outside scene data", () => {
+  const engine = new InteriorStream();
+  const initial = engine.entity();
+  engine.updateGhost(0, { position: { x: 2, y: 3, z: 4 } });
+  const moved = engine.entity();
+  expect(moved.sceneData).toBe(initial.sceneData);
+  expect(moved.position).toEqual([2, 3, 4]);
+  expect(initial.position).toBeUndefined();
+  expect(engine.entity()).toBe(moved);
 });
 
 it("ignores current and past alarm requests for lights in interiors without alarm support", () => {

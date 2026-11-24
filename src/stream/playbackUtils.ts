@@ -35,7 +35,7 @@ import {
   playerSkinUrls,
   type PlayerSkinSelection,
 } from "../engine/playerSkins";
-import { setupTexture } from "../textureUtils";
+import { markTextureSamplerUpdate, setupTexture } from "../textureUtils";
 import { textureToUrl } from "../loaders";
 import type { Keyframe } from "./types";
 
@@ -92,9 +92,7 @@ export function setupEffectTexture(
   tex.magFilter = LinearFilter;
   tex.colorSpace = colorSpace;
   tex.flipY = false;
-  if (tex.image) {
-    tex.needsUpdate = true;
-  }
+  if (tex.image) markTextureSamplerUpdate(tex);
 }
 
 export function setQuaternionFromDir(dir: Vector3, out: Quaternion): void {

@@ -9,6 +9,7 @@ import {
 import type { DemoCheckpointRepository } from "./demoCheckpointRepository";
 import { emptyGroundEffectState } from "./groundEffectCheckpoint";
 import { fakeDemoParser, moveBlock } from "./streamTestFixtures";
+import { streamTimeToTick } from "./streamHelpers";
 import { PlaybackClock } from "./PlaybackClock";
 import { bytesToBase64, encodeCheckpoint } from "./checkpointCodec";
 import {
@@ -49,6 +50,21 @@ function stream(options: DemoStreamingOptions = {}, onRestore?: () => void) {
   playback.setPlayerPredictionEnabled(true);
   return playback;
 }
+
+function finishSeek(
+  clock: PlaybackClock,
+  playback: DemoStreamAdapter,
+  transport: Parameters<PlaybackClock["step"]>[1],
+) {
+  // After the anchor is ready, even the smallest replay slice advances a tick.
+  const targetTick = streamTimeToTick(transport.seekTime);
+  for (let slice = 0; slice <= targetTick; slice++) {
+    const frame = clock.step(playback, transport, 0);
+    if (frame) return frame;
+  }
+  throw new Error("Seek did not reach its target");
+}
+
 async function index(ticks: number[], legacyGroundEffects = false) {
   const source = stream({ checkpoints: false });
   const buffer = new Uint8Array([1, 2, 3]).buffer;
@@ -289,13 +305,12 @@ describe("browser checkpoint retention", () => {
       const wait = playback.checkpointWait;
       expect(wait).toBeInstanceOf(Promise);
       await wait;
-      const frame = clock.step(playback, transport, 0);
-      expect(frame).not.toBeNull();
+      const frame = finishSeek(clock, playback, transport);
       const expected = stream({ checkpoints: false }).stepToTime(
         atTick(tick + 1),
       );
-      expect(frame!.snapshot.camera).toEqual(expected.camera);
-      expect(frame!.snapshot.timeSec).toBe(expected.timeSec);
+      expect(frame.snapshot.camera).toEqual(expected.camera);
+      expect(frame.snapshot.timeSec).toBe(expected.timeSec);
       const metrics = playback.getDiagnosticMetrics();
       expect(metrics.persistedCheckpointEntries).toBe(1);
       expect(metrics.uniqueCheckpointEntries).toBe(1);
@@ -325,13 +340,14 @@ describe("browser checkpoint retention", () => {
       ),
     ).toBeNull();
     await playback.checkpointWait;
-    const frame = clock.step(
-      playback,
-      { status: "seeking", rate: 1, seekTime: atTick(500), seekNonce: 2 },
-      0,
-    );
-    expect(frame!.snapshot.timeSec).toBeCloseTo(atTick(501));
-    expect(frame!.snapshot.camera).toEqual(
+    const frame = finishSeek(clock, playback, {
+      status: "seeking",
+      rate: 1,
+      seekTime: atTick(500),
+      seekNonce: 2,
+    });
+    expect(frame.snapshot.timeSec).toBeCloseTo(atTick(501));
+    expect(frame.snapshot.camera).toEqual(
       stream({ checkpoints: false }).stepToTime(atTick(501)).camera,
     );
   });

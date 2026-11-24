@@ -361,6 +361,23 @@ export class ShadowPoolRuntime {
     for (let i = MAX_CASTERS - 1; i >= 0; i--) this.freeTiles.push(i);
   }
 
+  /** Repaint GPU-only atlas tiles before the next scene draw after a
+   * renderer change or context restore, even if the poses are unchanged. */
+  invalidateAtlases(): void {
+    const now = performance.now();
+    this.pending.length = 0;
+    for (const state of this.states.values()) {
+      const uniforms = state.material.uniforms;
+      uniforms.hasDepth.value = 0;
+      state.depthDirty = state.hasReceivers;
+      state.lastRenderMs = -Infinity;
+      if (state.mesh.visible && !uniforms.generic.value) {
+        state.lastRenderMs = now;
+        this.pending.push(state);
+      }
+    }
+  }
+
   dispose(): void {
     for (const state of this.states.values()) this.disposeState(state);
     this.states.clear();
@@ -641,7 +658,11 @@ export class ShadowPoolRuntime {
         break;
       }
     }
-    if (!depthPending && this.pending.length === 0) return;
+    if (
+      (!depthPending && this.pending.length === 0) ||
+      renderer.getContext().isContextLost()
+    )
+      return;
     const previousTarget = renderer.getRenderTarget();
     const previousAutoClear = renderer.autoClear;
     const previousClearAlpha = renderer.getClearAlpha();

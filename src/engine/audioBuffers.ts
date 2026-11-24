@@ -4,6 +4,7 @@ import { ByteLruMap } from "../assets/byteLruMap";
 import { PendingRequests } from "../assets/pendingRequests";
 import { classifyDevice, readDeviceSignals } from "../deviceConstraints";
 import { deviceTierValue, performanceTuning } from "../performanceTuning";
+import { readM4aSampleRate } from "./m4aSampleRate";
 
 const log = createLogger("audioBuffers");
 
@@ -41,25 +42,71 @@ export interface AudioBufferLoader {
 }
 
 export function createAudioBufferLoader(
-  context: Pick<BaseAudioContext, "decodeAudioData">,
+  context: Pick<BaseAudioContext, "decodeAudioData" | "sampleRate">,
 ): AudioBufferLoader {
+  // Each native rate shares one decoder for the lifetime of the mixer.
+  const nativeDecoders = new Map<number, OfflineAudioContext | null>();
+  const nativeDecoder = (rate: number) => {
+    let decoder = nativeDecoders.get(rate);
+    if (decoder === undefined) {
+      decoder = null;
+      if (typeof OfflineAudioContext !== "undefined") {
+        try {
+          decoder = new OfflineAudioContext(1, 1, rate);
+        } catch {
+          // A browser can reject an unsupported offline sample rate.
+        }
+      }
+      nativeDecoders.set(rate, decoder);
+    }
+    return decoder;
+  };
+
+  async function fetchSound(url: string, signal: AbortSignal) {
+    // Use a request-local signal so a timed-out fetch cannot hold up a
+    // later attempt for the same URL or abort unrelated audio.
+    const response = await fetch(url, { signal });
+    if (!response.ok)
+      throw new Error(`Audio request failed with HTTP ${response.status}`);
+    return response.arrayBuffer();
+  }
+
+  async function decodeSound(url: string, signal: AbortSignal) {
+    let bytes = await fetchSound(url, signal);
+    signal.throwIfAborted();
+    const rate = readM4aSampleRate(bytes);
+    if (rate !== undefined && rate < context.sampleRate) {
+      const decoder = nativeDecoder(rate);
+      if (decoder) {
+        // A stalled native decode may never settle. Later loads at that
+        // rate should use the mixer once the shared request times out.
+        const onAbort = () => {
+          if (signal.reason?.name === "TimeoutError")
+            nativeDecoders.set(rate, null);
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        try {
+          return await decoder.decodeAudioData(bytes);
+        } catch {
+          // Retry through the mixer if the request still has time.
+        } finally {
+          signal.removeEventListener("abort", onAbort);
+        }
+        signal.throwIfAborted();
+        // Web Audio may detach even failed input. The successful native
+        // path can pass ownership directly and fetch again only on failure.
+        if (bytes.byteLength === 0) {
+          bytes = await fetchSound(url, signal);
+          signal.throwIfAborted();
+        }
+      }
+    }
+    return context.decodeAudioData(bytes);
+  }
+
   return {
     load(url, onLoad, _onProgress, onError, signal) {
-      // Use a request-local signal so a timed-out fetch cannot hold up a
-      // later attempt for the same URL or abort unrelated audio.
-      void fetch(url, { signal })
-        .then((response) => {
-          if (!response.ok)
-            throw new Error(
-              `Audio request failed with HTTP ${response.status}`,
-            );
-          return response.arrayBuffer();
-        })
-        .then((bytes) => {
-          signal.throwIfAborted();
-          return context.decodeAudioData(bytes);
-        })
-        .then(onLoad, onError);
+      void decodeSound(url, signal).then(onLoad, onError);
     },
   };
 }

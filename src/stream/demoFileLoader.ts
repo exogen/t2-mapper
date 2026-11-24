@@ -222,7 +222,15 @@ async function loadRemoteDemo(
     throw new DOMException("The recording was replaced", "AbortError");
   const attempt = cancelLoad();
   if (!attempt.isCurrent) return;
-  const cancel = () => attempt.cancel(true);
+  const cancel = () => {
+    attempt.cancel(true);
+    if (loadAttempt !== attempt) return;
+    const load = demoLoadStore.getState();
+    // An installed progressive recording has already settled the load UI.
+    // Before installation, settle it here so waiting clips can retry.
+    if (load.phase === "downloading" || load.phase === "parsing")
+      load.fail("The demo download was canceled. Please retry.");
+  };
   options.signal?.addEventListener("abort", cancel, { once: true });
   try {
     if (options.signal?.aborted) cancel();

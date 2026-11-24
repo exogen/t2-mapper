@@ -14,6 +14,7 @@ import {
   CanvasTexture,
   DynamicDrawUsage,
   Group,
+  InstancedBufferAttribute,
   Object3D,
   Mesh,
   MeshBasicMaterial,
@@ -485,7 +486,7 @@ function getExplosionRadius(expBlock: Record<string, unknown>): number {
 // ── Per-emitter rendering state ──
 
 interface ActiveEmitter extends ParticleBuffers {
-  /** Exact CPU typed-array payload of this emitter's particle geometry. */
+  /** CPU bytes owned by this emitter's instance attributes. */
   geometryArrayBytes: number;
   mesh: Mesh;
   material: ShaderMaterial;
@@ -545,13 +546,15 @@ function disposeEmitter(entry: ActiveEmitter): void {
   entry.material.dispose();
 }
 
-function particleGeometryArrayBytes(geometry: BufferGeometry): number {
-  const arrays = new Set<ArrayBufferView>();
-  for (const attribute of Object.values(geometry.attributes))
-    arrays.add(attribute.array);
-  if (geometry.index) arrays.add(geometry.index.array);
+function particleGeometryArrayBytes(
+  geometry: ParticleBuffers["geometry"],
+): number {
+  // The quad corners and indices are shared by all emitters.
   let bytes = 0;
-  for (const array of arrays) bytes += array.byteLength;
+  for (const attribute of Object.values(geometry.attributes)) {
+    if (attribute instanceof InstancedBufferAttribute)
+      bytes += attribute.array.byteLength;
+  }
   return bytes;
 }
 

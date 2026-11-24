@@ -41,7 +41,7 @@ export const performanceTuning = {
   audioBufferCache: {
     /** Decoded PCM bytes owned by lookup-cache references only. Active sounds
      * may retain evicted buffers. Lower caps trade retention for more misses. */
-    maximumBytes: { constrained: 16 * MiB, desktop: 64 * MiB },
+    maximumBytes: { constrained: 32 * MiB, desktop: 64 * MiB },
     /** URL entries; aliases share byte accounting but each consumes an entry. */
     maximumEntries: { constrained: 256, desktop: 512 },
   },

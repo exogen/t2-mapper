@@ -36,7 +36,7 @@ interface Emission {
   uploadedRevision?: number;
 }
 
-/** Four vertices per quad; WebGL2 reserves Uint16 index 65535 for restart. */
+/** Bound particle simulation and buffer capacity for dense ambient emitters. */
 const MAX_PARTICLES = 16383;
 const emissionAxis = new Vector3();
 
@@ -284,7 +284,7 @@ export class AmbientParticles {
       if (particleTexturesReady.has(emission.texture))
         emission.material.uniforms.particleTexture.value = emission.texture;
       emission.material.uniforms.debugOpacity.value = opacity;
-      const capacity = emission.geometry.getAttribute("position").count / 4;
+      const capacity = emission.geometry.getAttribute("position").count;
       if (emission.emitter.particles.length > capacity) {
         emission.geometry.dispose();
         emission.geometry = createParticleGeometry(

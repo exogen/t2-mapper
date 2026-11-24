@@ -59,7 +59,9 @@ function setup(casterRoot: Object3D = root) {
     squareSize: 8,
   });
   const render = vi.fn();
+  let contextLost = false;
   const renderer = {
+    getContext: () => ({ isContextLost: () => contextLost }),
     getDrawingBufferSize: (v: Vector2) => v.set(1000, 1000),
     getRenderTarget: () => null,
     getClearAlpha: () => 1,
@@ -80,7 +82,16 @@ function setup(casterRoot: Object3D = root) {
     (runtime.decals.children[0] as Mesh).geometry.getAttribute(
       "position",
     ) as BufferAttribute;
-  return { frame, depthDraws, positions, render };
+  return {
+    frame,
+    depthDraws,
+    positions,
+    render,
+    renderPending: () => runtime.renderPending(renderer),
+    setContextLost(lost: boolean) {
+      contextLost = lost;
+    },
+  };
 }
 
 afterEach(() => {
@@ -106,6 +117,36 @@ describe("off-screen casters", () => {
 });
 
 describe("shadow receiver reuse", () => {
+  it("repaints cached silhouette and depth tiles after context restoration", () => {
+    const {
+      frame,
+      depthDraws,
+      positions,
+      render,
+      renderPending,
+      setContextLost,
+    } = setup();
+    const silhouetteDraws = () =>
+      render.mock.calls.filter(([s]) => s === runtime.silhouetteScene).length;
+    frame();
+    const version = positions().version;
+    expect(depthDraws()).toBe(1);
+    expect(silhouetteDraws()).toBe(1);
+    runtime.invalidateAtlases();
+    setContextLost(true);
+    renderPending();
+    expect(depthDraws()).toBe(1);
+    expect(silhouetteDraws()).toBe(1);
+    setContextLost(false);
+    renderPending();
+    expect(depthDraws()).toBe(2);
+    expect(silhouetteDraws()).toBe(2);
+    expect(positions().version).toBe(version);
+    renderPending();
+    expect(depthDraws()).toBe(2);
+    expect(silhouetteDraws()).toBe(2);
+  });
+
   it("reuses stationary receivers and depth, including after temporary hiding", () => {
     const { frame, depthDraws, positions } = setup();
     frame();

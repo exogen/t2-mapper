@@ -12,6 +12,16 @@ import {
   Texture,
   UnsignedByteType,
 } from "three";
+
+/** Recheck the sampler's GPU cache key while preserving the shared pixels'
+ * revision. Three uploads new sampler variants and reuses resident ones.
+ * An upload hook, such as DTS zero-border mipmap generation, needs to run
+ * even when a matching variant is already resident. */
+export function markTextureSamplerUpdate(texture: Texture): void {
+  if (texture.onUpdate) texture.needsUpdate = true;
+  else texture.version++;
+}
+
 export interface TextureSetupOptions {
   /** Texture repeat values [x, y]. Default: [1, 1] */
   repeat?: [number, number];
@@ -60,11 +70,8 @@ export function setupTexture<T extends Texture>(
   }
   tex.magFilter = LinearFilter;
 
-  // Only mark for upload if the texture actually has image data. Textures
-  // from the bitmap loader get needsUpdate set in the load callback instead.
-  if (tex.image) {
-    tex.needsUpdate = true;
-  }
+  // The bitmap loader marks pending samplers once the pixels arrive.
+  if (tex.image) markTextureSamplerUpdate(tex);
 
   return tex;
 }

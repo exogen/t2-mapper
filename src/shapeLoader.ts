@@ -14,6 +14,7 @@ import type { DTSModel } from "./dts/dtsModel";
 import { batchDTSRigidMeshes } from "./dts/dtsRigidBatch";
 import { loadShapeImageLists } from "./iflAtlas";
 import { repairBitmapSource } from "./assets/bitmapSourceRecovery";
+import { markTextureSamplerUpdate } from "./textureUtils";
 
 // Shape views and imperative effect pools request the same source model.
 interface ShapeSource {
@@ -129,8 +130,10 @@ export class ShapeLoader extends DTSLoader {
               // clones instead of leaving them bound to the failed placeholder.
               if (texture && !texture.image) {
                 repairBitmapSource(texture.source, loaded);
-                texture.source = loaded.source;
-                texture.needsUpdate = true;
+                if (texture.source !== loaded.source) {
+                  texture.source = loaded.source;
+                  markTextureSamplerUpdate(texture);
+                }
               }
             }),
         ),
