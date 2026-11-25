@@ -36,6 +36,55 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it.each([
+  ["iPhone", false],
+  ["Mozilla/5.0 (Macintosh) Version/27.0.1 Safari/605.1.15", false],
+  ["Desktop", true],
+] as const)(
+  "defaults HD textures for %s and remembers an override",
+  (userAgent, expected) => {
+    vi.stubGlobal("navigator", { userAgent, hardwareConcurrency: 8 });
+    stubSaved({ hdTexturesEnabled: "invalid" });
+    const store = createSettingsStore();
+    expect(store.getState()).toMatchObject({
+      hdTexturesEnabled: expected,
+      hdTexturesDefaultEnabled: expected,
+    });
+    const onReload = vi.fn(() =>
+      expect(lastSaved().hdTexturesEnabled).toBe(!expected),
+    );
+    store.subscribe((state) => state.hdTexturesEnabled, onReload);
+    setPreference("hdTexturesEnabled", !expected, store);
+    expect(onReload).toHaveBeenCalledOnce();
+    stubSaved(lastSaved());
+    expect(createSettingsStore().getState()).toMatchObject({
+      hdTexturesEnabled: !expected,
+      hdTexturesDefaultEnabled: expected,
+    });
+  },
+);
+
+it("keeps the HD texture default automatic when another preference is saved", () => {
+  vi.stubGlobal("navigator", { userAgent: "Desktop", hardwareConcurrency: 8 });
+  const store = createSettingsStore();
+  setPreference("invertLookY", true, store);
+  vi.advanceTimersByTime(500);
+  expect(lastSaved()).not.toHaveProperty("hdTexturesEnabled");
+  stubSaved(lastSaved());
+  vi.stubGlobal("navigator", { userAgent: "iPhone" });
+  expect(createSettingsStore().getState()).toMatchObject({
+    hdTexturesEnabled: false,
+    invertLookY: true,
+  });
+});
+
+it("restores the earlier HD texture preference and gives the current key priority", () => {
+  stubSaved({ useHdTexturePack: false });
+  expect(createSettingsStore().getState().hdTexturesEnabled).toBe(false);
+  stubSaved({ useHdTexturePack: false, hdTexturesEnabled: true });
+  expect(createSettingsStore().getState().hdTexturesEnabled).toBe(true);
+});
+
 it("defaults to normal vertical look and restores the saved inversion", () => {
   const store = createSettingsStore();
   expect(store.getState().invertLookY).toBe(false);

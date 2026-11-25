@@ -6,6 +6,7 @@ import type {
   RenderType,
 } from "../state/gameEntityTypes";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
+import { settingsStore } from "../state/settingsStore";
 import { combineCleanups, reaction } from "./storeReaction";
 import { markTransformChanged } from "../transformChanges";
 import { objectMountSlot } from "../world/placement";
@@ -230,6 +231,13 @@ export function installEntityViews(engine: GameEngine): () => void {
   streamPlaybackStore.setState({ root: entities.root });
   return combineCleanups(
     releaseScene,
+    settingsStore.subscribe(
+      (state) => state.hdTexturesEnabled,
+      () => {
+        engine.sceneAssets.refreshTextures();
+        engine.invalidate();
+      },
+    ),
     engine.withHost(({ scene }) => {
       scene.add(entities.root);
       return () => scene.remove(entities.root);

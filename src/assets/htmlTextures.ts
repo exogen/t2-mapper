@@ -1,10 +1,9 @@
-import { TextureLoader, type Texture } from "three";
+import { Texture } from "three";
 import { estimateDecodedImageBytes } from "../diagnostics/resourceEstimates";
 import { registerMetricSource } from "../diagnostics/resourceMetricRegistry";
-import { createImageLoadingManager, loadQueuedImage } from "./imageLoading";
+import { loadHtmlImage, loadQueuedImage } from "./imageLoading";
 import { sharedSceneAssets, type SceneAssets } from "./sceneAssets";
 
-const loader = new TextureLoader(createImageLoadingManager());
 const cacheKey = {};
 interface Entry {
   promise: Promise<Texture>;
@@ -54,15 +53,15 @@ export function loadHtmlTexture(
       cache.delete(url);
       cacheEntries--;
     };
-    const promise = loadQueuedImage(url, () => loader.loadAsync(url), {
-      signal: assets.signal,
+    const { signal } = assets;
+    const promise = loadQueuedImage(url, () => loadHtmlImage(url, signal), {
+      signal,
       onError: forget,
     })
-      .then((texture) => {
-        if (assets.disposed) {
-          texture.dispose();
-          assets.signal.throwIfAborted();
-        }
+      .then((image) => {
+        signal.throwIfAborted();
+        const texture = new Texture(image);
+        texture.needsUpdate = true;
         created.texture = texture;
         decodedSources++;
         estimatedDecodedImageBytes +=

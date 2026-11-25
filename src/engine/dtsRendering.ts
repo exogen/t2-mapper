@@ -33,8 +33,11 @@ export function installDTSRendering(engine: GameEngine): () => void {
             typeof import("../dts/dtsAnimatedInstances").installDTSAnimatedInstances
           > | null = null;
           let stopped = false;
-          const stopSceneRelease = engine.onSceneAssetsRelease(() =>
-            instances?.pool.clear(),
+          const clear = () => instances?.pool.clear();
+          const stopSceneRelease = engine.onSceneAssetsRelease(clear);
+          const stopTextureChange = settingsStore.subscribe(
+            (state) => state.hdTexturesEnabled,
+            clear,
           );
           // Loaded on demand, like the rest of the shape pipeline. It wraps
           // the engine's render hooks, so it prepares after them and
@@ -47,6 +50,7 @@ export function installDTSRendering(engine: GameEngine): () => void {
           );
           return () => {
             stopped = true;
+            stopTextureChange();
             stopSceneRelease();
             instances?.dispose();
           };

@@ -14,14 +14,13 @@ import {
   Quaternion,
   RepeatWrapping,
   ShaderMaterial,
-  Texture,
+  type Texture,
   Vector3,
   Vector4,
 } from "three";
 import { audioToUrl, textureToUrl } from "../loaders";
 import { loadSharedDetailMapList } from "./detailMapList";
-import { loadBitmapTexture } from "../assets/bitmapTextures";
-import { markTextureSamplerUpdate } from "../textureUtils";
+import { loadBitmapTextureInstance } from "../assets/bitmapTextures";
 import { threeToTorque, torqueVecToThree } from "../scene/coordinates";
 import { engineStore, worldDeltaSec } from "../state/engineStore";
 import { gameEntityStore, selectSkyData } from "../state/gameEntityStore";
@@ -258,31 +257,18 @@ export function createPrecipitationView(
     void loadSharedDetailMapList(name, assets).then(
       ([entry]) => {
         if (!entry || disposed || token !== textureToken) return;
-        let url: string;
-        try {
-          url = textureToUrl(entry);
-        } catch {
-          return;
-        }
-        const instance = new Texture();
-        instance.flipY = false;
+        const instance = loadBitmapTextureInstance(
+          () => [textureToUrl(entry)],
+          undefined,
+          undefined,
+          assets,
+        );
         instance.colorSpace = NoColorSpace;
         instance.wrapS = instance.wrapT = RepeatWrapping;
         instance.minFilter = LinearMipmapNearestFilter;
         texture = instance;
-        const shared = loadBitmapTexture(
-          url,
-          (loaded) => {
-            if (disposed || token !== textureToken) return;
-            instance.source = loaded.source;
-            markTextureSamplerUpdate(instance);
-            quadMaterial.uniforms.weatherTexture.value = instance;
-            engine.invalidate();
-          },
-          undefined,
-          assets,
-        );
-        instance.source = shared.source;
+        quadMaterial.uniforms.weatherTexture.value = instance;
+        engine.invalidate();
       },
       () => {},
     );

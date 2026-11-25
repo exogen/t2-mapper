@@ -48,7 +48,7 @@ it("keeps parse pure and starts referenced images alongside embedded decoding", 
   expect(load).toHaveBeenCalledOnce();
   expect(loadHtmlTexture).toHaveBeenCalledExactlyOnceWith(
     "/textures/test.png",
-    assets,
+    assets.textures,
   );
   embeddedReady(model);
   await expect(ready).resolves.toBe(model);
@@ -58,6 +58,34 @@ it("keeps parse pure and starts referenced images alongside embedded decoding", 
   expect(dependenciesDone).toHaveBeenCalledOnce();
   expect(await loadInterior("parallel.dif", assets)).toBe(model);
   assets.dispose();
+});
+
+it("warms replacement textures while the geometry and native lightmaps stay live", async () => {
+  const assets = new SceneAssets();
+  const model = createDIFModel(createDIFTestBuffer().buffer);
+  const disposeGeometry = vi.spyOn(model.surfaceMeshes[0].geometry, "dispose");
+  const disposeLightMap = vi.spyOn(model.lightMaps[0], "dispose");
+  vi.mocked(loadHtmlTexture).mockResolvedValue(new Texture());
+  const load = vi
+    .spyOn(DIFLoader.prototype, "load")
+    .mockImplementation(function (this: DIFLoader, _url, done) {
+      this.onModelParsed?.(model);
+      done(model);
+    });
+  const url = "refresh-textures.dif";
+  await loadInteriorDependencies(url, assets);
+  const oldTextures = assets.textures;
+  assets.refreshTextures();
+  expect(oldTextures.disposed).toBe(true);
+  await loadInteriorDependencies(url, assets);
+  expect(vi.mocked(loadHtmlTexture).mock.lastCall?.[1]).toBe(assets.textures);
+  expect(await loadInterior(url, assets)).toBe(model);
+  expect(load).toHaveBeenCalledOnce();
+  expect(disposeGeometry).not.toHaveBeenCalled();
+  expect(disposeLightMap).not.toHaveBeenCalled();
+  assets.dispose();
+  expect(disposeGeometry).toHaveBeenCalledOnce();
+  expect(disposeLightMap).toHaveBeenCalledOnce();
 });
 
 it("forgets failed models so a subsequent load can retry", async () => {

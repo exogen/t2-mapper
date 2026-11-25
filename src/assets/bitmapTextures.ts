@@ -1,17 +1,14 @@
-import { FileLoader, Texture } from "three";
+import { DefaultLoadingManager, Source, Texture } from "three";
 import { estimateDecodedImageBytes } from "../diagnostics/resourceEstimates";
 import { registerMetricSource } from "../diagnostics/resourceMetricRegistry";
 import { createLogger } from "../logger";
 import { markTextureSamplerUpdate } from "../textureUtils";
-import { createImageLoadingManager, loadQueuedImage } from "./imageLoading";
+import { loadQueuedImage } from "./imageLoading";
 import { PendingRequests } from "./pendingRequests";
 import { observeFailedBitmapTexture } from "./bitmapSourceRecovery";
 import { sharedSceneAssets, type SceneAssets } from "./sceneAssets";
 
 const log = createLogger("bitmapTextures");
-const loader = new FileLoader(createImageLoadingManager()).setResponseType(
-  "blob",
-);
 const cacheKey = {};
 const pending = new PendingRequests<Texture, Texture>((error) =>
   log.error("Texture callback error: %o", error),
@@ -48,26 +45,24 @@ function loadBitmap(
 ): Promise<ImageBitmap> {
   return loadQueuedImage(
     url,
-    () =>
-      new Promise<ImageBitmap>((resolve, reject) => {
-        loader.load(
-          url,
-          (blob) => {
-            void Promise.resolve()
-              .then(() => {
-                signal.throwIfAborted();
-                return createImageBitmap(blob as unknown as Blob, {
-                  // Transparent RGB is also used as an environment mask.
-                  premultiplyAlpha: "none",
-                  colorSpaceConversion: "none",
-                });
-              })
-              .then(resolve, reject);
-          },
-          undefined,
-          reject,
-        );
-      }),
+    async () => {
+      // Scene-owned requests can be canceled independently, including when
+      // the next scene immediately asks for the same URL.
+      const response = await fetch(DefaultLoadingManager.resolveURL(url), {
+        signal,
+      });
+      if (!response.ok)
+        throw new Error(`Texture request failed (${response.status}): ${url}`);
+      const blob = await response.blob();
+      signal.throwIfAborted();
+      // Keep the queue slot until decoding settles. A late bitmap is closed
+      // by the cache owner below instead of publishing it to a retired scene.
+      return createImageBitmap(blob, {
+        // Transparent RGB is also used as an environment mask.
+        premultiplyAlpha: "none",
+        colorSpaceConversion: "none",
+      });
+    },
     { signal, onLoad, onError },
   );
 }
@@ -150,48 +145,91 @@ export function loadBitmapTexture(
   return texture;
 }
 
-/** Independent sampler/UV state, sharing only the canonical bitmap Source. */
+/** Independent sampler/UV state, sharing only the canonical bitmap Source.
+ * A resolver reselects its candidates when the scene's image scope changes. */
 export function loadBitmapTextureInstance(
-  url: string,
+  url: string | (() => readonly string[]),
   onError?: (url: string) => void,
   fallbackUrls: readonly string[] = [],
   assets: SceneAssets = sharedSceneAssets,
 ): Texture {
   const texture = new Texture();
   texture.flipY = false;
+  const resolveUrls = typeof url === "function" ? url : undefined;
   let disposed = false;
+  let unsubscribe: (() => void) | undefined;
   const markDisposed = () => {
     disposed = true;
+    texture.removeEventListener("dispose", markDisposed);
+    unsubscribe?.();
+    unsubscribe = undefined;
   };
   texture.addEventListener("dispose", markDisposed);
-  let nextFallback = 0;
-  function load(candidate: string) {
-    const source = loadBitmapTexture(
-      candidate,
-      (loaded) => {
-        texture.removeEventListener("dispose", markDisposed);
-        if (disposed) return;
-        texture.source = loaded.source;
-        markTextureSamplerUpdate(texture);
-      },
-      (failedUrl) => {
-        if (
-          !disposed &&
-          !assets.disposed &&
-          nextFallback < fallbackUrls.length
-        ) {
-          load(fallbackUrls[nextFallback++]);
-          return;
-        }
-        texture.removeEventListener("dispose", markDisposed);
-        if (!disposed && !assets.disposed) observeFailedBitmapTexture(texture);
-        if (!assets.disposed) onError?.(failedUrl);
-      },
-      assets,
-    );
-    texture.source = source.source;
+  function start(
+    first: string,
+    fallbacks: readonly string[],
+    owner: SceneAssets,
+  ) {
+    let nextFallback = 0;
+    const isCurrent = () =>
+      !owner.disposed &&
+      (!resolveUrls || (!assets.disposed && owner === assets.textures));
+    function load(candidate: string) {
+      const source = loadBitmapTexture(
+        candidate,
+        (loaded) => {
+          if (!resolveUrls)
+            texture.removeEventListener("dispose", markDisposed);
+          if (disposed || !isCurrent()) return;
+          texture.source = loaded.source;
+          markTextureSamplerUpdate(texture);
+        },
+        (failedUrl) => {
+          if (!isCurrent()) return;
+          if (!disposed && nextFallback < fallbacks.length) {
+            load(fallbacks[nextFallback++]);
+            return;
+          }
+          if (!resolveUrls)
+            texture.removeEventListener("dispose", markDisposed);
+          if (!disposed) observeFailedBitmapTexture(texture);
+          onError?.(failedUrl);
+        },
+        owner,
+      );
+      if (!disposed && isCurrent()) texture.source = source.source;
+    }
+    load(first);
   }
-  load(url);
+
+  if (typeof url === "string") {
+    start(url, fallbackUrls, assets);
+  } else {
+    const reload = () => {
+      const [first, ...fallbacks] = url();
+      if (first !== undefined) start(first, fallbacks, assets.textures);
+    };
+    unsubscribe = assets.onTexturesChanged(() => {
+      if (disposed) return;
+      // Three keys GPU storage by the attached Source. Evict it before
+      // replacing the Source while keeping this sampler bound to the scene.
+      texture.removeEventListener("dispose", markDisposed);
+      try {
+        texture.dispose();
+      } finally {
+        texture.addEventListener("dispose", markDisposed);
+        texture.version = 0;
+        texture.source = new Source(null);
+      }
+      reload();
+    });
+    try {
+      reload();
+    } catch (error) {
+      markDisposed();
+      throw error;
+    }
+  }
   return texture;
 }
 

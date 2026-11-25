@@ -31,7 +31,7 @@ interface ShapeSource {
   data?: Promise<DTSShapeData>;
   resolvedModel?: DTSModel;
   model?: Promise<DTSModel>;
-  dependencies?: Promise<void>;
+  dependencies?: { textures: SceneAssets; pending: Promise<void> };
 }
 const shapeSourceCache = {};
 const standaloneSources = new WeakMap<
@@ -76,7 +76,7 @@ export class ShapeLoader extends DTSLoader {
       return flags & DTSMaterialFlags.IflMaterial
         ? null
         : loadBitmapTextureInstance(
-            textureToUrl(name),
+            () => [textureToUrl(name)],
             undefined,
             [],
             this.assets,
@@ -151,7 +151,9 @@ export class ShapeLoader extends DTSLoader {
     url: string,
   ): Promise<void> {
     this.assets.signal.throwIfAborted();
-    if (source.dependencies) return source.dependencies;
+    const textures = this.assets.textures;
+    if (source.dependencies?.textures === textures)
+      return source.dependencies.pending;
     const pending = Promise.allSettled([
       ...model.data.materials
         .map((material, index) => ({ material, index }))
@@ -161,14 +163,14 @@ export class ShapeLoader extends DTSLoader {
         .map(({ material, index }) =>
           Promise.resolve()
             .then(() => {
-              this.assets.signal.throwIfAborted();
+              textures.signal.throwIfAborted();
               return loadBitmapTextureAsync(
                 textureToUrl(material.name),
-                this.assets,
+                textures,
               );
             })
             .then((loaded) => {
-              this.assets.signal.throwIfAborted();
+              textures.signal.throwIfAborted();
               const texture = model.materials[index]?.map;
               // A failed bitmap is evicted from its source cache. A retry then
               // gets a new Source; repair the existing sampler shared by model
@@ -182,19 +184,20 @@ export class ShapeLoader extends DTSLoader {
               }
             }),
         ),
-      loadShapeImageLists(model, this.assets),
+      loadShapeImageLists(model, textures),
     ])
       .then((results) => {
         const failure = results.find((result) => result.status === "rejected");
         if (failure?.status === "rejected") throw failure.reason;
       })
       .catch((error: unknown) => {
-        if (source.dependencies === pending) source.dependencies = undefined;
+        if (source.dependencies?.pending === pending)
+          source.dependencies = undefined;
         throw error;
       });
-    source.dependencies = pending;
+    source.dependencies = { textures, pending };
     void pending.catch((error) => {
-      if (!this.assets.disposed)
+      if (!textures.disposed)
         console.warn(`Failed to load shape textures for ${url}`, error);
     });
     return pending;
@@ -225,6 +228,11 @@ export class ShapeLoader extends DTSLoader {
           registerShapeSequences(name, model.animations);
           registerGroundEffectShape(name, model, this.assets);
           registerShapeBounds(name, model.data.bounds);
+          if (model.data.iflMaterials.length) {
+            this.assets.onTexturesChanged(() =>
+              this.prepareDependencies(source, model, url),
+            );
+          }
           onLoad(model);
         } catch (error) {
           if (source.resolvedModel === model) {

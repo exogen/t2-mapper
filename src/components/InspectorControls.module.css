@@ -391,6 +391,12 @@ fieldset.GraphicsEffects {
   padding-bottom: 10px;
 }
 
+.OnOffLabel {
+  text-transform: uppercase;
+  font-size: 0.9em;
+  font-weight: 600;
+}
+
 @media (min-width: 900px) {
   .CloseSidebarButton {
     display: none;

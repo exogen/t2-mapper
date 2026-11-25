@@ -41,7 +41,7 @@ it("preserves cloud scrolling across host replacement while releasing old mesh r
         return () => {};
       },
     },
-    prepareWithHost: (
+    prepareTextureWithHost: (
       _load: unknown,
       adopt: (textures: Texture[]) => () => void,
     ) => {

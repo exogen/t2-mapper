@@ -62,7 +62,7 @@ it("requests explicit model-and-dependency readiness for prefetch jobs", async (
   );
   expect(mocks.loadHtmlTexture).toHaveBeenCalledWith(
     "/textures/test.png",
-    sharedSceneAssets,
+    sharedSceneAssets.textures,
   );
 });
 

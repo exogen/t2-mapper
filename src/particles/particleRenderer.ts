@@ -12,6 +12,7 @@ import {
   RepeatWrapping,
   RGBAFormat,
   ShaderMaterial,
+  Source,
   Texture,
   UnsignedByteType,
 } from "three";
@@ -78,7 +79,10 @@ export function getParticleTexture(
   if (!textureName) return _placeholderTexture;
   const textureCache = assets.cache<string, ParticleTextureEntry>(
     textureCacheKey,
-    ({ texture }) => texture.dispose(),
+    ({ texture }) => {
+      texture.dispose();
+      particleTexturesReady.delete(texture);
+    },
   );
   const cached = textureCache.get(textureName);
   if (
@@ -86,34 +90,56 @@ export function getParticleTexture(
     (cached.retryAfter === undefined || performance.now() < cached.retryAfter)
   )
     return cached.texture;
+  if (cached) {
+    loadParticleTexture(textureName, cached, assets);
+    return cached.texture;
+  }
+  // Share decoded pixels, not sampler/color-space settings with other effects.
+  const texture = new Texture();
+  setupParticleTexture(texture);
+  const entry = { texture };
+  textureCache.set(textureName, entry);
+  assets.onTexturesChanged(() =>
+    loadParticleTexture(textureName, entry, assets),
+  );
+  loadParticleTexture(textureName, entry, assets);
+  return texture;
+}
+
+function loadParticleTexture(
+  textureName: string,
+  entry: ParticleTextureEntry,
+  assets: SceneAssets,
+): void {
+  const { texture } = entry;
+  const images = assets.textures;
+  entry.retryAfter = undefined;
+  if (particleTexturesReady.delete(texture)) {
+    // Remove GL storage while it still belongs to the previous Source. Effects
+    // keep this sampler in their material uniforms throughout the refresh.
+    texture.dispose();
+    texture.source = new Source(null);
+    // Bind the renderer's empty texture until the new pixels arrive.
+    texture.version = 0;
+  }
+  const failed = () => {
+    if (!images.disposed)
+      entry.retryAfter = performance.now() + PARTICLE_TEXTURE_RETRY_MS;
+  };
   try {
-    const url = textureToUrl(textureName);
-    // Share decoded pixels, not sampler/color-space settings with other effects.
-    const tex = cached?.texture ?? new Texture();
-    const entry: ParticleTextureEntry = cached ?? { texture: tex };
-    if (!cached) setupParticleTexture(tex);
-    entry.retryAfter = undefined;
     const source = loadBitmapTexture(
-      url,
+      textureToUrl(textureName),
       (loaded) => {
-        tex.source = loaded.source;
-        markTextureSamplerUpdate(tex);
-        particleTexturesReady.add(tex);
+        texture.source = loaded.source;
+        markTextureSamplerUpdate(texture);
+        particleTexturesReady.add(texture);
       },
-      () => {
-        entry.retryAfter = performance.now() + PARTICLE_TEXTURE_RETRY_MS;
-      },
-      assets,
+      failed,
+      images,
     );
-    tex.source = source.source;
-    textureCache.set(textureName, entry);
-    return tex;
+    texture.source = source.source;
   } catch {
-    if (cached) {
-      cached.retryAfter = performance.now() + PARTICLE_TEXTURE_RETRY_MS;
-      return cached.texture;
-    }
-    return _placeholderTexture;
+    failed();
   }
 }
 

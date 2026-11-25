@@ -41,6 +41,49 @@ async function materialUrls(shape: string, path: string) {
 }
 
 describe("player skin manifest", () => {
+  it("switches both archive overrides and native high-resolution skins on a warm lookup", async () => {
+    const urls = await materialUrls("light_male.dts", "skins/base.lmale");
+    const { settingsStore } = await import("../state/settingsStore");
+    const { FALLBACK_TEXTURE_URL, iflTextureToUrl, textureToUrl } =
+      await import("../loaders");
+    for (const enabled of [true, false, true]) {
+      settingsStore.setState({ hdTexturesEnabled: enabled });
+      const pack = enabled ? "yHDTextures2.0.vl2" : "skins.vl2";
+      expect(urls("base")[0]).toContain(
+        `/${pack}/textures/skins/base.lmale.png`,
+      );
+      const beagle = "/skins.vl2/textures/skins/beagle.lmale";
+      expect(urls("beagle")).toEqual(
+        (enabled
+          ? [`${beagle}_512.png`, `${beagle}.png`]
+          : [`${beagle}.png`]
+        ).map((path) => expect.stringContaining(path)),
+      );
+      expect(
+        iflTextureToUrl("disc00.PNG", "textures/skins/disc00.ifl"),
+      ).toContain(
+        `/${pack}/textures/skins/${enabled ? "disc00.png" : "disc00.PNG"}`,
+      );
+      expect(textureToUrl("skins/base.flag")).toContain(
+        enabled ? "/z_textures/zflags.vl2/" : "/skins.vl2/",
+      );
+      expect(textureToUrl("lava/ds_iwal01a")).toContain(
+        "/z_mappacks/zDMP-4.7.3DX.vl2/",
+      );
+      expect(textureToUrl("emap")).toContain(
+        enabled
+          ? "/yHDTextures2.0.vl2/textures/emap.png"
+          : "/textures.vl2/textures/emap.bmp",
+      );
+      if (!enabled) {
+        expect(textureToUrl("emap.png")).toBe(FALLBACK_TEXTURE_URL);
+        expect(() => textureToUrl("emap.png", null)).toThrow(
+          "No standard-definition source",
+        );
+      }
+    }
+  });
+
   it.each([
     ["heavy_male.dts", "Beagle", "textures/skins/beagle.hmale_512.png"],
     ["heavy_male.dts", "swolf", "textures/skins/swolf_hmale_512.png"],
@@ -100,6 +143,41 @@ describe("player skin manifest", () => {
     expect(light("missing")).toEqual([]);
     expect(heavy("custom")).toEqual([]);
     expect(loadSkinManifest()).toBe(pending);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the published @1x variant only for the models with an HD original", async () => {
+    const name = "Team PSYOP";
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          customSkins: { lmale: [name], hmale: [name] },
+          sizeMultiplier: { "Team PSYOP.lmale.png": 2 },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const { settingsStore } = await import("../state/settingsStore");
+    const { getPlayerSkinSelection, loadSkinManifest, playerSkinUrls } =
+      await import("./playerSkins");
+    await loadSkinManifest();
+    // A mounted model keeps its selection while quality changes.
+    const preferred = getPlayerSkinSelection("light_male.dts", name);
+    const team = getPlayerSkinSelection("light_male.dts", undefined, name);
+    const heavy = getPlayerSkinSelection("heavy_male.dts", name);
+    const missing = getPlayerSkinSelection("light_male.dts", "Missing");
+
+    const root = "https://assets.tribes2.online/skins/files/Team%20PSYOP";
+    for (const enabled of [true, false, true]) {
+      settingsStore.setState({ hdTexturesEnabled: enabled });
+      const lightUrl = `${root}.lmale${enabled ? "" : "@1x"}.png`;
+      expect(playerSkinUrls("skins/base.lmale", preferred)).toEqual([lightUrl]);
+      expect(playerSkinUrls("skins/base.lmale", team)).toEqual([lightUrl]);
+      expect(playerSkinUrls("skins/base.hmale", heavy)).toEqual([
+        `${root}.hmale.png`,
+      ]);
+      expect(playerSkinUrls("skins/base.lmale", missing)).toEqual([]);
+    }
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 

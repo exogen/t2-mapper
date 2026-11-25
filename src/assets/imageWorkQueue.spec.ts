@@ -10,28 +10,22 @@ describe("shared image work policy", () => {
       imageWorkConcurrency({
         mobile: true,
         coarsePointer: false,
-        deviceMemoryGB: 8,
+        deviceMemoryGB: 32,
         hardwareConcurrency: 12,
       }),
     ).toBe(2);
-    expect(
-      imageWorkConcurrency({
-        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)",
-        maxTouchPoints: 5,
-        coarsePointer: false,
-        deviceMemoryGB: 8,
-        hardwareConcurrency: 12,
-      }),
-    ).toBe(2);
+  });
+
+  it("applies the constrained policy to a touchscreen desktop", () => {
     expect(
       imageWorkConcurrency({
         userAgent: "Mozilla/5.0 (Windows NT 10.0)",
         maxTouchPoints: 5,
         coarsePointer: false,
-        deviceMemoryGB: 8,
+        deviceMemoryGB: 32,
         hardwareConcurrency: 12,
       }),
-    ).toBe(4);
+    ).toBe(2);
   });
 
   it("uses the same structural browser signals as the global device policy", () => {

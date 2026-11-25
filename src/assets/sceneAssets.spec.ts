@@ -19,3 +19,28 @@ it("disposes every cached resource even if a release listener throws", () => {
   assets.dispose();
   expect(release).toHaveBeenCalledTimes(3);
 });
+
+it("detaches old image bindings before canceling image requests and keeps world resources", () => {
+  const assets = new SceneAssets();
+  const world = assets.cache({}, vi.fn());
+  world.set("terrain", {});
+  const first = assets.textures;
+  const detach = vi.fn(() => expect(first.disposed).toBe(false));
+  const bind = vi.fn((textures: SceneAssets) =>
+    textures === first ? detach : undefined,
+  );
+  const stop = assets.bindTextures(bind);
+
+  assets.refreshTextures();
+  const second = assets.textures;
+  expect(bind.mock.calls).toEqual([[first], [second]]);
+  expect(detach).toHaveBeenCalledOnce();
+  expect(first.signal.aborted).toBe(true);
+  expect(second.signal.aborted).toBe(false);
+  expect(world.has("terrain")).toBe(true);
+
+  stop();
+  assets.dispose();
+  expect(second.signal.aborted).toBe(true);
+  expect(world.size).toBe(0);
+});

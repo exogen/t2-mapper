@@ -70,6 +70,7 @@ export function installLightPool(engine: GameEngine): () => void {
   const clear = () => {
     if (effectLightUniforms.effectLightFalloff.value === falloff)
       effectLightUniforms.effectLightFalloff.value = null;
+    falloff?.dispose();
     falloff = undefined;
     active.length = 0;
   };

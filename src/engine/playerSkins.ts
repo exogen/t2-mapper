@@ -1,4 +1,5 @@
 import { textureToUrl } from "../loaders";
+import { settingsStore } from "../state/settingsStore";
 
 const SKIN_BASE_URL = "https://assets.tribes2.online/skins/files/";
 const SKIN_MANIFEST_URL = "https://assets.tribes2.online/skins/manifest.json";
@@ -40,23 +41,31 @@ function hiResSkinBasename(basename: string): string {
   return `${basename}_512`;
 }
 
-const builtInUrls = new Map<string, string | undefined>();
+const builtInUrls = {
+  hd: new Map<string, string | undefined>(),
+  stock: new Map<string, string | undefined>(),
+};
 
 function builtInSkinUrl(path: string): string | undefined {
-  if (!builtInUrls.has(path)) {
+  const urls = settingsStore.getState().hdTexturesEnabled
+    ? builtInUrls.hd
+    : builtInUrls.stock;
+  if (!urls.has(path)) {
     let url: string | undefined;
     try {
       url = textureToUrl(path, null);
     } catch {
       // A missing candidate is a normal part of skin selection.
     }
-    builtInUrls.set(path, url);
+    urls.set(path, url);
   }
-  return builtInUrls.get(path);
+  return urls.get(path);
 }
 
-/** Processed custom skin manifest: suffix → Set of available skin names. */
-type SkinLookup = Record<string, Set<string>>;
+interface SkinLookup {
+  byModel: Record<string, Set<string>>;
+  sizeMultiplier: Record<string, number>;
+}
 
 let manifest: SkinLookup | undefined;
 let pending: Promise<SkinLookup | undefined> | undefined;
@@ -66,14 +75,15 @@ async function fetchSkinManifest(): Promise<SkinLookup> {
     signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) throw new Error(`${res.status}`);
-  const raw: { customSkins?: Record<string, string[]> } = await res.json();
-  const lookup: SkinLookup = {};
-  if (raw.customSkins) {
-    for (const [suffix, names] of Object.entries(raw.customSkins)) {
-      lookup[suffix] = new Set(names);
-    }
+  const raw: {
+    customSkins?: Record<string, string[]>;
+    sizeMultiplier?: Record<string, number>;
+  } = await res.json();
+  const byModel: SkinLookup["byModel"] = {};
+  for (const [suffix, names] of Object.entries(raw.customSkins ?? {})) {
+    byModel[suffix] = new Set(names);
   }
-  return lookup;
+  return { byModel, sizeMultiplier: raw.sizeMultiplier ?? {} };
 }
 
 /**
@@ -92,7 +102,7 @@ export function loadSkinManifest(): Promise<SkinLookup | undefined> {
 
 interface SkinChoice {
   name: string;
-  customUrl?: string;
+  customBasename?: string;
 }
 
 export interface PlayerSkinSelection {
@@ -108,10 +118,11 @@ export function getPlayerSkinSelection(
   const model = SKIN_SUFFIXES[shapeName.toLowerCase()];
   function choice(name: string | undefined): SkinChoice | undefined {
     if (!name) return undefined;
-    const customUrl = manifest?.[model]?.has(name)
-      ? `${SKIN_BASE_URL}${name}.${model}.png`
+    const skinName = name.toLowerCase();
+    const customBasename = manifest?.byModel[model]?.has(name)
+      ? `${name}.${model}`
       : undefined;
-    return { name: name.toLowerCase(), customUrl };
+    return { name: skinName, customBasename };
   }
   return { preferred: choice(preferredSkin), team: choice(teamSkin) };
 }
@@ -128,24 +139,37 @@ export function playerSkinUrls(
   if (base < 0 || resourcePath.length <= 5) return [];
   const prefix = resourcePath.slice(0, base).toLowerCase();
   const suffix = resourcePath.slice(base + 4).toLowerCase();
+  const { hdTexturesEnabled } = settingsStore.getState();
+  const customUrl = ({ customBasename }: SkinChoice) => {
+    if (!customBasename || !manifest) return;
+    // The skin catalog publishes a prepared @1x copy for each HD original.
+    const variant =
+      !hdTexturesEnabled && manifest.sizeMultiplier[`${customBasename}.png`] > 1
+        ? "@1x"
+        : "";
+    return `${SKIN_BASE_URL}${encodeURIComponent(customBasename)}${variant}.png`;
+  };
   const urls: string[] = [];
   if (preferred) {
     const path = prefix + preferred.name + suffix;
-    if (path.startsWith("skins/")) {
+    if (hdTexturesEnabled && path.startsWith("skins/")) {
       const hiRes = builtInSkinUrl("skins/" + hiResSkinBasename(path.slice(6)));
       if (hiRes) urls.push(hiRes);
     }
     const regular = builtInSkinUrl(path);
     if (regular) urls.push(regular);
-    else if (preferred.customUrl) {
+    else {
+      const custom = customUrl(preferred);
       // A failed bucket download uses the authored texture, as before.
-      urls.push(preferred.customUrl);
-      return urls;
+      if (custom) {
+        urls.push(custom);
+        return urls;
+      }
     }
   }
   if (team) {
     const regular =
-      builtInSkinUrl(prefix + team.name + suffix) ?? team.customUrl;
+      builtInSkinUrl(prefix + team.name + suffix) ?? customUrl(team);
     if (regular) urls.push(regular);
   }
   return urls;

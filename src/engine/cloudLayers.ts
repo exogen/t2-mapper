@@ -570,18 +570,17 @@ export function startCloudLayers(
         cloudCount = configs.length;
         parent.add(group);
         configs.forEach((config, layerIndex) => {
-          const url = textureToUrl(config.texture);
           // Animation state belongs to the view, not its temporary GPU mesh.
           const offset = new Vector2();
           textureTasks.push(
-            engine.prepareWithHost(
-              ({ renderer }, signal) =>
+            engine.prepareTextureWithHost(
+              ({ renderer }, signal, textures) =>
                 loadTextures(
-                  [url],
+                  [textureToUrl(config.texture)],
                   renderer,
                   setupCloudTexture,
                   signal,
-                  assets,
+                  textures,
                 ),
               ([texture]) => {
                 const layer = createCloudLayer(
@@ -604,7 +603,7 @@ export function startCloudLayers(
                 };
               },
               (error: unknown) =>
-                log.warn("cloud texture %s failed: %o", url, error),
+                log.warn("cloud texture %s failed: %o", config.texture, error),
             ),
           );
         });

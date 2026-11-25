@@ -8,11 +8,10 @@
 const MiB = 1024 * 1024;
 
 export const performanceTuning = {
-  /** Optional browser hints, not available-resource measurements. Mobile/coarse
-   * identity still takes priority. Lower thresholds classify fewer desktops. */
+  /** Optional browser hints. Browser and input signals take priority. */
   constrainedDevice: {
-    /** Approximate navigator.deviceMemory hint in GiB. */
-    maximumMemoryGB: 4,
+    /** Classify reported navigator.deviceMemory values below this many GiB. */
+    memoryThresholdGiB: 16,
     /** Logical CPU thread count, not physical cores. */
     maximumLogicalCpuThreads: 4,
   },

@@ -277,6 +277,27 @@ it("disposes outgoing effects before their scene assets and resumes on the new s
   expect(owners.simulations[1].step).toHaveBeenCalledOnce();
 });
 
+it("keeps active ground effects and continues capture when external images are refreshed", () => {
+  const f = fixture();
+  const geometry = owners.geometries[0];
+  const material = owners.materials[0];
+  const clears = f.simulation.clear.mock.calls.length;
+  const assets = f.engine.sceneAssets;
+  const images = assets.textures;
+
+  assets.refreshTextures();
+  expect(images.disposed).toBe(true);
+  expect(f.engine.sceneAssets).toBe(assets);
+  expect(f.queue.capturing).toBe(true);
+  f.append(f.queue, 0.064);
+  f.frame(0.064);
+  expect(f.simulation.clear).toHaveBeenCalledTimes(clears);
+  expect(f.simulation.step).toHaveBeenCalledTimes(2);
+  expect(owners.geometries).toEqual([geometry]);
+  expect(geometry.dispose).not.toHaveBeenCalled();
+  expect(material.dispose).not.toHaveBeenCalled();
+});
+
 it("retires replaced recordings and removes transport, visibility and scheduler work on disposal", () => {
   const f = fixture();
   const next = recording();

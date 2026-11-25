@@ -70,6 +70,31 @@ describe("shared DTS IFL resources", () => {
     newAssets.dispose();
   });
 
+  it("cancels an outgoing frame-list request while its replacement loads", async () => {
+    const outgoing = new SceneAssets();
+    const replacement = new SceneAssets();
+    vi.mocked(loadImageFrameList).mockImplementationOnce(
+      (_, signal) =>
+        new Promise((_, reject) => {
+          signal!.addEventListener("abort", () => reject(signal!.reason), {
+            once: true,
+          });
+        }),
+    );
+    const retired = loadIflAtlas("interrupted.ifl", 0, outgoing);
+    outgoing.dispose();
+    await expect(retired).rejects.toBe(outgoing.signal.reason);
+    expect(loadBitmapTextureAsync).not.toHaveBeenCalled();
+    await expect(
+      loadIflAtlas("interrupted.ifl", 0, replacement),
+    ).resolves.toHaveProperty("duration");
+    expect(loadImageFrameList).toHaveBeenLastCalledWith(
+      "interrupted.ifl",
+      replacement.signal,
+    );
+    replacement.dispose();
+  });
+
   it("deduplicates concurrent loads and shares fixed frame transforms across consumers", async () => {
     const a = loadIflAtlas("concurrent.ifl"),
       b = loadIflAtlas("concurrent.ifl");
@@ -145,7 +170,10 @@ describe("shared DTS IFL resources", () => {
     ];
     const model = buildDTS(data);
     const ready = loadShapeImageLists(model);
-    expect(loadImageFrameList).toHaveBeenCalledWith("textures/skins/late.ifl");
+    expect(loadImageFrameList).toHaveBeenCalledWith(
+      "textures/skins/late.ifl",
+      expect.any(AbortSignal),
+    );
     const instance = clone(model.scene) as DTSShape;
     expect(instance.imageAnimations).toHaveLength(0);
     resolve([{ name: "a", frameCount: 1 }]);

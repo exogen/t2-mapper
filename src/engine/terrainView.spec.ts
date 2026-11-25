@@ -16,6 +16,8 @@ import { createTerrainView } from "./terrainView";
 import { registerShadowRenderer } from "./shadowControl";
 import { FramePriority } from "./framePriority";
 import { commandCircuitStore } from "../state/commandCircuitStore";
+import { SceneAssets } from "../assets/sceneAssets";
+import { collisionState } from "../collision/collisionContext";
 
 const loads = vi.hoisted(() => ({ terrain: vi.fn(), textures: vi.fn() }));
 vi.mock("./terrainCache", () => ({ loadTerrainAsset: loads.terrain }));
@@ -38,7 +40,7 @@ vi.mock("../logger", () => ({
   createLogger: () => ({ debug: vi.fn(), error: vi.fn(), warn: vi.fn() }),
 }));
 
-it("refreshes frozen shadows when terrain changes from wireframe to solid and back on host detach", async () => {
+it("preserves terrain collision and refreshes frozen shadows when texture bindings change", async () => {
   const terrain: TerrainFile = {
     version: 1,
     textureNames: ["grass"],
@@ -49,10 +51,11 @@ it("refreshes frozen shadows when terrain changes from wireframe to solid and ba
   };
   loads.terrain.mockResolvedValue(terrain);
   let finishTextures!: (textures: Texture[]) => void;
-  loads.textures.mockReturnValue(
-    new Promise<Texture[]>((resolve) => {
-      finishTextures = resolve;
-    }),
+  loads.textures.mockImplementation(
+    () =>
+      new Promise<Texture[]>((resolve) => {
+        finishTextures = resolve;
+      }),
   );
   const renderer = {
     domElement: new EventTarget(),
@@ -71,7 +74,9 @@ it("refreshes frozen shadows when terrain changes from wireframe to solid and ba
   const engine = {
     invalidate: host.invalidate,
     scheduler: new FrameScheduler(),
+    sceneAssets: new SceneAssets(),
     prepareWithHost: GameEngine.prototype.prepareWithHost,
+    prepareTextureWithHost: GameEngine.prototype.prepareTextureWithHost,
     withHost(start: (host: EngineHost) => (() => void) | void) {
       detachHost = start(host) || undefined;
       return () => {
@@ -136,6 +141,23 @@ it("refreshes frozen shadows when terrain changes from wireframe to solid and ba
     expect(renderer.shadowMap.needsUpdate).toBe(true);
     commandCircuitStore.setState({ active: false });
     expect(pool().castShadow).toBe(true);
+    const collision = collisionState().terrain;
+    expect(collision).not.toBeNull();
+    const geometry = primary.geometry;
+    const outgoingTextures = engine.sceneAssets.textures;
+    engine.sceneAssets.refreshTextures();
+    expect(outgoingTextures.disposed).toBe(true);
+    expect(primary.material).toBe(fallback);
+    expect(primary.castShadow).toBe(false);
+    expect(primary.geometry).toBe(geometry);
+    expect(collisionState().terrain).toBe(collision);
+    await vi.waitFor(() => expect(loads.textures).toHaveBeenCalledTimes(2));
+    expect(loads.terrain).toHaveBeenCalledOnce();
+    expect(loads.textures.mock.lastCall?.[4]).toBe(engine.sceneAssets.textures);
+    finishTextures(sourceTextures);
+    await vi.waitFor(() => expect(primary.material).not.toBe(fallback));
+    expect(primary.castShadow).toBe(true);
+    expect(collisionState().terrain).toBe(collision);
     const disposeSolid = vi.spyOn(primary.material, "dispose");
     renderer.shadowMap.needsUpdate = false;
     detachHost?.();
@@ -152,6 +174,7 @@ it("refreshes frozen shadows when terrain changes from wireframe to solid and ba
     expect(renderer.shadowMap.needsUpdate).toBe(false);
   } finally {
     view.dispose();
+    engine.sceneAssets.dispose();
     commandCircuitStore.setState({ active: previousCommandMap });
     releaseShadow();
     for (const texture of sourceTextures) texture.dispose();

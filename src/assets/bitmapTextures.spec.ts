@@ -7,6 +7,7 @@ import {
 } from "./bitmapTextures";
 import { readResourceMetrics } from "../diagnostics/resourceMetricRegistry";
 import { setupTexture } from "../textureUtils";
+import { SceneAssets } from "./sceneAssets";
 
 vi.mock("../logger", () => ({
   createLogger: () => ({ error: vi.fn() }),
@@ -42,7 +43,7 @@ const previousManagerCallbacks = {
 let requests: Array<ReturnType<typeof deferred<Response>>>;
 let decodes: Array<ReturnType<typeof deferred<ImageBitmap>>>;
 let sequence = 0;
-const fetchImage = vi.fn<(request: Request) => Promise<Response>>();
+const fetchImage = vi.fn<typeof fetch>();
 const decodeImage =
   vi.fn<(blob: Blob, options: ImageBitmapOptions) => Promise<ImageBitmap>>();
 const complete = vi.fn();
@@ -71,8 +72,6 @@ beforeEach(() => {
   DefaultLoadingManager.onError = error;
   vi.stubGlobal("fetch", fetchImage);
   vi.stubGlobal("createImageBitmap", decodeImage);
-  // FileLoader emits progress events while reading Response's real stream.
-  vi.stubGlobal("ProgressEvent", Event);
 });
 
 afterEach(() => {
@@ -88,6 +87,68 @@ async function fetchSucceeded() {
 }
 
 describe("shared shape texture images", () => {
+  it("rebinds a live sampler through rapid texture changes and ignores stale decodes", async () => {
+    const assets = new SceneAssets();
+    let name = `${url()}?size=large`;
+    const resolve = vi.fn(() => [name]);
+    const sampler = loadBitmapTextureInstance(resolve, undefined, [], assets);
+    sampler.repeat.set(3, 4);
+
+    await fetchSucceeded();
+    const firstBitmap = {
+      width: 8,
+      height: 8,
+      close: vi.fn(),
+    } as unknown as ImageBitmap;
+    decodes[0].resolve(firstBitmap);
+    await vi.waitFor(() => expect(sampler.image).toBe(firstBitmap));
+    const firstSource = sampler.source;
+    const evicted = vi.fn(() => sampler.source);
+    sampler.addEventListener("dispose", evicted);
+
+    name = `${url()}?size=intermediate`;
+    assets.refreshTextures();
+    expect(evicted).toHaveReturnedWith(firstSource);
+    expect(firstBitmap.close).toHaveBeenCalledOnce();
+    expect(sampler.image).toBeNull();
+    expect(sampler.version).toBe(0);
+    requests[1].resolve(new Response(png));
+    await vi.waitFor(() => expect(decodes).toHaveLength(2));
+
+    name = `${url()}?size=small`;
+    assets.refreshTextures();
+    const stale = {
+      width: 4,
+      height: 4,
+      close: vi.fn(),
+    } as unknown as ImageBitmap;
+    decodes[1].resolve(stale);
+    await vi.waitFor(() => expect(stale.close).toHaveBeenCalledOnce());
+    expect(sampler.image).toBeNull();
+
+    requests[2].resolve(new Response(png));
+    await vi.waitFor(() => expect(decodes).toHaveLength(3));
+    const latest = {
+      width: 2,
+      height: 2,
+      close: vi.fn(),
+    } as unknown as ImageBitmap;
+    decodes[2].resolve(latest);
+    await vi.waitFor(() => expect(sampler.image).toBe(latest));
+    expect(sampler.version).toBeGreaterThan(0);
+    expect(sampler.repeat.toArray()).toEqual([3, 4]);
+    expect(
+      loadBitmapTexture(name, undefined, undefined, assets.textures).source,
+    ).toBe(sampler.source);
+
+    sampler.dispose();
+    assets.refreshTextures();
+    expect(latest.close).toHaveBeenCalledOnce();
+    expect(resolve).toHaveBeenCalledTimes(3);
+    expect(fetchImage).toHaveBeenCalledTimes(3);
+    assets.dispose();
+  });
+
   it("shares checked image loads and keeps the manager busy through decoding", async () => {
     const loaded = vi.fn();
     const original = loadBitmapTexture(url(), loaded);

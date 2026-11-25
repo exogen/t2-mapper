@@ -62,7 +62,7 @@ it("wakes an idle on-demand seek and ignores obsolete or disposed sessions", () 
   }
 });
 
-it("keeps the scene's assets for live rehydration and releases them at the next mission", () => {
+it("keeps the live world across rehydration and texture changes, and releases it on mission change", () => {
   const stream = new LiveStreamAdapter({} as RelayClient, { mode: "watch" });
   stream.missionName = "Harvester";
   let generation = stream.worldGeneration;
@@ -90,6 +90,7 @@ it("keeps the scene's assets for live rehydration and releases them at the next 
   const stopViews = installEntityViews(engine);
   engineStore.getState().setRecording(recording);
   const session = new StreamPlaybackSession(engine, recording);
+  const { hdTexturesEnabled } = settingsStore.getState();
   let frame = 0;
   const draw = () =>
     engine.scheduler.run(FramePriority.StreamPlayback, {
@@ -102,17 +103,32 @@ it("keeps the scene's assets for live rehydration and releases them at the next 
     });
   try {
     const assets = engine.sceneAssets;
+    const textures = assets.textures;
+    const release = vi.fn();
+    engine.onSceneAssetsRelease(release);
     generation++;
     stream.playbackRevision++;
     stream.missionSequence = "1";
     draw();
     expect(engine.sceneAssets).toBe(assets);
 
+    settingsStore.setState({ hdTexturesEnabled: !hdTexturesEnabled });
+    draw();
+    expect(engine.sceneAssets).toBe(assets);
+    expect(assets.disposed).toBe(false);
+    expect(textures.disposed).toBe(true);
+    const switchedTextures = assets.textures;
+    expect(switchedTextures.disposed).toBe(false);
+    expect(release).not.toHaveBeenCalled();
+    expect(engineStore.getState().playback.recording).toBe(recording);
+
     generation++;
     stream.missionSequence = "2";
     stream.missionName = "BeachBlitz";
     draw();
     expect(assets.disposed).toBe(true);
+    expect(switchedTextures.disposed).toBe(true);
+    expect(release).toHaveBeenCalledOnce();
     const nextAssets = engine.sceneAssets;
     expect(nextAssets).not.toBe(assets);
 
@@ -124,6 +140,7 @@ it("keeps the scene's assets for live rehydration and releases them at the next 
     session.dispose();
     engineStore.getState().setRecording(null);
     stopViews();
+    settingsStore.setState({ hdTexturesEnabled });
     gameEntityStore.getState().endStreaming();
   }
 });

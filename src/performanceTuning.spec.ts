@@ -44,8 +44,8 @@ describe("performance tuning invariants", () => {
 
   it("requires meaningful positive classification thresholds", () => {
     const thresholds = performanceTuning.constrainedDevice;
-    expect(Number.isFinite(thresholds.maximumMemoryGB)).toBe(true);
-    expect(thresholds.maximumMemoryGB).toBeGreaterThan(0);
+    expect(Number.isFinite(thresholds.memoryThresholdGiB)).toBe(true);
+    expect(thresholds.memoryThresholdGiB).toBeGreaterThan(0);
     expectPositiveInteger(thresholds.maximumLogicalCpuThreads);
   });
 

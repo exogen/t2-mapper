@@ -17,7 +17,7 @@ vi.mock("../logger", () => ({
   createLogger: () => ({ error: vi.fn() }),
 }));
 
-// Exercise the real TextureLoader/ImageLoader path without browser decoding.
+// Exercise the HTML-element path without browser decoding.
 class TestImage extends EventTarget {
   width = 0;
   height = 0;
@@ -32,6 +32,10 @@ class TestImage extends EventTarget {
   set src(value: string) {
     this.source = value;
     images.push(this);
+  }
+
+  removeAttribute(name: string) {
+    if (name === "src") this.source = "";
   }
 
   succeed(width = 8, height = 4) {
@@ -69,7 +73,7 @@ beforeEach(() => {
   DefaultLoadingManager.onStart = start;
   DefaultLoadingManager.onLoad = complete;
   DefaultLoadingManager.onError = error;
-  vi.stubGlobal("document", { createElementNS: createImage });
+  vi.stubGlobal("document", { createElement: createImage });
 });
 
 afterEach(() => {
@@ -134,7 +138,6 @@ describe("view texture ownership", () => {
       "fetch",
       vi.fn(async () => new Response(new Blob())),
     );
-    vi.stubGlobal("ProgressEvent", Event);
 
     const ready = await loadBitmapTextureAsync(`${url()}?ready`, old);
     const onDispose = vi.fn();
@@ -153,7 +156,7 @@ describe("view texture ownership", () => {
 
     const nextBitmap = loadBitmapTextureAsync(url(), next);
     const nextHtml = loadHtmlTexture(url(), next);
-    images[0].succeed();
+    expect(images[0].src).toBe("");
     finishLateBitmap(lateBitmap);
     await vi.waitFor(() => expect(images).toHaveLength(2));
     images[1].succeed();
@@ -176,13 +179,66 @@ describe("view texture ownership", () => {
     }
   });
 
+  it("frees stalled bitmap and HTML requests when their scene is replaced", async () => {
+    const old = new SceneAssets();
+    const next = new SceneAssets();
+    const concurrency = readResourceMetrics()["imageWorkQueue.concurrency"]!;
+    const fetchImage = vi
+      .fn<(url: string, init: { signal: AbortSignal }) => Promise<Response>>(
+        async () => new Response(new Blob()),
+      )
+      .mockImplementationOnce(
+        (_url: string, { signal }: { signal: AbortSignal }) =>
+          new Promise((_, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), {
+              once: true,
+            });
+          }),
+      );
+    const bitmap = { width: 1, height: 1, close: vi.fn() };
+    vi.stubGlobal("fetch", fetchImage);
+    vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bitmap));
+
+    const discarded = [
+      expect(loadBitmapTextureAsync(url(), old)).rejects.toMatchObject({
+        cause: { name: "AbortError" },
+      }),
+      ...Array.from({ length: concurrency - 1 }, (_, i) =>
+        expect(loadHtmlTexture(`${url()}?${i}`, old)).rejects.toMatchObject({
+          name: "AbortError",
+        }),
+      ),
+    ];
+    const nextBitmap = loadBitmapTextureAsync(url(), next);
+    const nextHtml = loadHtmlTexture(`${url()}?0`, next);
+    expect(fetchImage).toHaveBeenCalledOnce();
+    expect(images).toHaveLength(concurrency - 1);
+    expect(readResourceMetrics()["imageWorkQueue.queued"]).toBe(2);
+
+    old.dispose();
+    expect(images.every((image) => !image.src)).toBe(true);
+    await Promise.all(discarded);
+    await vi.waitFor(() => expect(images).toHaveLength(concurrency));
+    const nextImage = images.at(-1)!;
+    nextImage.succeed();
+    await expect(nextBitmap).resolves.toHaveProperty("image", bitmap);
+    await expect(nextHtml).resolves.toHaveProperty("image", nextImage);
+    expect(fetchImage.mock.calls).toEqual([
+      [url(), { signal: old.signal }],
+      [url(), { signal: next.signal }],
+    ]);
+    expect(error).not.toHaveBeenCalled();
+    expect(complete).toHaveBeenCalledOnce();
+    expect(readResourceMetrics()["imageWorkQueue.active"]).toBe(0);
+    next.dispose();
+  });
+
   it("preserves HTML loader defaults and independently accounts shape bitmap images", async () => {
     const before = readResourceMetrics();
     const bitmap = { width: 8, height: 4 } as ImageBitmap;
     const decode = vi.fn().mockResolvedValue(bitmap);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(new Blob())));
     vi.stubGlobal("createImageBitmap", decode);
-    vi.stubGlobal("ProgressEvent", Event);
 
     const view = loadHtmlTexture(url());
     expect(loadHtmlTexture(url())).toBe(view);
@@ -275,7 +331,6 @@ describe("view texture ownership", () => {
     const bitmap = { width: 1, height: 1 } as ImageBitmap;
     vi.stubGlobal("fetch", fetchImage);
     vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bitmap));
-    vi.stubGlobal("ProgressEvent", Event);
     const views = Array.from({ length: concurrency }, (_, index) =>
       loadHtmlTexture(`${url()}?mixed=${index}`),
     );

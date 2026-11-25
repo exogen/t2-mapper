@@ -177,6 +177,9 @@ export const InspectorControls = memo(function InspectorControls({
     setAnimationEnabled,
     shadowsEnabled,
     setShadowsEnabled,
+    hdTexturesEnabled,
+    hdTexturesDefaultEnabled,
+    setHdTexturesEnabled,
     fpsLimit,
     setFpsLimit,
     renderScale,
@@ -805,6 +808,34 @@ export const InspectorControls = memo(function InspectorControls({
                 </div>
               </Accordion>
               <Accordion value="graphics" label="Graphics">
+                <div className={styles.CheckboxField}>
+                  <Checkbox
+                    id="hdTexturesEnabledInput"
+                    aria-describedby="hdTexturesEnabledInput-description"
+                    checked={hdTexturesEnabled}
+                    onChange={(event) =>
+                      setHdTexturesEnabled(event.target.checked)
+                    }
+                  />
+                  <label
+                    className={styles.Label}
+                    htmlFor="hdTexturesEnabledInput"
+                  >
+                    Enable HD textures
+                  </label>
+                  <p
+                    id="hdTexturesEnabledInput-description"
+                    className={styles.Description}
+                  >
+                    Use higher resolution textures at the expense of memory. Try
+                    disabling this if the page crashes. Based on your device,
+                    the default is{" "}
+                    <strong className={styles.OnOffLabel}>
+                      {hdTexturesDefaultEnabled ? "on" : "off"}
+                    </strong>
+                    .
+                  </p>
+                </div>
                 {canDisableFog && (
                   <div className={styles.CheckboxField}>
                     <Checkbox

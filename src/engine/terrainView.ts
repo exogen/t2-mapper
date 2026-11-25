@@ -343,14 +343,14 @@ export function createTerrainView(
 
     rebake();
 
-    const stopTextures = engine.prepareWithHost(
-      ({ renderer }, signal) =>
+    const stopTextures = engine.prepareTextureWithHost(
+      ({ renderer }, signal, textureAssets) =>
         loadTerrainTextures(
           loaded.textureNames,
           detailTextureName,
           renderer,
           signal,
-          assets,
+          textureAssets,
         ),
       (textures) => {
         const debugMode = selectDebugMode(settingsStore.getState());

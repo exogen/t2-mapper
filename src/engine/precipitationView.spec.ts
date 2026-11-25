@@ -63,19 +63,17 @@ vi.mock("../loaders", () => ({
 vi.mock("../assets/bitmapTextures", async () => {
   const { Texture } = await import("three");
   return {
-    loadBitmapTexture: (
-      url: string,
-      onLoad: (texture: import("three").Texture) => void,
+    loadBitmapTextureInstance: (
+      candidates: () => readonly string[],
       _onError: undefined,
+      _fallbacks: undefined,
       assets: SceneAssets,
     ) => {
-      state.textureLoads(url, assets);
-      const texture = new Texture({
+      state.textureLoads(candidates()[0], assets);
+      return new Texture({
         width: 256,
         height: 256,
       } as TexImageSource);
-      onLoad(texture);
-      return texture;
     },
   };
 });

@@ -1,4 +1,6 @@
 import React, { useMemo } from "react";
+import { useStore } from "zustand";
+import { settingsStore } from "../state/settingsStore";
 import { guiTextureToUrl } from "../loaders";
 import styles from "./GuiMarkup.module.css";
 
@@ -229,17 +231,9 @@ function nodeToJsx(node: Node): React.ReactNode {
 
 // Bitmap rendering
 
-const bitmapUrlCache = new Map<string, string | null>();
-
-function getBitmapUrl(name: string): string | null {
-  if (bitmapUrlCache.has(name)) return bitmapUrlCache.get(name)!;
-  const url = guiTextureToUrl(name);
-  bitmapUrlCache.set(name, url);
-  return url;
-}
-
 function GuiBitmap({ name }: { name: string }) {
-  const url = getBitmapUrl(name);
+  const hdTexturesEnabled = useStore(settingsStore, (s) => s.hdTexturesEnabled);
+  const url = guiTextureToUrl(name, hdTexturesEnabled);
   if (url) {
     return <img src={url} alt="" className={styles.Bitmap} />;
   }

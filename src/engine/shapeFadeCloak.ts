@@ -15,26 +15,32 @@ import { DTSShape } from "../dts/dtsModel";
 import { engineStore, effectNow } from "../state/engineStore";
 import { NormalBlending, RepeatWrapping, SRGBColorSpace } from "three";
 import type { Object3D, Texture } from "three";
-import { loadBitmapTexture } from "../assets/bitmapTextures";
+import { loadBitmapTextureInstance } from "../assets/bitmapTextures";
 import { sharedSceneAssets, type SceneAssets } from "../assets/sceneAssets";
 import { textureToUrl } from "../loaders";
 import type { FrameContext } from "./frameScheduler";
 
 // Lazy-loaded on first use, with a scroll shared by this world's cloaked shapes.
-const cloakStates = new WeakMap<
-  SceneAssets,
-  {
-    texture: Texture;
-    shiftX: number;
-    shiftY: number;
-    lastFrame: number;
-  }
->();
+const cloakCacheKey = {};
+interface CloakState {
+  texture: Texture;
+  shiftX: number;
+  shiftY: number;
+  lastFrame: number;
+}
+
+function cloakStates(assets: SceneAssets) {
+  return assets.cache<object, CloakState>(cloakCacheKey, ({ texture }) =>
+    texture.dispose(),
+  );
+}
+
 function cloakState(assets: SceneAssets) {
-  let state = cloakStates.get(assets);
+  const cache = cloakStates(assets);
+  let state = cache.get(cloakCacheKey);
   if (state) return state;
-  const texture = loadBitmapTexture(
-    textureToUrl("special/cloakTexture"),
+  const texture = loadBitmapTextureInstance(
+    () => [textureToUrl("special/cloakTexture")],
     undefined,
     undefined,
     assets,
@@ -43,7 +49,7 @@ function cloakState(assets: SceneAssets) {
   texture.wrapT = RepeatWrapping;
   texture.colorSpace = SRGBColorSpace;
   state = { texture, shiftX: 0, shiftY: 0, lastFrame: -1 };
-  cloakStates.set(assets, state);
+  cache.set(cloakCacheKey, state);
   return state;
 }
 
@@ -105,7 +111,7 @@ export function applyFadeAndCloak(
       : 1;
   const cloakTex = isCloak
     ? getCloakTexture(assets)
-    : cloakStates.get(assets)?.texture;
+    : cloakStates(assets).get(cloakCacheKey)?.texture;
 
   const mountedMeshes = new Map<Object3D, boolean>();
   for (const m of mounted) {

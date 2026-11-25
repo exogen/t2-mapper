@@ -136,6 +136,12 @@ export function createInteriorView(
 
     const meshes = interior.surfaceMeshes.map((node, i) => {
       const material = lighting.materials[i] as InteriorMaterial;
+      // A cached static material can outlive the texture scope while no
+      // instance is mounted. Its released source has no image to draw.
+      if (material.map && !material.map.image) {
+        material.map = null;
+        material.needsUpdate = true;
+      }
       const mesh = new Mesh(node.geometry, material);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
@@ -170,26 +176,28 @@ export function createInteriorView(
     const textured = new Set<InteriorMaterial>();
     const textureGroups = new Map<string, InteriorMaterial[]>();
     for (const { material } of meshes) {
-      const url = textureToUrl(material.resourcePath);
-      const group = textureGroups.get(url) ?? [];
+      const path = material.resourcePath;
+      const group = textureGroups.get(path) ?? [];
       group.push(material);
-      textureGroups.set(url, group);
+      textureGroups.set(path, group);
     }
     const stopTextures = combineCleanups(
-      ...[...textureGroups].map(([url, materials]) =>
-        engine.prepareWithHost(
-          ({ renderer }, signal) =>
-            loadTextures(
-              [url],
+      ...[...textureGroups].map(([path, materials]) =>
+        engine.prepareTextureWithHost(
+          async ({ renderer }, signal, textureAssets) => {
+            const [texture] = await loadTextures(
+              [textureToUrl(path)],
               renderer,
               (texture: Texture) =>
                 setupTexture(texture, {
                   anisotropy: renderer.capabilities.getMaxAnisotropy(),
                 }),
               signal,
-              assets,
-            ),
-          ([texture]) => {
+              textureAssets,
+            );
+            return { texture, textureAssets };
+          },
+          ({ texture, textureAssets }) => {
             for (const material of materials) {
               const outsideVisible = material.outsideVisible;
               material.map = texture;
@@ -213,10 +221,16 @@ export function createInteriorView(
             engine.invalidate();
             return () => {
               // Static DIF instances share cached materials and CPU textures.
-              // Retiring one binding must not clear a surviving instance's map.
+              // Remove the map only when the shared texture scope changes.
+              const retiringTextures = textureAssets !== assets.textures;
               for (const material of materials) {
                 textured.delete(material);
+                if (retiringTextures && material.map === texture) {
+                  material.map = null;
+                  material.needsUpdate = true;
+                }
               }
+              if (retiringTextures) invalidateShadows();
             };
           },
           (error: unknown) =>

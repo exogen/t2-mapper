@@ -1,11 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import {
-  FileLoader,
-  LoadingManager,
-  Mesh,
-  Texture,
-  type Object3D,
-} from "three";
+import { LoadingManager, Mesh, Texture, type Object3D } from "three";
 import { loadBitmapTextureInstance } from "./assets/bitmapTextures";
 import { buildDTS } from "./dts/dtsBuilder";
 import { DTSLoader } from "./dts/dtsLoader";
@@ -41,12 +35,14 @@ it("tries regular, team and authored skins after hi-res fetch and regular decode
   const team = path("baseb.lmale");
   const original = path("base.lmale");
   const requests: string[] = [];
-  vi.spyOn(FileLoader.prototype, "load").mockImplementation(
-    (url, done, _progress, fail) => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
       requests.push(url);
-      if (url === hiRes) fail?.(new Error("404"));
-      else done?.(new Blob([url]) as unknown as ArrayBuffer);
-    },
+      return url === hiRes
+        ? new Response(null, { status: 404 })
+        : new Response(new Blob([url]));
+    }),
   );
   const teamImage = { width: 16, height: 16 } as ImageBitmap;
   const baseImage = { width: 8, height: 8 } as ImageBitmap;
@@ -87,9 +83,7 @@ it("recovers real processed view samplers after a shared decode fails and depend
   vi.spyOn(loaders, "textureToUrl").mockImplementation(
     (name) => `https://images.test/retry/${name}`,
   );
-  vi.spyOn(FileLoader.prototype, "load").mockImplementation((_url, done) => {
-    done?.(new Blob([new Uint8Array([1, 2, 3])]) as unknown as ArrayBuffer);
-  });
+  vi.stubGlobal("fetch", async () => new Response(new Blob()));
   const image = { width: 16, height: 16 } as ImageBitmap;
   const decode = vi
     .fn()
@@ -98,7 +92,8 @@ it("recovers real processed view samplers after a shared decode fails and depend
   vi.stubGlobal("createImageBitmap", decode);
   const data = createDTSTestShape();
   const model = buildDTS(data, {
-    texture: (name) => loadBitmapTextureInstance(loaders.textureToUrl(name)),
+    texture: (name) =>
+      loadBitmapTextureInstance(() => [loaders.textureToUrl(name)]),
   });
   vi.spyOn(DTSLoader.prototype, "load").mockImplementation((_url, done) =>
     done(model),
@@ -163,9 +158,7 @@ it.each([2, 3])(
     vi.spyOn(loaders, "textureToUrl").mockImplementation(
       (name) => `https://images.test/generations-${failures}/${name}`,
     );
-    vi.spyOn(FileLoader.prototype, "load").mockImplementation((_url, done) => {
-      done?.(new Blob([new Uint8Array([1])]) as unknown as ArrayBuffer);
-    });
+    vi.stubGlobal("fetch", async () => new Response(new Blob()));
     const image = { width: 16, height: 16 } as ImageBitmap;
     const decode = vi.fn();
     for (let i = 0; i < failures; i++)
@@ -173,7 +166,8 @@ it.each([2, 3])(
     decode.mockResolvedValue(image);
     vi.stubGlobal("createImageBitmap", decode);
     const model = buildDTS(createDTSTestShape(), {
-      texture: (name) => loadBitmapTextureInstance(loaders.textureToUrl(name)),
+      texture: (name) =>
+        loadBitmapTextureInstance(() => [loaders.textureToUrl(name)]),
     });
     vi.spyOn(DTSLoader.prototype, "load").mockImplementation((_url, done) =>
       done(model),
@@ -210,12 +204,7 @@ it("keeps a pending custom skin independent while the native default source reco
   vi.spyOn(loaders, "textureToUrl").mockImplementation(
     (name) => `https://images.test/skin-isolation/${name}`,
   );
-  const urls = new WeakMap<Blob, string>();
-  vi.spyOn(FileLoader.prototype, "load").mockImplementation((url, done) => {
-    const blob = new Blob([new Uint8Array([1])]);
-    urls.set(blob, String(url));
-    done?.(blob as unknown as ArrayBuffer);
-  });
+  vi.stubGlobal("fetch", async (url: string) => new Response(new Blob([url])));
   const customUrl = "https://images.test/custom-skin-generation.png";
   const defaultImage = { width: 16, height: 16 } as ImageBitmap;
   const customImage = { width: 32, height: 32 } as ImageBitmap;
@@ -226,17 +215,17 @@ it("keeps a pending custom skin independent while the native default source reco
   let defaultAttempts = 0;
   vi.stubGlobal(
     "createImageBitmap",
-    vi.fn((blob: Blob) => {
-      if (urls.get(blob) === customUrl) return skin;
-      if (defaultAttempts++ === 0)
-        return Promise.reject(new Error("default decode failed"));
-      return Promise.resolve(defaultImage);
+    vi.fn(async (blob: Blob) => {
+      if ((await blob.text()) === customUrl) return skin;
+      if (defaultAttempts++ === 0) throw new Error("default decode failed");
+      return defaultImage;
     }),
   );
   const data = createDTSTestShape();
   data.materials[0].name = "skins/base.recovering-skin";
   const model = buildDTS(data, {
-    texture: (name) => loadBitmapTextureInstance(loaders.textureToUrl(name)),
+    texture: (name) =>
+      loadBitmapTextureInstance(() => [loaders.textureToUrl(name)]),
   });
   vi.spyOn(DTSLoader.prototype, "load").mockImplementation((_url, done) =>
     done(model),

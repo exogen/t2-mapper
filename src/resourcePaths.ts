@@ -42,7 +42,7 @@ export function resourceSources(entry: ResourceEntry): ResourceSource[] {
   return sourceTuples.map((tuple) => toResourceSource(firstSeenPath, tuple));
 }
 
-/** The last (winning) source of a resource entry, with its actual path. */
+/** The last source overrides earlier ones. */
 export function winningSource(entry: ResourceEntry): ResourceSource {
   const [firstSeenPath, ...sourceTuples] = entry;
   return toResourceSource(firstSeenPath, sourceTuples[sourceTuples.length - 1]);
@@ -59,6 +59,22 @@ export function sourceFilePath({ source, actualPath }: ResourceSource): string {
 /** The winning source's location relative to the asset root. */
 export function winningSourcePath(entry: ResourceEntry): string {
   return sourceFilePath(winningSource(entry));
+}
+
+const HD_TEXTURE_ARCHIVES = new Set([
+  "yHDTextures2.0.vl2",
+  "z_textures/zflags.vl2",
+]);
+
+/** The last eligible source in standard-definition mode, if one exists. */
+export function standardDefinitionSourcePath([
+  firstSeenPath,
+  ...sourceTuples
+]: ResourceEntry): string | undefined {
+  const source = sourceTuples.findLast(
+    ([archive]) => !HD_TEXTURE_ARCHIVES.has(archive),
+  );
+  return source && sourceFilePath(toResourceSource(firstSeenPath, source));
 }
 
 /** Resource path of a shape named by a datablock or mission object. */

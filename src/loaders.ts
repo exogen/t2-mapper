@@ -3,11 +3,13 @@ import { createLogger } from "./logger";
 import {
   getActualResourceKey,
   getMissionInfo,
+  getStandardDefinitionSourcePath,
   getStandardTextureResourceKey,
   getWinningSourcePath,
 } from "./manifest";
 import { parseMissionScript } from "./mission";
 import { shapeResourcePath } from "./resourcePaths";
+import { settingsStore } from "./state/settingsStore";
 import { normalizePath } from "./stringUtils";
 import { parseTerrainBuffer, type TerrainFile } from "./terrain";
 
@@ -18,19 +20,24 @@ export type { TerrainFile };
 export const RESOURCE_ROOT_URL = process.env.GAME_ASSETS_BASE_URL;
 export const FALLBACK_TEXTURE_URL = `${process.env.BASE_PATH}white.png`;
 
-export function getUrlForPath(resourcePath: string, fallbackUrl?: string) {
-  let resourceKey;
+export function getUrlForPath(
+  resourcePath: string,
+  fallbackUrl?: string,
+  hdTexturesEnabled = true,
+) {
   try {
-    resourceKey = getActualResourceKey(resourcePath);
-  } catch (err) {
-    if (fallbackUrl) {
-      log.warn('Resource "%s" not found — rendering fallback', resourcePath);
-      return fallbackUrl;
-    } else {
-      throw err;
-    }
+    const resourceKey = getActualResourceKey(resourcePath);
+    const sourcePath = hdTexturesEnabled
+      ? getWinningSourcePath(resourceKey)
+      : getStandardDefinitionSourcePath(resourceKey);
+    if (sourcePath === undefined)
+      throw new Error(`No standard-definition source for ${resourcePath}`);
+    return `${RESOURCE_ROOT_URL}${sourcePath}`;
+  } catch (error) {
+    if (!fallbackUrl) throw error;
+    log.warn('Resource "%s" not found — rendering fallback', resourcePath);
+    return fallbackUrl;
   }
-  return `${RESOURCE_ROOT_URL}${getWinningSourcePath(resourceKey)}`;
 }
 
 export function interiorToUrl(name: string) {
@@ -41,10 +48,21 @@ export function shapeToUrl(name: string) {
   return getUrlForPath(shapeResourcePath(name));
 }
 
+function getTextureUrlForPath(
+  resourcePath: string,
+  fallbackUrl?: string,
+  hdTexturesEnabled = settingsStore.getState().hdTexturesEnabled,
+): string {
+  return getUrlForPath(
+    getStandardTextureResourceKey(resourcePath, hdTexturesEnabled),
+    fallbackUrl,
+    hdTexturesEnabled,
+  );
+}
+
 export function terrainTextureToUrl(name: string) {
   name = name.replace(/^terrain\./, "");
-  const resourceKey = getStandardTextureResourceKey(`textures/terrain/${name}`);
-  return getUrlForPath(resourceKey, FALLBACK_TEXTURE_URL);
+  return getTextureUrlForPath(`textures/terrain/${name}`, FALLBACK_TEXTURE_URL);
 }
 
 export function iflTextureToUrl(name: string, iflPath: string) {
@@ -53,23 +71,27 @@ export function iflTextureToUrl(name: string, iflPath: string) {
   const pathParts = normalizePath(iflPath).split("/");
   const iflDir =
     pathParts.length > 1 ? pathParts.slice(0, -1).join("/") + "/" : "";
-  const finalPath = `${iflDir}${name}`;
-  const resourceKey = getStandardTextureResourceKey(finalPath);
-  return getUrlForPath(resourceKey, FALLBACK_TEXTURE_URL);
+  return getTextureUrlForPath(`${iflDir}${name}`, FALLBACK_TEXTURE_URL);
 }
 
 export function textureToUrl(
   name: string,
   fallbackUrl: string | null = FALLBACK_TEXTURE_URL,
 ): string {
-  const resourceKey = getStandardTextureResourceKey(`textures/${name}`);
-  return getUrlForPath(resourceKey, fallbackUrl ?? undefined);
+  return getTextureUrlForPath(`textures/${name}`, fallbackUrl ?? undefined);
 }
 
 /** URL of a `textures/gui/` texture, or null when we don't ship it. */
-export function guiTextureToUrl(name: string): string | null {
+export function guiTextureToUrl(
+  name: string,
+  hdTexturesEnabled?: boolean,
+): string | null {
   try {
-    return getUrlForPath(getStandardTextureResourceKey(`textures/gui/${name}`));
+    return getTextureUrlForPath(
+      `textures/gui/${name}`,
+      undefined,
+      hdTexturesEnabled,
+    );
   } catch {
     return null;
   }
@@ -121,9 +143,13 @@ export async function loadTerrain(fileName: string, signal?: AbortSignal) {
   return parseTerrainBuffer(terrainBuffer);
 }
 
-export async function loadImageFrameList(iflPath: string) {
+export async function loadImageFrameList(
+  iflPath: string,
+  signal?: AbortSignal,
+) {
   const url = getUrlForPath(iflPath);
-  const res = await fetch(url);
+  const res = await fetch(url, { signal });
   const source = await res.text();
+  signal?.throwIfAborted();
   return parseImageFileList(source);
 }

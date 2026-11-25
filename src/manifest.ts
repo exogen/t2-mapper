@@ -1,6 +1,7 @@
 import untypedManifest from "./manifest.json";
 import {
   ASSET_BASE_DIR,
+  standardDefinitionSourcePath,
   winningSource,
   winningSourcePath,
   type ResourceEntry,
@@ -74,6 +75,12 @@ export function getWinningSourcePath(resourceKey: string): string {
   return winningSourcePath(manifest.resources[resourceKey]);
 }
 
+export function getStandardDefinitionSourcePath(
+  resourceKey: string,
+): string | undefined {
+  return standardDefinitionSourcePath(manifest.resources[resourceKey]);
+}
+
 /**
  * Given a file path, check the manifest for an exact match (but case insensitive),
  * followed by removing numeric suffixes and certain intermediate directories.
@@ -125,11 +132,15 @@ export function getResourceList(): string[] {
  */
 const standardTextureExt = ["", ".jpg", ".png", ".gif", ".bmp"];
 
-export function getStandardTextureResourceKey(resourcePath: string) {
+export function getStandardTextureResourceKey(
+  resourcePath: string,
+  hdTexturesEnabled = true,
+): string {
   const baseResourceKey = getResourceKey(resourcePath);
   for (const ext of standardTextureExt) {
     const resourceKey = `${baseResourceKey}${ext}`;
-    if (manifest.resources[resourceKey]) {
+    const entry = manifest.resources[resourceKey];
+    if (entry && (hdTexturesEnabled || standardDefinitionSourcePath(entry))) {
       return resourceKey;
     }
   }

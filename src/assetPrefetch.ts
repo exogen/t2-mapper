@@ -30,7 +30,7 @@ const log = createLogger("assetPrefetch");
 let provider: (() => PreloadAsset[]) | null = null;
 type PrefetchOwner = { assets: SceneAssets; manager: LoadingManager };
 let getOwner: (() => PrefetchOwner) | undefined;
-let previousAssets: SceneAssets | undefined;
+let previousTextures: SceneAssets | undefined;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let startDelayPending = false;
 /** Session bookkeeping, keyed kind:name. The asset caches deduplicate loads. */
@@ -55,10 +55,11 @@ async function prefetch(
   asset: PreloadAsset,
   owner: number,
   { assets, manager }: PrefetchOwner,
+  textures: SceneAssets,
 ): Promise<void> {
   switch (asset.kind) {
     case "texture":
-      await loadHtmlTexture(textureToUrl(asset.name), assets);
+      await loadHtmlTexture(textureToUrl(asset.name), textures);
       break;
     case "shape":
       await loadShapeDependencies(asset.name, manager);
@@ -73,8 +74,8 @@ async function prefetch(
       // win on join.
       const ter = await loadTerrainAsset(asset.name, assets);
       for (const name of ter.textureNames) {
-        if (owner !== generation || assets.disposed) return;
-        await loadHtmlTexture(terrainTextureToUrl(name), assets);
+        if (owner !== generation || textures.disposed) return;
+        await loadHtmlTexture(terrainTextureToUrl(name), textures);
       }
       break;
     }
@@ -119,7 +120,7 @@ export function stopAssetPrefetch(): void {
   preloaded.clear();
   provider = null;
   getOwner = undefined;
-  previousAssets = undefined;
+  previousTextures = undefined;
   startDelayPending = false;
   if (timer != null) {
     clearTimeout(timer);
@@ -144,9 +145,10 @@ function tick(): void {
   // Leave the replacement's timer and bookkeeping to its own generation.
   if (owner !== generation || provider !== currentProvider || !getOwner) return;
   const scene = getOwner();
-  if (scene.assets !== previousAssets) {
+  const textures = scene.assets.textures;
+  if (textures !== previousTextures) {
     preloaded.clear();
-    previousAssets = scene.assets;
+    previousTextures = textures;
   }
   for (const asset of assets) {
     if (owner !== generation || provider !== currentProvider) return;
@@ -157,9 +159,9 @@ function tick(): void {
     preloaded.add(key);
     activeJobs++;
     peakActiveJobs = Math.max(peakActiveJobs, activeJobs);
-    void prefetch(asset, owner, scene)
+    void prefetch(asset, owner, scene, textures)
       .catch((error: unknown) => {
-        if (scene.assets.disposed) return;
+        if (textures.disposed) return;
         failedJobs++;
         log.debug("%s prefetch failed: %o", asset.kind, error);
       })

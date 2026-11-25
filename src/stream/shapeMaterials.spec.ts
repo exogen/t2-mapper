@@ -38,9 +38,11 @@ vi.mock("../assets/bitmapTextures", async (original) => {
   const utilities = await original<typeof import("../assets/bitmapTextures")>();
   return {
     ...utilities,
-    loadBitmapTextureInstance: (name: string) => {
+    loadBitmapTextureInstance: (
+      resolve: string | (() => readonly string[]),
+    ) => {
       const texture = new Texture();
-      texture.name = name;
+      texture.name = typeof resolve === "string" ? resolve : resolve()[0];
       return texture;
     },
   };

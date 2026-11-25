@@ -31,7 +31,7 @@ import {
   insertBeforeChunk,
   type ShaderSource,
 } from "./shaderUtils";
-import { loadBitmapTexture } from "./assets/bitmapTextures";
+import { loadBitmapTextureInstance } from "./assets/bitmapTextures";
 import type { SceneAssets } from "./assets/sceneAssets";
 
 /** Slots match the light pool size; unused slots carry radius 0. */
@@ -78,8 +78,8 @@ export function dynamicLightScreenFade(projectedRadiusPixels: number): number {
 
 /** The uniform samples this scene's falloff texture as soon as it is ready. */
 export function loadEffectLightFalloff(assets: SceneAssets): Texture {
-  const texture = loadBitmapTexture(
-    textureToUrl("special/lightFalloffMono"),
+  const texture = loadBitmapTextureInstance(
+    () => [textureToUrl("special/lightFalloffMono")],
     undefined,
     undefined,
     assets,

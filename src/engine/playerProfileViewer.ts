@@ -370,7 +370,10 @@ export function mountPlayerProfileViewer(
           appearance.shapeName,
           profile.skin ?? undefined,
         );
-        if (nextSkin.preferred?.customUrl !== playerSkin.preferred?.customUrl) {
+        if (
+          nextSkin.preferred?.customBasename !==
+          playerSkin.preferred?.customBasename
+        ) {
           playerSkin = nextSkin;
           buildPlayer();
         }

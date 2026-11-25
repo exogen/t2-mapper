@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { T2ProfileView } from "../../relay/accountTypes";
+import { useStore } from "zustand";
+import { settingsStore } from "../state/settingsStore";
 import styles from "./PlayerProfileViewer.module.css";
 
 /** A separate canvas keeps the profile independent of live/demo playback. */
@@ -11,6 +13,7 @@ export function PlayerProfileViewer({
   playerName: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const hdTexturesEnabled = useStore(settingsStore, (s) => s.hdTexturesEnabled);
   const { bodyType, skin, armor, pack, weapon } = profile;
   useEffect(() => {
     const container = containerRef.current!;
@@ -36,7 +39,7 @@ export function PlayerProfileViewer({
       cancelled = true;
       viewer?.dispose();
     };
-  }, [bodyType, skin, armor, pack, weapon]);
+  }, [bodyType, skin, armor, pack, weapon, hdTexturesEnabled]);
 
   return (
     <div

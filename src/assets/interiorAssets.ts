@@ -8,9 +8,9 @@ const log = createLogger("interiorAssets");
 interface Entry {
   model: Promise<DIFModel>;
   ready?: DIFModel;
-  dependencies?: Promise<void>;
 }
 const cacheKey = {};
+const dependenciesKey = {};
 
 async function warmTextures(
   model: DIFModel,
@@ -28,13 +28,17 @@ async function warmTextures(
 
 function rememberDependencies(
   entry: Entry,
+  textureAssets: SceneAssets,
   start: () => Promise<void>,
 ): Promise<void> {
+  const cache = textureAssets.cache<Entry, Promise<void>>(dependenciesKey);
+  const existing = cache.get(entry);
+  if (existing) return existing;
   const pending = start().catch((error: unknown) => {
-    if (entry.dependencies === pending) entry.dependencies = undefined;
+    if (cache.get(entry) === pending) cache.delete(entry);
     throw error;
   });
-  entry.dependencies = pending;
+  cache.set(entry, pending);
   // Progressive model consumers need not subscribe to dependency readiness.
   void pending.catch(() => {});
   return pending;
@@ -48,13 +52,16 @@ function source(url: string, assets: SceneAssets): Entry {
   if (entry) return entry;
   const loader = new DIFLoader();
   loader.signal = assets.signal;
-  let textures = Promise.resolve();
+  const initialTextures = assets.textures;
+  let warmed: { assets: SceneAssets; ready: Promise<void> } | undefined;
   // External images overlap embedded lightmap decoding as before, but this
   // application asset owner starts them explicitly; DIF parsing stays pure.
   loader.onModelParsed = (model) => {
-    textures = warmTextures(model, assets);
-    void textures.catch((error) => {
-      if (!assets.disposed)
+    const owner = assets.textures;
+    const ready = warmTextures(model, owner);
+    warmed = { assets: owner, ready };
+    void ready.catch((error) => {
+      if (!owner.disposed)
         log.warn("Interior textures failed for %s: %o", url, error);
     });
   };
@@ -67,11 +74,16 @@ function source(url: string, assets: SceneAssets): Entry {
     return model;
   });
   entry = { model };
-  rememberDependencies(entry, () =>
+  rememberDependencies(entry, initialTextures, () =>
     model.then(
-      () => textures,
+      (parsed) => {
+        initialTextures.signal.throwIfAborted();
+        return warmed?.assets === initialTextures
+          ? warmed.ready
+          : warmTextures(parsed, initialTextures);
+      },
       async (error: unknown) => {
-        await textures.catch(() => {});
+        await warmed?.ready.catch(() => {});
         throw error;
       },
     ),
@@ -98,10 +110,8 @@ export function loadInteriorDependencies(
   assets: SceneAssets = sharedSceneAssets,
 ): Promise<void> {
   const entry = source(url, assets);
-  return (
-    entry.dependencies ??
-    rememberDependencies(entry, () =>
-      entry.model.then((model) => warmTextures(model, assets)),
-    )
+  const textureAssets = assets.textures;
+  return rememberDependencies(entry, textureAssets, () =>
+    entry.model.then((model) => warmTextures(model, textureAssets)),
   );
 }

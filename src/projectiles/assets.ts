@@ -47,12 +47,11 @@ export class ProjectileAssets {
     colorSpace: ColorSpace = SRGBColorSpace,
     repeat: "none" | "s" | "st" = "none",
   ): Texture {
-    const url = textureToUrl(name),
-      key = JSON.stringify([url, colorSpace, repeat]);
+    const key = JSON.stringify([name.toLowerCase(), colorSpace, repeat]);
     let texture = this.textures.get(key);
     if (!texture) {
       texture = loadBitmapTextureInstance(
-        url,
+        () => [textureToUrl(name)],
         undefined,
         undefined,
         this.assets,

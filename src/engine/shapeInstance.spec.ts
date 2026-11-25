@@ -19,7 +19,10 @@ vi.mock("../assets/bitmapTextures", async (importOriginal) => {
   const images = new Map<string, Texture>();
   return {
     ...actual,
-    loadBitmapTextureInstance: (url: string) => {
+    loadBitmapTextureInstance: (
+      resolve: string | (() => readonly string[]),
+    ) => {
+      const url = typeof resolve === "string" ? resolve : resolve()[0];
       let shared = images.get(url);
       if (!shared) {
         shared = new Texture();

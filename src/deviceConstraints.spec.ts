@@ -7,14 +7,19 @@ import {
 
 afterEach(() => vi.unstubAllGlobals());
 
+const macWebKit =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)";
+
 describe("device classification", () => {
   it.each([
     { mobile: true },
     { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)" },
     { userAgent: "Mozilla/5.0 (Linux; Android 15; Pixel)" },
+    { mobile: false, userAgent: "Mozilla/5.0 (Linux; Android 14; Tablet)" },
     { userAgent: "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)" },
     { userAgent: "Mozilla/5.0 (iPod touch; CPU iPhone OS)" },
     { userAgent: "Example Mobile Browser" },
+    { userAgent: `${macWebKit} CriOS/147 Version/27.0 Safari/605.1.15` },
   ])(
     "prioritizes mobile identity even with strong reported resources: %j",
     (signals) => {
@@ -29,45 +34,53 @@ describe("device classification", () => {
     },
   );
 
-  it("recognizes desktop-mode iPad and Android tablets despite a false mobile hint", () => {
-    for (const signals of [
-      {
-        userAgent:
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15",
-        maxTouchPoints: 5,
-      },
-      {
-        userAgent: "Mozilla/5.0 (Linux; Android 14; Tablet) AppleWebKit/537.36",
-        maxTouchPoints: 10,
-      },
-    ]) {
+  it("classifies desktop Safari as constrained even with strong resource hints", () => {
+    expect(
+      classifyDevice({
+        userAgent: `${macWebKit} Version/27.0.1 Safari/605.1.15`,
+        mobile: false,
+        coarsePointer: false,
+        maxTouchPoints: 0,
+        hardwareConcurrency: 12,
+        deviceMemoryGB: 32,
+      }),
+    ).toEqual({ constrained: true, reason: "safari" });
+  });
+
+  it.each([
+    `${macWebKit} Chrome/147.0.0.0 Safari/537.36`,
+    `${macWebKit} Chrome/147.0.0.0 Safari/537.36 Edg/147.0.0.0`,
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:147.0) Gecko/20100101 Firefox/147.0",
+  ])(
+    "keeps high-resource non-touch desktops on the desktop tier: %s",
+    (userAgent) => {
       expect(
         classifyDevice({
-          ...signals,
-          mobile: false,
-          coarsePointer: false,
-          hardwareConcurrency: 8,
-          deviceMemoryGB: 8,
+          userAgent,
+          hardwareConcurrency: 12,
+          deviceMemoryGB: 32,
         }),
-      ).toEqual({ constrained: true, reason: "mobile" });
-    }
-  });
+      ).toEqual({ constrained: false, reason: "desktop" });
+    },
+  );
 
-  it("keeps a fine-pointer touchscreen Windows laptop in the desktop category", () => {
-    const laptop = {
-      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-      maxTouchPoints: 10,
-      coarsePointer: false,
-    };
-    expect(
-      classifyDevice({ ...laptop, hardwareConcurrency: 12, deviceMemoryGB: 8 }),
-    ).toEqual({ constrained: false, reason: "desktop" });
-    expect(
-      classifyDevice({ ...laptop, hardwareConcurrency: 12, deviceMemoryGB: 4 }),
-    ).toEqual({ constrained: true, reason: "low-memory" });
-  });
+  it.each([macWebKit, "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"])(
+    "uses touchscreen support even when the primary pointer is fine: %s",
+    (userAgent) => {
+      expect(
+        classifyDevice({
+          userAgent,
+          mobile: false,
+          maxTouchPoints: 1,
+          coarsePointer: false,
+          hardwareConcurrency: 12,
+          deviceMemoryGB: 32,
+        }),
+      ).toEqual({ constrained: true, reason: "touch" });
+    },
+  );
 
-  it("uses the primary coarse pointer before resource hints, independent of mobile false", () => {
+  it("uses coarse input before resource hints, independent of mobile false", () => {
     expect(
       classifyDevice({
         mobile: false,
@@ -81,9 +94,11 @@ describe("device classification", () => {
   it.each([
     [{ deviceMemoryGB: 0.5, hardwareConcurrency: 16 }, "low-memory"],
     [{ deviceMemoryGB: 4, hardwareConcurrency: 4 }, "low-memory"],
-    [{ deviceMemoryGB: 8, hardwareConcurrency: 4 }, "low-cpu"],
+    [{ deviceMemoryGB: 8, hardwareConcurrency: 16 }, "low-memory"],
+    [{ deviceMemoryGB: 16, hardwareConcurrency: 4 }, "low-cpu"],
     [{ hardwareConcurrency: 1 }, "low-cpu"],
-    [{ deviceMemoryGB: 8, hardwareConcurrency: 8 }, "desktop"],
+    [{ deviceMemoryGB: 16, hardwareConcurrency: 8 }, "desktop"],
+    [{ deviceMemoryGB: 32, hardwareConcurrency: 8 }, "desktop"],
     [{}, "desktop"],
   ] as const)(
     "applies resource thresholds with stable priority: %j",
@@ -106,12 +121,6 @@ describe("device classification", () => {
       ).toEqual({ constrained: false, reason: "desktop" });
     },
   );
-
-  it("does not infer mobile identity from one Mac touch point alone", () => {
-    expect(
-      classifyDevice({ userAgent: "Macintosh", maxTouchPoints: 1 }),
-    ).toEqual({ constrained: false, reason: "desktop" });
-  });
 });
 
 describe("browser signal reading", () => {
@@ -125,7 +134,7 @@ describe("browser signal reading", () => {
     });
   });
 
-  it("reads optional browser hints and the primary pointer, without reading viewport width", () => {
+  it("reads optional browser hints and coarse input, without reading viewport width", () => {
     const matchMedia = vi.fn(() => ({ matches: true }));
     vi.stubGlobal("navigator", {
       userAgentData: { mobile: false },
@@ -148,7 +157,7 @@ describe("browser signal reading", () => {
       hardwareConcurrency: 8,
       coarsePointer: true,
     });
-    expect(matchMedia).toHaveBeenCalledExactlyOnceWith("(pointer: coarse)");
+    expect(matchMedia).toHaveBeenCalledExactlyOnceWith("(any-pointer: coarse)");
   });
 
   it("works when mobile and memory hints or matchMedia are unavailable", () => {

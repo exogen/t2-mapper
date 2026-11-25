@@ -1,4 +1,4 @@
-import { DefaultLoadingManager, LoadingManager } from "three";
+import { DefaultLoadingManager } from "three";
 import { createLogger } from "../logger";
 import { imageWorkQueue } from "./imageWorkQueue";
 
@@ -12,14 +12,48 @@ function notify(callback: () => void): void {
   }
 }
 
-/** Internal Three loaders track their own fetch activity. The outer activity
- * below owns global progress, including queue wait and asynchronous decoding. */
-export function createImageLoadingManager(): LoadingManager {
-  const manager = new LoadingManager();
-  manager.resolveURL = (url) => DefaultLoadingManager.resolveURL(url);
-  return manager;
+/** Keep the HTML element's decode behavior and cancel its request with its owner. */
+export function loadHtmlImage(
+  url: string,
+  signal: AbortSignal,
+): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const source = DefaultLoadingManager.resolveURL(url);
+    signal.throwIfAborted();
+    const image = document.createElement("img");
+    if (!source.startsWith("data:")) image.crossOrigin = "anonymous";
+
+    function cleanup() {
+      image.removeEventListener("load", loaded);
+      image.removeEventListener("error", failed);
+      signal.removeEventListener("abort", cancel);
+    }
+    function loaded() {
+      cleanup();
+      resolve(image);
+    }
+    function failed(error: Event) {
+      cleanup();
+      reject(error);
+    }
+    function cancel() {
+      cleanup();
+      image.removeAttribute("src");
+      reject(signal.reason);
+    }
+    image.addEventListener("load", loaded);
+    image.addEventListener("error", failed);
+    signal.addEventListener("abort", cancel, { once: true });
+    try {
+      image.src = source;
+    } catch (error) {
+      cleanup();
+      reject(error);
+    }
+  });
 }
 
+/** Own global progress for queue wait, fetching and decoding. */
 export function loadQueuedImage<T>(
   url: string,
   start: () => T | PromiseLike<T>,

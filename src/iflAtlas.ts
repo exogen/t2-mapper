@@ -2,6 +2,7 @@ import {
   CanvasTexture,
   ClampToEdgeWrapping,
   NearestFilter,
+  Source,
   SRGBColorSpace,
   Texture,
 } from "three";
@@ -81,7 +82,7 @@ async function buildFrames(
   flags: number,
   assets: SceneAssets,
 ): Promise<DTSImageFrames> {
-  const entries = (await loadImageFrameList(iflPath)).filter(
+  const entries = (await loadImageFrameList(iflPath, assets.signal)).filter(
     (e) => e.frameCount > 0,
   );
   assets.signal.throwIfAborted();
@@ -114,8 +115,12 @@ async function buildFrames(
 }
 
 function disposeIflFrames({ frames }: DTSImageFrames): void {
-  for (const texture of new Set(frames.map((frame) => frame.texture)))
+  for (const texture of new Set(frames.map((frame) => frame.texture))) {
     texture.dispose();
+    // DTS instances can still reference a frame while its replacement loads.
+    texture.source = new Source(null);
+    texture.version = 0;
+  }
 }
 
 export function loadIflAtlas(

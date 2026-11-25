@@ -348,6 +348,25 @@ export class GameEngine {
     });
   }
 
+  /** Prepare the view's image binding again when the texture quality changes. */
+  prepareTextureWithHost<T>(
+    load: (
+      host: EngineHost,
+      signal: AbortSignal,
+      textures: SceneAssets,
+    ) => T | PromiseLike<T>,
+    install: (value: T, host: EngineHost) => Cleanup,
+    onError?: (error: unknown) => void,
+  ): () => void {
+    return this.sceneAssets.bindTextures((textures) =>
+      this.prepareWithHost(
+        (host, signal) => load(host, signal, textures),
+        install,
+        onError,
+      ),
+    );
+  }
+
   /** The connected host, if any. */
   get currentHost(): EngineHost | null {
     return this.host;

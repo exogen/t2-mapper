@@ -75,6 +75,9 @@ type SettingsContextType = {
   animationEnabled: boolean;
   setAnimationEnabled: StateSetter<boolean>;
   shadowsEnabled: boolean;
+  hdTexturesEnabled: boolean;
+  hdTexturesDefaultEnabled: boolean;
+  setHdTexturesEnabled: StateSetter<boolean>;
   setShadowsEnabled: StateSetter<boolean>;
   warriorName: string;
   setWarriorName: StateSetter<string>;
@@ -199,6 +202,7 @@ const settingsActions = {
   setAudioEnabled: setter("audioEnabled"),
   setAnimationEnabled: setter("animationEnabled"),
   setShadowsEnabled: setter("shadowsEnabled"),
+  setHdTexturesEnabled: setter("hdTexturesEnabled"),
   setWarriorName: setter("warriorName"),
   setAudioVolume: setter("audioVolume"),
   setCommentaryEnabled: setter("commentaryEnabled"),
@@ -250,6 +254,8 @@ function selectSettings(
     audioEnabled: state.audioEnabled,
     animationEnabled: state.animationEnabled,
     shadowsEnabled: state.shadowsEnabled,
+    hdTexturesEnabled: state.hdTexturesEnabled,
+    hdTexturesDefaultEnabled: state.hdTexturesDefaultEnabled,
     warriorName: state.warriorName,
     audioVolume: state.audioVolume,
     commentaryEnabled: state.commentaryEnabled,

@@ -10,6 +10,7 @@ import {
   type BufferAttribute,
 } from "three";
 import { loadBitmapTexture } from "../assets/bitmapTextures";
+import { SceneAssets, sharedSceneAssets } from "../assets/sceneAssets";
 import {
   getParticleTexture,
   particleTexturesReady,
@@ -19,40 +20,36 @@ import {
 } from "./particleRenderer";
 import { EmitterInstance, resolveEmitterData } from "./ParticleSystem";
 
-const pending = vi.hoisted(() => new Map<string, (image: unknown) => void>());
-const failed = vi.hoisted(() => new Map<string, (error: Error) => void>());
-vi.mock("three", async (importOriginal) => {
-  const three = await importOriginal<typeof import("three")>();
-  return {
-    ...three,
-    FileLoader: class {
-      manager = three.DefaultLoadingManager;
-      setResponseType() {
-        return this;
-      }
-      load(
-        url: string,
-        load: (image: unknown) => void,
-        _progress?: unknown,
-        onError?: (error: Error) => void,
-      ) {
-        pending.set(url, load);
-        if (onError) failed.set(url, onError);
-      }
-    },
-  };
-});
+const pending = new Map<string, (image: unknown) => void>();
+const failed = new Map<string, (error: Error) => void>();
+const quality = vi.hoisted(() => ({ hd: true }));
 vi.mock("../loaders", () => ({
-  textureToUrl: (name: string) => `/${name}.png`,
+  textureToUrl: (name: string) =>
+    `/${name === "refresh-dust" && !quality.hd ? "stock-" : ""}${name}.png`,
 }));
 
 beforeAll(() => {
   vi.stubGlobal("createImageBitmap", async (image: unknown) => image);
+  vi.stubGlobal(
+    "fetch",
+    (url: string) =>
+      new Promise((resolve, reject) => {
+        pending.set(url, (image) =>
+          resolve({ ok: true, blob: async () => image }),
+        );
+        failed.set(url, reject);
+      }),
+  );
 });
 afterAll(() => vi.unstubAllGlobals());
 
 it("shares particle image data without changing another renderer's texture settings", async () => {
-  const source = loadBitmapTexture("/dust.png");
+  const source = loadBitmapTexture(
+    "/dust.png",
+    undefined,
+    undefined,
+    sharedSceneAssets.textures,
+  );
   source.colorSpace = SRGBColorSpace;
   source.minFilter = LinearFilter;
   source.wrapS = ClampToEdgeWrapping;
@@ -80,7 +77,12 @@ it("shares particle image data without changing another renderer's texture setti
 });
 
 it("makes an already-decoded particle texture ready immediately", async () => {
-  const source = loadBitmapTexture("/footprint.png");
+  const source = loadBitmapTexture(
+    "/footprint.png",
+    undefined,
+    undefined,
+    sharedSceneAssets.textures,
+  );
   pending.get("/footprint.png")!({ width: 32, height: 64 });
   await vi.waitFor(() => expect(source.image).toHaveProperty("width", 32));
   const particle = getParticleTexture("footprint");
@@ -97,7 +99,12 @@ it("retries a failed bitmap on later demand and updates existing particle sample
   const firstLoad = pending.get(path);
   try {
     const settled = new Promise<void>((resolve) => {
-      loadBitmapTexture(path, undefined, () => resolve());
+      loadBitmapTexture(
+        path,
+        undefined,
+        () => resolve(),
+        sharedSceneAssets.textures,
+      );
     });
     failed.get(path)!(new Error("offline"));
     await settled;
@@ -120,6 +127,40 @@ it("retries a failed bitmap on later demand and updates existing particle sample
     expect(texture.source.version).toBe(1);
   } finally {
     clock.mockRestore();
+  }
+});
+
+it("reuses the particle sampler and releases its old pixels on a graphics change", async () => {
+  const assets = new SceneAssets();
+  try {
+    const sampler = getParticleTexture("refresh-dust", assets);
+    const oldImage = { width: 64, height: 64, close: vi.fn() };
+    pending.get("/refresh-dust.png")!(oldImage);
+    await vi.waitFor(() => expect(sampler.image).toBe(oldImage));
+    const oldSource = sampler.source;
+    const freeGpuTexture = vi.fn(() => expect(sampler.source).toBe(oldSource));
+    sampler.addEventListener("dispose", freeGpuTexture);
+
+    quality.hd = false;
+    assets.refreshTextures();
+    expect(freeGpuTexture).toHaveBeenCalledOnce();
+    sampler.removeEventListener("dispose", freeGpuTexture);
+    expect(oldImage.close).toHaveBeenCalledOnce();
+    expect(sampler.image).toBeNull();
+    expect(sampler.version).toBe(0);
+    expect(particleTexturesReady.has(sampler)).toBe(false);
+    expect(getParticleTexture("refresh-dust", assets)).toBe(sampler);
+
+    const image = { width: 16, height: 16, close: vi.fn() };
+    pending.get("/stock-refresh-dust.png")!(image);
+    await vi.waitFor(() => expect(sampler.image).toBe(image));
+    expect(sampler.source).not.toBe(oldSource);
+    expect(particleTexturesReady.has(sampler)).toBe(true);
+    expect(sampler.wrapS).toBe(RepeatWrapping);
+    expect(sampler.colorSpace).toBe(NoColorSpace);
+  } finally {
+    quality.hd = true;
+    assets.dispose();
   }
 });
 

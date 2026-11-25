@@ -2,13 +2,13 @@ import {
   BufferAttribute,
   BufferGeometry,
   Color,
-  CubeTextureLoader,
+  CubeTexture,
   Group,
   Mesh,
   ShaderMaterial,
+  SRGBColorSpace,
   Vector4,
   type Camera,
-  type CubeTexture,
   type IUniform,
   type Object3D,
 } from "three";
@@ -32,6 +32,7 @@ import {
   settingsStore,
 } from "../state/settingsStore";
 import { loadBitmapTexture } from "../assets/bitmapTextures";
+import { loadHtmlTexture } from "../assets/htmlTextures";
 import type { SceneAssets } from "../assets/sceneAssets";
 import { setupTexture } from "../textureUtils";
 import { startCloudLayers } from "./cloudLayers";
@@ -44,7 +45,7 @@ import {
   type FogState,
 } from "./fogState";
 import { FramePriority } from "./framePriority";
-import { combineCleanups, reaction } from "./storeReaction";
+import { combineCleanups, reaction, type Cleanup } from "./storeReaction";
 import type { GameEngine } from "./gameEngine";
 
 const log = createLogger("Sky");
@@ -104,12 +105,11 @@ function selectSceneFog(mode: SkyMode): boolean {
   return mode.fogSetting && !mode.commandCircuit;
 }
 
-const cubeTextureLoader = new CubeTextureLoader();
 const cubeCacheKey = {};
 
 /**
  * Load a sky box's cube map once per face list and share it.
- * CubeTextureLoader marks it sRGB, so the shader samples linear values.
+ * Face images share the same cancellable queue as other scene textures.
  */
 function loadSharedCubeTexture(
   files: readonly string[],
@@ -130,7 +130,15 @@ function loadSharedCubeTexture(
   const key = files.join("\n");
   let promise = cubeTextures.get(key);
   if (!promise) {
-    promise = cubeTextureLoader.loadAsync(files);
+    promise = Promise.all(
+      files.map((url) => loadHtmlTexture(url, assets)),
+    ).then((faces) => {
+      assets.signal.throwIfAborted();
+      const cube = new CubeTexture(faces.map((face) => face.image));
+      cube.colorSpace = SRGBColorSpace;
+      cube.needsUpdate = true;
+      return cube;
+    });
     // A failed sky box can be retried later.
     const created = promise;
     void promise.catch(() => {
@@ -375,38 +383,46 @@ function startSkyBox(
 ): () => void {
   let active = true;
   let dome: SkyDome | null = null;
-  let stopEnvMap: (() => void) | null = null;
+  let stopTextures: Cleanup;
   const assets = engine.sceneAssets;
 
   void loadSharedDetailMapList(materialList, assets).then(
     (detailMapList) => {
       if (!active) return;
-      stopEnvMap = startShapeEnvMap(detailMapList[6], assets);
-      const skyBoxFiles = [
-        textureToUrl(detailMapList[1]!), // +x
-        textureToUrl(detailMapList[3]!), // -x
-        textureToUrl(detailMapList[4]!), // +y
-        textureToUrl(detailMapList[5]!), // -y
-        textureToUrl(detailMapList[0]!), // +z
-        textureToUrl(detailMapList[2]!), // -z
-      ];
-      void loadSharedCubeTexture(skyBoxFiles, assets).then(
-        (skyBox) => {
-          if (!active) return;
-          dome = createSkyDome(
-            skyBoxFragmentShader,
-            { skybox: { value: skyBox } },
-            engine.cameras.active,
-            currentFog(),
-          );
-          parent.add(dome.mesh);
-          engine.invalidate();
-        },
-        (error: unknown) => {
-          if (!active) return;
-          log.warn("sky box %s failed: %o", materialList, error);
-        },
-      );
+      stopTextures = assets.bindTextures((textures) => {
+        let current = true;
+        const stopEnvMap = startShapeEnvMap(detailMapList[6], textures);
+        // Cube faces are in +X, -X, +Y, -Y, +Z, -Z order.
+        const skyBoxFiles = [1, 3, 4, 5, 0, 2].map((index) =>
+          textureToUrl(detailMapList[index]!),
+        );
+        void loadSharedCubeTexture(skyBoxFiles, textures).then(
+          (skyBox) => {
+            if (!current) return;
+            dome = createSkyDome(
+              skyBoxFragmentShader,
+              { skybox: { value: skyBox } },
+              engine.cameras.active,
+              currentFog(),
+            );
+            parent.add(dome.mesh);
+            engine.invalidate();
+          },
+          (error: unknown) => {
+            if (!current) return;
+            log.warn("sky box %s failed: %o", materialList, error);
+          },
+        );
+        return () => {
+          current = false;
+          stopEnvMap();
+          if (dome) {
+            parent.remove(dome.mesh);
+            dome.dispose();
+            dome = null;
+          }
+        };
+      });
     },
     // No list, no sky box (the failure is logged where it's loaded).
     () => {},
@@ -415,12 +431,7 @@ function startSkyBox(
   return combineCleanups(
     () => {
       active = false;
-      if (dome) {
-        parent.remove(dome.mesh);
-        dome.dispose();
-        dome = null;
-      }
-      stopEnvMap?.();
+      stopTextures?.();
     },
     // In debug mode, show sphere map UVs as colors instead of the texture.
     // Left as it is when the sky box goes.

@@ -12,33 +12,40 @@ export interface DeviceSignals {
 
 export interface DeviceClassification {
   constrained: boolean;
-  reason: "mobile" | "coarse-pointer" | "low-memory" | "low-cpu" | "desktop";
+  reason:
+    | "mobile"
+    | "safari"
+    | "coarse-pointer"
+    | "touch"
+    | "low-memory"
+    | "low-cpu"
+    | "desktop";
 }
 
 function positiveFinite(value: number | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
-/**
- * A conservative quality-default policy. Mobile identity takes priority over
- * strong reported resources; a false mobile hint does not exclude tablets.
- * Touch support alone does not classify a Windows laptop as constrained.
- */
+/** Mobile, Safari, and touch hints take priority over reported resources. */
 export function classifyDevice(signals: DeviceSignals): DeviceClassification {
   const ua = signals.userAgent ?? "";
-  const mobile =
+  if (
     signals.mobile === true ||
     /Android|iPhone|iPad|iPod|Mobile/i.test(ua) ||
-    (/Macintosh/i.test(ua) &&
-      positiveFinite(signals.maxTouchPoints) &&
-      signals.maxTouchPoints > 1);
-  if (mobile) return { constrained: true, reason: "mobile" };
+    /\b(?:CriOS|FxiOS|EdgiOS|OPiOS)\//i.test(ua)
+  )
+    return { constrained: true, reason: "mobile" };
+  // Chromium user agents also contain Safari/. Safari pairs it with Version/.
+  if (/\bVersion\/[\d.]+\s+Safari\//i.test(ua))
+    return { constrained: true, reason: "safari" };
   if (signals.coarsePointer === true)
     return { constrained: true, reason: "coarse-pointer" };
+  if (positiveFinite(signals.maxTouchPoints))
+    return { constrained: true, reason: "touch" };
   if (
     positiveFinite(signals.deviceMemoryGB) &&
-    signals.deviceMemoryGB <=
-      performanceTuning.constrainedDevice.maximumMemoryGB
+    signals.deviceMemoryGB <
+      performanceTuning.constrainedDevice.memoryThresholdGiB
   )
     return { constrained: true, reason: "low-memory" };
   if (
@@ -86,8 +93,9 @@ export function readDeviceSignals(): DeviceSignals {
   const browserWindow = environment.window;
   if (typeof browserWindow?.matchMedia === "function") {
     try {
-      signals.coarsePointer =
-        browserWindow.matchMedia("(pointer: coarse)").matches;
+      signals.coarsePointer = browserWindow.matchMedia(
+        "(any-pointer: coarse)",
+      ).matches;
     } catch {
       // Restricted or partial browser environments can expose a failing API.
     }

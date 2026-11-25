@@ -153,7 +153,7 @@ export function startBrowserDiagnostics(): DiagnosticsAPI {
     deviceMemoryGB: deviceSignals.deviceMemoryGB ?? null,
     hardwareConcurrency: deviceSignals.hardwareConcurrency ?? null,
     mobileHint: deviceSignals.mobile ?? null,
-    primaryCoarsePointer: deviceSignals.coarsePointer ?? null,
+    coarsePointer: deviceSignals.coarsePointer ?? null,
     maxTouchPoints: deviceSignals.maxTouchPoints ?? null,
     userAgent: navigator.userAgent,
     mode: new URLSearchParams(location.search).get("mode") || "map",

@@ -190,7 +190,6 @@ export function createWaterView(
   entity: WaterBlockEntity,
   engine: GameEngine,
 ): EntityView {
-  const assets = engine.sceneAssets;
   let scene = entity.waterData;
   const root = new Group();
   root.name = entity.id;
@@ -257,14 +256,21 @@ export function createWaterView(
   placeReps();
 
   let fallbackShown = true;
+  const showFallback = () => {
+    if (fallbackShown) return;
+    fallbackShown = true;
+    for (const mesh of fallbackMeshes) group.add(mesh);
+    placeReps();
+  };
   const removeFallback = () => {
     if (!fallbackShown) return;
     fallbackShown = false;
     for (const mesh of fallbackMeshes) group.remove(mesh);
   };
 
-  const stopTextures = engine.prepareWithHost(
-    ({ renderer }, signal) => {
+  const stopTextures = engine.prepareTextureWithHost(
+    ({ renderer }, signal, textureAssets) => {
+      showFallback();
       const anisotropy = renderer.capabilities.getMaxAnisotropy();
       return loadTextures(
         [
@@ -274,7 +280,7 @@ export function createWaterView(
         renderer,
         (texture) => setupWaterTexture(texture, anisotropy),
         signal,
-        assets,
+        textureAssets,
       );
     },
     ([baseTexture, envMapTexture]) => {
@@ -298,8 +304,7 @@ export function createWaterView(
         mesh.dispose();
         material.dispose();
         water = null;
-        fallbackShown = true;
-        for (const fallback of fallbackMeshes) group.add(fallback);
+        showFallback();
       };
     },
     (error: unknown) => {
@@ -368,10 +373,9 @@ export function createWaterView(
           placeReps();
         }
 
-        if (!water) return;
         if (!settingsStore.getState().animationEnabled) elapsed = 0;
         else elapsed += worldDeltaSec(delta);
-        water.material.uniforms.uTime.value = elapsed;
+        if (water) water.material.uniforms.uTime.value = elapsed;
         // Keep the submersion test's wave phase in sync with the rendering.
         setWaterTime(elapsed);
       }),

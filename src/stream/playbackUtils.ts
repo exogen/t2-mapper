@@ -260,35 +260,43 @@ export function replaceWithShapeMaterial(
   }
 
   const isBaseTexture = /[/\\]base\./i.test(resourcePath);
-  let skinUrls: string[] | undefined;
-  if (options.playerSkin) {
-    skinUrls = playerSkinUrls(resourcePath, options.playerSkin);
-  } else if (isBaseTexture && options.skinUrl) {
-    skinUrls = [options.skinUrl];
-  } else if (isBaseTexture && options.skinName && options.skinName !== "base") {
-    const skinnedPath = resourcePath.replace(
-      /\bbase\./i,
-      `${options.skinName}.`,
-    );
-    try {
-      skinUrls = [textureToUrl(skinnedPath, null)];
-    } catch {
-      // Skin texture not found — fall through to default.
+  let hasFallbacks = false;
+  const resolveTextures = () => {
+    let skinUrls: string[] | undefined;
+    if (options.playerSkin) {
+      skinUrls = playerSkinUrls(resourcePath, options.playerSkin);
+    } else if (isBaseTexture && options.skinUrl) {
+      skinUrls = [options.skinUrl];
+    } else if (
+      isBaseTexture &&
+      options.skinName &&
+      options.skinName !== "base"
+    ) {
+      const skinnedPath = resourcePath.replace(
+        /\bbase\./i,
+        `${options.skinName}.`,
+      );
+      try {
+        skinUrls = [textureToUrl(skinnedPath, null)];
+      } catch {
+        // Skin texture not found — fall through to default.
+      }
     }
-  }
-  const defaultUrl = textureToUrl(resourcePath);
-  const url = skinUrls?.[0] ?? defaultUrl;
-  const fallbacks = skinUrls?.length
-    ? [...new Set([...skinUrls, defaultUrl])].slice(1)
-    : undefined;
+    const defaultUrl = textureToUrl(resourcePath);
+    const candidates = skinUrls?.length
+      ? [...new Set([...skinUrls, defaultUrl])]
+      : [defaultUrl];
+    hasFallbacks = candidates.length > 1;
+    return candidates;
+  };
   const texture = loadBitmapTextureInstance(
-    url,
+    resolveTextures,
     undefined,
-    fallbacks,
+    [],
     options.assets,
   );
   if (
-    !fallbacks?.length &&
+    !hasFallbacks &&
     mat instanceof DTSMaterial &&
     mat.map &&
     !mat.map.image &&

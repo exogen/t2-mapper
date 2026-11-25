@@ -8,6 +8,10 @@ import { IDENTITY_MATRIX } from "../scene/types";
 import type { InteriorInstanceEntity } from "../state/gameEntityTypes";
 import { GameEngine, type EngineHost } from "./gameEngine";
 import { createInteriorView } from "./interiorView";
+import {
+  registerInteriorCollider,
+  unregisterInteriorCollider,
+} from "../collision/worldCollision";
 
 vi.mock("./ambientParticles", () => ({ AmbientParticles: class {} }));
 vi.mock("./lightningEffects", () => ({ LightningEffects: class {} }));
@@ -115,6 +119,22 @@ it("preserves a surviving static interior's shared texture when another instance
       expect(secondHost.renderer.initTexture).toHaveBeenCalledOnce(),
     );
     for (const material of secondMaterials) expect(material.map).toBe(texture);
+    const registered = vi.mocked(registerInteriorCollider).mock.calls.length;
+    const unregistered = vi.mocked(unregisterInteriorCollider).mock.calls
+      .length;
+    const nextTexture = new Texture({ width: 4, height: 4 });
+    vi.mocked(loadHtmlTexture).mockResolvedValue(nextTexture);
+    engine.sceneAssets.refreshTextures();
+    for (const material of secondMaterials) expect(material.map).toBeNull();
+    await vi.waitFor(() =>
+      expect(
+        secondMaterials.every((material) => material.map === nextTexture),
+      ).toBe(true),
+    );
+    expect(registerInteriorCollider).toHaveBeenCalledTimes(registered);
+    expect(unregisterInteriorCollider).toHaveBeenCalledTimes(unregistered);
+    for (const [index, material] of secondMaterials.entries())
+      expect(material.lightMap).toBe(lightMaps[index]);
   } finally {
     if (!firstDisposed) first.dispose();
     second.dispose();

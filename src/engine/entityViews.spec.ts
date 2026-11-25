@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { Group } from "three";
 import type { GameEntity } from "../state/gameEntityTypes";
 import { gameEntityStore } from "../state/gameEntityStore";
+import { settingsStore } from "../state/settingsStore";
+import { SceneAssets } from "../assets/sceneAssets";
 import { EntityViewRegistry, installEntityViews } from "./entityViews";
 import { MountPoints } from "./shapeMounts";
 import type { GameEngine } from "./gameEngine";
@@ -24,13 +26,18 @@ function createRegistry(log: string[]) {
   });
 }
 
-it("releases scene assets between old and new views only at scene boundaries", () => {
+it("rebuilds views at scene boundaries and refreshes only textures on a quality change", () => {
   const log: string[] = [];
   const snapshot = gameEntityStore.getState();
+  const { hdTexturesEnabled } = settingsStore.getState();
+  const sceneAssets = new SceneAssets();
+  sceneAssets.onTexturesChanged(() => log.push("refresh textures"));
   const scopedEngine = {
     entities: createRegistry(log),
+    sceneAssets,
     withHost: () => () => {},
     releaseSceneAssets: () => log.push("release assets"),
+    invalidate: () => log.push("invalidate"),
   } as unknown as GameEngine;
   try {
     snapshot.setAllEntities([sky("a")]);
@@ -45,11 +52,17 @@ it("releases scene assets between old and new views only at scene boundaries", (
         "release assets",
         "create b",
       ]);
+      log.length = 0;
+      settingsStore.setState({ hdTexturesEnabled: !hdTexturesEnabled });
+      expect(log).toEqual(["refresh textures", "invalidate"]);
+      expect(scopedEngine.entities.get("b")).toBeDefined();
     } finally {
       stop();
     }
     expect(log.slice(-2)).toEqual(["dispose b", "release assets"]);
   } finally {
+    sceneAssets.dispose();
+    settingsStore.setState({ hdTexturesEnabled });
     gameEntityStore.setState(snapshot, true);
   }
 });

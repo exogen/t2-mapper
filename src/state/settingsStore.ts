@@ -1,5 +1,6 @@
 import { createStore } from "zustand/vanilla";
 import { subscribeWithSelector } from "zustand/middleware";
+import { classifyDevice, readDeviceSignals } from "../deviceConstraints";
 import {
   DEFAULT_TEAM_COLOR_SCHEME,
   TEAM_COLOR_SCHEMES,
@@ -108,6 +109,7 @@ export interface Preferences {
   animationEnabled: boolean;
   /** Engine-style projected shadows under players and vehicles. */
   shadowsEnabled: boolean;
+  hdTexturesEnabled: boolean;
   debugMode: boolean;
   touchMode: TouchMode;
   joystickOpacity: number;
@@ -164,6 +166,7 @@ export interface FeatureAccess {
 }
 
 export interface SettingsState extends Preferences {
+  readonly hdTexturesDefaultEnabled: boolean;
   access: FeatureAccess;
   /** The `?fog=` URL override, mirrored here by SettingsProvider. */
   fogEnabledOverride: boolean | null;
@@ -184,6 +187,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   adjustAudioSpeed: true,
   animationEnabled: true,
   shadowsEnabled: true,
+  hdTexturesEnabled: true,
   debugMode: false,
   touchMode: "moveLookStick",
   joystickOpacity: 0.9,
@@ -232,6 +236,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
 type PersistedSettings = Partial<
   Omit<Preferences, "hudPreferences" | "renderOnDemand" | "lodEnabled">
 > & {
+  useHdTexturePack?: boolean;
   showScoreHud?: boolean;
   scoreHudPosition?: HudPosition;
   showQuickCamHud?: boolean;
@@ -285,6 +290,12 @@ export function restorePreferences(
   copy("audioEnabled");
   copy("animationEnabled");
   copy("shadowsEnabled");
+  copy("hdTexturesEnabled", isBoolean);
+  if (
+    restored.hdTexturesEnabled === undefined &&
+    isBoolean(saved.useHdTexturePack)
+  )
+    restored.hdTexturesEnabled = saved.useHdTexturePack;
   copy("fogEnabled");
   copy("highQualityFog");
   if (saved.speedMultiplier != null)
@@ -380,7 +391,10 @@ export function restorePreferences(
   return restored;
 }
 
-function toPersisted(state: Preferences): PersistedSettings {
+function toPersisted(
+  state: Preferences,
+  hdTexturesOverride: boolean | undefined,
+): PersistedSettings {
   const {
     hudPreferences,
     playerInterpolation,
@@ -390,6 +404,7 @@ function toPersisted(state: Preferences): PersistedSettings {
   } = state;
   return {
     ...rest,
+    hdTexturesEnabled: hdTexturesOverride,
     playerInterpolationOverride: samePlayerInterpolation(
       playerInterpolation,
       DEFAULT_PLAYER_INTERPOLATION,
@@ -427,15 +442,21 @@ export function selectDebugMode(state: SettingsState): boolean {
 export type SettingsStore = ReturnType<typeof createSettingsStore>;
 
 /**
- * The settings store: restored from localStorage on creation, saved back
- * (debounced) whenever a preference changes. React reads it through
+ * The settings store: restored from localStorage on creation. Most writes
+ * are debounced. React reads it through
  * SettingsProvider's hooks; everything else uses `getState`/`subscribe`.
  */
 export function createSettingsStore() {
+  const hdTexturesDefaultEnabled =
+    !classifyDevice(readDeviceSignals()).constrained;
+  const restored = restorePreferences(readPersistedSettings());
+  let hdTexturesOverride = restored.hdTexturesEnabled;
   const store = createStore<SettingsState>()(
     subscribeWithSelector((): SettingsState => ({
       ...DEFAULT_PREFERENCES,
-      ...restorePreferences(readPersistedSettings()),
+      hdTexturesEnabled: hdTexturesDefaultEnabled,
+      ...restored,
+      hdTexturesDefaultEnabled,
       access: {
         canDisableFog: true,
         canShowDebugVisuals: true,
@@ -446,21 +467,28 @@ export function createSettingsStore() {
   );
 
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  const save = (preferences: Preferences) => {
+    saveTimer = null;
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify(toPersisted(preferences, hdTexturesOverride)),
+      );
+    } catch {
+      // Probably forbidden by browser settings.
+    }
+  };
   store.subscribe(
     pickPreferences,
-    (preferences) => {
+    (preferences, previous) => {
       if (saveTimer) clearTimeout(saveTimer);
-      saveTimer = setTimeout(() => {
-        saveTimer = null;
-        try {
-          localStorage.setItem(
-            STORAGE_KEY,
-            JSON.stringify(toPersisted(preferences)),
-          );
-        } catch {
-          // Probably forbidden by browser settings.
-        }
-      }, SAVE_DEBOUNCE_MS);
+      if (preferences.hdTexturesEnabled !== previous.hdTexturesEnabled) {
+        // Save the user's choice before the renderer starts replacing textures.
+        hdTexturesOverride = preferences.hdTexturesEnabled;
+        save(preferences);
+      } else {
+        saveTimer = setTimeout(() => save(preferences), SAVE_DEBOUNCE_MS);
+      }
     },
     { equalityFn: shallowEqual },
   );
