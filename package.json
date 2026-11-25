@@ -37,6 +37,8 @@
     "postbuild": "npm run copy-public -- --dry-run && npm run copy-public",
     "prebuild": "rimraf --verbose -g 'docs/!(base)'",
     "preview": "vite preview",
+    "previews:render": "node --import=tsx/esm scripts/render-link-previews.ts",
+    "previews:update-gallery": "node --import=tsx/esm scripts/update-link-preview-gallery.ts",
     "relay:dev": "node --env-file-if-exists=.env.development.local --watch --import=tsx/esm relay/server.ts",
     "relay": "node --env-file-if-exists=.env.development.local --import=tsx/esm relay/server.ts",
     "serve:static": "tsx scripts/serve-static.ts",
