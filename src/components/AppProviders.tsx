@@ -5,8 +5,7 @@ import { loadSkinManifest } from "../engine/playerSkins";
 import { FeaturesProvider } from "./FeaturesProvider";
 import { SettingsProvider } from "./SettingsProvider";
 
-// Three.js has its own loaders for textures and models, but we need to load other
-// stuff too, e.g. missions, terrains, and more. This client is used for those.
+// Parsed mission scripts and API metadata. Render assets have their own owners.
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

@@ -12,14 +12,21 @@ import type { StreamRecording } from "./types";
 
 let startGeneration = 0;
 const log = createLogger("clipPlayback");
+const CLIP_CHECKPOINT_DECODE_TIMEOUT_MS = 60_000;
+const CLIP_SEEK_STALL_TIMEOUT_MS = 60_000;
+
+interface ClipPlaybackCheckpoint {
+  text: string;
+  sourceSha256?: string;
+  recover?: (error: unknown) => Promise<void>;
+}
 
 /** Restore the cached start before seeking, when available. */
 export async function startClipPlayback(
   take: ClipTake,
   recording: StreamRecording,
   signal: AbortSignal,
-  checkpointText?: string,
-  recoverCheckpoint?: (error: unknown) => Promise<void>,
+  checkpoint?: ClipPlaybackCheckpoint,
 ): Promise<void> {
   const interpolation = take.playerInterpolation ?? RETAIL_PLAYER_INTERPOLATION;
   const generation = ++startGeneration;
@@ -52,15 +59,19 @@ export async function startClipPlayback(
     recording.streamingPlayback.holdPlayerInterpolation?.(interpolation);
   let holdingForPlayback = false;
   try {
-    if (checkpointText !== undefined) {
+    if (checkpoint) {
+      const { text, sourceSha256, recover } = checkpoint;
       const { demoBuffer, downloadStatus } = engineStore.getState().playback;
       if (!demoBuffer || downloadStatus !== "complete")
         throw new Error("Wait for the source demo to finish downloading.");
       try {
         const checkpoints = await readDemoCheckpoints(
-          checkpointText,
-          demoBuffer,
-          signal,
+          text,
+          { demoBytes: demoBuffer.byteLength, demoSha256: sourceSha256 },
+          AbortSignal.any([
+            signal,
+            AbortSignal.timeout(CLIP_CHECKPOINT_DECODE_TIMEOUT_MS),
+          ]),
         );
         ensureCurrent();
         if (
@@ -72,9 +83,9 @@ export async function startClipPlayback(
           throw new Error("The clip's starting checkpoint is unavailable.");
         recording.streamingPlayback.importCheckpoints(
           checkpoints,
-          recoverCheckpoint &&
+          recover &&
             ((error) => {
-              void recoverCheckpoint(error).catch((reportError) =>
+              void recover(error).catch((reportError) =>
                 log.warn(
                   "Could not report checkpoint restore failure: %o",
                   reportError,
@@ -84,8 +95,8 @@ export async function startClipPlayback(
         );
       } catch (error) {
         ensureCurrent();
-        if (!recoverCheckpoint) throw error;
-        await recoverCheckpoint(error);
+        if (!recover) throw error;
+        await recover(error);
         ensureCurrent();
         log.warn(
           "Seeking %s without the clip checkpoint: %o",
@@ -99,13 +110,24 @@ export async function startClipPlayback(
     expectedSeekIntent = engineStore.getState().playback.seekIntentNonce;
     await new Promise<void>((resolve, reject) => {
       let unsubscribe = () => {};
+      let lastProgressSec: number | undefined;
+      let lastProgressAt = performance.now();
       const finish = (error?: unknown) => {
+        clearTimeout(stallTimer);
         unsubscribe();
         signal.removeEventListener("abort", aborted);
         if (error) reject(error);
         else resolve();
       };
       const aborted = () => finish(signal.reason);
+      // A cold seek may need to replay the recording from the beginning.
+      const checkForStall = () => {
+        const remaining =
+          CLIP_SEEK_STALL_TIMEOUT_MS - (performance.now() - lastProgressAt);
+        if (remaining > 0) stallTimer = setTimeout(checkForStall, remaining);
+        else finish(new Error("The clip's starting seek stopped progressing."));
+      };
+      let stallTimer = setTimeout(checkForStall, CLIP_SEEK_STALL_TIMEOUT_MS);
       const inspect = () => {
         const { playback } = engineStore.getState();
         if (signal.aborted) return finish(signal.reason);
@@ -118,7 +140,12 @@ export async function startClipPlayback(
           return finish(
             new Error("Could not restore the clip's starting view."),
           );
-        if (playback.status !== "seeking") finish();
+        if (playback.status !== "seeking") return finish();
+        const timeSec = playback.seekProgress?.currentTimeSec;
+        if (timeSec !== undefined && timeSec !== lastProgressSec) {
+          lastProgressSec = timeSec;
+          lastProgressAt = performance.now();
+        }
       };
       unsubscribe = engineStore.subscribe(inspect);
       signal.addEventListener("abort", aborted, { once: true });

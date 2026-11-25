@@ -7,7 +7,7 @@ export class AssetLoadQueue {
   peakQueued = 0;
   completed = 0;
   failed = 0;
-  private waiting: Array<() => void> = [];
+  private readonly waiting = new Set<() => void>();
   private pumping = false;
 
   constructor(concurrency: number) {
@@ -17,12 +17,19 @@ export class AssetLoadQueue {
   }
 
   get queued(): number {
-    return this.waiting.length;
+    return this.waiting.size;
   }
 
-  run<T>(start: () => T | PromiseLike<T>): Promise<T> {
+  /** Aborting removes waiting work immediately. A running job owns its cleanup. */
+  run<T>(start: () => T | PromiseLike<T>, signal?: AbortSignal): Promise<T> {
     return new Promise((resolve, reject) => {
-      this.waiting.push(() => {
+      signal?.throwIfAborted();
+      const cancel = () => {
+        this.waiting.delete(run);
+        reject(signal!.reason);
+      };
+      const run = () => {
+        signal?.removeEventListener("abort", cancel);
         this.active++;
         this.peakActive = Math.max(this.peakActive, this.active);
         const finish = (success: boolean) => {
@@ -46,7 +53,9 @@ export class AssetLoadQueue {
           finish(false);
           reject(error);
         }
-      });
+      };
+      this.waiting.add(run);
+      signal?.addEventListener("abort", cancel, { once: true });
       this.pump();
       this.peakQueued = Math.max(this.peakQueued, this.queued);
     });
@@ -56,8 +65,11 @@ export class AssetLoadQueue {
     if (this.pumping) return;
     this.pumping = true;
     try {
-      while (this.active < this.concurrency && this.waiting.length)
-        this.waiting.shift()!();
+      for (const run of this.waiting) {
+        if (this.active >= this.concurrency) break;
+        this.waiting.delete(run);
+        run();
+      }
     } finally {
       this.pumping = false;
     }

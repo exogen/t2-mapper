@@ -361,6 +361,7 @@ export class LightningEffects {
   install(): () => void {
     return this.engine.withHost(({ scene }) => {
       scene.add(this.group);
+      const stopScene = this.engine.onSceneAssetsRelease(() => this.clear());
       const stop = this.engine.scheduler.add(
         FramePriority.PostCamera,
         (frame) => this.update(frame),
@@ -369,6 +370,7 @@ export class LightningEffects {
         if (!state.audioEnabled) this.stopSounds();
       });
       return () => {
+        stopScene();
         stop();
         stopSettings();
         this.clear();
@@ -388,7 +390,10 @@ export class LightningEffects {
     };
     this.storms.set(entity.id, storm);
     if (entity.lightning.strikeTextures[0])
-      getParticleTexture(entity.lightning.strikeTextures[0]);
+      getParticleTexture(
+        entity.lightning.strikeTextures[0],
+        this.engine.sceneAssets,
+      );
     this.engine.invalidate();
     return {
       update: (next) => {
@@ -516,7 +521,10 @@ export class LightningEffects {
           )
         : null;
     let mesh: Strike["mesh"] = null;
-    const texture = getParticleTexture(event.config.strikeTextures[0] ?? "");
+    const texture = getParticleTexture(
+      event.config.strikeTextures[0] ?? "",
+      this.engine.sceneAssets,
+    );
     if (simulation) {
       simulation.advanceTo(age, event.config);
       mesh = new Mesh(new BufferGeometry(), material(event.config, texture));
@@ -697,6 +705,7 @@ export class LightningEffects {
           );
           strike.texture = getParticleTexture(
             renderConfig.strikeTextures[0] ?? "",
+            this.engine.sceneAssets,
           );
           strike.mesh.material.uniforms.boltTexture.value = strike.texture;
           strike.mesh.material.uniforms.hasTexture.value =

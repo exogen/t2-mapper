@@ -107,11 +107,13 @@ export class AmbientParticles {
   install(): () => void {
     return this.engine.withHost(({ scene }) => {
       scene.add(this.group);
+      const stopScene = this.engine.onSceneAssetsRelease(() => this.clear());
       const stop = this.engine.scheduler.add(
         FramePriority.PostCamera,
         ({ delta }) => this.update(delta),
       );
       return () => {
+        stopScene();
         stop();
         this.clear();
         this.group.removeFromParent();
@@ -185,7 +187,10 @@ export class AmbientParticles {
     // representable maximum so frame hitches and timeMultiple changes cannot
     // discard particles merely because the initial estimate was smaller.
     const emitter = new EmitterInstance(data, MAX_PARTICLES);
-    const texture = getParticleTexture(data.particles.textureName);
+    const texture = getParticleTexture(
+      data.particles.textureName,
+      this.engine.sceneAssets,
+    );
     const geometry = createParticleGeometry(capacity);
     const material = createParticleMaterial(
       texture,

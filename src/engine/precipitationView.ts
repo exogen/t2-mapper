@@ -18,7 +18,8 @@ import {
   Vector3,
   Vector4,
 } from "three";
-import { audioToUrl, loadDetailMapList, textureToUrl } from "../loaders";
+import { audioToUrl, textureToUrl } from "../loaders";
+import { loadSharedDetailMapList } from "./detailMapList";
 import { loadBitmapTexture } from "../assets/bitmapTextures";
 import { markTextureSamplerUpdate } from "../textureUtils";
 import { threeToTorque, torqueVecToThree } from "../scene/coordinates";
@@ -54,18 +55,6 @@ import { exteriorViewRect } from "./exteriorVisibility";
 const CAPACITY = 2000;
 const PRECIPITATION_RENDER_ORDER = 51;
 const PLAYER_BOX_SIZE = { x: 1, y: 1, z: 2.3 };
-const materialLists = new Map<string, Promise<string | undefined>>();
-
-function firstMaterial(name: string): Promise<string | undefined> {
-  let promise = materialLists.get(name);
-  if (!promise) {
-    promise = loadDetailMapList(name)
-      .then((materials) => materials[0])
-      .catch(() => undefined);
-    materialLists.set(name, promise);
-  }
-  return promise;
-}
 
 function geometry(points: boolean): BufferGeometry {
   const result = new BufferGeometry();
@@ -265,29 +254,38 @@ export function createPrecipitationView(
     mesh.visible = false;
     texture?.dispose();
     texture = undefined;
-    void firstMaterial(name).then((entry) => {
-      if (!entry || disposed || token !== textureToken) return;
-      let url: string;
-      try {
-        url = textureToUrl(entry);
-      } catch {
-        return;
-      }
-      const instance = new Texture();
-      instance.flipY = false;
-      instance.colorSpace = NoColorSpace;
-      instance.wrapS = instance.wrapT = RepeatWrapping;
-      instance.minFilter = LinearMipmapNearestFilter;
-      texture = instance;
-      const shared = loadBitmapTexture(url, (loaded) => {
-        if (disposed || token !== textureToken) return;
-        instance.source = loaded.source;
-        markTextureSamplerUpdate(instance);
-        quadMaterial.uniforms.weatherTexture.value = instance;
-        engine.invalidate();
-      });
-      instance.source = shared.source;
-    });
+    const assets = engine.sceneAssets;
+    void loadSharedDetailMapList(name, assets).then(
+      ([entry]) => {
+        if (!entry || disposed || token !== textureToken) return;
+        let url: string;
+        try {
+          url = textureToUrl(entry);
+        } catch {
+          return;
+        }
+        const instance = new Texture();
+        instance.flipY = false;
+        instance.colorSpace = NoColorSpace;
+        instance.wrapS = instance.wrapT = RepeatWrapping;
+        instance.minFilter = LinearMipmapNearestFilter;
+        texture = instance;
+        const shared = loadBitmapTexture(
+          url,
+          (loaded) => {
+            if (disposed || token !== textureToken) return;
+            instance.source = loaded.source;
+            markTextureSamplerUpdate(instance);
+            quadMaterial.uniforms.weatherTexture.value = instance;
+            engine.invalidate();
+          },
+          undefined,
+          assets,
+        );
+        instance.source = shared.source;
+      },
+      () => {},
+    );
   };
 
   const stopFrame = engine.scheduler.add(

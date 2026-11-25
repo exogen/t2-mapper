@@ -17,6 +17,7 @@ import type { RelayClient } from "../stream/relayClient";
 import type { StreamRecording } from "../stream/types";
 import { FramePriority } from "./framePriority";
 import { GameEngine } from "./gameEngine";
+import { installEntityViews } from "./entityViews";
 import { StreamPlaybackSession } from "./streamPlayback";
 import { createRecordingFromParser } from "../stream/demoStreaming";
 import { fakeDemoParser } from "../stream/streamTestFixtures";
@@ -60,6 +61,135 @@ it("wakes an idle on-demand seek and ignores obsolete or disposed sessions", () 
     gameEntityStore.getState().endStreaming();
   }
 });
+
+it("keeps the scene's assets for live rehydration and releases them at the next mission", () => {
+  const stream = new LiveStreamAdapter({} as RelayClient, { mode: "watch" });
+  stream.missionName = "Harvester";
+  let generation = stream.worldGeneration;
+  const snapshot = stream.getSnapshot();
+  const readSnapshot = () => ({
+    ...snapshot,
+    playbackRevision: stream.playbackRevision,
+  });
+  vi.spyOn(stream, "worldGeneration", "get").mockImplementation(
+    () => generation,
+  );
+  vi.spyOn(stream, "getSnapshot").mockImplementation(readSnapshot);
+  vi.spyOn(stream, "stepToTime").mockImplementation(readSnapshot);
+  const recording: StreamRecording = {
+    source: "live",
+    duration: Infinity,
+    missionName: stream.missionName,
+    gameType: null,
+    serverDisplayName: null,
+    recorderName: null,
+    recordingDate: null,
+    streamingPlayback: stream,
+  };
+  const engine = new GameEngine();
+  const stopViews = installEntityViews(engine);
+  engineStore.getState().setRecording(recording);
+  const session = new StreamPlaybackSession(engine, recording);
+  let frame = 0;
+  const draw = () =>
+    engine.scheduler.run(FramePriority.StreamPlayback, {
+      camera: engine.cameras.perspective,
+      delta: 1 / 60,
+      elapsed: ++frame / 60,
+      frame,
+      renderer: {} as WebGLRenderer,
+      scene: new Scene(),
+    });
+  try {
+    const assets = engine.sceneAssets;
+    generation++;
+    stream.playbackRevision++;
+    stream.missionSequence = "1";
+    draw();
+    expect(engine.sceneAssets).toBe(assets);
+
+    generation++;
+    stream.missionSequence = "2";
+    stream.missionName = "BeachBlitz";
+    draw();
+    expect(assets.disposed).toBe(true);
+    const nextAssets = engine.sceneAssets;
+    expect(nextAssets).not.toBe(assets);
+
+    engineStore.getState().setRecording(null);
+    draw();
+    expect(engine.sceneAssets).toBe(nextAssets);
+    expect(nextAssets.disposed).toBe(false);
+  } finally {
+    session.dispose();
+    engineStore.getState().setRecording(null);
+    stopViews();
+    gameEntityStore.getState().endStreaming();
+  }
+});
+
+it.each([false, true])(
+  "waits for mission identity after a seek while ghosting (different mission=%s)",
+  (differentMission) => {
+    const recording = createRecordingFromParser(fakeDemoParser(), {
+      checkpoints: false,
+    });
+    const stream = recording.streamingPlayback;
+    let generation = stream.worldGeneration ?? 0;
+    let snapshot = {
+      ...stream.getSnapshot(),
+      missionReadySec: 1,
+      ghostAlwaysDoneSec: 1 as number | null,
+    };
+    vi.spyOn(stream, "worldGeneration", "get").mockImplementation(
+      () => generation,
+    );
+    vi.spyOn(stream, "canStartSeek", "get").mockReturnValue(true);
+    vi.spyOn(stream, "findSceneReadyTime").mockReturnValue(0);
+    vi.spyOn(stream, "stepToTime").mockImplementation((timeSec) => ({
+      ...snapshot,
+      timeSec,
+    }));
+    const engine = new GameEngine();
+    const scene = new Scene();
+    const stopViews = installEntityViews(engine);
+    engineStore.getState().setRecording(recording);
+    const session = new StreamPlaybackSession(engine, recording);
+    let frame = 0;
+    const draw = () =>
+      engine.scheduler.run(FramePriority.StreamPlayback, {
+        camera: engine.cameras.perspective,
+        delta: 1 / 60,
+        elapsed: ++frame / 60,
+        frame,
+        renderer: {} as WebGLRenderer,
+        scene,
+      });
+    try {
+      const assets = engine.sceneAssets;
+      // EndGhosting clears the ghost-ready time, while missionReadySec still
+      // describes the old mission until MsgClientReady arrives.
+      generation++;
+      snapshot = { ...snapshot, ghostAlwaysDoneSec: null };
+      expect(engineStore.getState().seekPlayback(10)).toBe(true);
+      draw();
+      expect(engine.sceneAssets).toBe(assets);
+
+      // The terrain/ghosting data finishes without another world reset.
+      snapshot = {
+        ...snapshot,
+        ghostAlwaysDoneSec: differentMission ? 11 : 1,
+      };
+      draw();
+      expect(assets.disposed).toBe(differentMission);
+    } finally {
+      session.dispose();
+      engineStore.getState().setRecording(null);
+      stopViews();
+      gameEntityStore.getState().endStreaming();
+    }
+  },
+);
 
 it("retracts and restores the same follow arm for manual and directed live shots", () => {
   const stream = new LiveStreamAdapter({} as RelayClient, { mode: "watch" });

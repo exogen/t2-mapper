@@ -1,4 +1,5 @@
 /** Node-only offline replay; invoked in a child process by the relay. */
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import { RETAIL_PLAYER_INTERPOLATION } from "../src/stream/playerInterpolation.js";
 import path from "node:path";
@@ -14,7 +15,6 @@ import { scanDemoTimelineParser } from "../src/stream/demoTimelineScanner";
 import {
   DEFAULT_CHECKPOINT_INTERVAL_TICKS,
   DEMO_CHECKPOINT_VERSION,
-  demoSha256,
   demoCheckpointTargets,
   validateDemoCheckpoints,
   readDemoCheckpoints,
@@ -85,15 +85,11 @@ export async function generateDemoCheckpoints(
   )
     throw new Error("Checkpoint output must not overwrite the demo");
   const bytes = await fs.readFile(input);
-  const buffer = (
-    bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
-      ? bytes.buffer
-      : bytes.buffer.slice(
-          bytes.byteOffset,
-          bytes.byteOffset + bytes.byteLength,
-        )
-  ) as ArrayBuffer;
   const start = performance.now();
+  const source = {
+    demoBytes: bytes.byteLength,
+    demoSha256: createHash("sha256").update(bytes).digest("hex"),
+  };
   if (reuseExisting && requiredEndTick === undefined) {
     try {
       const text = await fs.readFile(output, "utf8");
@@ -113,7 +109,7 @@ export async function generateDemoCheckpoints(
             )))
       )
         throw new Error("Checkpoint plan changed");
-      await validateDemoCheckpoints(text, buffer);
+      await validateDemoCheckpoints(text, source);
       return {
         version: existing.version,
         demoBytes: existing.demoBytes,
@@ -127,7 +123,7 @@ export async function generateDemoCheckpoints(
       // Missing, stale, or interrupted outputs are regenerated atomically.
     }
   }
-  const parser = new DemoParser(new Uint8Array(buffer));
+  const parser = new DemoParser(bytes);
   await parser.load();
   if (
     requiredEndTick !== undefined &&
@@ -155,8 +151,7 @@ export async function generateDemoCheckpoints(
   const sidecar: DemoCheckpointSidecar = {
     format: "t2-mapper-seek-checkpoints",
     version: DEMO_CHECKPOINT_VERSION,
-    demoBytes: bytes.byteLength,
-    demoSha256: await demoSha256(buffer),
+    ...source,
     requestedCount: plan.maxCount,
     intervalTicks: plan.intervalTicks,
     checkpoints: [],
@@ -291,7 +286,7 @@ export async function generateDemoCheckpoints(
     // Check the exact bytes a clip viewer will receive before marking it ready.
     DemoStreamAdapter.verifyCheckpointRestoration(
       parser,
-      await readDemoCheckpoints(serialized, buffer),
+      await readDemoCheckpoints(serialized, source),
     );
   }
   await fs.writeFile(temporary, serialized);

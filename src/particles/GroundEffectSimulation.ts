@@ -5,6 +5,7 @@ import { terrainParticleColors } from "./terrainProperties";
 import {
   clearGroundActionMaps,
   getGroundEffectShape,
+  type GroundShapeLookup,
   groundActionName,
   groundClipInfo,
   groundWheels,
@@ -70,10 +71,15 @@ export class GroundEffectSimulation {
   private terrainColors: ReturnType<typeof terrainParticleColors>;
 
   private readonly playback: StreamingPlayback;
+  private readonly findShape: GroundShapeLookup;
   private vehicles: GroundVehicleCollision;
-  constructor(playback: StreamingPlayback) {
+  constructor(
+    playback: StreamingPlayback,
+    findShape: GroundShapeLookup = getGroundEffectShape,
+  ) {
     this.playback = playback;
-    this.vehicles = new GroundVehicleCollision(playback);
+    this.findShape = findShape;
+    this.vehicles = new GroundVehicleCollision(playback, findShape);
   }
 
   /** Drop live effects; a landing time seeds only the next advancing tick. */
@@ -291,7 +297,7 @@ export class GroundEffectSimulation {
           const db = this.playback.getDataBlockData(actor.dataBlockId);
           if (!db) continue;
           const name = String(db.shapeName ?? "");
-          const shape = getGroundEffectShape(name);
+          const shape = this.findShape(name);
           const spawnSec = actor.spawnTick * STREAM_TICK_SEC;
           const actorStartSec =
             firstTickStartSec === undefined

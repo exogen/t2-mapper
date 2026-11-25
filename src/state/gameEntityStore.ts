@@ -47,6 +47,8 @@ export interface GameEntityState {
   recordingDate: string | null;
   /** Monotonically increasing version counter, bumped on any mutation. */
   version: number;
+  /** Changes only when the rendered scene's asset ownership is replaced. */
+  sceneRevision: number;
 
   // ── Mission entity mutations ──
   setEntity(entity: GameEntity): void;
@@ -82,7 +84,7 @@ export interface GameEntityState {
   getStreamEntitiesMap(): Map<string, GameEntity>;
   /** Bump version to notify React subscribers. Call after adds/removes/
    *  identity rebuilds, NOT for in-place field mutations. */
-  bumpStreamVersion(): void;
+  bumpStreamVersion(newScene?: boolean): void;
 }
 
 export const gameEntityStore = createStore<GameEntityState>()((set, get) => ({
@@ -98,6 +100,7 @@ export const gameEntityStore = createStore<GameEntityState>()((set, get) => ({
   recorderName: null,
   recordingDate: null,
   version: 0,
+  sceneRevision: 0,
 
   // ── Mission entity mutations ──
 
@@ -134,11 +137,13 @@ export const gameEntityStore = createStore<GameEntityState>()((set, get) => ({
       for (const entity of entities) {
         next.set(entity.id, entity);
       }
+      const streaming = isStreamingSource(state.dataSource);
       return {
         missionEntities: next,
-        dataSource: isStreamingSource(state.dataSource)
-          ? state.dataSource
-          : "map",
+        dataSource: streaming ? state.dataSource : "map",
+        sceneRevision: streaming
+          ? state.sceneRevision
+          : state.sceneRevision + 1,
       };
     });
   },
@@ -166,6 +171,7 @@ export const gameEntityStore = createStore<GameEntityState>()((set, get) => ({
         recorderName: null,
         recordingDate: null,
         version: state.version + 1,
+        sceneRevision: state.sceneRevision + 1,
       };
     });
   },
@@ -218,6 +224,7 @@ export const gameEntityStore = createStore<GameEntityState>()((set, get) => ({
       recorderName: null,
       recordingDate: null,
       version: state.version + 1,
+      sceneRevision: state.sceneRevision + 1,
     }));
   },
 
@@ -236,6 +243,7 @@ export const gameEntityStore = createStore<GameEntityState>()((set, get) => ({
         recordingDate: null,
         streamEntities: new Map(),
         version: state.version + 1,
+        sceneRevision: state.sceneRevision + 1,
       };
     });
   },
@@ -296,8 +304,11 @@ export const gameEntityStore = createStore<GameEntityState>()((set, get) => ({
     return get().streamEntities;
   },
 
-  bumpStreamVersion() {
-    set((state) => ({ version: state.version + 1 }));
+  bumpStreamVersion(newScene = false) {
+    set((state) => ({
+      version: state.version + 1,
+      sceneRevision: newScene ? state.sceneRevision + 1 : state.sceneRevision,
+    }));
   },
 }));
 

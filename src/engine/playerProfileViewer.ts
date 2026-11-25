@@ -1,6 +1,8 @@
 import {
   Color,
+  DefaultLoadingManager,
   Group,
+  LoadingManager,
   LoopOnce,
   LoopRepeat,
   NoToneMapping,
@@ -14,6 +16,7 @@ import {
   type Material,
 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { bindSceneAssets, SceneAssets } from "../assets/sceneAssets";
 import { DTSAnimationMixer } from "../dts/dtsAnimationMixer";
 import { createDtsDamageThreads } from "../dts/dtsDamage";
 import { getDTSImageMountTransform } from "../dts/dtsMount";
@@ -84,12 +87,14 @@ function mountProfileImage(
   image: ProfileImageAppearance,
   mounts: MountPoints,
   anisotropy: number,
+  assets: SceneAssets,
 ) {
   const instance = createShapeInstance({
     model,
     shapeName: image.shapeName,
     anisotropy,
     emap: image.emap,
+    assets,
   });
   const { scene } = instance;
   const stopMaterials = studioMaterials(scene);
@@ -141,8 +146,7 @@ function mountProfileImage(
   };
 }
 
-/** An isolated, small player portrait. Loading may finish after dispose;
- * only cached source assets survive that cancellation. */
+/** An isolated player portrait with assets owned by the canvas lifetime. */
 export function mountPlayerProfileViewer(
   container: HTMLElement,
   profile: ProfileAppearanceInput,
@@ -153,6 +157,11 @@ export function mountPlayerProfileViewer(
   } catch {
     return { dispose() {} };
   }
+  const assets = new SceneAssets();
+  const manager = new LoadingManager();
+  manager.resolveURL = (url) => DefaultLoadingManager.resolveURL(url);
+  manager.getHandler = (file) => DefaultLoadingManager.getHandler(file);
+  bindSceneAssets(manager, assets);
   renderer.outputColorSpace = SRGBColorSpace;
   renderer.toneMapping = NoToneMapping;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -290,7 +299,7 @@ export function mountPlayerProfileViewer(
     if (disposed) return;
     // Remote skin discovery must not delay the base armor or its attachments.
     const skinManifest = loadSkinManifest();
-    const model = await loadShape(appearance.shapeName);
+    const model = await loadShape(appearance.shapeName, manager);
     if (disposed) return;
     const anisotropy = renderer.capabilities.getMaxAnisotropy();
     const mounts = new MountPoints();
@@ -307,6 +316,7 @@ export function mountPlayerProfileViewer(
         anisotropy,
         emap: appearance.emap,
         playerSkin,
+        assets,
       });
       const stopMaterials = studioMaterials(player.scene);
       scene.add(player.root);
@@ -369,13 +379,14 @@ export function mountPlayerProfileViewer(
     // A missing mod image must not prevent the armor or other image showing.
     await Promise.allSettled(
       appearance.images.map(async (image) => {
-        const imageModel = await loadShape(image.shapeName);
+        const imageModel = await loadShape(image.shapeName, manager);
         if (disposed) return;
         const mounted = mountProfileImage(
           imageModel,
           image,
           mounts,
           anisotropy,
+          assets,
         );
         cleanups.push(() => mounted.dispose());
         updates.push(mounted.update);
@@ -389,6 +400,7 @@ export function mountPlayerProfileViewer(
 
   return {
     dispose() {
+      if (disposed) return;
       disposed = true;
       cancelAnimationFrame(raf);
       resize.disconnect();
@@ -408,6 +420,7 @@ export function mountPlayerProfileViewer(
       flushTransformChanges(scene);
       for (const cleanup of cleanups.reverse()) cleanup();
       scene.clear();
+      assets.dispose();
       renderer.dispose();
       renderer.forceContextLoss();
       canvas.remove();

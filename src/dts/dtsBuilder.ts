@@ -3,9 +3,13 @@ import {
   Box3,
   BufferAttribute,
   Matrix4,
+  Mesh,
   MeshLambertMaterial,
   Skeleton,
+  SkinnedMesh,
   type BufferGeometry,
+  type Material,
+  type Object3D,
   type Texture,
 } from "three";
 import { buildDTSAnimations } from "./dtsAnimation";
@@ -45,11 +49,45 @@ export interface DTSBuildOptions {
   texture?: (name: string, materialIndex: number) => Texture | null;
 }
 
+// Other instances can realize branches that never appeared under model.scene.
+const modelTemplates = new WeakMap<DTSModel, readonly DTSDetail[]>();
+
+/** Release source-owned resources after all clones and draw pages have stopped. */
+export function disposeDTSModel(
+  model: DTSModel,
+  extraRoots: readonly Object3D[] = [],
+): void {
+  const geometries = new Set<BufferGeometry>();
+  const materials = new Set<Material>(model.materials);
+  const skeletons = new Set<Skeleton>();
+  for (const root of [
+    model.scene,
+    ...(modelTemplates.get(model) ?? []),
+    ...extraRoots,
+  ])
+    root.traverse((node) => {
+      if (!(node instanceof Mesh)) return;
+      geometries.add(node.geometry);
+      for (const material of Array.isArray(node.material)
+        ? node.material
+        : [node.material])
+        materials.add(material);
+      if (node instanceof SkinnedMesh) skeletons.add(node.skeleton);
+    });
+  modelTemplates.delete(model);
+  for (const geometry of geometries) geometry.dispose();
+  for (const material of materials) material.dispose();
+  for (const skeleton of skeletons) skeleton.dispose();
+  const samplers = new Set(model.materials.map((material) => material.map));
+  for (const sampler of samplers) sampler?.dispose();
+}
+
 export function buildDTS(
   shape: DTSShapeData,
   options: DTSBuildOptions = {},
 ): DTSModel {
   const scene = new DTSShape();
+  const templates: DTSDetail[] = [];
   scene.data = shape;
   scene.iflTimes = shape.iflMaterials.map(() => -1);
   scene.iflLoops = shape.iflMaterials.map(() => true);
@@ -167,6 +205,7 @@ export function buildDTS(
         if (template) return template;
         const { geometry, frames } = getGeometry(source);
         const detail = new DTSDetail();
+        templates.push(detail);
         detail.name = `${label}_detail_${detailIndices.join("_")}`;
         template = detail;
         detail.visible =
@@ -338,6 +377,7 @@ export function buildDTS(
             decalIndex: i,
           };
           const detail = new DTSDetail();
+          templates.push(detail);
           detail.visible =
             detailIndices.includes(0) &&
             shape.details[0]?.size >= 0 &&
@@ -376,7 +416,7 @@ export function buildDTS(
       get: () => scene.getNode(index)!,
     });
   });
-  return {
+  const model: DTSModel = {
     scene,
     animations,
     materials,
@@ -384,4 +424,6 @@ export function buildDTS(
     bounds,
     nodes,
   };
+  modelTemplates.set(model, templates);
+  return model;
 }

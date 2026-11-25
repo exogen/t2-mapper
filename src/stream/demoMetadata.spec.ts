@@ -6,7 +6,6 @@ import { createRecordingFromParser, DemoStreamAdapter } from "./demoStreaming";
 import { bytesToBase64, encodeCheckpoint } from "./checkpointCodec";
 import {
   DEMO_CHECKPOINT_VERSION,
-  demoSha256,
   readDemoCheckpoints,
 } from "./demoCheckpoints";
 import { flagReturnSecondsRemaining } from "./flagReturnTimer";
@@ -288,7 +287,7 @@ describe("imported checkpoint playback", () => {
       format: "t2-mapper-seek-checkpoints",
       version: DEMO_CHECKPOINT_VERSION,
       demoBytes: buffer.byteLength,
-      demoSha256: await demoSha256(buffer),
+      demoSha256: "a".repeat(64),
       requestedCount: 1,
       checkpoints: [
         {
@@ -299,7 +298,9 @@ describe("imported checkpoint playback", () => {
         },
       ],
     });
-    stream.importCheckpoints(await readDemoCheckpoints(text, buffer));
+    stream.importCheckpoints(
+      await readDemoCheckpoints(text, { demoBytes: buffer.byteLength }),
+    );
     expect(stream.stepToTime(6).flagDroppedAtSec).toEqual({ 1: 3.2 });
 
     const restore = vi.spyOn(parser, "restoreCheckpoint");

@@ -6,7 +6,6 @@ import { RuntimeProvider } from "./RuntimeProvider";
 import { useParsedMission } from "./useParsedMission";
 import {
   createProgressTracker,
-  createScriptCache,
   FileSystemHandler,
   runServer,
   TorqueRuntime,
@@ -27,8 +26,6 @@ import { createLogger } from "../logger";
 const log = createLogger("Mission");
 
 const loadScript = createScriptLoader();
-// Shared cache for parsed scripts - survives runtime restarts
-const scriptCache = createScriptCache();
 const fileSystem: FileSystemHandler = {
   findFiles: (pattern) => {
     const isMatch = picomatch(pattern, { nocase: true });
@@ -86,7 +83,6 @@ function useExecutedMission(
       runtimeOptions: {
         loadScript,
         fileSystem,
-        cache: scriptCache,
         signal: controller.signal,
         progress: progressTracker,
         ignoreScripts,

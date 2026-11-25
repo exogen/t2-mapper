@@ -11,11 +11,15 @@ import {
   Matrix4,
   Group,
   Frustum,
+  LinearFilter,
+  LinearMipmapLinearFilter,
+  MirroredRepeatWrapping,
   MeshLambertMaterial,
   RepeatWrapping,
   PerspectiveCamera,
   Scene,
   ShaderLib,
+  SRGBColorSpace,
   Vector3,
   type InstancedMesh,
   type Material,
@@ -320,6 +324,42 @@ describe("animated DTS instancing", () => {
     expect(renderer.copyTextureToTexture).toHaveBeenCalledTimes(20);
     pool.dispose();
   });
+
+  it("uses compatible sampler settings without marking skin pixels dirty", () => {
+    const { pool, bodies, renderer, prepare } = fixture();
+    const [first, second] = bodies.map(
+      (body) => body.material as MeshLambertMaterial,
+    );
+    const settings = {
+      colorSpace: SRGBColorSpace,
+      wrapS: RepeatWrapping,
+      wrapT: MirroredRepeatWrapping,
+      magFilter: LinearFilter,
+      minFilter: LinearMipmapLinearFilter,
+      anisotropy: 4,
+      generateMipmaps: true,
+    };
+    const firstMap = Object.assign(first.map!, settings);
+    const secondMap = Object.assign(second.map!, settings);
+    const firstVersion = firstMap.source.version;
+    const secondVersion = secondMap.source.version;
+
+    second.map = firstMap;
+    prepare();
+    expect(pool.stats.instances).toBe(2);
+    expect(firstMap.source.version).toBe(firstVersion);
+    expect(renderer.copyTextureToTexture).not.toHaveBeenCalled();
+
+    second.map = secondMap;
+    prepare();
+    const copies = vi.mocked(renderer.copyTextureToTexture).mock.calls;
+    expect(copies).toHaveLength(2);
+    expect(copies[0][1]).toMatchObject(settings);
+    expect(firstMap.source.version).toBe(firstVersion);
+    expect(secondMap.source.version).toBe(secondVersion);
+    pool.dispose();
+  });
+
   it("preserves independent poses, normals, skins and lighting in one draw", () => {
     const { pool, bodies, renderer, prepare } = fixture();
     prepare();

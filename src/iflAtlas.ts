@@ -17,9 +17,10 @@ import { DTSMaterialFlags } from "./dts/dtsTypes";
 import { iflTextureToUrl, loadImageFrameList } from "./loaders";
 import { loadBitmapTextureAsync } from "./assets/bitmapTextures";
 import { normalizePath } from "./stringUtils";
+import { sharedSceneAssets, type SceneAssets } from "./assets/sceneAssets";
 
 // Cache in-flight work too: simultaneous spawns must not build duplicate atlases.
-const atlasCache = new Map<string, Promise<DTSImageFrames>>();
+const iflCache = {};
 const samplerFlags =
   DTSMaterialFlags.SWrap |
   DTSMaterialFlags.TWrap |
@@ -78,15 +79,20 @@ function packFrames(textures: Texture[]): Texture[] {
 async function buildFrames(
   iflPath: string,
   flags: number,
+  assets: SceneAssets,
 ): Promise<DTSImageFrames> {
   const entries = (await loadImageFrameList(iflPath)).filter(
     (e) => e.frameCount > 0,
   );
+  assets.signal.throwIfAborted();
   if (!entries.length) return { frames: [], duration: 0 };
   const names = [...new Set(entries.map((entry) => entry.name))];
   const textures = await Promise.all(
-    names.map((name) => loadBitmapTextureAsync(iflTextureToUrl(name, iflPath))),
+    names.map((name) =>
+      loadBitmapTextureAsync(iflTextureToUrl(name, iflPath), assets),
+    ),
   );
+  assets.signal.throwIfAborted();
   // An atlas cannot tile or preserve differently sized frames. Keep those
   // as ordinary textures, with separate sampler state from the image cache.
   const individual =
@@ -107,15 +113,25 @@ async function buildFrames(
   return createDTSImageFrames(entries, (name) => byName.get(name)!);
 }
 
+function disposeIflFrames({ frames }: DTSImageFrames): void {
+  for (const texture of new Set(frames.map((frame) => frame.texture)))
+    texture.dispose();
+}
+
 export function loadIflAtlas(
   iflPath: string,
   flags = 0,
+  assets: SceneAssets = sharedSceneAssets,
 ): Promise<DTSImageFrames> {
+  const atlasCache = assets.cache<string, Promise<DTSImageFrames>>(
+    iflCache,
+    (pending) => void pending.then(disposeIflFrames, () => {}),
+  );
   const key = `${normalizePath(iflPath).toLowerCase()}:${flags & samplerFlags}`;
   let pending = atlasCache.get(key);
   if (!pending) {
-    pending = buildFrames(iflPath, flags).catch((error) => {
-      atlasCache.delete(key);
+    pending = buildFrames(iflPath, flags, assets).catch((error) => {
+      if (atlasCache.get(key) === pending) atlasCache.delete(key);
       throw error;
     });
     atlasCache.set(key, pending);
@@ -125,7 +141,10 @@ export function loadIflAtlas(
 
 /** Publish into a shared list so clones made before decoding finishes receive
  * the frames too. No mesh traversal or per-instance loading is necessary. */
-export async function loadShapeImageLists(model: DTSModel): Promise<void> {
+export async function loadShapeImageLists(
+  model: DTSModel,
+  assets: SceneAssets = sharedSceneAssets,
+): Promise<void> {
   // Clones share this array. Retrying a failed atlas must update the same list,
   // including successful lists from an earlier partial attempt.
   const animations = model.scene.imageAnimations as DTSImageAnimation[];
@@ -135,7 +154,8 @@ export async function loadShapeImageLists(model: DTSModel): Promise<void> {
       if (!material || !(material.flags & DTSMaterialFlags.IflMaterial)) return;
       const name = model.data.names[ifl.nameIndex] || `${material.name}.ifl`;
       const path = `textures/${normalizePath(name).replace(/\.ifl$/i, "")}.ifl`;
-      const frames = await loadIflAtlas(path, material.flags);
+      const frames = await loadIflAtlas(path, material.flags, assets);
+      assets.signal.throwIfAborted();
       const animation = createDTSImageAnimation(model.data, iflIndex, frames);
       const index = animations.findIndex(
         (current) => current.iflIndex === iflIndex,

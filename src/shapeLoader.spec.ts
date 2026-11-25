@@ -3,6 +3,7 @@ import { FileLoader, LoadingManager, Mesh, Texture } from "three";
 import { clone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { ShapeLoader } from "./shapeLoader";
 import { DTSLoader } from "./dts/dtsLoader";
+import * as dts from "./dts/dts";
 import { buildDTS } from "./dts/dtsBuilder";
 import {
   createDSQTestBuffer,
@@ -13,6 +14,8 @@ import * as manifest from "./manifest";
 import * as loaders from "./loaders";
 import { loadBitmapTextureAsync } from "./assets/bitmapTextures";
 import * as iflAtlas from "./iflAtlas";
+import { bindSceneAssets, SceneAssets } from "./assets/sceneAssets";
+import { getGroundEffectShape } from "./particles/groundEffectAssets";
 
 vi.mock("./assets/bitmapTextures", () => ({
   loadBitmapTextureAsync: vi.fn(async () => new Texture()),
@@ -31,6 +34,81 @@ afterEach(() => {
 });
 
 describe("shared shape sources", () => {
+  it("releases a scene's sources without touching another manager's model", async () => {
+    const oldAssets = new SceneAssets();
+    const newAssets = new SceneAssets();
+    const manager = new LoadingManager();
+    const map = new Texture();
+    const oldModel = buildDTS(createDTSTestShape(), { texture: () => map });
+    const newModel = buildDTS(createDTSTestShape());
+    const models = [oldModel, newModel];
+    vi.spyOn(DTSLoader.prototype, "load").mockImplementation((_url, done) => {
+      done(models.shift()!);
+    });
+    const disposed = vi.fn();
+    map.addEventListener("dispose", disposed);
+    const url = "scope-model.dts";
+
+    bindSceneAssets(manager, oldAssets);
+    const old = new ShapeLoader(manager);
+    expect(await old.loadAsync(url)).toBe(oldModel);
+    const ground = getGroundEffectShape(url, oldAssets);
+    expect(ground?.model).toEqual({
+      data: oldModel.data,
+      animations: oldModel.animations,
+    });
+    expect(ground?.model).not.toHaveProperty("scene");
+
+    bindSceneAssets(manager, newAssets);
+    const next = new ShapeLoader(manager);
+    expect(await next.loadAsync(url)).toBe(newModel);
+    oldAssets.dispose();
+    expect(disposed).toHaveBeenCalledOnce();
+    expect(old.peekModel(url)).toBeUndefined();
+    expect(getGroundEffectShape(url, oldAssets)).toBeUndefined();
+    expect(next.peekModel(url)).toBe(newModel);
+    expect(getGroundEffectShape(url, newAssets)?.model.data).toBe(
+      newModel.data,
+    );
+    newAssets.dispose();
+  });
+
+  it("disposes a late model without warming or publishing it into a replacement scope", async () => {
+    const manager = new LoadingManager();
+    const oldAssets = new SceneAssets();
+    const newAssets = new SceneAssets();
+    const url = "late-scope.dts";
+    const map = new Texture();
+    const oldModel = buildDTS(createDTSTestShape(), { texture: () => map });
+    const newModel = buildDTS(createDTSTestShape());
+    const complete: ((model: typeof oldModel) => void)[] = [];
+    vi.spyOn(DTSLoader.prototype, "load").mockImplementation((_url, done) => {
+      complete.push(done);
+    });
+    const warm = vi.spyOn(iflAtlas, "loadShapeImageLists");
+    const dispose = vi.fn();
+    map.addEventListener("dispose", dispose);
+    bindSceneAssets(manager, oldAssets);
+    const old = new ShapeLoader(manager)
+      .loadDependencies(url)
+      .catch((error) => error);
+
+    oldAssets.dispose();
+    bindSceneAssets(manager, newAssets);
+    const next = new ShapeLoader(manager);
+    const loaded = next.loadAsync(url);
+    complete[0](oldModel);
+    complete[1](newModel);
+    expect(await old).toBe(oldAssets.signal.reason);
+    expect(await loaded).toBe(newModel);
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(warm).toHaveBeenCalledExactlyOnceWith(newModel, newAssets);
+    expect(getGroundEffectShape(url, newAssets)?.model.data).toBe(
+      newModel.data,
+    );
+    newAssets.dispose();
+  });
+
   it.each(["image", "IFL"] as const)(
     "retries failed %s readiness without rebuilding a model",
     async (failedStage) => {
@@ -223,6 +301,67 @@ describe("shared shape sources", () => {
     expect(fetch).toHaveBeenCalledTimes(3);
   });
 
+  it("skips parsing for a retired scene while its replacement uses the same download", async () => {
+    const url = "https://assets.test/scene-transition.dts";
+    let finish!: (response: Response) => void;
+    const fetchAsset = vi.spyOn(globalThis, "fetch").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const parse = vi.spyOn(dts, "parseDTS");
+    const sequences = vi.fn(() => []);
+    const oldManager = new LoadingManager();
+    const oldAssets = new SceneAssets();
+    bindSceneAssets(oldManager, oldAssets);
+    const old = new ShapeLoader(oldManager).setSequenceResolver(sequences);
+    const retired = old.loadShapeData(url);
+    oldAssets.dispose();
+
+    const nextManager = new LoadingManager();
+    const nextAssets = new SceneAssets();
+    bindSceneAssets(nextManager, nextAssets);
+    const next = new ShapeLoader(nextManager).setSequenceResolver(() => []);
+    const replacement = next.loadShapeData(url);
+    const response = new Response(createDTSTestBuffer());
+    // Use FileLoader's non-streaming path in Node.
+    Object.defineProperty(response, "body", { value: undefined });
+    finish(response);
+    await expect(retired).rejects.toBe(oldAssets.signal.reason);
+    expect(await replacement).toBe(next.peekShapeData(url));
+    expect(fetchAsset).toHaveBeenCalledOnce();
+    expect(parse).toHaveBeenCalledOnce();
+    expect(sequences).not.toHaveBeenCalled();
+    nextAssets.dispose();
+  });
+
+  it("skips animation decoding when a scene closes during its download", async () => {
+    let finish!: (bytes: ArrayBuffer) => void;
+    const sequence = new Promise<ArrayBuffer>((resolve) => {
+      finish = resolve;
+    });
+    const fetchAsset = vi
+      .spyOn(FileLoader.prototype, "loadAsync")
+      .mockResolvedValueOnce(createDTSTestBuffer())
+      .mockReturnValueOnce(sequence);
+    const manager = new LoadingManager();
+    const assets = new SceneAssets();
+    bindSceneAssets(manager, assets);
+    const loader = new ShapeLoader(manager).setSequenceResolver(() => [
+      { url: "animation.dsq" },
+    ]);
+    const loaded = loader.loadShapeData("animated.dts");
+    await vi.waitFor(() =>
+      expect(fetchAsset).toHaveBeenCalledWith("animation.dsq"),
+    );
+    assets.dispose();
+    // Parsing these bytes would throw a format error.
+    finish(new ArrayBuffer(1));
+    await expect(loaded).rejects.toBe(assets.signal.reason);
+    expect(loader.peekShapeData("animated.dts")).toBeUndefined();
+  });
+
   it("evicts failed requests so a later request can retry", async () => {
     const model = buildDTS(createDTSTestShape());
     const load = vi
@@ -262,5 +401,34 @@ describe("shared shape sources", () => {
     await failed;
     expect(await loader.loadShapeData(url)).toBe(loader.peekShapeData(url));
     expect(fetchAsset).toHaveBeenCalledTimes(2);
+  });
+
+  it("times out stalled animation downloads even after a sibling fails", async () => {
+    vi.useFakeTimers();
+    const shapeUrl = "https://assets.test/sibling.dts";
+    const missingUrl = "https://assets.test/sibling-missing.dsq";
+    const stalledUrl = "https://assets.test/sibling-stalled.dsq";
+    let stalledRequest: Request | undefined;
+    const response = new Response(createDTSTestBuffer());
+    Object.defineProperty(response, "body", { value: undefined });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const request = input as Request;
+      if (request.url === shapeUrl) return response;
+      if (request.url === missingUrl)
+        return new Response(null, { status: 404 });
+      stalledRequest = request;
+      return new Promise((_resolve, reject) => {
+        request.signal.addEventListener("abort", () =>
+          reject(request.signal.reason),
+        );
+      });
+    });
+    const loader = new ShapeLoader(new LoadingManager()).setSequenceResolver(
+      () => [{ url: missingUrl }, { url: stalledUrl }],
+    );
+    await expect(loader.loadShapeData(shapeUrl)).rejects.toThrow("404");
+    expect(stalledRequest?.signal.aborted).toBe(false);
+    await vi.runAllTimersAsync();
+    expect(stalledRequest?.signal.aborted).toBe(true);
   });
 });

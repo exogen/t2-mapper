@@ -1,9 +1,10 @@
 import { NoColorSpace, RepeatWrapping, SRGBColorSpace } from "three";
-import type { Texture, ColorSpace } from "three";
+import { DefaultLoadingManager, type Texture, type ColorSpace } from "three";
 import type { DTSModel } from "../dts/dtsModel";
 import { ShapeLoader } from "../shapeLoader";
 import { shapeToUrl, textureToUrl } from "../loaders";
 import { loadBitmapTextureInstance } from "../assets/bitmapTextures";
+import { getSceneAssets, type SceneAssets } from "../assets/sceneAssets";
 import { setupEffectTexture } from "../stream/playbackUtils";
 import type { ProjectileEntity } from "../state/projectileEntities";
 import type { ProjectileEntityLookup, ProjectileFactory } from "./types";
@@ -20,7 +21,8 @@ import { streamPlaybackStore } from "../state/streamPlaybackStore";
 /** Resources belong to the manager; recycled views only own their mutable state. */
 export class ProjectileAssets {
   private textures = new Map<string, Texture>();
-  private loader = new ShapeLoader();
+  private readonly loader: ShapeLoader;
+  private readonly assets: SceneAssets;
   private disposed = false;
   anisotropy: number;
   animationEnabled: () => boolean;
@@ -31,11 +33,14 @@ export class ProjectileAssets {
     animationEnabled: () => boolean,
     viewportHeight: () => number = () => 0,
     findEntity: ProjectileEntityLookup = () => undefined,
+    manager = DefaultLoadingManager,
   ) {
     this.anisotropy = anisotropy;
     this.animationEnabled = animationEnabled;
     this.viewportHeight = viewportHeight;
     this.findEntity = findEntity;
+    this.loader = new ShapeLoader(manager);
+    this.assets = getSceneAssets(manager);
   }
   private texture(
     name: string,
@@ -46,7 +51,12 @@ export class ProjectileAssets {
       key = JSON.stringify([url, colorSpace, repeat]);
     let texture = this.textures.get(key);
     if (!texture) {
-      texture = loadBitmapTextureInstance(url);
+      texture = loadBitmapTextureInstance(
+        url,
+        undefined,
+        undefined,
+        this.assets,
+      );
       setupEffectTexture(texture, colorSpace);
       if (repeat !== "none") texture.wrapS = RepeatWrapping;
       if (repeat === "st") texture.wrapT = RepeatWrapping;
@@ -137,7 +147,7 @@ export class ProjectileAssets {
               : undefined,
           };
         const create = (model?: DTSModel) => () =>
-          createFlareView(v, maps, model, this.anisotropy);
+          createFlareView(v, maps, model, this.anisotropy, this.assets);
         return v.shapeName
           ? this.loadModelFactory(v.shapeName, create)
           : create();
@@ -156,6 +166,7 @@ export class ProjectileAssets {
               entity.shapeName!,
               block,
               this.anisotropy,
+              this.assets,
             );
         });
       }
@@ -187,6 +198,7 @@ export class ProjectileAssets {
               casing && casingName
                 ? { model: casing, shapeName: casingName }
                 : undefined,
+              this.assets,
             ),
           casingName,
         );

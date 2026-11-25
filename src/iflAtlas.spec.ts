@@ -13,6 +13,7 @@ import { buildDTS } from "./dts/dtsBuilder";
 import { createDTSTestShape } from "./dts/dtsTestFixtures";
 import type { DTSShape } from "./dts/dtsModel";
 import { DTSMaterialFlags } from "./dts/dtsTypes";
+import { SceneAssets } from "./assets/sceneAssets";
 
 vi.mock("./loaders", () => ({
   loadImageFrameList: vi.fn(),
@@ -46,6 +47,29 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("shared DTS IFL resources", () => {
+  it("retires unique frame samplers while preserving the replacement scene's frames", async () => {
+    const oldAssets = new SceneAssets();
+    const newAssets = new SceneAssets();
+    const url = "scope.ifl";
+    const old = await loadIflAtlas(url, DTSMaterialFlags.SWrap, oldAssets);
+    const next = await loadIflAtlas(url, DTSMaterialFlags.SWrap, newAssets);
+    const disposed = vi.fn();
+    const stillLive = vi.fn();
+    expect(old.frames[0].texture).toBe(old.frames[2].texture);
+    old.frames[0].texture.addEventListener("dispose", disposed);
+    next.frames[0].texture.addEventListener("dispose", stillLive);
+    expect(loadBitmapTextureAsync).toHaveBeenCalledWith("a", oldAssets);
+    expect(loadBitmapTextureAsync).toHaveBeenCalledWith("a", newAssets);
+    oldAssets.dispose();
+    await Promise.resolve();
+    expect(disposed).toHaveBeenCalledOnce();
+    expect(stillLive).not.toHaveBeenCalled();
+    expect(await loadIflAtlas(url, DTSMaterialFlags.SWrap, newAssets)).toBe(
+      next,
+    );
+    newAssets.dispose();
+  });
+
   it("deduplicates concurrent loads and shares fixed frame transforms across consumers", async () => {
     const a = loadIflAtlas("concurrent.ifl"),
       b = loadIflAtlas("concurrent.ifl");

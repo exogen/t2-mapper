@@ -190,6 +190,7 @@ export function createWaterView(
   entity: WaterBlockEntity,
   engine: GameEngine,
 ): EntityView {
+  const assets = engine.sceneAssets;
   let scene = entity.waterData;
   const root = new Group();
   root.name = entity.id;
@@ -273,6 +274,7 @@ export function createWaterView(
         renderer,
         (texture) => setupWaterTexture(texture, anisotropy),
         signal,
+        assets,
       );
     },
     ([baseTexture, envMapTexture]) => {

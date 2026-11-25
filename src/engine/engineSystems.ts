@@ -1,4 +1,5 @@
 import { engineStore } from "../state/engineStore";
+import { clearBrowserProjectileShapeAssets } from "../collision/projectileShapeAssets";
 import { installAudio } from "./audioSystem";
 import { installCameraRig } from "./cameraRig";
 import { installClipRecorder } from "./clipRecorder";
@@ -70,6 +71,7 @@ function startDemoSystems(engine: GameEngine): () => void {
  */
 export function startEngineSystems(engine: GameEngine): () => void {
   return combineCleanups(
+    engine.onSceneAssetsRelease(clearBrowserProjectileShapeAssets),
     // First: everything else reads the cameras.
     installCameraRig(engine),
     installClipRecorder(engine),

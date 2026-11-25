@@ -18,6 +18,7 @@ import type { FlareEntity } from "../state/gameEntityTypes";
 import { effectDeltaSec } from "../state/engineStore";
 import { streamClock } from "../state/streamPlaybackStore";
 import { createEffectShape } from "../effectShape";
+import type { SceneAssets } from "../assets/sceneAssets";
 import { FlareSpikes, VERTS_PER_SPIKE } from "../particles/flareSpikes";
 import {
   additiveBeforeCompile,
@@ -77,13 +78,14 @@ export function createFlareView(
   textures: { base?: Texture; mod?: Texture },
   model: DTSModel | undefined,
   anisotropy: number,
+  assets?: SceneAssets,
 ): ProjectileView<FlareEntity> {
   const root = new Group(),
     effects = new Group(),
     shapeGroup = new Group();
   root.add(effects, shapeGroup);
   const shape = model
-    ? createEffectShape(model, visual.shapeName, { anisotropy })
+    ? createEffectShape(model, visual.shapeName, { assets, anisotropy })
     : null;
   if (shape) {
     torqueVecToThree(visual.shapeScale, shapeGroup.scale);

@@ -3,6 +3,7 @@ import {
   loadHtmlTexture,
   recordSkippedHtmlTextureUpload,
 } from "../assets/htmlTextures";
+import type { SceneAssets } from "../assets/sceneAssets";
 
 /**
  * Load several textures, then prepare them and upload them to the GPU
@@ -13,8 +14,11 @@ export async function loadTextures(
   renderer: WebGLRenderer,
   setup?: (texture: Texture) => void,
   signal?: AbortSignal,
+  assets?: SceneAssets,
 ): Promise<Texture[]> {
-  const textures = await Promise.all(urls.map(loadHtmlTexture));
+  const textures = await Promise.all(
+    urls.map((url) => loadHtmlTexture(url, assets)),
+  );
   for (const texture of textures) {
     if (signal?.aborted) {
       recordSkippedHtmlTextureUpload();

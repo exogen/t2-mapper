@@ -7,6 +7,7 @@ import {
 } from "../world/nodeCollisionContext";
 import { ProjectileDynamicCollision } from "./projectileDynamicCollision";
 import {
+  clearBrowserProjectileShapeAssets,
   getProjectileShapeAsset,
   getProjectileShapeData,
   prepareProjectileShapes,
@@ -201,5 +202,36 @@ describe("projectile shape assets", () => {
       prepareProjectileShapes([name], () => data);
       expect(getProjectileShapeAsset(name)).toBe(loaded);
     });
+  });
+
+  it("releases viewer shapes without touching a Node world or accepting stale loads", async () => {
+    const ready = "test-scene-release-ready.dts";
+    const pending = "test-scene-release-pending.dts";
+    const previous = createDTSCollisionTestShape();
+    const current = createDTSCollisionTestShape();
+    const nodeWorld = createCollisionState();
+    let finish!: (value: typeof previous) => void;
+    const download = new Promise<typeof previous>(
+      (resolve) => (finish = resolve),
+    );
+
+    await runInCollisionWorld(nodeWorld, () => {
+      prepareProjectileShapes([ready], () => previous);
+    });
+    prepareProjectileShapes([ready], () => previous);
+    const oldLoad = prepareProjectileShapes([pending], () => download);
+    expect(getProjectileShapeData(ready)).toBe(previous);
+
+    clearBrowserProjectileShapeAssets();
+    expect(getProjectileShapeData(ready)).toBeUndefined();
+    prepareProjectileShapes([pending], () => current);
+
+    finish(previous);
+    await oldLoad;
+    expect(getProjectileShapeData(pending)).toBe(current);
+    await runInCollisionWorld(nodeWorld, () => {
+      expect(getProjectileShapeData(ready)).toBe(previous);
+    });
+    clearBrowserProjectileShapeAssets();
   });
 });

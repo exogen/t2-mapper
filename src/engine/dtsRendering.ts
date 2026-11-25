@@ -29,8 +29,13 @@ export function installDTSRendering(engine: GameEngine): () => void {
     ),
     pooled
       ? engine.withHost(({ scene, renderer }) => {
-          let instances: { dispose(): void } | null = null;
+          let instances: ReturnType<
+            typeof import("../dts/dtsAnimatedInstances").installDTSAnimatedInstances
+          > | null = null;
           let stopped = false;
+          const stopSceneRelease = engine.onSceneAssetsRelease(() =>
+            instances?.pool.clear(),
+          );
           // Loaded on demand, like the rest of the shape pipeline. It wraps
           // the engine's render hooks, so it prepares after them and
           // restores before them.
@@ -42,6 +47,7 @@ export function installDTSRendering(engine: GameEngine): () => void {
           );
           return () => {
             stopped = true;
+            stopSceneRelease();
             instances?.dispose();
           };
         })

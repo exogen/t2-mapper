@@ -11,6 +11,7 @@ const fixture = vi.hoisted(() => ({
       seekNonce: number;
       seekIntentNonce: number;
       seekFailed: boolean;
+      seekProgress: { currentTimeSec: number } | null;
       downloadStatus: "downloading" | "complete" | "interrupted";
       demoBuffer: ArrayBuffer | null;
     };
@@ -97,6 +98,7 @@ beforeEach(() => {
       seekNonce: 1,
       seekIntentNonce: 1,
       seekFailed: false,
+      seekProgress: null,
       downloadStatus: "complete",
       demoBuffer: new ArrayBuffer(4),
     },
@@ -108,6 +110,7 @@ beforeEach(() => {
     fixture.state.playback.seekNonce++;
     fixture.state.playback.seekIntentNonce++;
     fixture.state.playback.seekFailed = false;
+    fixture.state.playback.seekProgress = null;
     return true;
   });
   fixture.play.mockImplementation((active: ClipTake) => {
@@ -128,7 +131,7 @@ it("imports the clip checkpoint before seeking and waits for the target scene be
     take,
     recording,
     new AbortController().signal,
-    "checkpoint",
+    { text: "checkpoint" },
   );
   await vi.waitFor(() => expect(fixture.seek).toHaveBeenCalledWith(100));
   expect(hold).toHaveBeenCalledWith(RETAIL_PLAYER_INTERPOLATION);
@@ -151,8 +154,7 @@ it("seeks the verified demo normally when the engine rejects the clip checkpoint
     take,
     recording,
     new AbortController().signal,
-    "checkpoint",
-    recover,
+    { text: "checkpoint", recover },
   );
   await vi.waitFor(() => expect(fixture.seek).toHaveBeenCalledWith(100));
   expect(fixture.play).not.toHaveBeenCalled();
@@ -160,6 +162,42 @@ it("seeks the verified demo normally when the engine rejects the clip checkpoint
   await task;
   expect(fixture.play).toHaveBeenCalledWith(take);
   expect(recover).toHaveBeenCalledOnce();
+});
+
+it("rejects a same-size checkpoint with a different stored digest and seeks normally", async () => {
+  const checkpoints =
+    await vi.importActual<typeof import("./demoCheckpoints")>(
+      "./demoCheckpoints",
+    );
+  fixture.read.mockImplementationOnce(checkpoints.readDemoCheckpoints);
+  const text = JSON.stringify({
+    format: "t2-mapper-seek-checkpoints",
+    version: checkpoints.DEMO_CHECKPOINT_VERSION,
+    demoBytes: fixture.state.playback.demoBuffer!.byteLength,
+    demoSha256: "a".repeat(64),
+    checkpoints: [{ tick: checkpoint.cursor.moveTicks, data: "unused" }],
+  });
+  const recover = vi.fn().mockResolvedValue(undefined);
+  const task = startClipPlayback(
+    take,
+    recording,
+    new AbortController().signal,
+    {
+      text,
+      sourceSha256: "b".repeat(64),
+      recover,
+    },
+  );
+  await vi.waitFor(() => expect(fixture.seek).toHaveBeenCalledWith(100));
+  settle();
+  await task;
+  expect(recover).toHaveBeenCalledWith(
+    expect.objectContaining({
+      message: expect.stringContaining("do not match"),
+    }),
+  );
+  expect(imported).not.toHaveBeenCalled();
+  expect(fixture.play).toHaveBeenCalledWith(take);
 });
 
 it("holds the creator's interpolation through checkpoint restore and playback", async () => {
@@ -179,7 +217,7 @@ it("holds the creator's interpolation through checkpoint restore and playback", 
     { ...take, playerInterpolation: settings },
     recording,
     new AbortController().signal,
-    "checkpoint",
+    { text: "checkpoint" },
   );
   await vi.waitFor(() => expect(fixture.seek).toHaveBeenCalledWith(100));
   expect(imported).toHaveBeenCalledWith([checkpoint], undefined);
@@ -204,7 +242,7 @@ it("does not seek or start a replaced demo after asynchronous checkpoint validat
     take,
     recording,
     new AbortController().signal,
-    "checkpoint",
+    { text: "checkpoint" },
   );
   expect(fixture.exitDirector).toHaveBeenCalledOnce();
   fixture.state.playback.recording = { source: "demo" };
@@ -225,6 +263,49 @@ it("cancels a pending start if another seek wins", async () => {
   expect(fixture.listeners.size).toBe(0);
 });
 
+it("continues seeking past one minute while replay is advancing", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  try {
+    const task = startClipPlayback(
+      take,
+      recording,
+      new AbortController().signal,
+    );
+    await vi.advanceTimersByTimeAsync(40_000);
+    fixture.state.playback.seekProgress = { currentTimeSec: 50 };
+    fixture.listeners.forEach((listener) => listener());
+    await vi.advanceTimersByTimeAsync(40_000);
+    expect(fixture.play).not.toHaveBeenCalled();
+    settle();
+    await task;
+    expect(fixture.play).toHaveBeenCalledWith(take);
+    expect(fixture.listeners.size).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("stops waiting for a seek that makes no further progress", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  try {
+    const task = startClipPlayback(
+      take,
+      recording,
+      new AbortController().signal,
+    );
+    const rejected = expect(task).rejects.toThrow("seek stopped progressing");
+    await vi.advanceTimersByTimeAsync(40_000);
+    fixture.state.playback.seekProgress = { currentTimeSec: 50 };
+    fixture.listeners.forEach((listener) => listener());
+    await vi.advanceTimersByTimeAsync(60_000);
+    await rejected;
+    expect(fixture.play).not.toHaveBeenCalled();
+    expect(fixture.listeners.size).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("does not overwrite a manual seek made while the checkpoint is being validated", async () => {
   let finish!: (value: unknown[]) => void;
   fixture.read.mockImplementation(
@@ -237,7 +318,7 @@ it("does not overwrite a manual seek made while the checkpoint is being validate
     take,
     recording,
     new AbortController().signal,
-    "checkpoint",
+    { text: "checkpoint" },
   );
   fixture.state.playback.seekNonce++;
   fixture.state.playback.seekIntentNonce++;
@@ -260,7 +341,7 @@ it("tolerates cold asset reconstruction during checkpoint validation and the sta
     take,
     recording,
     new AbortController().signal,
-    "checkpoint",
+    { text: "checkpoint" },
   );
   fixture.state.playback.seekNonce++;
   finish([checkpoint]);
@@ -284,7 +365,7 @@ it("lets a newer start replace an earlier request still validating its checkpoin
     take,
     recording,
     new AbortController().signal,
-    "checkpoint",
+    { text: "checkpoint" },
   );
   const latest = startClipPlayback(
     take,
@@ -335,12 +416,9 @@ it("rejects a failed starting seek and releases the interpolation hold", async (
 it("waits for complete source bytes and rejects previews from a different source", async () => {
   fixture.state.playback.downloadStatus = "downloading";
   await expect(
-    startClipPlayback(
-      take,
-      recording,
-      new AbortController().signal,
-      "checkpoint",
-    ),
+    startClipPlayback(take, recording, new AbortController().signal, {
+      text: "checkpoint",
+    }),
   ).rejects.toThrow(/finish downloading/);
   fixture.state.playback.downloadStatus = "complete";
   fixture.source = "other.rec";

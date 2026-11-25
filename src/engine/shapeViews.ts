@@ -6,7 +6,6 @@ import {
   type Object3D,
 } from "three";
 import { createLogger } from "../logger";
-import type { DTSModel } from "../dts/dtsModel";
 import {
   applyStreamEntityPose,
   streamRenderFrame,
@@ -30,7 +29,7 @@ import {
   resolveCloakableFromImageSlot,
   resolveEmapFromDatablock,
 } from "./resolveEmap";
-import { loadShape, peekShape } from "./shapeCache";
+import { withShape } from "./shapeCache";
 import {
   createShapeModel,
   type ShapeLightConfig,
@@ -81,35 +80,6 @@ function showDebugSphere(
     parent.add(mesh);
     return () => disposeMesh(mesh);
   });
-}
-
-/**
- * Build with a shape now if it's cached (and the renderer is connected),
- * otherwise once both are ready.
- */
-function withShape(
-  engine: GameEngine,
-  shapeName: string,
-  onLoad: (model: DTSModel) => void,
-  onError: (error: unknown) => void,
-): () => void {
-  const loaded = peekShape(shapeName);
-  if (loaded && engine.currentHost) {
-    onLoad(loaded);
-    return () => {};
-  }
-  let cancelled = false;
-  void Promise.all([loadShape(shapeName), engine.whenHost()]).then(
-    ([model]) => {
-      if (!cancelled) onLoad(model);
-    },
-    (error: unknown) => {
-      if (!cancelled) onError(error);
-    },
-  );
-  return () => {
-    cancelled = true;
-  };
 }
 
 /**

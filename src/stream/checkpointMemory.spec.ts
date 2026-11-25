@@ -14,7 +14,6 @@ import { PlaybackClock } from "./PlaybackClock";
 import { bytesToBase64, encodeCheckpoint } from "./checkpointCodec";
 import {
   DEMO_CHECKPOINT_VERSION,
-  demoSha256,
   readDemoCheckpointIndex,
 } from "./demoCheckpoints";
 import {
@@ -107,10 +106,10 @@ async function index(ticks: number[], legacyGroundEffects = false) {
       format: "t2-mapper-seek-checkpoints",
       version: DEMO_CHECKPOINT_VERSION,
       demoBytes: buffer.byteLength,
-      demoSha256: await demoSha256(buffer),
+      demoSha256: "a".repeat(64),
       checkpoints,
     }),
-    buffer,
+    { demoBytes: buffer.byteLength },
   );
 }
 

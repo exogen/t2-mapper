@@ -192,6 +192,7 @@ export function createDIFModel(buffer: ArrayBuffer, detailIndex = 0): DIFModel {
 
 /** Native DIF loader for useLoader / loadAsync; only embedded PNGs need a DOM. */
 export class DIFLoader extends Loader<DIFModel> {
+  signal?: AbortSignal;
   /** Geometry/material metadata is available before embedded PNG decoding.
    * Applications can explicitly start independent dependency work here. */
   onModelParsed?: (model: DIFModel) => void;
@@ -207,12 +208,13 @@ export class DIFLoader extends Loader<DIFModel> {
     loader.setResponseType("arraybuffer");
     loader.setRequestHeader(this.requestHeader);
     loader.setWithCredentials(this.withCredentials);
+    const signal = this.signal;
     loader.load(
       url,
       (buffer) => {
         this.parseAsync(buffer as ArrayBuffer).then(onLoad, (error) => {
           onError?.(error);
-          this.manager.itemError(url);
+          if (!signal?.aborted) this.manager.itemError(url);
         });
       },
       onProgress,
@@ -226,70 +228,77 @@ export class DIFLoader extends Loader<DIFModel> {
   }
 
   async parseAsync(buffer: ArrayBuffer): Promise<DIFModel> {
+    const signal = this.signal;
     const activity = "DIF embedded lightmaps";
     // The queued jobs have not started their TextureLoader items yet. Keep
     // this parse visible to the manager until every job settles, even on a
     // failure or when the DIF contains no lightmaps.
     this.manager.itemStart(activity);
     try {
+      signal?.throwIfAborted();
       const model = this.parse(buffer);
       try {
         this.onModelParsed?.(model);
+        // Keep the existing HTML PNG decoder fallback and lightmap orientation.
+        const textureLoader = new TextureLoader(this.manager);
+        const results = await Promise.allSettled(
+          [
+            ...model.interior.lightMaps.map((map, index) => ({
+              ...map,
+              texture: model.lightMaps[index],
+            })),
+            ...(model.collisionLightMaps === model.lightMaps
+              ? []
+              : model.collision.interior.lightMaps.map((map, index) => ({
+                  ...map,
+                  texture: model.collisionLightMaps[index],
+                }))),
+          ].map(({ png, texture }) =>
+            imageWorkQueue.run(async () => {
+              // Do not allocate a Blob/object URL while this decode is queued.
+              const url = URL.createObjectURL(
+                new Blob([png], { type: "image/png" }),
+              );
+              try {
+                const loaded = await textureLoader.loadAsync(url);
+                loaded.dispose();
+                signal?.throwIfAborted();
+                texture.image = loaded.image;
+                texture.needsUpdate = true;
+              } finally {
+                URL.revokeObjectURL(url);
+              }
+            }, signal),
+          ),
+        );
+        const failure = results.find((result) => result.status === "rejected");
+        if (failure?.status === "rejected") throw failure.reason;
+        signal?.throwIfAborted();
+        return model;
       } catch (error) {
         disposeDIFModel(model);
         throw error;
       }
-      // Keep the existing HTML PNG decoder fallback and lightmap orientation.
-      const textureLoader = new TextureLoader(this.manager);
-      const results = await Promise.allSettled(
-        [
-          ...model.interior.lightMaps.map((map, index) => ({
-            ...map,
-            texture: model.lightMaps[index],
-          })),
-          ...(model.collisionLightMaps === model.lightMaps
-            ? []
-            : model.collision.interior.lightMaps.map((map, index) => ({
-                ...map,
-                texture: model.collisionLightMaps[index],
-              }))),
-        ].map(({ png, texture }) =>
-          imageWorkQueue.run(async () => {
-            // Do not allocate a Blob/object URL while this decode is queued.
-            const url = URL.createObjectURL(
-              new Blob([png], { type: "image/png" }),
-            );
-            try {
-              const loaded = await textureLoader.loadAsync(url);
-              texture.image = loaded.image;
-              texture.needsUpdate = true;
-              loaded.dispose();
-            } finally {
-              URL.revokeObjectURL(url);
-            }
-          }),
-        ),
-      );
-      const failure = results.find((result) => result.status === "rejected");
-      if (failure?.status === "rejected") {
-        disposeDIFModel(model);
-        throw failure.reason;
-      }
-      return model;
     } finally {
       this.manager.itemEnd(activity);
     }
   }
 }
 
-/** For manually managed loaders; useLoader caches are owned by the caller. */
+/** Release a DIF source once its surface and collision views are detached. */
 export function disposeDIFModel(model: DIFModel): void {
   model.collision.dispose();
   for (const mesh of model.surfaceMeshes) {
     mesh.geometry.dispose();
     mesh.material.dispose();
   }
-  for (const texture of model.lightMaps) texture.dispose();
+  for (const texture of model.lightMaps) {
+    texture.dispose();
+    texture.image = null;
+  }
   if (model.collisionLightMaps !== model.lightMaps)
-    for (const texture of model.collisionLightMaps) texture.dispose();
+    for (const texture of model.collisionLightMaps) {
+      texture.dispose();
+      texture.image = null;
+    }
 }

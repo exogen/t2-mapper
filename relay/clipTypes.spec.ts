@@ -583,7 +583,7 @@ it("accepts a 60-second clip and rejects one past the recording limit", () => {
 it("validates an idempotent create request and rejects invalid trim ranges", () => {
   const request = {
     requestId: "12345678-1234-4123-8123-123456789abc",
-    sourceSha256: "a".repeat(64),
+    sourceBytes: 1024,
     take: take(),
     trimStartMs: 0,
     trimEndMs: 1000,
@@ -598,4 +598,14 @@ it("validates an idempotent create request and rejects invalid trim ranges", () 
   expect(() =>
     readClipCreateRequest({ ...request, sourceSha256: "bad" }),
   ).toThrow(/source fingerprint/);
+  const legacy = {
+    ...request,
+    sourceBytes: undefined,
+    sourceSha256: "a".repeat(64),
+  };
+  expect(readClipCreateRequest(legacy)).toEqual(legacy);
+  for (const sourceBytes of [undefined, null, 0, -1, 1.5, "1024", 2 ** 53])
+    expect(() => readClipCreateRequest({ ...request, sourceBytes })).toThrow(
+      /source size/,
+    );
 });

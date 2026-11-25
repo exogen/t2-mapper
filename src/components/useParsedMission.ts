@@ -5,7 +5,9 @@ import { loadMission } from "../loaders";
 export function useParsedMission(name: string, enabled = true) {
   return useQuery({
     queryKey: ["parsedMission", name],
-    queryFn: () => loadMission(name),
+    queryFn: ({ signal }) => loadMission(name, signal),
+    // Share across current readers without retaining old maps' parsed objects.
+    gcTime: 0,
     enabled,
   });
 }

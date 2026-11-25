@@ -17,6 +17,7 @@ import {
 } from "three";
 import { textureToUrl } from "../loaders";
 import { loadBitmapTexture } from "../assets/bitmapTextures";
+import { sharedSceneAssets, type SceneAssets } from "../assets/sceneAssets";
 import { setupEffectTexture } from "../stream/playbackUtils";
 import { markTextureSamplerUpdate } from "../textureUtils";
 import { particleVertexShader, particleFragmentShader } from "./shaders";
@@ -40,9 +41,9 @@ interface ParticleTextureEntry {
 }
 
 const PARTICLE_TEXTURE_RETRY_MS = 5_000;
-const _textureCache = new Map<string, ParticleTextureEntry>();
+const textureCacheKey = {};
 /** Set of textures whose image data has finished loading. */
-export const particleTexturesReady = new Set<Texture>();
+export const particleTexturesReady = new WeakSet<Texture>();
 
 /** 1×1 white placeholder so particles are visible before async textures load. */
 const _placeholderTexture = new DataTexture(
@@ -70,9 +71,16 @@ function setupParticleTexture(tex: Texture): void {
   tex.minFilter = LinearMipmapNearestFilter;
 }
 
-export function getParticleTexture(textureName: string): Texture {
+export function getParticleTexture(
+  textureName: string,
+  assets: SceneAssets = sharedSceneAssets,
+): Texture {
   if (!textureName) return _placeholderTexture;
-  const cached = _textureCache.get(textureName);
+  const textureCache = assets.cache<string, ParticleTextureEntry>(
+    textureCacheKey,
+    ({ texture }) => texture.dispose(),
+  );
+  const cached = textureCache.get(textureName);
   if (
     cached &&
     (cached.retryAfter === undefined || performance.now() < cached.retryAfter)
@@ -95,9 +103,10 @@ export function getParticleTexture(textureName: string): Texture {
       () => {
         entry.retryAfter = performance.now() + PARTICLE_TEXTURE_RETRY_MS;
       },
+      assets,
     );
     tex.source = source.source;
-    _textureCache.set(textureName, entry);
+    textureCache.set(textureName, entry);
     return tex;
   } catch {
     if (cached) {

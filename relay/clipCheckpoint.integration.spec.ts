@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -66,15 +67,15 @@ it.each([0.065, 0.09])(
         endSec,
         assetRoot: "/absent-assets",
       });
-      const buffer = bytes.buffer.slice(
-        bytes.byteOffset,
-        bytes.byteOffset + bytes.byteLength,
-      ) as ArrayBuffer;
-      const loaded = await readDemoCheckpoints(checkpoint.text, buffer);
+      const demoSha256 = createHash("sha256").update(bytes).digest("hex");
+      const loaded = await readDemoCheckpoints(checkpoint.text, {
+        demoBytes: bytes.byteLength,
+        demoSha256,
+      });
       expect(loaded[0].cursor.latency?.sendTicks).toHaveLength(32);
       expect(loaded.map((entry) => entry.cursor.moveTicks)).toEqual([2]);
       expect(checkpoint.sourceBytes).toBe(bytes.length);
-      expect(checkpoint.sourceSha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(checkpoint.sourceSha256).toBe(demoSha256);
     } finally {
       await fs.rm(directory, { recursive: true, force: true });
     }

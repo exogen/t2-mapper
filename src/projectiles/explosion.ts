@@ -9,6 +9,7 @@ import {
 } from "../stream/explosionLifetime";
 import { getShapeSequenceDurationSec } from "../stream/shapeSequences";
 import { createEffectShape } from "../effectShape";
+import type { SceneAssets } from "../assets/sceneAssets";
 import type { ProjectileView } from "./types";
 function extractSizeKeyframes(expBlock: Record<string, unknown>): {
   times: number[];
@@ -71,6 +72,7 @@ export function createExplosionView(
   shapeName: string,
   expBlock: Record<string, unknown> | undefined,
   anisotropy: number,
+  assets?: SceneAssets,
 ): ProjectileView<ExplosionEntity> {
   const root = new Group(),
     group = new Group(),
@@ -81,6 +83,7 @@ export function createExplosionView(
   // opposite to Projectile::prepModelView. Keep this turn for explosions.
   flip.rotation.y = Math.PI;
   const shape = createEffectShape(model, shapeName, {
+    assets,
     anisotropy,
     ignoreDetailSize: true,
     loop: false,

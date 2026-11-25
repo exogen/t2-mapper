@@ -9,9 +9,11 @@ import { observeShapeMeshes } from "../dts/dtsScene";
 import { SHAPE_MODEL_ROTATION_Y } from "../world/placement";
 import type { PlayerSkinSelection } from "./playerSkins";
 import { createShapeInstance } from "./shapeInstance";
+import type { SceneAssets } from "../assets/sceneAssets";
 
 export interface PlayerPresentationOptions {
   model: DTSModel;
+  assets?: SceneAssets;
   anisotropy: number;
   emap: boolean;
   skinUrl?: string;

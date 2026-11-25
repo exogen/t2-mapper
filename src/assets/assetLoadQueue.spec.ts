@@ -61,4 +61,26 @@ describe("asset load concurrency", () => {
     expect(queue.completed).toBe(2);
     expect(queue.failed).toBe(2);
   });
+
+  it("keeps the running job's slot when its queued siblings are canceled", async () => {
+    const queue = new AssetLoadQueue(1);
+    const controller = new AbortController();
+    const blocker = deferred<number>();
+    const active = queue.run(() => blocker.promise, controller.signal);
+    const skipped = () => {
+      throw new Error("canceled job ran");
+    };
+    const waiting = queue.run(skipped, controller.signal);
+    const next = queue.run(() => 2);
+    controller.abort();
+    await expect(waiting).rejects.toBe(controller.signal.reason);
+    await expect(queue.run(skipped, controller.signal)).rejects.toBe(
+      controller.signal.reason,
+    );
+    expect(queue.active).toBe(1);
+    expect(queue.queued).toBe(1);
+    blocker.resolve(1);
+    expect(await Promise.all([active, next])).toEqual([1, 2]);
+    expect(queue.active).toBe(0);
+  });
 });

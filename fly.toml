@@ -11,8 +11,8 @@ kill_timeout = 15
 [env]
   RELAY_TRUST_FLY_PROXY = 'true'
   DEMO_DIR = '/data/demos'
-  DEMO_CHECKPOINT_INTERVAL_MINUTES = '6'
-  DEMO_CHECKPOINT_COUNT = '6'
+  DEMO_CHECKPOINT_INTERVAL_MINUTES = '4'
+  DEMO_CHECKPOINT_COUNT = '10'
   DEMO_PRIVATE_R2_BUCKET = 'non-public-demo-data'
   WATCH_STATE_PATH = '/data/watch-state.json'
   AUTH_DATABASE_PATH = '/data/accounts/app.sqlite'

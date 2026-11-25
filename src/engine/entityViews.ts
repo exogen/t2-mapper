@@ -11,6 +11,7 @@ import { markTransformChanged } from "../transformChanges";
 import { objectMountSlot } from "../world/placement";
 import type { MountPoints } from "./shapeMounts";
 import type { GameEngine } from "./gameEngine";
+import { runOwnedCleanups } from "./runOwnedCleanups";
 
 export type EntityViewDisposalReason =
   "removed" | "replaced" | "hidden" | "shutdown";
@@ -211,25 +212,42 @@ export class EntityViewRegistry {
   }
 
   dispose(): void {
-    for (const id of [...this.views.keys()]) this.remove(id, "shutdown");
+    runOwnedCleanups(
+      [...this.views.keys()].map((id) => () => this.remove(id, "shutdown")),
+    );
   }
 }
 
 /** Keep the engine's entity views in step with the store. */
 export function installEntityViews(engine: GameEngine): () => void {
   const { entities } = engine;
+  let sceneRevision = gameEntityStore.getState().sceneRevision;
+  const releaseScene = () =>
+    runOwnedCleanups([
+      () => entities.dispose(),
+      () => engine.releaseSceneAssets(),
+    ]);
   streamPlaybackStore.setState({ root: entities.root });
   return combineCleanups(
-    () => entities.dispose(),
+    releaseScene,
     engine.withHost(({ scene }) => {
       scene.add(entities.root);
       return () => scene.remove(entities.root);
     }),
     reaction(
       gameEntityStore,
-      selectSceneEntities,
-      (list) => entities.sync(list, engine),
-      sameEntities,
+      (state) => ({
+        list: selectSceneEntities(state),
+        revision: state.sceneRevision,
+      }),
+      ({ list, revision }) => {
+        if (sceneRevision !== revision) {
+          sceneRevision = revision;
+          releaseScene();
+        }
+        entities.sync(list, engine);
+      },
+      (a, b) => a.revision === b.revision && sameEntities(a.list, b.list),
     ),
   );
 }

@@ -8,6 +8,7 @@ import {
   Vector3,
   type InstancedBufferGeometry,
 } from "three";
+import { SceneAssets } from "../assets/sceneAssets";
 import type { EmitterDataResolved } from "../particles/types";
 import type { ParticleEmissionDummyEntity } from "../state/gameEntityTypes";
 import { streamClock } from "../state/streamPlaybackStore";
@@ -132,10 +133,13 @@ function harness() {
   type HostStart = (host: EngineHost) => void | (() => void);
   let hostStart: HostStart | undefined;
   let stopHost: (() => void) | undefined;
+  const sceneAssets = new SceneAssets();
   const engine = {
     scheduler,
     invalidate,
+    sceneAssets,
     streamSnapshot: { current: { gravity: -9.81 } },
+    onSceneAssetsRelease: () => () => {},
     withHost(start: HostStart) {
       hostStart = start;
       stopHost = start(host) || undefined;
@@ -172,7 +176,10 @@ function harness() {
     reconnect() {
       stopHost = hostStart?.(host) || undefined;
     },
-    uninstall,
+    uninstall() {
+      uninstall();
+      sceneAssets.dispose();
+    },
   };
 }
 

@@ -29,6 +29,8 @@ const DTS_DOWNLOAD_TIMEOUT_MS = 8_000;
  * a WebGL context. Texture/DSQ resolution can follow the host application's
  * resource rules without importing them into the format reader. */
 export class DTSLoader extends Loader<DTSModel> {
+  /** Scene retirement cancels decoding. Three may share the download with another loader. */
+  protected signal?: AbortSignal;
   imageListResolver?: (name: string) => DTSImageListSource | null;
   textureResolver?: (name: string, flags: number) => Texture | null;
   sequenceResolver?: (url: string) => readonly DTSSequenceSource[];
@@ -51,6 +53,7 @@ export class DTSLoader extends Loader<DTSModel> {
   ): void {
     void this.loadShapeData(url, onProgress).then(async (data) => {
       try {
+        this.signal?.throwIfAborted();
         const textureLoader = new TextureLoader(this.manager).setCrossOrigin(
           this.crossOrigin,
         );
@@ -81,7 +84,7 @@ export class DTSLoader extends Loader<DTSModel> {
       } catch (error) {
         if (onError) onError(error);
         else console.error(error);
-        this.manager.itemError(url);
+        if (!this.signal?.aborted) this.manager.itemError(url);
       }
     }, onError ?? console.error);
   }
@@ -91,8 +94,11 @@ export class DTSLoader extends Loader<DTSModel> {
     url: string,
     onProgress?: Parameters<FileLoader["load"]>[2],
   ): Promise<DTSShapeData> {
+    const signal = this.signal;
+    if (signal?.aborted) return Promise.reject(signal.reason);
     const shapeLoader = this.fileLoader().setPath(this.path);
     const sequenceLoader = this.fileLoader();
+    let pendingSequences = 0;
     // Release Three's shared in-flight requests as well as the render wait.
     const timeout = setTimeout(() => {
       shapeLoader.abort();
@@ -102,20 +108,32 @@ export class DTSLoader extends Loader<DTSModel> {
       .loadAsync(url, onProgress)
       .then(async (buffer) => {
         try {
+          signal?.throwIfAborted();
           const shape = parseDTS(buffer as ArrayBuffer);
           const sources = this.sequenceResolver?.(url) ?? [];
           return await mergeDTSSequenceSources(
             shape,
             sources,
-            async (file) =>
-              (await sequenceLoader.loadAsync(file)) as ArrayBuffer,
+            async (file) => {
+              pendingSequences++;
+              try {
+                return (await sequenceLoader.loadAsync(file)) as ArrayBuffer;
+              } finally {
+                if (--pendingSequences === 0) clearTimeout(timeout);
+              }
+            },
+            signal,
           );
         } catch (error) {
-          this.manager.itemError(url);
+          if (!signal?.aborted) this.manager.itemError(url);
           throw error;
         }
       })
-      .finally(() => clearTimeout(timeout));
+      .finally(() => {
+        // A failed sequence can reject the model while sibling downloads
+        // still need the timeout. New scopes may join those same requests.
+        if (pendingSequences === 0) clearTimeout(timeout);
+      });
   }
 
   private fileLoader(): FileLoader {

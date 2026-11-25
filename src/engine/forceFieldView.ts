@@ -86,6 +86,7 @@ export function createForceFieldView(
   entity: ForceFieldBareEntity,
   engine: GameEngine,
 ): EntityView {
+  const assets = engine.sceneAssets;
   const { root, model } = createPositionedRoot(entity);
   const data = entity.forceFieldData!;
   const geometry = cornerBoxGeometry(data.dimensions);
@@ -121,6 +122,7 @@ export function createForceFieldView(
               renderer,
               setupForceFieldTexture,
               signal,
+              assets,
             ),
           (textures) => {
             const material = createForceFieldMaterial({

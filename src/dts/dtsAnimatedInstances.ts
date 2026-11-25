@@ -341,13 +341,18 @@ export class DTSAnimatedInstancePool {
         for (const draw of pages) draw.invalidateSkinUploads();
   }
 
-  dispose(): void {
+  /** Drop draw pages before their scene's shared model and skin assets. */
+  clear(): void {
     this.restore();
     for (const bucket of this.buckets.values()) this.disposeBucket(bucket);
     this.buckets.clear();
     this.activeBuckets.length = 0;
     this.transparentRun.length = 0;
     this.registrations = new WeakMap();
+  }
+
+  dispose(): void {
+    this.clear();
     this.root.removeFromParent();
     this.memory.dispose();
   }
@@ -423,6 +428,11 @@ export function installDTSAnimatedInstances(
 }
 const installedScenes = new WeakSet<Scene>();
 
+function estimateSkinLayerBytes(width: number, height: number): number {
+  // Budget for RGBA8 pixels and a full mip chain.
+  return (width * height * 4 * 4) / 3;
+}
+
 class AnimatedDraw {
   mesh: InstancedMesh<BufferGeometry, ShapeMaterial>;
   readonly sources: InstanceSource[] = [];
@@ -450,7 +460,7 @@ class AnimatedDraw {
   private renderer: WebGLRenderer;
   private maxInstances: number;
   private maxLayers: number;
-  private template: Texture | null;
+  private readonly skinSampler;
   private textureWidth: number;
   private textureHeight: number;
   private readonly memory: InstancePageMemory;
@@ -497,8 +507,8 @@ class AnimatedDraw {
     const { node, material, item } = source;
     this.renderer = renderer;
     this.maxInstances = maxInstances;
-    const image = material.map?.image as
-      { width: number; height: number } | undefined;
+    const map = material.map;
+    const image = map?.image as { width: number; height: number } | undefined;
     this.maxLayers = Math.max(
       1,
       Math.min(
@@ -506,12 +516,23 @@ class AnimatedDraw {
         image
           ? Math.floor(
               performanceTuning.dtsInstancePages.maximumSkinArrayPageBytes /
-                ((image.width * image.height * 4 * 4) / 3),
+                estimateSkinLayerBytes(image.width, image.height),
             )
           : 1,
       ),
     );
-    this.template = material.map?.clone() ?? null;
+    // Texture.clone() marks the shared pixel source dirty.
+    this.skinSampler = map
+      ? {
+          colorSpace: map.colorSpace,
+          wrapS: map.wrapS,
+          wrapT: map.wrapT,
+          magFilter: map.magFilter,
+          minFilter: map.minFilter,
+          anisotropy: map.anisotropy,
+          generateMipmaps: map.generateMipmaps,
+        }
+      : null;
     this.textureWidth = image?.width ?? 0;
     this.textureHeight = image?.height ?? 0;
     this.boneCount =
@@ -647,20 +668,13 @@ class AnimatedDraw {
         Math.max(this.skinEntries.size, 4, this.skinCapacity * 2),
       );
       this.skins.value?.dispose();
-      const t = this.template!;
       const array = new DataArrayTexture(
         null,
         this.textureWidth,
         this.textureHeight,
         this.skinCapacity,
       );
-      array.colorSpace = t.colorSpace;
-      array.wrapS = t.wrapS;
-      array.wrapT = t.wrapT;
-      array.magFilter = t.magFilter;
-      array.minFilter = t.minFilter;
-      array.anisotropy = t.anisotropy;
-      array.generateMipmaps = t.generateMipmaps;
+      Object.assign(array, this.skinSampler);
       array.source.dataReady = false; // Allocate storage; GPU copies fill it.
       array.needsUpdate = true;
       this.renderer.initTexture(array);
@@ -900,7 +914,7 @@ function readTexture(map: Texture, revision: number): TextureState {
   state.arrayTexture =
     !!width &&
     !!height &&
-    (width * height * 4 * 4) / 3 <=
+    estimateSkinLayerBytes(width, height) <=
       performanceTuning.dtsInstancePages.maximumSkinArrayPageBytes &&
     map.format === RGBAFormat &&
     map.type === UnsignedByteType &&

@@ -62,7 +62,7 @@ it("saves only under the expected signed-in account and shares no editable title
     take: {},
     trimStartMs: 0,
     trimEndMs: 100,
-    sourceSha256: "a".repeat(64),
+    sourceBytes: 500,
   } as ClipCreateRequest;
   await saveClip(request, "123456789012345678", new AbortController().signal);
   const [url, options] = fetch.mock.calls[0];

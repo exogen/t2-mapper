@@ -37,15 +37,20 @@ export async function mergeDTSSequenceSources(
   shape: DTSShapeData,
   sources: readonly DTSSequenceSource[],
   load: (url: string) => Promise<ArrayBuffer>,
+  signal?: AbortSignal,
 ): Promise<DTSShapeData> {
+  signal?.throwIfAborted();
   if (!sources.length) return shape;
   const sequences = await Promise.all(
     sources.map(async ({ url, name }) => {
       const bytes = await load(url);
+      // Let outstanding shared downloads settle under the loader's timeout.
+      if (signal?.aborted) return null;
       // One stock medium_male DSQ is empty and imports no sequences.
       return bytes.byteLength ? { data: parseDSQ(bytes), name } : null;
     }),
   );
+  signal?.throwIfAborted();
   const imported = sequences.filter((sequence) => sequence !== null);
   return imported.length ? mergeDSQ(shape, imported) : shape;
 }

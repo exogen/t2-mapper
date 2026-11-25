@@ -1,3 +1,4 @@
+import type { SceneAssets } from "../assets/sceneAssets";
 import {
   MAX_PARTICLES_PER_EMITTER,
   particleTexturesReady,
@@ -233,6 +234,7 @@ const _shockwaveNormalRoll = new Quaternion().setFromAxisAngle(
  * orient(normal) x rotX(pi/2), tilting the ring's axis along the normal.
  */
 function createShockwave(
+  assets: SceneAssets,
   shockwaveId: number,
   origin: [number, number, number],
   entityId: string,
@@ -242,7 +244,7 @@ function createShockwave(
 ): ActiveShockwave | null {
   const swData = resolveShockwaveData(shockwaveId, getDataBlockData);
   if (!swData) return null;
-  const texture = getParticleTexture(swData.textureName);
+  const texture = getParticleTexture(swData.textureName, assets);
   const geo = createShockwaveGeometry(swData.numSegments, swData.texWrap);
   const mat = createEffectRingMaterial(texture);
   const mesh = new Mesh(geo, mat);
@@ -641,6 +643,7 @@ function resolveExplosion(
 /** An emitter parked at `origin`, ready to emit along each frame. Callers
  *  that emit only once flip `isBurst` and kill the emitter themselves. */
 function createStreamEmitter(
+  assets: SceneAssets,
   emitterData: EmitterDataResolved,
   origin: [number, number, number],
   group: Object3D,
@@ -651,7 +654,7 @@ function createStreamEmitter(
     MAX_PARTICLES_PER_EMITTER,
     random,
   );
-  const texture = getParticleTexture(emitterData.particles.textureName);
+  const texture = getParticleTexture(emitterData.particles.textureName, assets);
   const geometry = createParticleGeometry(MAX_PARTICLES_PER_EMITTER);
   const material = createParticleMaterial(
     texture,
@@ -825,6 +828,7 @@ export function createParticleEffects(
   snapshotRef: { readonly current: StreamSnapshot | null },
 ): { group: Group; dispose(): void } {
   const { audioLoader, audioListener } = getAudioGraph();
+  const assets = engine.sceneAssets;
   const group = new Group();
   const soundLifetime = new AbortController();
   const soundOwner = { signal: soundLifetime.signal };
@@ -1005,7 +1009,10 @@ export function createParticleEffects(
       if (!data) continue;
       if (!splashRings.has(entity.id)) {
         const rings = data.textureName
-          ? createSplashRings(data, getParticleTexture(data.textureName))
+          ? createSplashRings(
+              data,
+              getParticleTexture(data.textureName, assets),
+            )
           : null;
         splashRings.set(entity.id, rings);
         if (rings) {
@@ -1017,6 +1024,7 @@ export function createParticleEffects(
           const emitter = resolveStreamEmitter(ref);
           if (!emitter) continue;
           const entry = createStreamEmitter(
+            assets,
             emitter,
             [...position],
             group,
@@ -1045,6 +1053,7 @@ export function createParticleEffects(
     // Rings other systems asked for this frame (mounted-image muzzle flashes).
     for (const req of takeShockwaveRequests()) {
       const sw = createShockwave(
+        assets,
         req.dataBlockId,
         req.origin,
         req.ownerId,
@@ -1078,7 +1087,7 @@ export function createParticleEffects(
 
         // Create burst emitters.
         for (const burst of resolved.burstEmitters) {
-          const entry = createStreamEmitter(burst.data, origin, group);
+          const entry = createStreamEmitter(assets, burst.data, origin, group);
           entry.isBurst = true;
           // Explosion::explode (0x00621570) uses the radius/count overload.
           entry.emitter.emitRadial(origin, burst.radius, burst.density);
@@ -1091,7 +1100,7 @@ export function createParticleEffects(
         // explosion lives and stop at their own datablock lifetime, whichever
         // comes first; already-emitted particles then live out their lifetime.
         for (const emitterData of resolved.streamingEmitters) {
-          const entry = createStreamEmitter(emitterData, origin, group);
+          const entry = createStreamEmitter(assets, emitterData, origin, group);
           entry.driverEntityId = entity.id;
           addEmitter(entry);
         }
@@ -1142,6 +1151,7 @@ export function createParticleEffects(
         const shockwaveId = expBlock?.shockwave as number | null | undefined;
         if (typeof shockwaveId === "number") {
           const sw = createShockwave(
+            assets,
             shockwaveId,
             origin,
             entity.id,
@@ -1180,6 +1190,7 @@ export function createParticleEffects(
         const axis: [number, number, number] = [dx / len, dy / len, dz / len];
         if (visual.shockwaveId != null) {
           const sw = createShockwave(
+            assets,
             visual.shockwaveId,
             end,
             entity.id,
@@ -1195,6 +1206,7 @@ export function createParticleEffects(
             emitterRaw && resolveEmitterData(emitterRaw, getDataBlockData);
           if (emitterData) {
             const entry = createStreamEmitter(
+              assets,
               emitterData,
               [end[0], end[1], end[2]],
               group,
@@ -1225,6 +1237,7 @@ export function createParticleEffects(
           const { lifetimeMS, lifetimeVarianceMS } = data.particles;
           if (ageMS < lifetimeMS + lifetimeVarianceMS) {
             const entry = createStreamEmitter(
+              assets,
               data,
               [...puffPosition],
               group,
@@ -1258,7 +1271,7 @@ export function createParticleEffects(
         const data = resolveStreamEmitter(exhaustEmitterId);
         if (data) {
           launchedExhausts.add(entity.id);
-          const entry = createStreamEmitter(data, [0, 0, 0], group);
+          const entry = createStreamEmitter(assets, data, [0, 0, 0], group);
           entry.driverEntityId = entity.id;
           entry.launcherExhaust = {
             sourceId,
@@ -1290,7 +1303,7 @@ export function createParticleEffects(
           if (!entry) {
             const data = resolveStreamEmitter(event.emitterId);
             if (!data) continue;
-            entry = createStreamEmitter(data, [...event.to], group);
+            entry = createStreamEmitter(assets, data, [...event.to], group);
             entry.driverEntityId = event.projectileId;
             entry.trail = "tick";
             entries.set(event.projectileId, entry);
@@ -1343,7 +1356,7 @@ export function createParticleEffects(
           if (previous) [origin[0], origin[1], origin[2]] = previous;
           else readTrailPosition(entity, origin);
           if (trail === "water") previousBubblePositions.delete(entity.id);
-          const entry = createStreamEmitter(data, origin, group);
+          const entry = createStreamEmitter(assets, data, origin, group);
           entry.driverEntityId = entity.id;
           entry.trail = trail;
           addEmitter(entry);
@@ -1380,7 +1393,7 @@ export function createParticleEffects(
         nodeEntries.set(node, null);
         continue;
       }
-      const entry = createStreamEmitter(data, [0, 0, 0], group);
+      const entry = createStreamEmitter(assets, data, [0, 0, 0], group);
       entry.node = node;
       readNodeFrame(entry, node);
       entry.prevOrigin![0] = entry.origin[0];

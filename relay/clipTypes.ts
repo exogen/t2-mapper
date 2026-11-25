@@ -107,13 +107,15 @@ export interface ClipTake {
   graphicsEffects?: ClipGraphicsEffects;
 }
 
-export interface ClipCreateRequest {
+export type ClipCreateRequest = {
   requestId: string;
-  sourceSha256: string;
   take: ClipTake;
   trimStartMs: number;
   trimEndMs: number;
-}
+} & (
+  | { sourceBytes: number; sourceSha256?: string }
+  | { sourceBytes?: undefined; sourceSha256: string }
+);
 
 export interface ClipView {
   id: string;
@@ -128,7 +130,9 @@ export interface ClipView {
   state: "processing" | "ready" | "failed";
   error?: string;
   timeline?: ClipTake;
-  /** Included with the timeline so a viewer can seek the verified source directly. */
+  /** Size of the hosted recording, included with the timeline when available. */
+  sourceBytes?: number;
+  /** Included for older clients that verify the recording digest. */
   sourceSha256?: string;
   checkpointUrl: string;
 }
@@ -621,6 +625,10 @@ export function trimClipTake(
   };
 }
 
+export function isClipSourceByteCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
 export function readClipCreateRequest(value: unknown): ClipCreateRequest {
   const request = value as Partial<ClipCreateRequest> | null;
   if (
@@ -631,19 +639,23 @@ export function readClipCreateRequest(value: unknown): ClipCreateRequest {
     )
   )
     throw new Error("Invalid clip request ID");
+  const { requestId, sourceBytes, sourceSha256 } = request;
   if (
-    typeof request.sourceSha256 !== "string" ||
-    !/^[0-9a-f]{64}$/.test(request.sourceSha256)
+    sourceSha256 !== undefined &&
+    (typeof sourceSha256 !== "string" || !/^[0-9a-f]{64}$/.test(sourceSha256))
   )
     throw new Error("Invalid clip source fingerprint");
-  const { requestId, sourceSha256 } = request;
   const take = readClipTake(request.take);
   validateClipTrimRange(take, request);
-  return {
+  const parsed = {
     requestId: requestId.toLowerCase(),
-    sourceSha256,
     take,
     trimStartMs: request.trimStartMs,
     trimEndMs: request.trimEndMs,
   };
+  if (sourceBytes === undefined && sourceSha256)
+    return { ...parsed, sourceSha256 };
+  if (!isClipSourceByteCount(sourceBytes))
+    throw new Error("Invalid clip source size");
+  return { ...parsed, sourceBytes, ...(sourceSha256 && { sourceSha256 }) };
 }

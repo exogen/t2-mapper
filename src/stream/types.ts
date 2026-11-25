@@ -919,6 +919,9 @@ export interface StreamingPlayback {
   readonly worldGeneration?: number;
   /** Authoritative hydration replaced the timeline; rebase render clocks/snapshots. */
   readonly playbackRevision?: number;
+  /** Mission identity provided by live streams and preserved on rehydration. */
+  readonly missionName?: string | null;
+  readonly missionSequence?: string | null;
   /** Camera and follow controls are entirely local to this spectator. */
   readonly localSpectator?: boolean;
   /** Simulation position after checkpoint restore, before the last step's ticks. */

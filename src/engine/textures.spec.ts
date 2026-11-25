@@ -10,6 +10,7 @@ import {
 import { loadTextures } from "./textures";
 import { loadHtmlTexture } from "../assets/htmlTextures";
 import { loadBitmapTextureAsync } from "../assets/bitmapTextures";
+import { SceneAssets } from "../assets/sceneAssets";
 import { readResourceMetrics } from "../diagnostics/resourceMetricRegistry";
 
 vi.mock("../logger", () => ({
@@ -78,6 +79,103 @@ afterEach(() => {
 });
 
 describe("view texture ownership", () => {
+  it("cancels queued texture loads when the scene is released", async () => {
+    const concurrency = readResourceMetrics()["imageWorkQueue.concurrency"]!;
+    const active = Array.from({ length: concurrency }, (_, index) =>
+      loadHtmlTexture(`${url()}?active=${index}`),
+    );
+    const outgoing = new SceneAssets();
+    const fetchImage = vi.fn();
+    vi.stubGlobal("fetch", fetchImage);
+    const discarded = [
+      expect(loadHtmlTexture(`${url()}?html`, outgoing)).rejects.toMatchObject({
+        name: "AbortError",
+      }),
+      expect(
+        loadBitmapTextureAsync(`${url()}?bitmap`, outgoing),
+      ).rejects.toMatchObject({
+        cause: { name: "AbortError" },
+      }),
+    ];
+    expect(readResourceMetrics()["imageWorkQueue.queued"]).toBe(2);
+    outgoing.dispose();
+    const queuedAfterRelease = readResourceMetrics()["imageWorkQueue.queued"];
+    expect(complete).not.toHaveBeenCalled();
+    for (const image of images) image.succeed();
+    await Promise.all([...active, ...discarded]);
+
+    expect(queuedAfterRelease).toBe(0);
+    expect(images).toHaveLength(concurrency);
+    expect(fetchImage).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    expect(complete).toHaveBeenCalledOnce();
+  });
+
+  it("releases settled images and rejects late work without affecting a replacement scene", async () => {
+    const old = new SceneAssets();
+    const next = new SceneAssets();
+    const before = readResourceMetrics();
+    const earlyBitmap = { width: 4, height: 4, close: vi.fn() };
+    const lateBitmap = { width: 8, height: 8, close: vi.fn() };
+    const newBitmap = { width: 8, height: 4, close: vi.fn() };
+    let finishLateBitmap!: (value: typeof lateBitmap) => void;
+    const decode = vi
+      .fn()
+      .mockResolvedValueOnce(earlyBitmap)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishLateBitmap = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(newBitmap);
+    vi.stubGlobal("createImageBitmap", decode);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(new Blob())),
+    );
+    vi.stubGlobal("ProgressEvent", Event);
+
+    const ready = await loadBitmapTextureAsync(`${url()}?ready`, old);
+    const onDispose = vi.fn();
+    ready.addEventListener("dispose", onDispose);
+    const oldBitmap = loadBitmapTextureAsync(url(), old).catch(
+      (error: unknown) => error,
+    );
+    await vi.waitFor(() => expect(decode).toHaveBeenCalledTimes(2));
+    const oldHtml = loadHtmlTexture(url(), old).catch(
+      (error: unknown) => error,
+    );
+    old.dispose();
+    expect(earlyBitmap.close).toHaveBeenCalledOnce();
+    expect(onDispose).toHaveBeenCalledOnce();
+    expect(ready.image).toBe(null);
+
+    const nextBitmap = loadBitmapTextureAsync(url(), next);
+    const nextHtml = loadHtmlTexture(url(), next);
+    images[0].succeed();
+    finishLateBitmap(lateBitmap);
+    await vi.waitFor(() => expect(images).toHaveLength(2));
+    images[1].succeed();
+    expect(await oldBitmap).toBeInstanceOf(Error);
+    expect(await oldHtml).toMatchObject({ name: "AbortError" });
+    expect(lateBitmap.close).toHaveBeenCalledOnce();
+    expect((await nextBitmap).image).toBe(newBitmap);
+    expect((await nextHtml).image).toBe(images[1]);
+    expect(newBitmap.close).not.toHaveBeenCalled();
+    next.dispose();
+    expect(newBitmap.close).toHaveBeenCalledOnce();
+    const after = readResourceMetrics();
+    for (const prefix of ["bitmapTextureCache", "imageTextureCache"]) {
+      expect(after[`${prefix}.cacheEntries`]).toBe(
+        before[`${prefix}.cacheEntries`],
+      );
+      expect(after[`${prefix}.estimatedDecodedImageBytes`]).toBe(
+        before[`${prefix}.estimatedDecodedImageBytes`],
+      );
+    }
+  });
+
   it("preserves HTML loader defaults and independently accounts shape bitmap images", async () => {
     const before = readResourceMetrics();
     const bitmap = { width: 8, height: 4 } as ImageBitmap;

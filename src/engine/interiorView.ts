@@ -68,6 +68,7 @@ export function createInteriorView(
   engine: GameEngine,
 ): EntityView {
   const root = new Group();
+  const assets = engine.sceneAssets;
   root.name = entity.id;
   let lightingState = entity.interiorData;
   const { interiorFile, ghostIndex } = lightingState;
@@ -91,7 +92,7 @@ export function createInteriorView(
   let disposed = false;
   let stopModel: Cleanup;
 
-  void loadInterior(interiorToUrl(interiorFile)).then(
+  void loadInterior(interiorToUrl(interiorFile), assets).then(
     (interior) => {
       if (disposed) return;
       disposeMesh(loading);
@@ -186,6 +187,7 @@ export function createInteriorView(
                   anisotropy: renderer.capabilities.getMaxAnisotropy(),
                 }),
               signal,
+              assets,
             ),
           ([texture]) => {
             for (const material of materials) {

@@ -559,9 +559,10 @@ export function startCloudLayers(
   let cloudCount = 0;
   let active = true;
   const textureTasks: Cleanup[] = [];
+  const assets = engine.sceneAssets;
 
   if (materialList) {
-    void loadSharedDetailMapList(materialList).then(
+    void loadSharedDetailMapList(materialList, assets).then(
       (detailMapList) => {
         if (!active) return;
         const configs = cloudLayerConfigs(detailMapList, scene);
@@ -575,7 +576,13 @@ export function startCloudLayers(
           textureTasks.push(
             engine.prepareWithHost(
               ({ renderer }, signal) =>
-                loadTextures([url], renderer, setupCloudTexture, signal),
+                loadTextures(
+                  [url],
+                  renderer,
+                  setupCloudTexture,
+                  signal,
+                  assets,
+                ),
               ([texture]) => {
                 const layer = createCloudLayer(
                   texture,

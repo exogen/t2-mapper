@@ -23,22 +23,27 @@ export function createImageLoadingManager(): LoadingManager {
 export function loadQueuedImage<T>(
   url: string,
   start: () => T | PromiseLike<T>,
-  observers: {
+  {
+    signal,
+    onLoad,
+    onError,
+  }: {
+    signal: AbortSignal;
     onLoad?: (value: T) => void;
     onError?: (error: unknown) => void;
-  } = {},
+  },
 ): Promise<T> {
   notify(() => DefaultLoadingManager.itemStart(url));
   return imageWorkQueue
-    .run(start)
+    .run(start, signal)
     .then(
       (value) => {
-        observers.onLoad?.(value);
+        onLoad?.(value);
         return value;
       },
       (error: unknown) => {
-        observers.onError?.(error);
-        notify(() => DefaultLoadingManager.itemError(url));
+        onError?.(error);
+        if (!signal.aborted) notify(() => DefaultLoadingManager.itemError(url));
         throw error;
       },
     )

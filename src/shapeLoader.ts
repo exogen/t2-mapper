@@ -11,10 +11,19 @@ import { DTSMaterialFlags, type DTSShapeData } from "./dts/dtsTypes";
 import { registerShapeSequences } from "./stream/shapeSequences";
 import { registerShapeBounds } from "./stream/shapeBounds";
 import type { DTSModel } from "./dts/dtsModel";
-import { batchDTSRigidMeshes } from "./dts/dtsRigidBatch";
+import {
+  batchDTSRigidMeshes,
+  getDTSRigidBatchSources,
+} from "./dts/dtsRigidBatch";
 import { loadShapeImageLists } from "./iflAtlas";
 import { repairBitmapSource } from "./assets/bitmapSourceRecovery";
 import { markTextureSamplerUpdate } from "./textureUtils";
+import {
+  getSceneAssets,
+  sharedSceneAssets,
+  type SceneAssets,
+} from "./assets/sceneAssets";
+import { disposeDTSModel } from "./dts/dtsBuilder";
 
 // Shape views and imperative effect pools request the same source model.
 interface ShapeSource {
@@ -24,20 +33,39 @@ interface ShapeSource {
   model?: Promise<DTSModel>;
   dependencies?: Promise<void>;
 }
-const sources = new WeakMap<LoadingManager, Map<string, ShapeSource>>();
+const shapeSourceCache = {};
+const standaloneSources = new WeakMap<
+  LoadingManager,
+  Map<string, ShapeSource>
+>();
 
-function getSource(manager: LoadingManager, url: string): ShapeSource {
-  let cache = sources.get(manager);
-  if (!cache) sources.set(manager, (cache = new Map()));
-  let source = cache.get(url);
-  if (!source) cache.set(url, (source = {}));
-  return source;
+function disposeModel(model: DTSModel): void {
+  disposeDTSModel(model, getDTSRigidBatchSources(model.scene));
 }
 
 /** App resource resolution shared by React, prefetch, and ordinary loaders. */
 export class ShapeLoader extends DTSLoader {
+  private readonly assets: SceneAssets;
+  private readonly sources: Map<string, ShapeSource>;
+
   constructor(manager?: LoadingManager) {
     super(manager);
+    this.assets = getSceneAssets(this.manager);
+    this.signal = this.assets.signal;
+    if (this.assets === sharedSceneAssets) {
+      let cache = standaloneSources.get(this.manager);
+      if (!cache) standaloneSources.set(this.manager, (cache = new Map()));
+      this.sources = cache;
+    } else {
+      this.sources = this.assets.cache<string, ShapeSource>(
+        shapeSourceCache,
+        (source) => {
+          const model = source.resolvedModel;
+          source.resolvedModel = undefined;
+          if (model) disposeModel(model);
+        },
+      );
+    }
     this.imageListResolver = () => null; // Atlases load progressively below.
     this.setSequenceResolver((url) =>
       shapeSequenceSources(decodeURIComponent(url.split("/").pop()!)).map(
@@ -47,8 +75,19 @@ export class ShapeLoader extends DTSLoader {
     this.setTextureResolver((name, flags) => {
       return flags & DTSMaterialFlags.IflMaterial
         ? null
-        : loadBitmapTextureInstance(textureToUrl(name));
+        : loadBitmapTextureInstance(
+            textureToUrl(name),
+            undefined,
+            [],
+            this.assets,
+          );
     });
+  }
+  private getSource(url: string): ShapeSource {
+    this.assets.signal.throwIfAborted();
+    let source = this.sources.get(url);
+    if (!source) this.sources.set(url, (source = {}));
+    return source;
   }
   override load(
     url: string,
@@ -56,33 +95,30 @@ export class ShapeLoader extends DTSLoader {
     onProgress?: Parameters<FileLoader["load"]>[2],
     onError?: (error: unknown) => void,
   ): void {
-    const source = getSource(this.manager, url);
+    const source = this.getSource(url);
     if (!source.model) {
       source.model = new Promise<DTSModel>((resolve, reject) => {
-        this.loadModel(
-          url,
-          (model) => {
-            source.resolvedModel = model;
-            resolve(model);
-          },
-          onProgress,
-          reject,
-        );
+        this.loadModel(url, source, resolve, onProgress, reject);
       });
       void source.model.catch(() => {
         source.model = undefined;
       });
     }
-    void source.model.then(onLoad, onError ?? console.error);
+    const fail = onError ?? console.error;
+    void source.model.then((model) => {
+      if (this.assets.disposed) fail(this.assets.signal.reason);
+      else onLoad(model);
+    }, fail);
   }
 
   override loadShapeData(
     url: string,
     onProgress?: Parameters<FileLoader["load"]>[2],
   ): Promise<DTSShapeData> {
-    const source = getSource(this.manager, url);
+    const source = this.getSource(url);
     if (!source.data) {
       source.data = super.loadShapeData(url, onProgress).then((data) => {
+        this.assets.signal.throwIfAborted();
         source.parsed = data;
         return data;
       });
@@ -94,18 +130,19 @@ export class ShapeLoader extends DTSLoader {
   }
 
   peekShapeData(url: string): DTSShapeData | undefined {
-    return sources.get(this.manager)?.get(url)?.parsed;
+    return this.sources.get(url)?.parsed;
   }
 
   peekModel(url: string): DTSModel | undefined {
-    return sources.get(this.manager)?.get(url)?.resolvedModel;
+    return this.sources.get(url)?.resolvedModel;
   }
 
   /** Model readiness remains progressive. Prefetch can explicitly wait for
    * ordinary images and IFL atlases without blocking model consumers. */
   async loadDependencies(url: string): Promise<void> {
+    const source = this.getSource(url);
     const model = await this.loadAsync(url);
-    await this.prepareDependencies(getSource(this.manager, url), model, url);
+    await this.prepareDependencies(source, model, url);
   }
 
   private prepareDependencies(
@@ -113,6 +150,7 @@ export class ShapeLoader extends DTSLoader {
     model: DTSModel,
     url: string,
   ): Promise<void> {
+    this.assets.signal.throwIfAborted();
     if (source.dependencies) return source.dependencies;
     const pending = Promise.allSettled([
       ...model.data.materials
@@ -122,8 +160,15 @@ export class ShapeLoader extends DTSLoader {
         )
         .map(({ material, index }) =>
           Promise.resolve()
-            .then(() => loadBitmapTextureAsync(textureToUrl(material.name)))
+            .then(() => {
+              this.assets.signal.throwIfAborted();
+              return loadBitmapTextureAsync(
+                textureToUrl(material.name),
+                this.assets,
+              );
+            })
             .then((loaded) => {
+              this.assets.signal.throwIfAborted();
               const texture = model.materials[index]?.map;
               // A failed bitmap is evicted from its source cache. A retry then
               // gets a new Source; repair the existing sampler shared by model
@@ -137,7 +182,7 @@ export class ShapeLoader extends DTSLoader {
               }
             }),
         ),
-      loadShapeImageLists(model),
+      loadShapeImageLists(model, this.assets),
     ])
       .then((results) => {
         const failure = results.find((result) => result.status === "rejected");
@@ -148,14 +193,16 @@ export class ShapeLoader extends DTSLoader {
         throw error;
       });
     source.dependencies = pending;
-    void pending.catch((error) =>
-      console.warn(`Failed to load shape textures for ${url}`, error),
-    );
+    void pending.catch((error) => {
+      if (!this.assets.disposed)
+        console.warn(`Failed to load shape textures for ${url}`, error);
+    });
     return pending;
   }
 
   private loadModel(
     url: string,
+    source: ShapeSource,
     onLoad: (model: DTSModel) => void,
     onProgress?: Parameters<FileLoader["load"]>[2],
     onError?: (error: unknown) => void,
@@ -163,15 +210,29 @@ export class ShapeLoader extends DTSLoader {
     super.load(
       url,
       (model) => {
-        batchDTSRigidMeshes(model.scene);
-        model.scene.detailLevel = null;
-        const source = getSource(this.manager, url);
-        this.prepareDependencies(source, model, url);
-        const name = decodeURIComponent(url.split("/").pop()!);
-        registerShapeSequences(name, model.animations);
-        registerGroundEffectShape(name, model);
-        registerShapeBounds(name, model.data.bounds);
-        onLoad(model);
+        if (this.assets.disposed) {
+          disposeModel(model);
+          onError?.(this.assets.signal.reason);
+          return;
+        }
+        source.resolvedModel = model;
+        try {
+          batchDTSRigidMeshes(model.scene);
+          model.scene.detailLevel = null;
+          this.prepareDependencies(source, model, url);
+          this.assets.signal.throwIfAborted();
+          const name = decodeURIComponent(url.split("/").pop()!);
+          registerShapeSequences(name, model.animations);
+          registerGroundEffectShape(name, model, this.assets);
+          registerShapeBounds(name, model.data.bounds);
+          onLoad(model);
+        } catch (error) {
+          if (source.resolvedModel === model) {
+            source.resolvedModel = undefined;
+            disposeModel(model);
+          }
+          onError?.(error);
+        }
       },
       onProgress,
       onError,

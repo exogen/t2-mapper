@@ -202,6 +202,7 @@ interface CasterState {
   scannedAt: number;
   tile: number;
   lastRenderMs: number;
+  hasSilhouette: boolean;
   geometry: BufferGeometry;
   material: ShaderMaterial;
   mesh: Mesh;
@@ -340,8 +341,8 @@ export class ShadowPoolRuntime {
     stencilBuffer: false,
     depthTexture: new DepthTexture(ATLAS_SIZE, ATLAS_SIZE),
   });
-  readonly silhouetteScene = new Scene();
-  readonly depthScene = new Scene();
+  silhouetteScene = new Scene();
+  depthScene = new Scene();
   /** Depth-only receiver pass (colour writes off). */
   readonly depthMaterial = new MeshBasicMaterial({
     colorWrite: false,
@@ -371,6 +372,7 @@ export class ShadowPoolRuntime {
       uniforms.hasDepth.value = 0;
       state.depthDirty = state.hasReceivers;
       state.lastRenderMs = -Infinity;
+      state.hasSilhouette = false;
       if (state.mesh.visible && !uniforms.generic.value) {
         state.lastRenderMs = now;
         this.pending.push(state);
@@ -378,9 +380,18 @@ export class ShadowPoolRuntime {
     }
   }
 
-  dispose(): void {
+  clearCasters(): void {
+    this.pending.length = 0;
     for (const state of this.states.values()) this.disposeState(state);
     this.states.clear();
+    // Three's render lists can still reference proxies from the last pass.
+    // Releasing the scene keys lets the lists be collected, even without a new draw.
+    this.silhouetteScene = new Scene();
+    this.depthScene = new Scene();
+  }
+
+  dispose(): void {
+    this.clearCasters();
     this.atlas.dispose();
     this.depthAtlas.dispose();
     this.blackMaterial.dispose();
@@ -435,6 +446,7 @@ export class ShadowPoolRuntime {
       scannedAt: -Infinity,
       tile,
       lastRenderMs: -Infinity,
+      hasSilhouette: false,
       geometry,
       material,
       mesh,
@@ -618,6 +630,8 @@ export class ShadowPoolRuntime {
       u.blur.value = spec.blur ? 1 : 0;
       u.generic.value = generic ? 1 : 0;
       state.mesh.visible = true;
+      // Keep the depth pass queued while hiding pixels from a previous caster.
+      state.material.visible = generic || state.hasSilhouette;
 
       if (!generic) {
         this.syncProxies(state, nowSec);
@@ -704,6 +718,7 @@ export class ShadowPoolRuntime {
       renderer.clear(true, false, false);
       renderer.render(this.silhouetteScene, camera);
       state.proxyGroup.visible = false;
+      state.hasSilhouette = true;
     }
     this.pending.length = 0;
     renderer.setRenderTarget(previousTarget);

@@ -16,7 +16,11 @@ import type {
 import type { StreamingPlayback } from "../stream/types";
 import type { Vec3 } from "../collision/terrainCollision";
 import { groundActorMatrix } from "../collision/wheelContact";
-import { getGroundEffectShape, type GroundShape } from "./groundEffectAssets";
+import {
+  getGroundEffectShape,
+  type GroundShape,
+  type GroundShapeLookup,
+} from "./groundEffectAssets";
 import { torqueVecToThree } from "../scene/coordinates";
 
 /** Reuse shape geometry/mixers with each consumed tick's transform and threads.
@@ -86,8 +90,13 @@ export class GroundVehicleCollision {
   private rayBox = new Box3();
   private frame?: GroundEffectFrame;
   private playback: StreamingPlayback;
-  constructor(playback: StreamingPlayback) {
+  private readonly findShape: GroundShapeLookup;
+  constructor(
+    playback: StreamingPlayback,
+    findShape: GroundShapeLookup = getGroundEffectShape,
+  ) {
     this.playback = playback;
+    this.findShape = findShape;
   }
   setFrame(frame: GroundEffectFrame) {
     this.endFrame();
@@ -112,8 +121,7 @@ export class GroundVehicleCollision {
     for (const actor of this.frame?.actors ?? []) {
       if (actor.type !== "Vehicle" || actor.key === exclude) continue;
       const name = this.playback.getDataBlockData(actor.dataBlockId)?.shapeName;
-      const shape =
-        typeof name === "string" ? getGroundEffectShape(name) : undefined;
+      const shape = typeof name === "string" ? this.findShape(name) : undefined;
       if (!shape) continue;
       const data = shape.model.data;
       const radius =

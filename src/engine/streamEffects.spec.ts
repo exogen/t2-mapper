@@ -14,8 +14,7 @@ import {
   type GroundEffectFrame,
 } from "../stream/groundEffectQueue";
 import type { StreamRecording, StreamingPlayback } from "../stream/types";
-import { FrameScheduler } from "./frameScheduler";
-import type { EngineHost, GameEngine } from "./gameEngine";
+import { GameEngine } from "./gameEngine";
 import { installStreamEffects } from "./streamEffects";
 
 interface Simulation {
@@ -108,6 +107,7 @@ const savedClock = {
 let visibility: DocumentVisibilityState;
 let documentEvents: EventTarget;
 let stop: (() => void) | undefined;
+let disconnectHost: (() => void) | undefined;
 
 beforeEach(() => {
   owners.simulations.length =
@@ -134,6 +134,8 @@ beforeEach(() => {
 afterEach(() => {
   stop?.();
   stop = undefined;
+  disconnectHost?.();
+  disconnectHost = undefined;
   engineStore.setState({ playback: savedPlayback });
   Object.assign(streamClock, savedClock);
   setTerrainCollisionData(null);
@@ -157,24 +159,19 @@ function fixture() {
   const source = recording();
   transport({ recording: source, status: "playing", seekNonce: 0 });
   const scene = new Scene();
-  const scheduler = new FrameScheduler();
   const camera = new PerspectiveCamera();
   const renderer = {} as WebGLRenderer;
-  const engine = {
-    scheduler,
-    streamSnapshot: { current: null },
-    withHost: (start: (host: EngineHost) => void | (() => void)) =>
-      start({
-        scene,
-        renderer,
-        invalidate: vi.fn(),
-        assetsLoading: () => false,
-      }),
-  } as unknown as GameEngine;
+  const engine = new GameEngine();
+  disconnectHost = engine.connect({
+    scene,
+    renderer,
+    invalidate: vi.fn(),
+    assetsLoading: () => false,
+  });
   stop = installStreamEffects(engine);
   const frame = (timeSec: number) => {
     streamClock.time = timeSec;
-    scheduler.runAll({
+    engine.scheduler.runAll({
       frame: 1,
       delta: 0.032,
       elapsed: timeSec,
@@ -254,6 +251,30 @@ it("preserves paused visible effects but clears immediately when transport enter
   expect(f.simulation.emitters.size).toBe(0);
   expect(geometry.dispose).toHaveBeenCalledOnce();
   expect(material.dispose).toHaveBeenCalledOnce();
+});
+
+it("disposes outgoing effects before their scene assets and resumes on the new scene", async () => {
+  const f = fixture();
+  const geometry = owners.geometries[0];
+  const assets = f.engine.sceneAssets;
+  const disposeAsset = vi.fn(() => {
+    expect(geometry.dispose).toHaveBeenCalledOnce();
+    expect(f.scene.children).toHaveLength(0);
+  });
+  assets.cache<object, object>({}, disposeAsset).set({}, {});
+
+  f.engine.releaseSceneAssets();
+  expect(disposeAsset).toHaveBeenCalledOnce();
+  expect(f.queue.capturing).toBe(false);
+  expect(f.simulation.emitters.size).toBe(0);
+
+  await Promise.resolve();
+  expect(f.engine.sceneAssets).not.toBe(assets);
+  f.frame(0.064);
+  f.append(f.queue, 0.096);
+  f.frame(0.096);
+  expect(owners.geometries).toHaveLength(2);
+  expect(owners.simulations[1].step).toHaveBeenCalledOnce();
 });
 
 it("retires replaced recordings and removes transport, visibility and scheduler work on disposal", () => {

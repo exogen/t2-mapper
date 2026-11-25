@@ -31,6 +31,7 @@ import {
 } from "../dts/dtsModel";
 import { observeShapeMeshes, getDTSObject } from "../dts/dtsScene";
 import { loadBitmapTextureInstance } from "../assets/bitmapTextures";
+import type { SceneAssets } from "../assets/sceneAssets";
 import {
   playerSkinUrls,
   type PlayerSkinSelection,
@@ -214,6 +215,7 @@ export function replaceWithShapeMaterial(
   mat: MeshStandardMaterial | DTSMaterial,
   vis: number,
   options: {
+    assets?: SceneAssets;
     anisotropy?: number;
     emap?: boolean;
     playerSkin?: PlayerSkinSelection;
@@ -279,7 +281,12 @@ export function replaceWithShapeMaterial(
   const fallbacks = skinUrls?.length
     ? [...new Set([...skinUrls, defaultUrl])].slice(1)
     : undefined;
-  const texture = loadBitmapTextureInstance(url, undefined, fallbacks);
+  const texture = loadBitmapTextureInstance(
+    url,
+    undefined,
+    fallbacks,
+    options.assets,
+  );
   if (
     !fallbacks?.length &&
     mat instanceof DTSMaterial &&
@@ -320,6 +327,7 @@ export function processShapeScene(
   scene: Object3D,
   _shapeName?: string,
   options: {
+    assets?: SceneAssets;
     anisotropy?: number;
     emap?: boolean;
     playerSkin?: PlayerSkinSelection;

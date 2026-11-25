@@ -80,14 +80,9 @@ describe("offline checkpoint generation", () => {
       );
       expect(result).toMatchObject({ count: 1, reused: false });
       expect(scan).not.toHaveBeenCalled();
-      const bytes = await fs.readFile(file);
-      const buffer = bytes.buffer.slice(
-        bytes.byteOffset,
-        bytes.byteOffset + bytes.byteLength,
-      ) as ArrayBuffer;
       const loaded = await readDemoCheckpoints(
         await fs.readFile(output, "utf8"),
-        buffer,
+        { demoBytes: (await fs.stat(file)).size },
       );
       expect(loaded.map((checkpoint) => checkpoint.cursor.moveTicks)).toEqual([
         tick,
@@ -188,13 +183,10 @@ describe("offline checkpoint generation", () => {
       "/absent-assets",
     );
     expect(result).toMatchObject({ count: 0, reused: false });
-    const bytes = await fs.readFile(file);
-    const buffer = bytes.buffer.slice(
-      bytes.byteOffset,
-      bytes.byteOffset + bytes.byteLength,
-    ) as ArrayBuffer;
     expect(
-      await readDemoCheckpoints(await fs.readFile(output, "utf8"), buffer),
+      await readDemoCheckpoints(await fs.readFile(output, "utf8"), {
+        demoBytes: (await fs.stat(file)).size,
+      }),
     ).toEqual([]);
     expect(await fs.readdir(dir)).toEqual([
       "midmatch.rec",
@@ -214,14 +206,11 @@ describe("offline checkpoint generation", () => {
         plan(5, 100),
       ),
     ).toMatchObject({ count: 3, reused: false });
-    const bytes = await fs.readFile(file);
-    const buffer = bytes.buffer.slice(
-      bytes.byteOffset,
-      bytes.byteOffset + bytes.byteLength,
-    ) as ArrayBuffer;
     expect(
       (
-        await readDemoCheckpoints(await fs.readFile(output, "utf8"), buffer)
+        await readDemoCheckpoints(await fs.readFile(output, "utf8"), {
+          demoBytes: (await fs.stat(file)).size,
+        })
       ).map((checkpoint) => checkpoint.cursor.moveTicks),
     ).toEqual([100, 200, 300]);
     expect(
@@ -278,6 +267,13 @@ describe("offline checkpoint generation", () => {
     expect(
       await generateDemoCheckpoints(file, output, "/absent-assets"),
     ).toMatchObject({ reused: true });
+    const mismatched = JSON.parse(original);
+    mismatched.demoSha256 = "0".repeat(64);
+    await fs.writeFile(output, JSON.stringify(mismatched));
+    expect(
+      await generateDemoCheckpoints(file, output, "/absent-assets"),
+    ).toMatchObject({ reused: false });
+    expect(await fs.readFile(output, "utf8")).toBe(original);
     const stale = JSON.parse(original);
     stale.version = 0;
     await fs.writeFile(output, JSON.stringify(stale));
@@ -443,14 +439,11 @@ describe("offline checkpoint generation", () => {
         checkpointPlan,
       );
       expect(result).toMatchObject({ count: ticks.length, reused: false });
-      const bytes = await fs.readFile(file);
-      const buffer = bytes.buffer.slice(
-        bytes.byteOffset,
-        bytes.byteOffset + bytes.byteLength,
-      ) as ArrayBuffer;
       expect(
         (
-          await readDemoCheckpoints(await fs.readFile(output, "utf8"), buffer)
+          await readDemoCheckpoints(await fs.readFile(output, "utf8"), {
+            demoBytes: (await fs.stat(file)).size,
+          })
         ).map((checkpoint) => checkpoint.cursor.moveTicks),
       ).toEqual(ticks);
       expect(

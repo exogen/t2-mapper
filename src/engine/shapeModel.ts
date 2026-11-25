@@ -240,6 +240,7 @@ export function createShapeModel(
   } = options;
   const gltf = model;
   const instance = createShapeInstance({
+    assets: engine.sceneAssets,
     model: gltf,
     shapeName,
     anisotropy: options.anisotropy,
@@ -830,7 +831,12 @@ export function createShapeModel(
   };
 
   // ShapeBase fade (mFadeVal) and cloak (mCloakLevel) — see shapeFadeCloak.ts.
-  const fadeAndCloak = createFadeAndCloak(clonedScene, readEntity);
+  const fadeAndCloak = createFadeAndCloak(
+    clonedScene,
+    readEntity,
+    undefined,
+    engine.sceneAssets,
+  );
   // The per-object lighting probe; its uniforms exist before the first
   // render, so the materials compile with them.
   const lightState = createShapeLightState(clonedScene, shapeName);

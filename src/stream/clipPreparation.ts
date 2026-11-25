@@ -4,15 +4,18 @@ import { engineStore } from "../state/engineStore";
 import { publishedDemoFilename } from "../state/editableGame";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { readClip } from "./clipApi";
-import {
-  ClipSourceError,
-  readClipCheckpoint,
-  recoverClipCheckpoint,
-  verifyClipSource,
-} from "./clipCheckpointApi";
+import { readClipCheckpoint, recoverClipCheckpoint } from "./clipCheckpointApi";
 import { startClipPlayback } from "./clipPlayback";
 import { getDemoLoadGeneration, loadDemoReference } from "./demoFileLoader";
 import type { StreamRecording } from "./types";
+
+class ClipSourceError extends Error {
+  constructor(
+    message = "The source demo download was interrupted. Please retry the download.",
+  ) {
+    super(message);
+  }
+}
 
 /** Wait for finalized bytes and the scene binding, in either store order. */
 function waitForClipSource(clip: ClipView, signal: AbortSignal) {
@@ -56,7 +59,7 @@ function waitForClipSource(clip: ClipView, signal: AbortSignal) {
           loadGeneration: getDemoLoadGeneration(),
         });
       } else if (load.phase === "error") {
-        finish(new ClipSourceError("interrupted"));
+        finish(new ClipSourceError());
       }
     };
     cleanups.push(
@@ -88,11 +91,16 @@ function ensureCurrent(
     throw new DOMException("Clip preparation was interrupted", "AbortError");
 }
 
-async function verify(clip: ClipView, source: ClipSource, signal: AbortSignal) {
+function verifySource(clip: ClipView, source: ClipSource, signal: AbortSignal) {
   ensureCurrent(clip, source, signal);
-  if (source.interrupted) throw new ClipSourceError("interrupted");
-  await verifyClipSource(clip, source.buffer, signal);
-  ensureCurrent(clip, source, signal);
+  if (source.interrupted) throw new ClipSourceError();
+  if (
+    clip.sourceBytes !== undefined &&
+    source.buffer.byteLength !== clip.sourceBytes
+  )
+    throw new ClipSourceError(
+      "The downloaded recording has an unexpected size. Please retry the download.",
+    );
 }
 
 /** One attempt owns at most one replacement source download. */
@@ -100,7 +108,7 @@ async function loadClipSource(clip: ClipView, signal: AbortSignal) {
   let source: ClipSource | undefined;
   try {
     source = await waitForClipSource(clip, signal);
-    await verify(clip, source, signal);
+    verifySource(clip, source, signal);
   } catch (error) {
     signal.throwIfAborted();
     if (source) ensureCurrent(clip, source, signal);
@@ -131,7 +139,7 @@ async function loadClipSource(clip: ClipView, signal: AbortSignal) {
           "Could not download the source demo. Please retry.",
       );
     source = await waitForClipSource(clip, signal);
-    await verify(clip, source, signal);
+    verifySource(clip, source, signal);
   }
   return { clip, source };
 }
@@ -159,11 +167,7 @@ export async function prepareClipPlayback(
   let checkpoint;
   try {
     ready = await loadClipSource(clip, preparing);
-    checkpoint = await readClipCheckpoint(
-      ready.clip,
-      ready.source.buffer,
-      preparing,
-    );
+    checkpoint = await readClipCheckpoint(ready.clip, preparing);
     ensureCurrent(ready.clip, ready.source, preparing);
   } finally {
     stop();
@@ -174,15 +178,15 @@ export async function prepareClipPlayback(
   await startClipPlayback(
     selected.timeline,
     source.recording,
-    AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
-    checkpoint?.text,
-    () =>
-      recoverClipCheckpoint(
-        selected,
-        source.buffer,
-        checkpoint?.etag ?? null,
-        signal,
-      ),
+    signal,
+    checkpoint
+      ? {
+          text: checkpoint.text,
+          sourceSha256: selected.sourceSha256,
+          recover: () =>
+            recoverClipCheckpoint(selected, checkpoint.etag, signal),
+        }
+      : undefined,
   );
   signal.throwIfAborted();
   return source.recording;

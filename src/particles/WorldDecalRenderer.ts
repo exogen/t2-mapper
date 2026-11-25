@@ -11,6 +11,7 @@ import {
   Vector3,
 } from "three";
 import type { StreamingPlayback } from "../stream/types";
+import type { SceneAssets } from "../assets/sceneAssets";
 import type { GroundDecal } from "./GroundEffectSimulation";
 import { getParticleTexture, particleTexturesReady } from "./particleRenderer";
 
@@ -40,10 +41,17 @@ export class WorldDecalRenderer {
   private group: Group;
   private playback: StreamingPlayback;
   private capacity: number;
-  constructor(group: Group, playback: StreamingPlayback, capacity = 256) {
+  private readonly assets?: SceneAssets;
+  constructor(
+    group: Group,
+    playback: StreamingPlayback,
+    capacity = 256,
+    assets?: SceneAssets,
+  ) {
     this.group = group;
     this.playback = playback;
     this.capacity = capacity;
+    this.assets = assets;
   }
   private batch(id: number): Batch | undefined {
     let batch = this.batches.get(id);
@@ -76,7 +84,7 @@ export class WorldDecalRenderer {
         1,
       ).setUsage(DynamicDrawUsage),
     );
-    const texture = getParticleTexture(db.textureName);
+    const texture = getParticleTexture(db.textureName, this.assets);
     const material = new ShaderMaterial({
       vertexShader,
       fragmentShader,

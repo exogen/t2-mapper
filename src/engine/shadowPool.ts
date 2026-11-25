@@ -24,6 +24,7 @@ export function installShadowPool(engine: GameEngine): () => void {
         scene.remove(runtime.decals);
       };
     }),
+    engine.onSceneAssetsRelease(() => runtime.clearCasters()),
     engine.scheduler.add(FramePriority.ShadowAtlas, ({ renderer }) =>
       runtime.renderPending(renderer),
     ),

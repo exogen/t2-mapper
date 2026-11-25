@@ -8,7 +8,7 @@ import {
   Vector3,
 } from "three";
 import { clone } from "three/examples/jsm/utils/SkeletonUtils.js";
-import { buildDTS } from "./dtsBuilder";
+import { buildDTS, disposeDTSModel } from "./dtsBuilder";
 import {
   DTSNode,
   isDTSMesh,
@@ -40,6 +40,19 @@ function twoDetails() {
 }
 
 describe("lazy DTS branches", () => {
+  it("disposes geometry first realized by an instance of the source model", () => {
+    const model = buildDTS(twoDetails());
+    const instance = clone(model.scene) as DTSShape;
+    instance.ensureDetail(1);
+    const geometry = parts(instance)[1].geometry;
+    const disposed = vi.fn();
+    geometry.addEventListener("dispose", disposed);
+    expect(parts(model.scene)).toHaveLength(1);
+    disposeDTSModel(model);
+    expect(disposed).toHaveBeenCalledOnce();
+    expect(parts(model.scene)).toHaveLength(1);
+  });
+
   it("retains disabled decals when mesh initialization requests details recursively", () => {
     const data = createDTSTestShape(),
       source = data.meshes[0];

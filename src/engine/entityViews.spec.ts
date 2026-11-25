@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { Group } from "three";
 import type { GameEntity } from "../state/gameEntityTypes";
-import { EntityViewRegistry } from "./entityViews";
+import { gameEntityStore } from "../state/gameEntityStore";
+import { EntityViewRegistry, installEntityViews } from "./entityViews";
 import { MountPoints } from "./shapeMounts";
 import type { GameEngine } from "./gameEngine";
 
@@ -22,6 +23,36 @@ function createRegistry(log: string[]) {
     },
   });
 }
+
+it("releases scene assets between old and new views only at scene boundaries", () => {
+  const log: string[] = [];
+  const snapshot = gameEntityStore.getState();
+  const scopedEngine = {
+    entities: createRegistry(log),
+    withHost: () => () => {},
+    releaseSceneAssets: () => log.push("release assets"),
+  } as unknown as GameEngine;
+  try {
+    snapshot.setAllEntities([sky("a")]);
+    const stop = installEntityViews(scopedEngine);
+    try {
+      snapshot.setMissionInfo({ missionName: "Metadata can arrive late" });
+      expect(log).toEqual(["create a"]);
+      snapshot.setAllEntities([sky("b")]);
+      expect(log).toEqual([
+        "create a",
+        "dispose a",
+        "release assets",
+        "create b",
+      ]);
+    } finally {
+      stop();
+    }
+    expect(log.slice(-2)).toEqual(["dispose b", "release assets"]);
+  } finally {
+    gameEntityStore.setState(snapshot, true);
+  }
+});
 
 it("disposes a replaced view before creating its successor under a new id", () => {
   const log: string[] = [];

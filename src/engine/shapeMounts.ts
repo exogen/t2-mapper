@@ -5,7 +5,7 @@ import type { DTSModel } from "../dts/dtsModel";
 import type { ImageSlot, StreamEntity } from "../stream/types";
 import { resolveEmapFromImageSlot } from "./resolveEmap";
 import { resolveImageLight } from "./imageLight";
-import { loadShape, peekShape } from "./shapeCache";
+import { withShape } from "./shapeCache";
 import { createShapeModel, type ShapeModel } from "./shapeModel";
 import type { MountPoints } from "./shapeMountPoints";
 import { attachFrozen } from "./staticMatrices";
@@ -130,7 +130,6 @@ export class ImageMounts {
     const root = new Group();
     root.matrixAutoUpdate = false;
     root.userData.imageMount = true;
-    let disposed = false;
     const mounted: MountedImage = {
       key,
       root,
@@ -139,7 +138,7 @@ export class ImageMounts {
       shape: null,
       detach: this.mounts.attach(image.mountPoint, root),
       dispose: () => {
-        disposed = true;
+        stopLoading();
         mounted.detach();
         mounted.model?.dispose();
         mounted.model = null;
@@ -164,19 +163,12 @@ export class ImageMounts {
       this.placeModel(mounted);
       this.engine.invalidate();
     };
-    const loaded = peekShape(image.shapeName!);
-    if (loaded && this.engine.currentHost) build(loaded);
-    else
-      void Promise.all([
-        loadShape(image.shapeName!),
-        this.engine.whenHost(),
-      ]).then(
-        ([shape]) => {
-          if (!disposed) build(shape);
-        },
-        (error: unknown) =>
-          log.error("Image shape error: %s: %o", image.shapeName, error),
-      );
+    const stopLoading = withShape(
+      this.engine,
+      image.shapeName!,
+      build,
+      (error) => log.error("Image shape error: %s: %o", image.shapeName, error),
+    );
     return mounted;
   }
 }

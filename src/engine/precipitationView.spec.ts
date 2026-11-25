@@ -20,6 +20,7 @@ import type { GameEngine } from "./gameEngine";
 import { FrameScheduler } from "./frameScheduler";
 import type { EntityView } from "./entityViews";
 import type { DIFVisibilityRect } from "../dif/difVisibility";
+import { SceneAssets } from "../assets/sceneAssets";
 
 const state = vi.hoisted(() => ({
   playback: {
@@ -65,8 +66,10 @@ vi.mock("../assets/bitmapTextures", async () => {
     loadBitmapTexture: (
       url: string,
       onLoad: (texture: import("three").Texture) => void,
+      _onError: undefined,
+      assets: SceneAssets,
     ) => {
-      state.textureLoads(url);
+      state.textureLoads(url, assets);
       const texture = new Texture({
         width: 256,
         height: 256,
@@ -170,12 +173,16 @@ function config(
 }
 
 const views: EntityView[] = [];
+const assetOwners = new Set<SceneAssets>();
 function world(precipitation = config()) {
   const scheduler = new FrameScheduler();
   const scene = new Scene();
   const camera = new PerspectiveCamera();
+  const sceneAssets = new SceneAssets();
+  assetOwners.add(sceneAssets);
   const engine = {
     scheduler,
+    sceneAssets,
     invalidate: vi.fn(),
     streamSnapshot: { current: null },
   } as unknown as GameEngine;
@@ -237,11 +244,14 @@ beforeEach(() => {
   state.cameraMode = "freeFly";
   state.worldTime = 10;
   state.water.mockReset();
+  state.material.mockClear();
   state.textureLoads.mockClear();
   vi.spyOn(Math, "random").mockReturnValue(0.5);
 });
 afterEach(() => {
   for (const view of views.splice(0)) view.dispose();
+  for (const assets of assetOwners) assets.dispose();
+  assetOwners.clear();
   clearShapeBounds();
   vi.restoreAllMocks();
 });
@@ -254,6 +264,14 @@ it("loads the authored material atlas and renders a camera-following field witho
   await Promise.resolve();
   await Promise.resolve();
   w.frame();
+  expect(state.material).toHaveBeenCalledExactlyOnceWith(
+    "view-test-rain.dml",
+    w.engine.sceneAssets.signal,
+  );
+  expect(state.textureLoads).toHaveBeenCalledExactlyOnceWith(
+    "precipitation/atlas",
+    w.engine.sceneAssets,
+  );
   expect(w.mesh.visible).toBe(true);
   expect(w.points.visible).toBe(false);
   expect(w.mesh.geometry.drawRange.count).toBe(12);

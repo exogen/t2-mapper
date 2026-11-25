@@ -23,6 +23,7 @@ import {
   readClipTake,
   trimClipTake,
   clipDurationMs,
+  isClipSourceByteCount,
   MAX_CLIP_BODY_BYTES,
   CLIPS_PAGE_SIZE,
   MAX_PUBLIC_CLIPS,
@@ -197,7 +198,11 @@ export class Clips {
   private key(id: string, suffix: string) {
     return `${this.options.config.prefix}clips/${id}/${suffix}`;
   }
-  private view(row: ClipRow, timeline?: ClipTake): ClipView {
+  private view(
+    row: ClipRow,
+    timeline?: ClipTake,
+    sourceBytes?: number,
+  ): ClipView {
     const playable = canPlayClip(row);
     return {
       id: row.id,
@@ -214,7 +219,11 @@ export class Clips {
           ? "failed"
           : "processing",
       ...(!playable && row.error && { error: row.error }),
-      ...(timeline && { timeline, sourceSha256: row.sourceSha256 }),
+      ...(timeline && {
+        timeline,
+        sourceBytes,
+        ...(row.sourceSha256 && { sourceSha256: row.sourceSha256 }),
+      }),
       checkpointUrl: `/api/clips/${row.id}/checkpoint`,
     };
   }
@@ -313,7 +322,7 @@ export class Clips {
   private async sourceCurrent(
     row: ClipRow,
     signal?: AbortSignal,
-  ): Promise<void> {
+  ): Promise<number | undefined> {
     try {
       const source = await this.head(
         `${this.options.config.prefix}${row.sourceDemo}`,
@@ -321,6 +330,9 @@ export class Clips {
       );
       if (!source.ETag || source.ETag !== row.sourceETag)
         throw new ClipError(410, SOURCE_UNAVAILABLE);
+      return isClipSourceByteCount(source.ContentLength)
+        ? source.ContentLength
+        : undefined;
     } catch (error) {
       if (
         isMissingObject(error) ||
@@ -395,7 +407,7 @@ export class Clips {
       } else if (req.method === "GET" && match) {
         if (!UUID.test(match[1])) throw new ClipError(404, "Clip not found");
         let row = this.visibleRow(match[1]);
-        await this.sourceCurrent(row);
+        const sourceBytes = await this.sourceCurrent(row);
         row = this.visibleRow(row.id);
         if (match[2]) {
           if (!canPlayClip(row))
@@ -464,7 +476,11 @@ export class Clips {
             }
           }
           row = this.visibleRow(row.id);
-          json(res, 200, this.view(row, canPlayClip(row) ? take : undefined));
+          json(
+            res,
+            200,
+            this.view(row, canPlayClip(row) ? take : undefined, sourceBytes),
+          );
         }
       } else if (req.method === "POST" && match?.[2]) {
         if (!UUID.test(match[1])) throw new ClipError(404, "Clip not found");
@@ -517,8 +533,15 @@ export class Clips {
           request.trimEndMs,
         );
         const payload = JSON.stringify(take);
+        // For a legacy retry, omitting sourceBytes preserves the original digest.
         const hash = createHash("sha256")
-          .update(JSON.stringify({ sourceSha256: request.sourceSha256, take }))
+          .update(
+            JSON.stringify({
+              sourceSha256: request.sourceSha256,
+              sourceBytes: request.sourceBytes,
+              take,
+            }),
+          )
           .digest("hex");
         let row = this.db
           .prepare("SELECT * FROM clip WHERE ownerDiscordId=? AND requestId=?")
@@ -540,6 +563,18 @@ export class Clips {
           });
           if (!source.ETag)
             throw new ClipError(503, "Could not identify the source recording");
+          if (request.sourceBytes !== undefined) {
+            if (!isClipSourceByteCount(source.ContentLength))
+              throw new ClipError(
+                503,
+                "Could not read the source recording size",
+              );
+            if (source.ContentLength !== request.sourceBytes)
+              throw new ClipError(
+                409,
+                "The downloaded recording size does not match the hosted demo. Please retry the download.",
+              );
+          }
           const title = await this.titleFor(
             take.sourceDemo,
             take.samples[0].demoTimeSec,
@@ -589,7 +624,7 @@ export class Clips {
                   hash,
                   take.sourceDemo,
                   source.ETag,
-                  request.sourceSha256,
+                  request.sourceSha256 ?? "",
                   title,
                   this.now(),
                   start,
@@ -639,7 +674,9 @@ export class Clips {
                   Key: this.key(id, "timeline.json"),
                   Metadata: {
                     "demo-etag": row.sourceETag,
-                    "demo-sha256": row.sourceSha256,
+                    ...(row.sourceSha256 && {
+                      "demo-sha256": row.sourceSha256,
+                    }),
                   },
                   Body: payload,
                   ContentType: "application/json",
@@ -837,7 +874,7 @@ export class Clips {
           signal: controller.signal,
           client: this.client,
         });
-        if (result.sourceSha256 !== row.sourceSha256)
+        if (row.sourceSha256 && result.sourceSha256 !== row.sourceSha256)
           throw new Error(
             "The clip was recorded from a different source version",
           );
@@ -859,9 +896,14 @@ export class Clips {
         controller.signal.throwIfAborted();
         this.db
           .prepare(
-            "UPDATE clip SET state='ready', error=NULL, checkpointVersion=?, durationMs=?, attempts=0 WHERE id=? AND state='processing'",
+            "UPDATE clip SET state='ready', error=NULL, checkpointVersion=?, durationMs=?, sourceSha256=?, attempts=0 WHERE id=? AND state='processing'",
           )
-          .run(DEMO_CHECKPOINT_VERSION, clipDurationMs(take), row.id);
+          .run(
+            DEMO_CHECKPOINT_VERSION,
+            clipDurationMs(take),
+            result.sourceSha256,
+            row.id,
+          );
       } catch (error) {
         if (!controller.signal.aborted) {
           const attempts = row.attempts + 1;

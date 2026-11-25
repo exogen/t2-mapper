@@ -1,5 +1,3 @@
-import { cachedDemoSha256 } from "./demoSourceIdentity";
-export { demoSha256 } from "./demoSourceIdentity";
 import type { TimelineEvent } from "../state/demoTimelineStore";
 import type { DemoSeekCheckpoint } from "./demoStreaming";
 import { decodeCompressedCheckpoint } from "./checkpointCodec";
@@ -118,13 +116,20 @@ export function demoCheckpointTargets(
   return targets;
 }
 
+/** The caller pairs the checkpoint with a recording and can provide an
+ * existing digest from clip metadata or offline generation. */
+interface DemoCheckpointSource {
+  demoBytes: number;
+  demoSha256?: string;
+}
+
 export async function readDemoCheckpoints(
   text: string,
-  buffer: ArrayBuffer,
+  source: DemoCheckpointSource,
   signal?: AbortSignal,
 ): Promise<DemoSeekCheckpoint[]> {
   const checkpoints: DemoSeekCheckpoint[] = [];
-  await visitDemoCheckpoints(text, buffer, signal, (checkpoint) =>
+  await visitDemoCheckpoints(text, source, signal, (checkpoint) =>
     checkpoints.push(checkpoint),
   );
   return checkpoints;
@@ -138,13 +143,13 @@ export interface DemoCheckpointIndex {
   discard(tick: number): void;
 }
 
-/** Validate identity and every index entry before retaining any lazy payloads. */
+/** Check the envelope and its index before retaining any lazy payloads. */
 export async function readDemoCheckpointIndex(
   text: string,
-  buffer: ArrayBuffer,
+  source: DemoCheckpointSource,
   signal?: AbortSignal,
 ): Promise<DemoCheckpointIndex> {
-  const sidecar = await readSidecar(text, buffer, signal);
+  const sidecar = readSidecar(text, source, signal);
   const encoded = new Map<number, string>();
   let encodedCharacters = 0;
   for (const entry of sidecar.checkpoints) {
@@ -182,19 +187,19 @@ export async function readDemoCheckpointIndex(
 /** Check persisted states one at a time without retaining them during a retry. */
 export async function validateDemoCheckpoints(
   text: string,
-  buffer: ArrayBuffer,
+  source: DemoCheckpointSource,
   signal?: AbortSignal,
 ): Promise<void> {
-  await visitDemoCheckpoints(text, buffer, signal);
+  await visitDemoCheckpoints(text, source, signal);
 }
 
 async function visitDemoCheckpoints(
   text: string,
-  buffer: ArrayBuffer,
+  source: DemoCheckpointSource,
   signal?: AbortSignal,
   visit?: (checkpoint: DemoSeekCheckpoint) => void,
 ): Promise<void> {
-  const sidecar = await readSidecar(text, buffer, signal);
+  const sidecar = readSidecar(text, source, signal);
   for (const entry of sidecar.checkpoints) {
     signal?.throwIfAborted();
     checkEntry(entry);
@@ -204,27 +209,25 @@ async function visitDemoCheckpoints(
   signal?.throwIfAborted();
 }
 
-async function readSidecar(
+function readSidecar(
   text: string,
-  buffer: ArrayBuffer,
+  source: DemoCheckpointSource,
   signal?: AbortSignal,
-): Promise<DemoCheckpointSidecar> {
-  const sidecar = JSON.parse(text) as DemoCheckpointSidecar;
+): DemoCheckpointSidecar {
   signal?.throwIfAborted();
-  // Any checkpoint of this exact demo speeds seeking, wherever it falls:
-  // the generator's plan (count, spacing) is its own business.
+  const sidecar = JSON.parse(text) as DemoCheckpointSidecar;
   if (
     !sidecar ||
     sidecar.format !== "t2-mapper-seek-checkpoints" ||
     !isSupportedDemoCheckpointVersion(sidecar.version) ||
-    sidecar.demoBytes !== buffer.byteLength ||
+    sidecar.demoBytes !== source.demoBytes ||
     !Array.isArray(sidecar.checkpoints) ||
-    sidecar.demoSha256 !== (await cachedDemoSha256(buffer))
+    (source.demoSha256 !== undefined &&
+      sidecar.demoSha256 !== source.demoSha256)
   )
     throw new Error(
       "Seek checkpoints do not match this demo or engine version",
     );
-  signal?.throwIfAborted();
   return sidecar;
 }
 

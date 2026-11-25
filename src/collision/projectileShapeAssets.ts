@@ -19,7 +19,11 @@ import { threeToTorque, torqueVecToThree } from "../scene/coordinates";
 import { shapeKey } from "../stream/shapeSequences";
 import type { StreamEntity } from "../stream/types";
 import { objectMountSlot, SHAPE_MODEL_ROTATION_Y } from "../world/placement";
-import { collisionState, type CollisionState } from "./collisionContext";
+import {
+  collisionState,
+  defaultCollisionState,
+  type CollisionState,
+} from "./collisionContext";
 
 export interface ProjectileShapeAsset {
   bounds: Box3;
@@ -63,6 +67,14 @@ function worldAssets(): ShapeCache {
   return assets;
 }
 
+/** Release the viewer's prepared shapes with its scene. Node simulation
+ * worlds have their own entries and retain their assets until they end. */
+export function clearBrowserProjectileShapeAssets(): void {
+  const world = defaultCollisionState();
+  assetsByWorld.get(world)?.entries.clear();
+  assetsByWorld.delete(world);
+}
+
 /** Prepare the raw DTS data needed by the next simulation tick. Each session's
  * loader waits once per shape. A later session may retry unavailable data. */
 export function prepareProjectileShapes(
@@ -92,6 +104,7 @@ export function prepareProjectileShapes(
             .catch(() => undefined)
             .then((data) => {
               clearTimeout(timeout);
+              if (!assets.entries.has(key)) return;
               assets.entries.set(
                 key,
                 data

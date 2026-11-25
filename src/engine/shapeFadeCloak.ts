@@ -16,32 +16,51 @@ import { engineStore, effectNow } from "../state/engineStore";
 import { NormalBlending, RepeatWrapping, SRGBColorSpace } from "three";
 import type { Object3D, Texture } from "three";
 import { loadBitmapTexture } from "../assets/bitmapTextures";
+import { sharedSceneAssets, type SceneAssets } from "../assets/sceneAssets";
 import { textureToUrl } from "../loaders";
 import type { FrameContext } from "./frameScheduler";
 
-// Lazy-loaded on first use since cloaking is rare.
-let _cloakTexture: Texture | null = null;
-export function getCloakTexture(): Texture {
-  if (!_cloakTexture) {
-    _cloakTexture = loadBitmapTexture(textureToUrl("special/cloakTexture"));
-    _cloakTexture.wrapS = RepeatWrapping;
-    _cloakTexture.wrapT = RepeatWrapping;
-    _cloakTexture.colorSpace = SRGBColorSpace;
+// Lazy-loaded on first use, with a scroll shared by this world's cloaked shapes.
+const cloakStates = new WeakMap<
+  SceneAssets,
+  {
+    texture: Texture;
+    shiftX: number;
+    shiftY: number;
+    lastFrame: number;
   }
-  return _cloakTexture;
+>();
+function cloakState(assets: SceneAssets) {
+  let state = cloakStates.get(assets);
+  if (state) return state;
+  const texture = loadBitmapTexture(
+    textureToUrl("special/cloakTexture"),
+    undefined,
+    undefined,
+    assets,
+  );
+  texture.wrapS = RepeatWrapping;
+  texture.wrapT = RepeatWrapping;
+  texture.colorSpace = SRGBColorSpace;
+  state = { texture, shiftX: 0, shiftY: 0, lastFrame: -1 };
+  cloakStates.set(assets, state);
+  return state;
 }
 
-// Global UV offset matching engine's static shiftX/shiftY with different moduli
-// to create a non-repeating shimmer pattern.
-let _cloakShiftX = 0;
-let _cloakShiftY = 0;
-let _cloakLastFrame = -1;
-export function advanceCloakUV(frameId: number): void {
-  if (frameId === _cloakLastFrame) return;
-  _cloakLastFrame = frameId;
-  _cloakShiftX = (_cloakShiftX + 1) % 128;
-  _cloakShiftY = (_cloakShiftY + 1) % 127;
-  getCloakTexture().offset.set(_cloakShiftX / 127, _cloakShiftY / 126);
+export function getCloakTexture(assets = sharedSceneAssets): Texture {
+  return cloakState(assets).texture;
+}
+
+export function advanceCloakUV(
+  frameId: number,
+  assets = sharedSceneAssets,
+): void {
+  const state = cloakState(assets);
+  if (frameId === state.lastFrame) return;
+  state.lastFrame = frameId;
+  state.shiftX = (state.shiftX + 1) % 128;
+  state.shiftY = (state.shiftY + 1) % 127;
+  state.texture.offset.set(state.shiftX / 127, state.shiftY / 126);
 }
 
 export function shapeCloakAlpha(cloakLevel: number): number {
@@ -75,6 +94,7 @@ export function applyFadeAndCloak(
   fadeVal: number,
   cloakLevel: number,
   mounted: readonly MountedImageRoot[] = [],
+  assets = sharedSceneAssets,
 ): void {
   const isCloak = cloakLevel > 0;
   const faded = fadeVal < 1;
@@ -83,7 +103,9 @@ export function applyFadeAndCloak(
     : isCloak
       ? shapeCloakAlpha(cloakLevel)
       : 1;
-  const cloakTex = isCloak ? getCloakTexture() : _cloakTexture;
+  const cloakTex = isCloak
+    ? getCloakTexture(assets)
+    : cloakStates.get(assets)?.texture;
 
   const mountedMeshes = new Map<Object3D, boolean>();
   for (const m of mounted) {
@@ -179,6 +201,7 @@ export function createFadeAndCloak(
   root: Object3D,
   read: () => FadeCloakState | undefined | null,
   mounted?: () => readonly MountedImageRoot[],
+  assets = sharedSceneAssets,
 ): (frame: FrameContext) => void {
   let lastFadeVal = 1;
   let lastCloakLevel = 0;
@@ -189,7 +212,7 @@ export function createFadeAndCloak(
     const cloakLevel = entity?.cloakLevel ?? 0;
     const isCloak = cloakLevel > 0;
 
-    // Advance global cloak UV offset once per frame (all cloaked shapes share it).
+    // Advance the world's shared cloak UV offset once per frame.
     if (isCloak)
       advanceCloakUV(
         Math.floor(
@@ -197,6 +220,7 @@ export function createFadeAndCloak(
             ? effectNow() / 1000
             : frame.elapsed) * 60,
         ),
+        assets,
       );
 
     const atRest = fadeVal >= 1 && !isCloak;
@@ -210,6 +234,6 @@ export function createFadeAndCloak(
     applied = true;
     lastFadeVal = fadeVal;
     lastCloakLevel = cloakLevel;
-    applyFadeAndCloak(root, fadeVal, cloakLevel, mounted?.());
+    applyFadeAndCloak(root, fadeVal, cloakLevel, mounted?.(), assets);
   };
 }

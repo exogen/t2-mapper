@@ -244,6 +244,41 @@ describe("native DIF meshes", () => {
     expect(complete).toHaveBeenCalledTimes(2);
   });
 
+  it("disposes a fully queued interior on abort while the replacement stays queued", async () => {
+    const blocker = deferred<void>();
+    const slots = Array.from({ length: imageWorkQueue.concurrency }, () =>
+      imageWorkQueue.run(() => blocker.promise),
+    );
+    const decode = vi
+      .spyOn(TextureLoader.prototype, "loadAsync")
+      .mockResolvedValue(
+        new Texture({ width: 1, height: 1 } as HTMLImageElement),
+      );
+    const complete = vi.fn();
+    const loader = new DIFLoader(new LoadingManager(complete));
+    const controller = new AbortController();
+    loader.signal = controller.signal;
+    const old = lightmapModel(3);
+    const dispose = vi.spyOn(old.collision, "dispose");
+    vi.spyOn(loader, "parse").mockReturnValue(old);
+    const buffer = createDIFTestBuffer().buffer;
+    const retired = loader.parseAsync(buffer);
+    const replacement = new DIFLoader().parseAsync(buffer);
+    try {
+      expect(imageWorkQueue.queued).toBe(4);
+      controller.abort();
+      expect(imageWorkQueue.queued).toBe(1);
+      await expect(retired).rejects.toBe(controller.signal.reason);
+      expect(dispose).toHaveBeenCalledOnce();
+      expect(complete).toHaveBeenCalledOnce();
+      expect(decode).not.toHaveBeenCalled();
+    } finally {
+      blocker.resolve();
+      await Promise.all([...slots, replacement]);
+    }
+    expect(decode).toHaveBeenCalledOnce();
+  });
+
   it("waits for remaining queued decodes before disposing a failed model and completing its manager", async () => {
     const started: Array<
       ReturnType<typeof deferred<Texture<HTMLImageElement>>>

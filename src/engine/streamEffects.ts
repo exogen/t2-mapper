@@ -8,6 +8,7 @@ import { interiorColliderVersion } from "../collision/worldCollision";
 import type { DebrisHistory } from "../stream/debrisHistory";
 import { DebrisSimulation } from "../particles/DebrisSimulation";
 import { GroundEffectSimulation } from "../particles/GroundEffectSimulation";
+import { getGroundEffectShape } from "../particles/groundEffectAssets";
 import { GroundEffectPlayback } from "../particles/groundEffectPlayback";
 import {
   createParticleGeometry,
@@ -126,6 +127,7 @@ function createDebrisEffects(
           renderer.capabilities.getMaxAnisotropy(),
           () => settingsStore.getState().animationEnabled,
           () => engine.invalidate(),
+          engine.assetLoadingManager,
         );
         const simulation = new DebrisSimulation(
           (id) => playback.getDataBlockData(id),
@@ -211,8 +213,11 @@ function createGroundEffects(
   playback: StreamingPlayback,
 ): StreamEffect {
   const group = new Group();
-  const simulation = new GroundEffectSimulation(playback);
-  const decals = new WorldDecalRenderer(group, playback);
+  const assets = engine.sceneAssets;
+  const simulation = new GroundEffectSimulation(playback, (name) =>
+    getGroundEffectShape(name, assets),
+  );
+  const decals = new WorldDecalRenderer(group, playback, undefined, assets);
   const visuals = new Map<EmitterInstance, GroundVisual>();
   let lastTime = -Infinity;
   const clearVisuals = () => {
@@ -255,7 +260,10 @@ function createGroundEffects(
       let visual = visuals.get(emitter);
       if (!visual) {
         if (!emitter.particles.length) continue;
-        const texture = getParticleTexture(emitter.data.particles.textureName);
+        const texture = getParticleTexture(
+          emitter.data.particles.textureName,
+          assets,
+        );
         const geometry = createParticleGeometry(emitter.maxParticles, true);
         const material = createParticleMaterial(
           texture,
@@ -308,25 +316,52 @@ function createGroundEffects(
  * particles — for as long as its recording plays.
  */
 export function installStreamEffects(engine: GameEngine): () => void {
-  return engine.withHost(({ scene }) =>
-    reaction(
+  return engine.withHost(({ scene }) => {
+    let stopEffects: (() => void) | undefined;
+    let active = true;
+    const disposeEffects = () => {
+      stopEffects?.();
+      stopEffects = undefined;
+    };
+    const startEffects = (playback: StreamingPlayback | undefined) => {
+      if (!playback || stopEffects) return;
+      const effects = [
+        createGroundEffects(engine, playback),
+        createDebrisEffects(engine, playback),
+        createParticleEffects(engine, playback, engine.streamSnapshot),
+      ];
+      for (const effect of effects) scene.add(effect.group);
+      stopEffects = () => {
+        for (const effect of effects) {
+          scene.remove(effect.group);
+          effect.dispose();
+        }
+      };
+    };
+    const stopScope = engine.onSceneAssetsRelease(() => {
+      disposeEffects();
+      // Restart after the outgoing scene has detached and the store has
+      // finished notifying recording and entity observers.
+      queueMicrotask(() => {
+        if (active)
+          startEffects(
+            engineStore.getState().playback.recording?.streamingPlayback,
+          );
+      });
+    });
+    const stopRecording = reaction(
       engineStore,
       (state) => state.playback.recording?.streamingPlayback,
       (playback) => {
-        if (!playback) return;
-        const effects = [
-          createGroundEffects(engine, playback),
-          createDebrisEffects(engine, playback),
-          createParticleEffects(engine, playback, engine.streamSnapshot),
-        ];
-        for (const effect of effects) scene.add(effect.group);
-        return () => {
-          for (const effect of effects) {
-            scene.remove(effect.group);
-            effect.dispose();
-          }
-        };
+        disposeEffects();
+        startEffects(playback);
       },
-    ),
-  );
+    );
+    return () => {
+      active = false;
+      stopScope();
+      stopRecording();
+      disposeEffects();
+    };
+  });
 }

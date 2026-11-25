@@ -172,6 +172,28 @@ it("produces the same exact-start bytes as Save clip and repairs only unusable a
     expect(await backfillClipCheckpoint(options)).toBe("published");
     expect(objects.get(checkpointKey)!.body.toString()).toBe(live.text);
     expect(writes).toBe(2);
+
+    const wrongDigest = "0".repeat(64);
+    objects.get(checkpointKey)!.metadata!["demo-sha256"] = wrongDigest;
+    await expect(
+      backfillClipCheckpoint({ ...options, force: true }),
+    ).rejects.toThrow("The clip source recording changed");
+    expect(writes).toBe(2);
+
+    objects.get(timelineKey)!.metadata = { "demo-etag": sourceETag };
+    expect(await backfillClipCheckpoint({ ...options, force: true })).toBe(
+      "published",
+    );
+    const repaired = objects.get(checkpointKey)!;
+    expect(repaired.metadata?.["demo-sha256"]).toBe(live.sourceSha256);
+
+    delete repaired.metadata;
+    const mismatched = JSON.parse(live.text);
+    mismatched.demoSha256 = wrongDigest;
+    repaired.body = Buffer.from(JSON.stringify(mismatched));
+    expect(await backfillClipCheckpoint(options)).toBe("published");
+    expect(objects.get(checkpointKey)!.body.toString()).toBe(live.text);
+    expect(writes).toBe(4);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

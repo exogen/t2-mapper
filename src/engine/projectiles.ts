@@ -28,12 +28,14 @@ export function installProjectiles(engine: GameEngine): () => void {
     source: unknown;
     mission: string | null;
   } | null = null;
+  const disposeRuntime = () => {
+    current?.pool.dispose();
+    current?.assets.dispose();
+    current = null;
+  };
   return combineCleanups(
-    () => {
-      current?.pool.dispose();
-      current?.assets.dispose();
-      current = null;
-    },
+    engine.onSceneAssetsRelease(disposeRuntime),
+    disposeRuntime,
     engine.scheduler.add(
       FramePriority.ProjectilePose,
       ({ camera, renderer, delta }) => {
@@ -60,6 +62,7 @@ export function installProjectiles(engine: GameEngine): () => void {
               const view = id ? engine.entities.get(id) : undefined;
               return view?.root.parent ? view : undefined;
             },
+            engine.assetLoadingManager,
           );
           const pool = new ProjectilePool(
             root,

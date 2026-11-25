@@ -83,9 +83,9 @@ export function audioToUrl(fileName: string) {
   return url.replace(/\.wav$/i, ".m4a");
 }
 
-export async function loadDetailMapList(name: string) {
+export async function loadDetailMapList(name: string, signal?: AbortSignal) {
   const url = getUrlForPath(`textures/${name}`);
-  const res = await fetch(url);
+  const res = await fetch(url, { signal });
   const text = await res.text();
   return text
     .split(/(?:\r\n|\r|\n)/)
@@ -98,22 +98,25 @@ export async function loadDetailMapList(name: string) {
     .filter(Boolean);
 }
 
-export async function loadMission(name: string) {
+export async function loadMission(name: string, signal?: AbortSignal) {
   const missionInfo = getMissionInfo(name);
-  const res = await fetch(getUrlForPath(missionInfo.resourcePath));
-  return parseMissionScript(await res.text());
+  const res = await fetch(getUrlForPath(missionInfo.resourcePath), { signal });
+  const script = await res.text();
+  signal?.throwIfAborted();
+  return parseMissionScript(script);
 }
 
-export async function loadTerrain(fileName: string) {
+export async function loadTerrain(fileName: string, signal?: AbortSignal) {
   const url = getUrlForPath(`terrains/${fileName}`);
   log.debug("Fetching terrain: %s", url);
-  const res = await fetch(url);
+  const res = await fetch(url, { signal });
   if (!res.ok) {
     throw new Error(
       `[loadTerrain] Failed to fetch ${url}: ${res.status} ${res.statusText}`,
     );
   }
   const terrainBuffer = await res.arrayBuffer();
+  signal?.throwIfAborted();
   log.debug("Loaded terrain %s: %d bytes", fileName, terrainBuffer.byteLength);
   return parseTerrainBuffer(terrainBuffer);
 }

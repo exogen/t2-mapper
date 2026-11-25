@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { DefaultLoadingManager, LoadingManager } from "three";
+import { SceneAssets, sharedSceneAssets } from "./assets/sceneAssets";
 
 const mocks = vi.hoisted(() => ({
   loadShape: vi.fn(async (_name: string) => {}),
@@ -50,9 +52,43 @@ it("requests explicit model-and-dependency readiness for prefetch jobs", async (
     { kind: "texture", name: "test" },
   ]);
   await vi.advanceTimersByTimeAsync(1000);
-  expect(mocks.loadInterior).toHaveBeenCalledWith("/interiors/native-test.dif");
-  expect(mocks.loadShape).toHaveBeenCalledWith("native-test.dts");
-  expect(mocks.loadHtmlTexture).toHaveBeenCalledWith("/textures/test.png");
+  expect(mocks.loadInterior).toHaveBeenCalledWith(
+    "/interiors/native-test.dif",
+    sharedSceneAssets,
+  );
+  expect(mocks.loadShape).toHaveBeenCalledWith(
+    "native-test.dts",
+    DefaultLoadingManager,
+  );
+  expect(mocks.loadHtmlTexture).toHaveBeenCalledWith(
+    "/textures/test.png",
+    sharedSceneAssets,
+  );
+});
+
+it("prefetches a shared filename again for a new scene in the same stream", async () => {
+  vi.useFakeTimers();
+  const first = { assets: new SceneAssets(), manager: new LoadingManager() };
+  const second = { assets: new SceneAssets(), manager: new LoadingManager() };
+  let owner = first;
+  startAssetPrefetch(
+    () => [{ kind: "shape", name: "shared.dts" }],
+    () => owner,
+  );
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(mocks.loadShape).toHaveBeenCalledExactlyOnceWith(
+    "shared.dts",
+    first.manager,
+  );
+  first.assets.dispose();
+  owner = second;
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(mocks.loadShape).toHaveBeenCalledTimes(2);
+  expect(mocks.loadShape).toHaveBeenLastCalledWith(
+    "shared.dts",
+    second.manager,
+  );
+  second.assets.dispose();
 });
 
 it.each([
@@ -111,7 +147,10 @@ it("counts old in-flight work against the limit after retargeting a stream", asy
     expect(mocks.loadShape).toHaveBeenCalledTimes(4);
     releases[0]();
     await vi.advanceTimersByTimeAsync(100);
-    expect(mocks.loadShape).toHaveBeenLastCalledWith("new");
+    expect(mocks.loadShape).toHaveBeenLastCalledWith(
+      "new",
+      DefaultLoadingManager,
+    );
     expect(mocks.loadShape).toHaveBeenCalledTimes(5);
   } finally {
     stopAssetPrefetch();
@@ -139,7 +178,10 @@ it("preserves the replacement provider and its timer when the old provider retar
   await vi.advanceTimersByTimeAsync(1000);
   expect(mocks.loadShape).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(1000);
-  expect(mocks.loadShape).toHaveBeenCalledExactlyOnceWith("current.dts");
+  expect(mocks.loadShape).toHaveBeenCalledExactlyOnceWith(
+    "current.dts",
+    DefaultLoadingManager,
+  );
 });
 
 it("stops the old launch loop if a synchronous cache/loader callback retargets the provider", async () => {

@@ -18,7 +18,7 @@ import { FramePriority } from "./framePriority";
 import { commandCircuitStore } from "../state/commandCircuitStore";
 
 const loads = vi.hoisted(() => ({ terrain: vi.fn(), textures: vi.fn() }));
-vi.mock("./terrainCache", () => ({ acquireTerrain: loads.terrain }));
+vi.mock("./terrainCache", () => ({ loadTerrainAsset: loads.terrain }));
 vi.mock("./textures", () => ({ loadTextures: loads.textures }));
 vi.mock("../terrainLightmap", async () => {
   const { DataTexture } = await import("three");
@@ -47,11 +47,7 @@ it("refreshes frozen shadows when terrain changes from wireframe to solid and ba
     minHeight: 0,
     maxHeight: 0,
   };
-  const releaseTerrain = vi.fn();
-  loads.terrain.mockReturnValue({
-    promise: Promise.resolve(terrain),
-    release: releaseTerrain,
-  });
+  loads.terrain.mockResolvedValue(terrain);
   let finishTextures!: (textures: Texture[]) => void;
   loads.textures.mockReturnValue(
     new Promise<Texture[]>((resolve) => {
@@ -160,5 +156,4 @@ it("refreshes frozen shadows when terrain changes from wireframe to solid and ba
     releaseShadow();
     for (const texture of sourceTextures) texture.dispose();
   }
-  expect(releaseTerrain).toHaveBeenCalledOnce();
 });

@@ -1,10 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { gzipSync } from "node:zlib";
 import { encodeCheckpoint, bytesToBase64 } from "./checkpointCodec";
 import {
   DEFAULT_CHECKPOINT_INTERVAL_TICKS,
   DEMO_CHECKPOINT_VERSION,
-  demoSha256,
   demoCheckpointTargets,
   readDemoCheckpoints,
   readDemoCheckpointIndex,
@@ -158,12 +157,12 @@ function checkpointData(
   );
 }
 
-async function sidecar(buffer: ArrayBuffer): Promise<DemoCheckpointSidecar> {
+function sidecar(demoBytes: number): DemoCheckpointSidecar {
   return {
     format: "t2-mapper-seek-checkpoints",
     version: DEMO_CHECKPOINT_VERSION,
-    demoBytes: buffer.byteLength,
-    demoSha256: await demoSha256(buffer),
+    demoBytes,
+    demoSha256: "a".repeat(64),
     requestedCount: 1,
     checkpoints: [
       {
@@ -177,33 +176,33 @@ async function sidecar(buffer: ArrayBuffer): Promise<DemoCheckpointSidecar> {
 }
 
 describe("checkpoint sidecar loading", () => {
-  it("validates a lazy sidecar's identity and every index entry before decoding graphs", async () => {
-    const buffer = new Uint8Array([1, 2, 3]).buffer;
-    const original = await sidecar(buffer);
+  it("validates the recording size and every index entry before decoding graphs", async () => {
+    const source = { demoBytes: 3 };
+    const original = sidecar(source.demoBytes);
     original.checkpoints[0].data = "corrupt";
     const index = await readDemoCheckpointIndex(
       JSON.stringify(original),
-      buffer,
+      source,
     );
     expect(index.ticks).toEqual([1000]);
     expect(index.encodedCharacters).toBe("corrupt".length);
     await expect(index.load(1000)).rejects.toThrow();
     await expect(
-      readDemoCheckpointIndex(JSON.stringify(original), new ArrayBuffer(3)),
+      readDemoCheckpointIndex(JSON.stringify(original), { demoBytes: 2 }),
     ).rejects.toThrow("do not match");
     original.checkpoints.push({ ...original.checkpoints[0], tick: -1 });
     await expect(
-      readDemoCheckpointIndex(JSON.stringify(original), buffer),
+      readDemoCheckpointIndex(JSON.stringify(original), source),
     ).rejects.toThrow("Invalid seek checkpoint");
   });
 
   it("lazily validates the captured tick, rejects duplicate index ticks, and honors cancellation", async () => {
-    const buffer = new ArrayBuffer(3);
-    const original = await sidecar(buffer);
+    const source = { demoBytes: 3 };
+    const original = sidecar(source.demoBytes);
     original.checkpoints[0].data = checkpointData(1001);
     const index = await readDemoCheckpointIndex(
       JSON.stringify(original),
-      buffer,
+      source,
     );
     await expect(index.load(1000)).rejects.toThrow(
       "Invalid seek checkpoint state",
@@ -216,18 +215,21 @@ describe("checkpoint sidecar loading", () => {
     expect(index.encodedCharacters).toBe(0);
     original.checkpoints.push(original.checkpoints[0]);
     await expect(
-      readDemoCheckpointIndex(JSON.stringify(original), buffer),
+      readDemoCheckpointIndex(JSON.stringify(original), source),
     ).rejects.toThrow("Duplicate seek checkpoint");
   });
-  it("decodes compressed checkpoints only for their original recording", async () => {
-    const buffer = new Uint8Array([1, 2, 3]).buffer;
-    const text = JSON.stringify(await sidecar(buffer));
-    expect((await readDemoCheckpoints(text, buffer))[0].cursor.moveTicks).toBe(
-      1000,
-    );
-    await expect(
-      readDemoCheckpoints(text, new Uint8Array([3, 2, 1]).buffer),
-    ).rejects.toThrow("do not match");
+  it("decodes a legacy sidecar without hashing the recording", async () => {
+    const source = { demoBytes: 3 };
+    const text = JSON.stringify(sidecar(source.demoBytes));
+    const digest = vi.spyOn(crypto.subtle, "digest");
+    try {
+      expect(
+        (await readDemoCheckpoints(text, source))[0].cursor.moveTicks,
+      ).toBe(1000);
+      expect(digest).not.toHaveBeenCalled();
+    } finally {
+      digest.mockRestore();
+    }
   });
   it.each([
     11,
@@ -244,48 +246,48 @@ describe("checkpoint sidecar loading", () => {
     DEMO_CHECKPOINT_VERSION - 0.5,
     String(DEMO_CHECKPOINT_VERSION),
   ])("rejects unsupported checkpoint version %s", async (version) => {
-    const buffer = new ArrayBuffer(3);
-    const original = await sidecar(buffer);
+    const source = { demoBytes: 3 };
+    const original = sidecar(source.demoBytes);
     await expect(
-      readDemoCheckpoints(JSON.stringify({ ...original, version }), buffer),
+      readDemoCheckpoints(JSON.stringify({ ...original, version }), source),
     ).rejects.toThrow("version");
   });
   it("preserves flag timing in current checkpoints", async () => {
-    const buffer = new ArrayBuffer(3);
-    const original = await sidecar(buffer);
+    const source = { demoBytes: 3 };
+    const original = sidecar(source.demoBytes);
     original.checkpoints[0].data = checkpointData(1000, { 1: 30 });
     const [checkpoint] = await readDemoCheckpoints(
       JSON.stringify(original),
-      buffer,
+      source,
     );
     expect(checkpoint.simulation.state.conn.flagDroppedAtSec).toEqual({
       1: 30,
     });
   });
   it("rejects changed timestamps and corrupt payloads", async () => {
-    const buffer = new ArrayBuffer(3);
-    const original = await sidecar(buffer);
+    const source = { demoBytes: 3 };
+    const original = sidecar(source.demoBytes);
     original.checkpoints[0].tick = 1001;
     await expect(
-      readDemoCheckpoints(JSON.stringify(original), buffer),
+      readDemoCheckpoints(JSON.stringify(original), source),
     ).rejects.toThrow("state");
     original.checkpoints[0].tick = 1000;
     original.checkpoints[0].data = "corrupt";
     await expect(
-      readDemoCheckpoints(JSON.stringify(original), buffer),
+      readDemoCheckpoints(JSON.stringify(original), source),
     ).rejects.toThrow();
   });
   it("accepts no checkpoints without inventing a match start", async () => {
-    const buffer = new ArrayBuffer(0);
-    const original = await sidecar(buffer);
+    const source = { demoBytes: 0 };
+    const original = sidecar(source.demoBytes);
     original.checkpoints = [];
-    expect(await readDemoCheckpoints(JSON.stringify(original), buffer)).toEqual(
+    expect(await readDemoCheckpoints(JSON.stringify(original), source)).toEqual(
       [],
     );
   });
   it("loads checkpoints at any spacing, whatever plan wrote them", async () => {
-    const buffer = new ArrayBuffer(3);
-    const original = await sidecar(buffer);
+    const source = { demoBytes: 3 };
+    const original = sidecar(source.demoBytes);
     for (const tick of [5000, 46_000])
       original.checkpoints.push({
         ...original.checkpoints[0],
@@ -295,35 +297,35 @@ describe("checkpoint sidecar loading", () => {
       });
     original.intervalTicks = 7;
     expect(
-      (await readDemoCheckpoints(JSON.stringify(original), buffer)).map(
+      (await readDemoCheckpoints(JSON.stringify(original), source)).map(
         (checkpoint) => checkpoint.cursor.moveTicks,
       ),
     ).toEqual([1000, 5000, 46_000]);
     await expect(
-      validateDemoCheckpoints(JSON.stringify(original), buffer),
+      validateDemoCheckpoints(JSON.stringify(original), source),
     ).resolves.toBeUndefined();
     original.checkpoints[2].data = "corrupt";
     await expect(
-      validateDemoCheckpoints(JSON.stringify(original), buffer),
+      validateDemoCheckpoints(JSON.stringify(original), source),
     ).rejects.toThrow();
   });
   it.each([{ tick: -1 }, { tick: 1000.5 }, { tick: "1000" }, { data: 1000 }])(
     "rejects malformed entry %o",
     async (change) => {
-      const buffer = new ArrayBuffer(3);
-      const original = await sidecar(buffer);
+      const source = { demoBytes: 3 };
+      const original = sidecar(source.demoBytes);
       Object.assign(original.checkpoints[0], change);
       await expect(
-        readDemoCheckpoints(JSON.stringify(original), buffer),
+        readDemoCheckpoints(JSON.stringify(original), source),
       ).rejects.toThrow("Invalid seek checkpoint");
     },
   );
   it("rejects payloads whose captured tick disagrees with their target", async () => {
-    const buffer = new ArrayBuffer(3);
-    const original = await sidecar(buffer);
+    const source = { demoBytes: 3 };
+    const original = sidecar(source.demoBytes);
     original.checkpoints[0].data = checkpointData(1001);
     await expect(
-      readDemoCheckpoints(JSON.stringify(original), buffer),
+      readDemoCheckpoints(JSON.stringify(original), source),
     ).rejects.toThrow("state");
   });
 });

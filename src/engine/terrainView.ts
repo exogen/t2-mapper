@@ -51,7 +51,7 @@ import { freezeStaticMatrices, unfreezeStaticMatrices } from "./staticMatrices";
 import { createDebugBounds, showWhileDebugTourTarget } from "./debugVisuals";
 import { FramePriority } from "./framePriority";
 import { combineCleanups, reaction, type Cleanup } from "./storeReaction";
-import { acquireTerrain } from "./terrainCache";
+import { loadTerrainAsset } from "./terrainCache";
 import {
   createTerrainGeometry,
   createVisibilityMask,
@@ -126,6 +126,7 @@ export function createTerrainView(
   engine: GameEngine,
 ): EntityView {
   const root = new Group();
+  const assets = engine.sceneAssets;
   root.name = entity.id;
   const scene = entity.terrainData;
   const terrainFile = scene.terrFileName;
@@ -349,6 +350,7 @@ export function createTerrainView(
           detailTextureName,
           renderer,
           signal,
+          assets,
         ),
       (textures) => {
         const debugMode = selectDebugMode(settingsStore.getState());
@@ -433,8 +435,7 @@ export function createTerrainView(
     );
   }
 
-  const terrainHandle = acquireTerrain(terrainFile);
-  void terrainHandle.promise.then(
+  void loadTerrainAsset(terrainFile, assets).then(
     (loaded) => {
       if (disposed) return;
       log.debug("Terrain ready: %s", terrainFile);
@@ -558,7 +559,6 @@ export function createTerrainView(
       stopBake = undefined;
       bake = null;
       terrain = null;
-      terrainHandle.release();
       primaryVisibilityMask.dispose();
       pooledVisibilityMask.dispose();
     },

@@ -1,9 +1,15 @@
-import { Vector2, Vector3, type Camera, type PerspectiveCamera } from "three";
+import {
+  Vector2,
+  Vector3,
+  type Camera,
+  type PerspectiveCamera,
+  type Texture,
+} from "three";
 import {
   dynamicLightScreenFade,
   EFFECT_LIGHT_COUNT,
   effectLightUniforms,
-  ensureEffectLightFalloff,
+  loadEffectLightFalloff,
 } from "../effectLightUniforms";
 import {
   shapeInteriorWorldDir,
@@ -13,6 +19,7 @@ import {
 import { effectLights, type EffectLight } from "./effectLights";
 import { isShownInHierarchy } from "../objectUtils";
 import type { GameEngine } from "./gameEngine";
+import { combineCleanups } from "./storeReaction";
 
 const _viewPosition = new Vector3();
 const _viewDir = new Vector3();
@@ -58,9 +65,17 @@ function screenSizeFade(
  * the nearest EFFECT_LIGHT_COUNT visible lights win.
  */
 export function installLightPool(engine: GameEngine): () => void {
-  ensureEffectLightFalloff();
+  let falloff: Texture | undefined;
   const active: EffectLight[] = [];
-  return engine.onBeforeRender((renderer, _scene, camera) => {
+  const clear = () => {
+    if (effectLightUniforms.effectLightFalloff.value === falloff)
+      effectLightUniforms.effectLightFalloff.value = null;
+    falloff = undefined;
+    active.length = 0;
+  };
+  const stopRender = engine.onBeforeRender((renderer, _scene, camera) => {
+    falloff ??= loadEffectLightFalloff(engine.sceneAssets);
+    effectLightUniforms.effectLightFalloff.value = falloff;
     active.length = 0;
     for (const light of effectLights()) {
       // A shape the engine does not draw registers no light: Projectile
@@ -117,4 +132,5 @@ export function installLightPool(engine: GameEngine): () => void {
         .transformDirection(camera.matrixWorldInverse),
     );
   });
+  return combineCleanups(clear, engine.onSceneAssetsRelease(clear), stopRender);
 }

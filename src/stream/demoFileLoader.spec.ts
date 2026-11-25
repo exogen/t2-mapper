@@ -768,7 +768,7 @@ describe("demo loads during navigation", () => {
     );
     expect(mocks.readCheckpoints).toHaveBeenCalledWith(
       "checkpoint sidecar",
-      buffer,
+      { demoBytes: buffer.byteLength },
       expect.any(AbortSignal),
     );
     expect(importCheckpoints).toHaveBeenCalledWith([]);
@@ -798,7 +798,7 @@ describe("demo loads during navigation", () => {
     );
     expect(mocks.indexCheckpoints).toHaveBeenCalledWith(
       "encoded checkpoints",
-      buffer,
+      { demoBytes: buffer.byteLength },
       expect.any(AbortSignal),
     );
     expect(mocks.readCheckpoints).not.toHaveBeenCalled();
@@ -1125,7 +1125,7 @@ describe("demo loads during navigation", () => {
     } as unknown as StreamRecording;
     mocks.parse.mockResolvedValueOnce(demo);
     mocks.readCheckpoints.mockRejectedValueOnce(
-      new Error("Wrong recording hash"),
+      new Error("Wrong recording size"),
     );
     await loadDemoFile(
       { arrayBuffer: async () => buffer } as File,
@@ -1515,7 +1515,7 @@ describe("demo loads during navigation", () => {
     );
     expect(mocks.readCheckpoints).toHaveBeenCalledWith(
       "saved checkpoints",
-      buffer,
+      { demoBytes: buffer.byteLength },
       expect.any(AbortSignal),
     );
     expect(fetch).toHaveBeenCalledWith(`${cachedUrl}.checkpoints.json`, {

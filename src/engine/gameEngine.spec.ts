@@ -2,6 +2,7 @@ import { expect, it, vi } from "vitest";
 import { Scene, type WebGLRenderer } from "three";
 import { GameEngine, type EngineHost } from "./gameEngine";
 import { loadTextures } from "./textures";
+import { getSceneAssets } from "../assets/sceneAssets";
 
 vi.mock("./ambientParticles", () => ({ AmbientParticles: class {} }));
 vi.mock("./lightningEffects", () => ({ LightningEffects: class {} }));
@@ -32,6 +33,44 @@ function host(): EngineHost {
 }
 
 const flush = () => new Promise<void>((resolve) => queueMicrotask(resolve));
+
+it("rejects a retired view's host wait before another view gets a host", async () => {
+  const engine = new GameEngine();
+  const retired = new AbortController();
+  const current = new AbortController();
+  const oldHost = engine.whenHost(retired.signal);
+  const nextHost = engine.whenHost(current.signal);
+  retired.abort();
+  await expect(oldHost).rejects.toBe(retired.signal.reason);
+  const next = host();
+  const disconnect = engine.connect(next);
+  await expect(nextHost).resolves.toBe(next);
+  disconnect();
+});
+
+it("detaches render pool resources before retiring a scene's loading manager", () => {
+  const engine = new GameEngine();
+  const first = engine.sceneAssets;
+  const loading = engine.assetLoadingManager;
+  const release = vi.fn(() => expect(first.disposed).toBe(false));
+  const dispose = vi.fn(() => expect(release).toHaveBeenCalledOnce());
+  const stop = engine.onSceneAssetsRelease(release);
+  first.cache<string, string>({}, dispose).set("terrain", "old terrain");
+  expect(getSceneAssets(loading)).toBe(first);
+
+  engine.releaseSceneAssets();
+  expect(release).toHaveBeenCalledOnce();
+  expect(dispose).toHaveBeenCalledExactlyOnceWith("old terrain");
+  expect(getSceneAssets(loading)).toBe(first);
+  expect(first.disposed).toBe(true);
+  expect(engine.sceneAssets).not.toBe(first);
+  expect(engine.assetLoadingManager).not.toBe(loading);
+  expect(getSceneAssets(engine.assetLoadingManager)).toBe(engine.sceneAssets);
+
+  stop();
+  engine.releaseSceneAssets();
+  expect(release).toHaveBeenCalledOnce();
+});
 
 it("retires an attached host before replacing it, including pending preparations", async () => {
   const engine = new GameEngine();

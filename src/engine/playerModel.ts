@@ -157,6 +157,7 @@ export function createPlayerModel(
     engineStore.getState().playback.recording?.streamingPlayback;
 
   const presentation = createPlayerPresentation({
+    assets: engine.sceneAssets,
     model: gltf,
     anisotropy: options.anisotropy,
     emap: options.emap,
@@ -478,6 +479,7 @@ export function createPlayerModel(
     clonedScene,
     readEntity,
     options.mountedImages,
+    engine.sceneAssets,
   );
   // ShapeBase sound slots (weapon switch sounds, etc.).
   const soundSlots = createEntitySoundSlots(readEntity, clonedScene);

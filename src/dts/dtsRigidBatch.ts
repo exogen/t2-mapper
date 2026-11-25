@@ -18,9 +18,19 @@ import {
   type DTSMeshBinding,
 } from "./dtsModel";
 import { getDTSObject } from "./dtsScene";
-import { DTSMaterialFlags, type DTSShapeData } from "./dtsTypes";
+import { DTSMaterialFlags } from "./dtsTypes";
 
-const geometries = new WeakMap<DTSShapeData, Map<string, BufferGeometry>>();
+// Clones share visual branches, but collision-only users can retain raw data.
+const geometries = new WeakMap<
+  DTSShape["branches"],
+  Map<string, BufferGeometry>
+>();
+const sourceRoots = new WeakMap<DTSShape, Object3D[]>();
+
+/** Templates can realize more details than the source scene itself. */
+export function getDTSRigidBatchSources(scene: DTSShape): readonly Object3D[] {
+  return sourceRoots.get(scene) ?? [];
+}
 
 interface EligibleMesh extends DTSMesh {
   binding: DTSMeshBinding;
@@ -40,12 +50,15 @@ export function batchDTSRigidMeshes(scene: DTSShape): DTSMeshBatch[] {
   // Freeze the unmodified asset pose/materials before consumers animate clones
   // or replace their skins. Lazy batches must never bake an instance's pose.
   const template = scene.clone();
+  const roots: Object3D[] = [template];
+  sourceRoots.set(scene, roots);
   const details = new Map<number, readonly DTSMeshBatch[]>();
   scene.meshBatchFactory = (detail) => {
     let batches = details.get(detail);
     if (!batches) {
       template.ensureDetail(detail);
       batches = buildDetailBatches(template, detail);
+      roots.push(...batches);
       details.set(detail, batches);
     }
     return batches;
@@ -91,8 +104,8 @@ function buildDetailBatches(scene: DTSShape, detail: number): DTSMeshBatch[] {
     for (const child of node.children) visit(child);
   };
   visit(scene);
-  let cache = geometries.get(scene.data);
-  if (!cache) geometries.set(scene.data, (cache = new Map()));
+  let cache = geometries.get(scene.branches);
+  if (!cache) geometries.set(scene.branches, (cache = new Map()));
   scene.updateMatrixWorld(true);
   const inverseRoot = scene.matrixWorld.clone().invert();
   const batches: DTSMeshBatch[] = [];

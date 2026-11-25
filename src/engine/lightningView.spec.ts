@@ -8,6 +8,7 @@ import {
   Texture,
   Vector3,
 } from "three";
+import { SceneAssets } from "../assets/sceneAssets";
 import type { LightningEntity, ShapeEntity } from "../state/gameEntityTypes";
 import type {
   LightningConfig,
@@ -217,11 +218,14 @@ function harness(entity = storm()) {
     scheduler = new FrameScheduler();
   const camera = new PerspectiveCamera();
   const views = new Map<string, { root: Group }>();
+  const sceneAssets = new SceneAssets();
   const engine = {
     scheduler,
     invalidate: vi.fn(),
+    sceneAssets,
     entities: { get: (id: string) => views.get(id) },
     cameras: { perspective: camera },
+    onSceneAssetsRelease: () => () => {},
     withHost(start: (host: EngineHost) => () => void) {
       return start({ scene } as EngineHost);
     },
@@ -233,6 +237,7 @@ function harness(entity = storm()) {
   cleanups.push(() => {
     view.dispose();
     uninstall();
+    sceneAssets.dispose();
   });
   return {
     effects,

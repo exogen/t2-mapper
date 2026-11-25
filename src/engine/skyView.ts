@@ -32,6 +32,7 @@ import {
   settingsStore,
 } from "../state/settingsStore";
 import { loadBitmapTexture } from "../assets/bitmapTextures";
+import type { SceneAssets } from "../assets/sceneAssets";
 import { setupTexture } from "../textureUtils";
 import { startCloudLayers } from "./cloudLayers";
 import { loadSharedDetailMapList } from "./detailMapList";
@@ -104,19 +105,37 @@ function selectSceneFog(mode: SkyMode): boolean {
 }
 
 const cubeTextureLoader = new CubeTextureLoader();
-const cubeTextures = new Map<string, Promise<CubeTexture>>();
+const cubeCacheKey = {};
 
 /**
  * Load a sky box's cube map once per face list and share it.
  * CubeTextureLoader marks it sRGB, so the shader samples linear values.
  */
-function loadSharedCubeTexture(files: readonly string[]): Promise<CubeTexture> {
+function loadSharedCubeTexture(
+  files: readonly string[],
+  assets: SceneAssets,
+): Promise<CubeTexture> {
+  const cubeTextures = assets.cache<string, Promise<CubeTexture>>(
+    cubeCacheKey,
+    (loading) => {
+      void loading.then(
+        (texture) => {
+          texture.dispose();
+          texture.images.length = 0;
+        },
+        () => {},
+      );
+    },
+  );
   const key = files.join("\n");
   let promise = cubeTextures.get(key);
   if (!promise) {
     promise = cubeTextureLoader.loadAsync(files);
     // A failed sky box can be retried later.
-    promise.catch(() => cubeTextures.delete(key));
+    const created = promise;
+    void promise.catch(() => {
+      if (cubeTextures.get(key) === created) cubeTextures.delete(key);
+    });
     cubeTextures.set(key, promise);
   }
   return promise;
@@ -315,7 +334,10 @@ function updateDomeEachFrame(
  * Some maps have broken emap paths (e.g. Katabatic references desert/skies/
  * but file is at ice/skies/) — skip if the texture doesn't resolve.
  */
-function startShapeEnvMap(emapName: string | undefined): () => void {
+function startShapeEnvMap(
+  emapName: string | undefined,
+  assets: SceneAssets,
+): () => void {
   if (!emapName) return () => {};
   const url = textureToUrl(emapName);
   // textureToUrl returns the fallback URL for missing textures (e.g.
@@ -323,12 +345,17 @@ function startShapeEnvMap(emapName: string | undefined): () => void {
   if (url === FALLBACK_TEXTURE_URL) return () => {};
   // The reflection shader blends raw sRGB samples with the lit base color.
   let active = true;
-  loadBitmapTexture(url, (loaded) => {
-    // A previous map's pending load must not replace the current sky.
-    if (!active) return;
-    setupTexture(loaded, { noColorSpace: true });
-    setShapeEnvMap(loaded);
-  });
+  loadBitmapTexture(
+    url,
+    (loaded) => {
+      // A previous map's pending load must not replace the current sky.
+      if (!active) return;
+      setupTexture(loaded, { noColorSpace: true });
+      setShapeEnvMap(loaded);
+    },
+    undefined,
+    assets,
+  );
   return () => {
     active = false;
     resetShapeEnvMap();
@@ -349,11 +376,12 @@ function startSkyBox(
   let active = true;
   let dome: SkyDome | null = null;
   let stopEnvMap: (() => void) | null = null;
+  const assets = engine.sceneAssets;
 
-  void loadSharedDetailMapList(materialList).then(
+  void loadSharedDetailMapList(materialList, assets).then(
     (detailMapList) => {
       if (!active) return;
-      stopEnvMap = startShapeEnvMap(detailMapList[6]);
+      stopEnvMap = startShapeEnvMap(detailMapList[6], assets);
       const skyBoxFiles = [
         textureToUrl(detailMapList[1]!), // +x
         textureToUrl(detailMapList[3]!), // -x
@@ -362,7 +390,7 @@ function startSkyBox(
         textureToUrl(detailMapList[0]!), // +z
         textureToUrl(detailMapList[2]!), // -z
       ];
-      void loadSharedCubeTexture(skyBoxFiles).then(
+      void loadSharedCubeTexture(skyBoxFiles, assets).then(
         (skyBox) => {
           if (!active) return;
           dome = createSkyDome(

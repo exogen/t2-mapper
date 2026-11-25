@@ -17,6 +17,7 @@ import { updateTerrainTextureShader } from "../terrainMaterial";
 import { injectCustomFog } from "../fogShader";
 import { globalFogUniforms } from "../globalFogUniforms";
 import { loadTextures } from "./textures";
+import type { SceneAssets } from "../assets/sceneAssets";
 
 // Texture tiling factors for each terrain layer
 const TILING: Record<number, number> = {
@@ -50,6 +51,7 @@ export async function loadTerrainTextures(
   detailTextureName: string | undefined,
   renderer: WebGLRenderer,
   signal?: AbortSignal,
+  assets?: SceneAssets,
 ): Promise<TerrainTextures> {
   const anisotropy = renderer.capabilities.getMaxAnisotropy();
   const detailTextureUrl = detailTextureName
@@ -66,6 +68,7 @@ export async function loadTerrainTextures(
       setupTexture(tex, { anisotropy, noColorSpace: true });
     },
     signal,
+    assets,
   );
   const detailTexture = textures.pop()!;
   return {

@@ -32,6 +32,7 @@ import {
   type ShaderSource,
 } from "./shaderUtils";
 import { loadBitmapTexture } from "./assets/bitmapTextures";
+import type { SceneAssets } from "./assets/sceneAssets";
 
 /** Slots match the light pool size; unused slots carry radius 0. */
 export const EFFECT_LIGHT_COUNT = 8;
@@ -75,13 +76,14 @@ export function dynamicLightScreenFade(projectedRadiusPixels: number): number {
   );
 }
 
-let falloffRequested = false;
-
-/** Loads the falloff texture once; the uniform picks it up when ready. */
-export function ensureEffectLightFalloff(): void {
-  if (falloffRequested) return;
-  falloffRequested = true;
-  const texture = loadBitmapTexture(textureToUrl("special/lightFalloffMono"));
+/** The uniform samples this scene's falloff texture as soon as it is ready. */
+export function loadEffectLightFalloff(assets: SceneAssets): Texture {
+  const texture = loadBitmapTexture(
+    textureToUrl("special/lightFalloffMono"),
+    undefined,
+    undefined,
+    assets,
+  );
   // A plain intensity ramp: no colour-space decode, and the edge texel (≈0)
   // is what the engine's clamped texcoords land on beyond the disc.
   texture.colorSpace = NoColorSpace;
@@ -90,7 +92,7 @@ export function ensureEffectLightFalloff(): void {
   texture.minFilter = LinearFilter;
   texture.magFilter = LinearFilter;
   texture.generateMipmaps = false;
-  effectLightUniforms.effectLightFalloff.value = texture;
+  return texture;
 }
 
 /**

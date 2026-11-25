@@ -343,6 +343,8 @@ async function loadRemoteDemoAttempt(
     const checkpointSourceUrl =
       source.checkpointSourceUrl?.(response) ?? source.sidecarSourceUrl;
     if (checkpointSourceUrl) {
+      // The sidecar belongs to this recording by URL. Its byte count is
+      // checked against the finalized download before checkpoints are used.
       const checkpointUrl = new URL(
         checkpointSourceUrl,
         typeof location === "undefined" ? "http://localhost/" : location.href,
@@ -807,14 +809,15 @@ async function installCheckpoints(
     markDiagnosticEvent("checkpoint-import-start", {
       sidecarCharacters: text.length,
     });
+    const source = { demoBytes: buffer.byteLength };
     let entries: number;
     if (playback.installCheckpointIndex) {
-      const index = await readDemoCheckpointIndex(text, buffer, signal);
+      const index = await readDemoCheckpointIndex(text, source, signal);
       if (!attempt.isCurrent) return;
       playback.installCheckpointIndex(index);
       entries = index.ticks.length;
     } else {
-      const checkpoints = await readDemoCheckpoints(text, buffer, signal);
+      const checkpoints = await readDemoCheckpoints(text, source, signal);
       if (!attempt.isCurrent) return;
       playback.importCheckpoints!(checkpoints);
       entries = checkpoints.length;

@@ -14,6 +14,7 @@ import { DTSSequenceFlags } from "../dts/dtsTypes";
 import type { ShapeEntity } from "../state/gameEntityTypes";
 import { effectNow, worldDeltaSec } from "../state/engineStore";
 import { disposeClonedScene, processShapeScene } from "../stream/playbackUtils";
+import type { SceneAssets } from "../assets/sceneAssets";
 import {
   createShapeLightState,
   updateShapeLighting,
@@ -41,6 +42,7 @@ export function createShapeProjectileView(
   emap: boolean,
   animationEnabled: () => boolean,
   casing?: { model: DTSModel; shapeName: string },
+  assets?: SceneAssets,
 ): ProjectileView<ShapeEntity> {
   const root = new Group(),
     rotation = new Group();
@@ -49,6 +51,7 @@ export function createShapeProjectileView(
   const scene = SkeletonUtils.clone(model.scene) as DTSShape;
   rotation.add(scene);
   processShapeScene(scene, config.shapeName, {
+    assets,
     anisotropy,
     emap,
     skinName: config.skinName,
@@ -58,6 +61,7 @@ export function createShapeProjectileView(
     : undefined;
   if (casingScene && casing) {
     processShapeScene(casingScene, casing.shapeName, {
+      assets,
       anisotropy,
       emap,
       skinName: config.skinName,
@@ -212,10 +216,11 @@ export function createShapeProjectileView(
     update(entity, camera, delta) {
       const f = entity.fadeVal ?? 1,
         c = entity.cloakLevel ?? 0;
-      if (c > 0) advanceCloakUV(Math.floor(effectNow() * 0.06));
+      if (c > 0) advanceCloakUV(Math.floor(effectNow() * 0.06), assets);
       if (f !== fade || c !== cloak || f < 1 || c > 0) {
-        applyFadeAndCloak(scene, f, c);
-        if (casingScene) applyFadeAndCloak(casingScene, f, c);
+        applyFadeAndCloak(scene, f, c, undefined, assets);
+        if (casingScene)
+          applyFadeAndCloak(casingScene, f, c, undefined, assets);
         fade = f;
         cloak = c;
       }

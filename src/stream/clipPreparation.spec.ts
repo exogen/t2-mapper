@@ -71,8 +71,7 @@ vi.mock("./clipApi", async (original) => ({
   ...(await original<typeof import("./clipApi")>()),
   readClip: fixture.readClip,
 }));
-vi.mock("./clipCheckpointApi", async (original) => ({
-  ...(await original<typeof import("./clipCheckpointApi")>()),
+vi.mock("./clipCheckpointApi", () => ({
   readClipCheckpoint: fixture.checkpoint,
   recoverClipCheckpoint: fixture.recover,
 }));
@@ -86,8 +85,6 @@ vi.mock("../account/authClient", () => ({
 }));
 
 import { prepareClipPlayback } from "./clipPreparation";
-import { demoSha256 } from "./demoSourceIdentity";
-import { ClipSourceError } from "./clipCheckpointApi";
 
 const bytes = new Uint8Array([1, 2, 3, 4]).buffer;
 let clip: ClipView;
@@ -116,7 +113,7 @@ function install(buffer: ArrayBuffer = bytes) {
   notify();
   return recording;
 }
-beforeEach(async () => {
+beforeEach(() => {
   vi.clearAllMocks();
   fixture.reload.mockReset();
   fixture.readClip.mockReset();
@@ -134,7 +131,7 @@ beforeEach(async () => {
     id: "clip-one",
     sourceDemo: "test.rec",
     state: "ready",
-    sourceSha256: await demoSha256(bytes),
+    sourceBytes: bytes.byteLength,
     timeline: { sourceDemo: "test.rec" },
   } as ClipView;
   fixture.readClip.mockResolvedValue(clip);
@@ -158,17 +155,34 @@ it("uses a verified source without a reload and permits normal seeking without a
   expect(fixture.reload).not.toHaveBeenCalled();
   expect(fixture.checkpoint).toHaveBeenCalledWith(
     clip,
-    bytes,
     expect.any(AbortSignal),
   );
-  const recovery = fixture.start.mock.calls[0][4];
-  await recovery();
-  expect(fixture.recover).toHaveBeenCalledWith(
-    clip,
-    bytes,
-    null,
-    expect.any(AbortSignal),
-  );
+  expect(fixture.start.mock.calls[0][3]).toBeUndefined();
+});
+
+it("passes the saved source digest and checkpoint repair token to playback", async () => {
+  clip.sourceSha256 = "a".repeat(64);
+  fixture.checkpoint.mockResolvedValueOnce({
+    text: "checkpoint",
+    etag: '"saved"',
+  });
+  const signal = new AbortController().signal;
+  await prepareClipPlayback(clip, signal);
+  const checkpoint = fixture.start.mock.calls[0][3];
+  expect(checkpoint).toMatchObject({
+    text: "checkpoint",
+    sourceSha256: clip.sourceSha256,
+  });
+  await checkpoint.recover();
+  expect(fixture.recover).toHaveBeenCalledWith(clip, '"saved"', signal);
+});
+
+it("accepts a complete recording from an older relay that omits its size", async () => {
+  const legacyClip = { ...clip, sourceBytes: undefined };
+  expect(
+    await prepareClipPlayback(legacyClip, new AbortController().signal),
+  ).toBe(fixture.playback.recording);
+  expect(fixture.reload).not.toHaveBeenCalled();
 });
 
 it("waits for complete bytes and scene attachment in either order", async () => {
@@ -288,7 +302,7 @@ it("stops after one fresh download still fails verification", async () => {
   });
   await expect(
     prepareClipPlayback(clip, new AbortController().signal),
-  ).rejects.toBeInstanceOf(ClipSourceError);
+  ).rejects.toThrow("unexpected size");
   expect(fixture.reload).toHaveBeenCalledOnce();
   expect(fixture.checkpoint).not.toHaveBeenCalled();
   expect(fixture.start).not.toHaveBeenCalled();

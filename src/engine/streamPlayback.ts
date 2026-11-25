@@ -127,6 +127,11 @@ function getField(entity: GameEntity, field: string): string | undefined {
     string | undefined;
 }
 
+function terrainFileName(snapshot: StreamSnapshot): string | undefined {
+  for (const { sceneData } of snapshot.entities)
+    if (sceneData?.className === "TerrainBlock") return sceneData.terrFileName;
+}
+
 /**
  * The director's follow-target spring, bundled so its state resets in
  * one place. `target` arrives raw and leaves smoothed. A shot boundary
@@ -422,6 +427,15 @@ export class StreamPlaybackSession {
   private silencedSeek = -1;
   private lastPublishTime = 0;
   private lastSyncedSnapshot: StreamSnapshot | null = null;
+  private lastSyncedWorldGeneration: number | undefined;
+  private lastSyncedMissionName: string | null | undefined;
+  private lastSyncedMissionSequence: string | null | undefined;
+  private pendingSceneIdentity?: {
+    name?: string | null;
+    sequence?: string | null;
+    ghostReadyAt: number | null;
+    terrainFile?: string;
+  };
   private readonly currentRenderableIds = new Set<string>();
   private streamRevision: number | undefined;
   private projectileAssetWait?: Promise<void>;
@@ -471,16 +485,73 @@ export class StreamPlaybackSession {
     void wait.then(wake, wake);
   }
 
-  private syncRenderableEntities(snapshot: StreamSnapshot): void {
+  private syncRenderableEntities(
+    snapshot: StreamSnapshot,
+    isSeeking = false,
+  ): void {
     const last = this.lastSyncedSnapshot;
     const worldTime = snapshot.matchEndedAtSec ?? snapshot.timeSec;
+    const generation = this.stream?.worldGeneration;
+    const name = this.stream?.missionName;
+    const sequence = this.stream?.missionSequence;
+    const worldRebuilt = generation !== this.lastSyncedWorldGeneration;
+    let newScene = false;
+    if (last && worldRebuilt) {
+      if (!isSeeking && last.playbackRevision === snapshot.playbackRevision) {
+        newScene = true;
+        this.pendingSceneIdentity = undefined;
+      } else {
+        // Reconstruction can publish a loading scene before its terrain
+        // or identity arrives. Keep the old scope's identity until that
+        // comparison is possible, even when the generation stays the same.
+        this.pendingSceneIdentity ??= {
+          name: this.lastSyncedMissionName,
+          sequence: this.lastSyncedMissionSequence,
+          ghostReadyAt:
+            this.recording.source === "demo" ? last.ghostAlwaysDoneSec : null,
+          terrainFile: terrainFileName(last),
+        };
+      }
+    }
+    const scene = this.pendingSceneIdentity;
+    if (scene) {
+      const comparableName = name != null && scene.name != null;
+      const comparableSequence = sequence != null && scene.sequence != null;
+      let sameScene: boolean | undefined;
+      if (comparableName || comparableSequence)
+        sameScene =
+          (!comparableName || name === scene.name) &&
+          (!comparableSequence || sequence === scene.sequence);
+      else if (
+        scene.ghostReadyAt != null &&
+        snapshot.ghostAlwaysDoneSec != null
+      )
+        sameScene = scene.ghostReadyAt === snapshot.ghostAlwaysDoneSec;
+      else if (scene.terrainFile) {
+        const terrain = terrainFileName(snapshot);
+        if (
+          terrain &&
+          (terrain !== scene.terrainFile || scene.ghostReadyAt == null)
+        )
+          sameScene = terrain === scene.terrainFile;
+      }
+      if (sameScene !== undefined) {
+        newScene = !sameScene;
+        this.pendingSceneIdentity = undefined;
+      }
+    }
     if (
       last &&
+      !worldRebuilt &&
+      !newScene &&
       snapshot.entities === last.entities &&
       worldTime === (last.matchEndedAtSec ?? last.timeSec)
     )
       return;
     this.lastSyncedSnapshot = snapshot;
+    this.lastSyncedWorldGeneration = generation;
+    this.lastSyncedMissionName = name;
+    this.lastSyncedMissionSequence = sequence;
 
     // Operate directly on the store's Map — one canonical source of truth.
     const map = gameEntityStore.getState().streamEntities;
@@ -569,8 +640,8 @@ export class StreamPlaybackSession {
     }
     currentIds.clear();
 
-    if (structuralChange) {
-      gameEntityStore.getState().bumpStreamVersion();
+    if (structuralChange || newScene) {
+      gameEntityStore.getState().bumpStreamVersion(newScene);
     }
   }
 
@@ -606,7 +677,16 @@ export class StreamPlaybackSession {
     // Prefetch what this session is certain to render — scene geometry
     // (terrain, interiors) first, then category shapes — re-polled as
     // more state arrives. On-demand loads cover the rest at first sight.
-    startAssetPrefetch(() => stream.getPreloadAssets());
+    startAssetPrefetch(
+      () =>
+        engineStore.getState().playback.status === "seeking"
+          ? []
+          : stream.getPreloadAssets(),
+      () => ({
+        assets: this.engine.sceneAssets,
+        manager: this.engine.assetLoadingManager,
+      }),
+    );
 
     // Update gameEntityStore when mission info arrives via server messages
     // (MsgMissionDropInfo, MsgLoadInfo, MsgClientReady).
@@ -676,7 +756,9 @@ export class StreamPlaybackSession {
     // their first seconds, so a paused start would show black — begin at
     // the first frame that has something to render. Retail demos carry
     // the scene in their initial block, so this is ~0 (no skip).
-    stream.setProjectileShapeLoader?.((name) => loadProjectileShapeData(name));
+    stream.setProjectileShapeLoader?.((name) =>
+      loadProjectileShapeData(name, this.engine.assetLoadingManager),
+    );
     stream.setMissileLockInferenceEnabled?.(true);
     const snapshot =
       this.recording.source === "demo"
@@ -766,7 +848,6 @@ export class StreamPlaybackSession {
       this.renderFrame = null;
       this.followTransition.reset();
       this.corpseView = null;
-      this.lastSyncedSnapshot = null;
     }
     const pending = engineStore.getState().playback;
     if (
@@ -815,7 +896,7 @@ export class StreamPlaybackSession {
               Math.min(1, (clock.time - tickStartTime) / STREAM_TICK_SEC),
             );
 
-        this.syncRenderableEntities(renderCurrent);
+        this.syncRenderableEntities(renderCurrent, isSeeking);
         if (!isCurrentPlayback(this.recording, playback.seekNonce)) return;
         this.flagReturnFollow.update(
           renderCurrent,

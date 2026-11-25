@@ -91,12 +91,19 @@ export async function backfillClipCheckpoint({
   });
   if (cached && (!cached.Body || !cached.ETag))
     throw new Error("Incomplete clip checkpoint response");
+  // A checkpoint can supply the source identity for older clips whose
+  // timeline recorded neither an ETag nor a digest.
   const cachedSourceSha = cached?.Metadata?.["demo-sha256"];
-  if (!originalSha && cachedSourceSha && /^[a-f0-9]{64}$/.test(cachedSourceSha))
+  if (
+    !originalETag &&
+    !originalSha &&
+    cachedSourceSha &&
+    /^[a-f0-9]{64}$/.test(cachedSourceSha)
+  )
     originalSha = cachedSourceSha;
   if (
     cached &&
-    (!force || !originalSha) &&
+    (!force || (!originalETag && !originalSha)) &&
     (cached.ContentLength ?? 0) <= MAX_CLIP_CHECKPOINT_BYTES
   ) {
     const text = await cached.Body!.transformToString();
@@ -123,6 +130,7 @@ export async function backfillClipCheckpoint({
         /* Rebuild malformed JSON below. */
       }
       if (
+        !originalETag &&
         !originalSha &&
         sidecar?.format === "t2-mapper-seek-checkpoints" &&
         typeof sidecar.demoSha256 === "string" &&
@@ -141,16 +149,15 @@ export async function backfillClipCheckpoint({
         const demo = await get(sourceKey, source.ETag);
         if (!demo.Body) throw new Error("Cannot read the source recording");
         const bytes = await demo.Body.transformToByteArray();
-        const buffer = bytes.buffer.slice(
-          bytes.byteOffset,
-          bytes.byteOffset + bytes.byteLength,
-        ) as ArrayBuffer;
-        const parser = new DemoParser(new Uint8Array(buffer));
+        const parser = new DemoParser(bytes);
         await parser.load();
         try {
           DemoStreamAdapter.verifyCheckpointRestoration(
             parser,
-            await readDemoCheckpoints(text, buffer),
+            await readDemoCheckpoints(text, {
+              demoBytes: bytes.byteLength,
+              demoSha256: createHash("sha256").update(bytes).digest("hex"),
+            }),
           );
           return "current";
         } catch {

@@ -5,12 +5,14 @@ import type { DTSShape, DTSModel } from "./dts/dtsModel";
 import { DTSAnimationMixer } from "./dts/dtsAnimationMixer";
 import { sampleDTSSequence } from "./dts/dtsAnimation";
 import { DTSSequenceFlags } from "./dts/dtsTypes";
+import type { SceneAssets } from "./assets/sceneAssets";
 
 /** Native DTS effect instance with its own animation state and materials. */
 export function createEffectShape(
   model: DTSModel,
   shapeName: string | undefined,
   options: {
+    assets?: SceneAssets;
     anisotropy?: number;
     ignoreDetailSize?: boolean;
     loop?: boolean;

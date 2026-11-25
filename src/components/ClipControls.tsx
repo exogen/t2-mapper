@@ -31,7 +31,6 @@ import {
   saveClip,
   clipShareUrl,
 } from "../stream/clipApi";
-import { cachedDemoSha256 } from "../stream/demoSourceIdentity";
 import { useAppNavigation } from "./useAppNavigation";
 import { ClipControlsContext } from "./clipControlsContext";
 import { Checkbox } from "./Checkbox";
@@ -265,7 +264,6 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
         throw new Error(
           "Wait for the source demo to finish downloading before saving.",
         );
-      const sourceSha256 = await cachedDemoSha256(snapshot.demoBuffer);
       controller.signal.throwIfAborted();
       const stillCurrent = () => {
         const current = engineStore.getState().playback;
@@ -287,7 +285,13 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
           "The clip, demo, or account changed. Review the clip before saving.",
         );
       const result = await saveClip(
-        { requestId, take, trimStartMs, trimEndMs, sourceSha256 },
+        {
+          requestId,
+          take,
+          trimStartMs,
+          trimEndMs,
+          sourceBytes: snapshot.demoBuffer.byteLength,
+        },
         owner,
         AbortSignal.any([controller.signal, AbortSignal.timeout(45_000)]),
       );

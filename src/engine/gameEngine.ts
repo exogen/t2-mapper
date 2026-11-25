@@ -1,4 +1,12 @@
-import type { Camera, Quaternion, Scene, Vector3, WebGLRenderer } from "three";
+import {
+  DefaultLoadingManager,
+  LoadingManager,
+  type Camera,
+  type Quaternion,
+  type Scene,
+  type Vector3,
+  type WebGLRenderer,
+} from "three";
 import { createStore } from "zustand/vanilla";
 import { FramePriority } from "./framePriority";
 import { FrameScheduler, type FrameContext } from "./frameScheduler";
@@ -25,6 +33,7 @@ import type { ClipCameraTransition, ClipSample } from "../../relay/clipTypes";
 import { renderShapeRaycast } from "../collision/renderShapeRaycast";
 import { createLogger } from "../logger";
 import { runOwnedCleanups } from "./runOwnedCleanups";
+import { bindSceneAssets, SceneAssets } from "../assets/sceneAssets";
 
 const log = createLogger("GameEngine");
 
@@ -136,6 +145,8 @@ export class GameEngine {
   private frameEndHooks: readonly (() => void)[] = [];
   private beforeRenderHooks: readonly RenderHook[] = [];
   private afterRenderHooks: readonly RenderHook[] = [];
+  private sceneAssetOwner?: { assets: SceneAssets; manager: LoadingManager };
+  private readonly sceneAssetReleaseHooks = new Set<() => void>();
 
   readonly ambientParticles: AmbientParticles;
   readonly lightningEffects: LightningEffects;
@@ -157,6 +168,46 @@ export class GameEngine {
 
   assetsLoading(): boolean {
     return this.host?.assetsLoading() ?? false;
+  }
+
+  private getSceneAssetOwner() {
+    if (!this.sceneAssetOwner) {
+      const assets = new SceneAssets();
+      const manager = new LoadingManager();
+      // Keep scene work visible to the existing canvas loading observer.
+      manager.resolveURL = (url) => DefaultLoadingManager.resolveURL(url);
+      manager.getHandler = (file) => DefaultLoadingManager.getHandler(file);
+      manager.itemStart = (url) => DefaultLoadingManager.itemStart(url);
+      manager.itemEnd = (url) => DefaultLoadingManager.itemEnd(url);
+      manager.itemError = (url) => DefaultLoadingManager.itemError(url);
+      bindSceneAssets(manager, assets);
+      this.sceneAssetOwner = { assets, manager };
+    }
+    return this.sceneAssetOwner;
+  }
+
+  get sceneAssets(): SceneAssets {
+    return this.getSceneAssetOwner().assets;
+  }
+
+  get assetLoadingManager(): LoadingManager {
+    return this.getSceneAssetOwner().manager;
+  }
+
+  /** Release render pools that could still hold objects from the old scene. */
+  onSceneAssetsRelease(release: () => void): () => void {
+    this.sceneAssetReleaseHooks.add(release);
+    return () => this.sceneAssetReleaseHooks.delete(release);
+  }
+
+  /** Called after old entity views detach and before new views acquire assets. */
+  releaseSceneAssets(): void {
+    const owner = this.sceneAssetOwner;
+    this.sceneAssetOwner = undefined;
+    runOwnedCleanups([
+      ...this.sceneAssetReleaseHooks,
+      () => owner?.assets.dispose(),
+    ]);
   }
 
   /**
@@ -302,14 +353,21 @@ export class GameEngine {
     return this.host;
   }
 
-  /** The host, once the engine has one. */
-  whenHost(): Promise<EngineHost> {
+  /** Wait for a renderer while the requesting view is still active. */
+  whenHost(signal: AbortSignal): Promise<EngineHost> {
+    if (signal.aborted) return Promise.reject(signal.reason);
     if (this.host) return Promise.resolve(this.host);
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      const cancel = () => {
+        stop();
+        reject(signal.reason);
+      };
       const stop = this.withHost((host) => {
-        queueMicrotask(stop);
+        stop();
+        signal.removeEventListener("abort", cancel);
         resolve(host);
       });
+      signal.addEventListener("abort", cancel, { once: true });
     });
   }
 

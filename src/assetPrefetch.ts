@@ -13,7 +13,9 @@
  */
 
 import { loadInteriorDependencies } from "./assets/interiorAssets";
-import { acquireTerrain } from "./engine/terrainCache";
+import { loadTerrainAsset } from "./engine/terrainCache";
+import { DefaultLoadingManager, type LoadingManager } from "three";
+import { sharedSceneAssets, type SceneAssets } from "./assets/sceneAssets";
 import { loadHtmlTexture } from "./assets/htmlTextures";
 import { loadShapeDependencies } from "./engine/shapeCache";
 import { interiorToUrl, textureToUrl, terrainTextureToUrl } from "./loaders";
@@ -26,6 +28,9 @@ import { deviceTierValue, performanceTuning } from "./performanceTuning";
 const log = createLogger("assetPrefetch");
 
 let provider: (() => PreloadAsset[]) | null = null;
+type PrefetchOwner = { assets: SceneAssets; manager: LoadingManager };
+let getOwner: (() => PrefetchOwner) | undefined;
+let previousAssets: SceneAssets | undefined;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let startDelayPending = false;
 /** Session bookkeeping, keyed kind:name. The asset caches deduplicate loads. */
@@ -46,29 +51,30 @@ registerMetricSource("assetPrefetch", () => ({
   failedJobs,
 }));
 
-async function prefetch(asset: PreloadAsset, owner: number): Promise<void> {
+async function prefetch(
+  asset: PreloadAsset,
+  owner: number,
+  { assets, manager }: PrefetchOwner,
+): Promise<void> {
   switch (asset.kind) {
     case "texture":
-      await loadHtmlTexture(textureToUrl(asset.name));
+      await loadHtmlTexture(textureToUrl(asset.name), assets);
       break;
     case "shape":
-      await loadShapeDependencies(asset.name);
+      await loadShapeDependencies(asset.name, manager);
       break;
     case "interior": {
-      await loadInteriorDependencies(interiorToUrl(asset.name));
+      await loadInteriorDependencies(interiorToUrl(asset.name), assets);
       break;
     }
     case "terrain": {
       // Load AND parse the .ter into the terrain view's cache, then
       // preload every referenced terrain texture — the largest visual
       // win on join.
-      const { promise, release } = acquireTerrain(asset.name);
-      const ter = await promise.finally(release);
-      // An abandoned map must not fan out into a new group of texture loads.
-      if (owner !== generation || !provider) return;
+      const ter = await loadTerrainAsset(asset.name, assets);
       for (const name of ter.textureNames) {
-        if (owner !== generation || !provider) return;
-        await loadHtmlTexture(terrainTextureToUrl(name));
+        if (owner !== generation || assets.disposed) return;
+        await loadHtmlTexture(terrainTextureToUrl(name), assets);
       }
       break;
     }
@@ -86,10 +92,17 @@ function schedule(delay: number): void {
  * returns the session's known assets in priority order — re-polled
  * continuously so late-arriving state is picked up.
  */
-export function startAssetPrefetch(getAssets: () => PreloadAsset[]): void {
+export function startAssetPrefetch(
+  getAssets: () => PreloadAsset[],
+  getSceneOwner: () => PrefetchOwner = () => ({
+    assets: sharedSceneAssets,
+    manager: DefaultLoadingManager,
+  }),
+): void {
   generation++;
   preloaded.clear();
   provider = getAssets;
+  getOwner = getSceneOwner;
   concurrency = deviceTierValue(
     performanceTuning.assetPrefetch.concurrency,
     classifyDevice(readDeviceSignals()).constrained,
@@ -100,11 +113,13 @@ export function startAssetPrefetch(getAssets: () => PreloadAsset[]): void {
   schedule(performanceTuning.assetPrefetch.startDelayMs);
 }
 
-/** Detach the active provider (keeps the global preload caches). */
+/** Detach the active provider. The scene owns the prefetched resources. */
 export function stopAssetPrefetch(): void {
   generation++;
   preloaded.clear();
   provider = null;
+  getOwner = undefined;
+  previousAssets = undefined;
   startDelayPending = false;
   if (timer != null) {
     clearTimeout(timer);
@@ -127,7 +142,12 @@ function tick(): void {
   }
   // Providers and synchronous cache callbacks can stop/retarget this work.
   // Leave the replacement's timer and bookkeeping to its own generation.
-  if (owner !== generation || provider !== currentProvider) return;
+  if (owner !== generation || provider !== currentProvider || !getOwner) return;
+  const scene = getOwner();
+  if (scene.assets !== previousAssets) {
+    preloaded.clear();
+    previousAssets = scene.assets;
+  }
   for (const asset of assets) {
     if (owner !== generation || provider !== currentProvider) return;
     if (activeJobs >= concurrency) break;
@@ -137,8 +157,9 @@ function tick(): void {
     preloaded.add(key);
     activeJobs++;
     peakActiveJobs = Math.max(peakActiveJobs, activeJobs);
-    void prefetch(asset, owner)
+    void prefetch(asset, owner, scene)
       .catch((error: unknown) => {
+        if (scene.assets.disposed) return;
         failedJobs++;
         log.debug("%s prefetch failed: %o", asset.kind, error);
       })

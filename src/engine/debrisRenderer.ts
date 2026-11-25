@@ -1,11 +1,13 @@
 import {
   Group,
   Mesh,
+  DefaultLoadingManager,
   type Camera,
   type Texture,
   type ShaderMaterial,
 } from "three";
 import { ShapeLoader } from "../shapeLoader";
+import { getSceneAssets, type SceneAssets } from "../assets/sceneAssets";
 import { shapeToUrl } from "../loaders";
 import type { DTSModel, DTSShape } from "../dts/dtsModel";
 import { debrisParts } from "../particles/debrisAssets";
@@ -54,7 +56,8 @@ export class DebrisRenderer {
   readonly trails = new Map<EmitterInstance, Trail>();
   readonly models = new Map<string, DTSModel>();
   private requested = new Set<string>();
-  private loader = new ShapeLoader();
+  private readonly loader: ShapeLoader;
+  private readonly sceneAssets: SceneAssets;
   private idleFragments: Fragment[] = [];
   private idleTrails: Trail[] = [];
   private assets: ProjectileAssets;
@@ -68,12 +71,21 @@ export class DebrisRenderer {
     anisotropy: number,
     animationEnabled: () => boolean,
     invalidate: () => void,
+    manager = DefaultLoadingManager,
   ) {
     this.anisotropy = anisotropy;
     this.animationEnabled = animationEnabled;
     this.invalidate = invalidate;
     this.root.name = "debris";
-    this.assets = new ProjectileAssets(anisotropy, animationEnabled);
+    this.loader = new ShapeLoader(manager);
+    this.sceneAssets = getSceneAssets(manager);
+    this.assets = new ProjectileAssets(
+      anisotropy,
+      animationEnabled,
+      undefined,
+      undefined,
+      manager,
+    );
     this.explosions = new ProjectilePool(this.root, async (entity) => {
       const factory = await this.assets.factory(entity);
       invalidate();
@@ -121,7 +133,10 @@ export class DebrisRenderer {
     const scene = template.clone();
     scene.detailLevel = null;
     scene.ensureDetail(0);
-    processShapeScene(scene, body.shape, { anisotropy: this.anisotropy });
+    processShapeScene(scene, body.shape, {
+      assets: this.sceneAssets,
+      anisotropy: this.anisotropy,
+    });
     const lighting = createShapeLightState(
       scene,
       body.part ? undefined : body.shape,
@@ -208,7 +223,10 @@ export class DebrisRenderer {
           view.emitter = emitter;
           view.uploadedRevision = undefined;
         } else {
-          const texture = getParticleTexture(particles.textureName);
+          const texture = getParticleTexture(
+            particles.textureName,
+            this.sceneAssets,
+          );
           const geometry = createParticleGeometry(emitter.maxParticles, true);
           const material = createParticleMaterial(
             texture,

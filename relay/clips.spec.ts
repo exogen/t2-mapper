@@ -74,14 +74,19 @@ function take(sourceDemo = "match.rec"): ClipTake {
   };
 }
 
-function payload(sourceDemo = "match.rec"): ClipCreateRequest {
-  return {
+function payload(
+  sourceDemo = "match.rec",
+  sourceBytes?: number,
+): ClipCreateRequest {
+  const request = {
     requestId: randomUUID(),
-    sourceSha256: "a".repeat(64),
     take: take(sourceDemo),
     trimStartMs: 250,
     trimEndMs: 750,
   };
+  return sourceBytes === undefined
+    ? { ...request, sourceSha256: "a".repeat(64) }
+    : { ...request, sourceBytes };
 }
 
 async function fixture() {
@@ -93,7 +98,12 @@ async function fixture() {
   database.transaction(() => migrateAccountSchema(database))();
   const objects = new Map<
     string,
-    { body: string; etag: string; metadata?: Record<string, string> }
+    {
+      body: string;
+      etag: string;
+      metadata?: Record<string, string>;
+      omitContentLength?: boolean;
+    }
   >([
     ["demos/match.rec", { body: "recording", etag: SOURCE_ETAG }],
     [
@@ -151,7 +161,9 @@ async function fixture() {
         return {
           ETag: object.etag,
           Metadata: object.metadata,
-          ContentLength: object.body.length,
+          ContentLength: object.omitContentLength
+            ? undefined
+            : object.body.length,
           Body: { transformToString: async () => object.body },
         };
       }
@@ -596,6 +608,8 @@ it("trims camera data, generates its own title and serves a ready clip/checkpoin
     state: "ready",
     ownerDiscordId: OWNER,
     sourceDemo: "match.rec",
+    sourceBytes: 9,
+    sourceSha256: body.sourceSha256,
     title: "Clip of S5-Damnation CTF from Sat, Nov 14, 2026",
   });
   expect(
@@ -698,15 +712,66 @@ it("rejects invalid HUD settings before creating or processing a clip", async ()
   expect(f.prepare).not.toHaveBeenCalled();
 });
 
-it("supports clipping another user's uploaded recording", async () => {
+it("saves another user's recording by its full storage key and byte count", async () => {
   const f = await fixture();
   const source = `users/${OTHER}/uploaded.rec`;
   f.objects.set(`demos/${source}`, { body: "recording", etag: SOURCE_ETAG });
-  const clip = await save(f, payload(source));
+  f.objects.set("demos/uploaded.rec", {
+    body: "another recording",
+    etag: '"other"',
+  });
+  const body = payload(source, 9);
+  const clip = await save(f, body);
   expect(clip.ownerDiscordId).toBe(OWNER);
   expect(f.prepare).toHaveBeenCalledWith(
     expect.objectContaining({ sourceDemo: source }),
   );
+  expect(f.rows()[0].sourceSha256).toBe("a".repeat(64));
+  expect(
+    f.objects.get(`demos/clips/${clip.id}/timeline.json`)?.metadata,
+  ).toEqual({ "demo-etag": SOURCE_ETAG });
+  expect((await save(f, body)).id).toBe(clip.id);
+  expect(f.prepare).toHaveBeenCalledOnce();
+  expect(
+    (await f.request("POST", "/api/clips", { ...body, sourceBytes: 8 })).status,
+  ).toBe(409);
+  f.send.mockClear();
+  const detail = await f.request("GET", `/api/clips/${clip.id}`);
+  expect(await detail.json()).toMatchObject({
+    state: "ready",
+    sourceDemo: source,
+    sourceBytes: 9,
+    sourceSha256: "a".repeat(64),
+  });
+  expect(
+    f.send.mock.calls.filter(
+      ([command]) => command instanceof HeadObjectCommand,
+    ),
+  ).toHaveLength(1);
+  expect((await f.request("GET", clip.checkpointUrl)).status).toBe(200);
+});
+
+it("rejects a byte-count claim before creating a clip when it cannot be matched", async () => {
+  const f = await fixture();
+  const mismatch = await f.request(
+    "POST",
+    "/api/clips",
+    payload("match.rec", 8),
+  );
+  expect(mismatch.status).toBe(409);
+  expect(await mismatch.json()).toEqual({
+    error:
+      "The downloaded recording size does not match the hosted demo. Please retry the download.",
+  });
+  f.objects.get("demos/match.rec")!.omitContentLength = true;
+  const unknown = await f.request(
+    "POST",
+    "/api/clips",
+    payload("match.rec", 9),
+  );
+  expect(unknown.status).toBe(503);
+  expect(f.rows()).toEqual([]);
+  expect(f.prepare).not.toHaveBeenCalled();
 });
 
 it("deduplicates a repeated create request and rejects reuse for a different trim", async () => {

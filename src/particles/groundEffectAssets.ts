@@ -10,29 +10,41 @@ import { DTSSequenceFlags } from "../dts/dtsTypes";
 import { shapeKey } from "../stream/shapeSequences";
 import { buildActionAnimMap } from "../stream/playerActionMap";
 import type { StreamingPlayback } from "../stream/types";
+import { sharedSceneAssets, type SceneAssets } from "../assets/sceneAssets";
 
 export interface WheelGroundData {
   position: [number, number, number];
   spring: [number, number, number];
 }
 export interface GroundShape {
-  model: DTSModel;
+  model: Pick<DTSModel, "data" | "animations">;
   clips: Map<string, DTSAnimationClip>;
   wheels?: WheelGroundData[];
 }
-// Page-lifetime registry of shared immutable models registered by ShapeLoader.
-// World cleanup releases local pose/action caches, not these shared assets.
-const shapes = new Map<string, GroundShape>();
-export function registerGroundEffectShape(name: string, model: DTSModel): void {
+export type GroundShapeLookup = (name: string) => GroundShape | undefined;
+const groundShapeCache = {};
+
+export function registerGroundEffectShape(
+  name: string,
+  model: GroundShape["model"],
+  assets: SceneAssets = sharedSceneAssets,
+): void {
+  const shapes = assets.cache<string, GroundShape>(groundShapeCache);
   const key = shapeKey(name);
   if (shapes.has(key)) return;
   shapes.set(key, {
-    model,
+    model: { data: model.data, animations: model.animations },
     clips: new Map(model.animations.map((c) => [c.name.toLowerCase(), c])),
   });
 }
-export function getGroundEffectShape(name: string): GroundShape | undefined {
-  return shapes.get(shapeKey(name));
+export function getGroundEffectShape(
+  name: string,
+  assets: SceneAssets = sharedSceneAssets,
+): GroundShape | undefined {
+  if (!assets.disposed)
+    return assets
+      .cache<string, GroundShape>(groundShapeCache)
+      .get(shapeKey(name));
 }
 
 const actionMaps = new WeakMap<
