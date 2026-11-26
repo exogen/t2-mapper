@@ -239,6 +239,7 @@ export function handleDisabledAppAuth(
 
 export interface AppAuthService {
   handle(req: IncomingMessage, res: ServerResponse): Promise<boolean>;
+  getPublicProfile(discordId: string): AccountPublicProfile | null;
   getAccount(
     headers: IncomingHttpHeaders | Headers,
   ): Promise<AccountUser | null>;
@@ -505,6 +506,35 @@ export async function createAppAuth({
      FROM "user" u JOIN "account" a ON a."userId" = u."id"
      WHERE a."providerId" = ? AND a."accountId" = ? LIMIT 2`,
   );
+  type PublicProfileRow = Omit<
+    AccountPublicProfile,
+    "t2Profile" | "t2AccountNames"
+  > & {
+    userId: string;
+    accountId: string;
+    discordProfileCheckedAt: number | null;
+  };
+  function readPublicProfileRow(
+    discordId: string,
+  ): PublicProfileRow | undefined {
+    const rows = publicProfileQuery.all(
+      "discord",
+      discordId,
+    ) as PublicProfileRow[];
+    if (rows.length > 1)
+      throw new Error("Discord account linkage is ambiguous");
+    return rows[0];
+  }
+  function buildPublicProfile(row: PublicProfileRow): AccountPublicProfile {
+    return {
+      name: row.name,
+      image: row.image,
+      discordId: row.discordId,
+      discordUsername: row.discordUsername,
+      t2AccountNames: readT2AccountNames(row.discordId),
+      t2Profile: readT2Profile(row.userId),
+    };
+  }
   const publicDemoLinkQuery = database.prepare(
     'SELECT 1 FROM "t2AccountLink" WHERE "discordId" = ? LIMIT 1',
   );
@@ -521,6 +551,10 @@ export async function createAppAuth({
       clearInterval(cleanupTimer);
     },
     getAccount,
+    getPublicProfile(discordId) {
+      const row = readPublicProfileRow(discordId);
+      return row ? buildPublicProfile(row) : null;
+    },
     requireAdmin,
     async handle(req, res) {
       const pathname = requestPathname(req, res);
@@ -547,16 +581,8 @@ export async function createAppAuth({
             json(res, 400, { error: "Invalid Discord user ID" });
             return true;
           }
-          const rows = publicProfileQuery.all("discord", discordId) as Array<
-            Omit<AccountPublicProfile, "t2Profile" | "t2AccountNames"> & {
-              userId: string;
-              accountId: string;
-              discordProfileCheckedAt: number | null;
-            }
-          >;
-          if (rows.length > 1)
-            throw new Error("Discord account linkage is ambiguous");
-          if (!rows.length) {
+          const row = readPublicProfileRow(discordId);
+          if (!row) {
             json(res, 404, { error: "User not found" });
             return true;
           }
@@ -581,19 +607,12 @@ export async function createAppAuth({
             }
             return true;
           }
-          const { userId, accountId, discordProfileCheckedAt, ...discord } =
-            rows[0];
-          const profile: AccountPublicProfile = {
-            ...discord,
-            t2AccountNames: readT2AccountNames(discordId),
-            t2Profile: readT2Profile(userId),
-          };
-          json(res, 200, profile);
+          json(res, 200, buildPublicProfile(row));
           void refreshDiscordProfile(
-            userId,
-            accountId,
+            row.userId,
+            row.accountId,
             discordId,
-            discordProfileCheckedAt,
+            row.discordProfileCheckedAt,
           );
           return true;
         }

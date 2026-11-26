@@ -89,7 +89,9 @@ it("projects a new row when an interior's ghost slot is reused", () => {
   engine.createGhost(0, 1, { interiorFile: "repurposed.dif" });
   const replacement = engine.entity();
   expect(replacement.id).not.toBe(first.id);
-  expect(replacement.sceneData).toMatchObject({ interiorFile: "repurposed.dif" });
+  expect(replacement.sceneData).toMatchObject({
+    interiorFile: "repurposed.dif",
+  });
   expect(engine.entity()).toBe(replacement);
 });
 

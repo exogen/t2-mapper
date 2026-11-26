@@ -30,6 +30,7 @@
   "include": [
     "env.d.ts",
     "vite.config.ts",
+    "functions",
     "relay",
     "scripts",
     /* The Node-only world and DTS adapters import node:fs / node:path

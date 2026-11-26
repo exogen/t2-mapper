@@ -424,7 +424,10 @@ export class DemoUploader {
   }
 
   /** Read canonical published metadata, independently of live sessions or local caches. */
-  async readPublishedDemo(filename: string): Promise<DemoMetadata> {
+  async readPublishedDemo(
+    filename: string,
+    abortSignal?: AbortSignal,
+  ): Promise<DemoMetadata> {
     if (!this.client)
       throw new GamePresentationError(
         503,
@@ -432,9 +435,9 @@ export class DemoUploader {
       );
     if (!isPublishedDemoKey(filename))
       throw new GamePresentationError(404, "Published demo not found");
-    const remote = await this.readRemoteSidecar(filename);
+    const remote = await this.readRemoteSidecar(filename, abortSignal);
     return publishedDemoRecord(
-      remote?.record ?? (await this.readIndexedDemo(filename)),
+      remote?.record ?? (await this.readIndexedDemo(filename, abortSignal)),
       filename,
     );
   }
@@ -924,6 +927,7 @@ export class DemoUploader {
 
   private async readRemoteSidecar(
     filename: string,
+    abortSignal?: AbortSignal,
   ): Promise<{ record: DemoMetadata; etag: string } | null> {
     try {
       const object = await this.client!.send(
@@ -931,8 +935,10 @@ export class DemoUploader {
           Bucket: this.config!.bucket,
           Key: `${this.config!.prefix}${filename}.json`,
         }),
+        { abortSignal },
       );
       const value: unknown = JSON.parse(await object.Body!.transformToString());
+      abortSignal?.throwIfAborted();
       if (
         !value ||
         typeof value !== "object" ||
@@ -953,8 +959,41 @@ export class DemoUploader {
     }
   }
 
+  /** A detached metadata sidecar alone never makes a recording public. */
+  async readLinkPreview(
+    filename: string,
+    abortSignal = AbortSignal.timeout(8_000),
+    { sourceVerified = false } = {},
+  ): Promise<DemoMetadata | undefined> {
+    if (!this.client || !isPublishedDemoKey(filename)) return undefined;
+    try {
+      // A playable clip lookup already verified its recorded source ETag.
+      if (!sourceVerified)
+        await this.client.send(
+          new HeadObjectCommand({
+            Bucket: this.config!.bucket,
+            Key: `${this.config!.prefix}${filename}`,
+          }),
+          { abortSignal },
+        );
+      abortSignal.throwIfAborted();
+      return await this.readPublishedDemo(filename, abortSignal);
+    } catch (error) {
+      if (
+        (error instanceof GamePresentationError && error.status === 404) ||
+        (error instanceof Error &&
+          (error.name === "NotFound" || error.name === "NoSuchKey"))
+      )
+        return undefined;
+      throw error;
+    }
+  }
+
   /** Pre-sidecar demos must already be indexed and have their original recording. */
-  private async readIndexedDemo(filename: string): Promise<DemoMetadata> {
+  private async readIndexedDemo(
+    filename: string,
+    abortSignal?: AbortSignal,
+  ): Promise<DemoMetadata> {
     let records: unknown;
     try {
       const index = await this.client!.send(
@@ -962,8 +1001,10 @@ export class DemoUploader {
           Bucket: this.config!.bucket,
           Key: `${this.config!.prefix}index.json`,
         }),
+        { abortSignal },
       );
       records = JSON.parse(await index.Body!.transformToString());
+      abortSignal?.throwIfAborted();
       if (!Array.isArray(records))
         throw new Error("Invalid published demo index");
     } catch (error) {
@@ -985,7 +1026,9 @@ export class DemoUploader {
           Bucket: this.config!.bucket,
           Key: `${this.config!.prefix}${filename}`,
         }),
+        { abortSignal },
       );
+      abortSignal?.throwIfAborted();
     } catch (error) {
       if (
         error instanceof Error &&

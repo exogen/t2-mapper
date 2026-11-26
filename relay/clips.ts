@@ -180,9 +180,48 @@ export class Clips {
     this.db
       .prepare(
         `UPDATE clip SET state='failed', error=? WHERE sourceDemo=?
-         AND state IN ('receiving','processing','ready')`,
+         AND (state IN ('receiving','processing','ready') OR
+              (state='failed' AND checkpointVersion IS NOT NULL AND error IS NOT ?))`,
       )
-      .run(SOURCE_UNAVAILABLE, sourceDemo);
+      .run(SOURCE_UNAVAILABLE, sourceDemo, SOURCE_UNAVAILABLE);
+  }
+
+  /** Resolve only playable public clips against their current source recording. */
+  async readLinkPreview(
+    id: string,
+    abortSignal = AbortSignal.timeout(8_000),
+  ): Promise<ClipView | undefined> {
+    if (!UUID.test(id)) return undefined;
+    const row = this.row(id);
+    if (!row || !canPlayClip(row)) return undefined;
+    try {
+      const source = await this.head(
+        `${this.options.config.prefix}${row.sourceDemo}`,
+        abortSignal,
+      );
+      abortSignal.throwIfAborted();
+      if (!source.ETag || source.ETag !== row.sourceETag) return undefined;
+    } catch (error) {
+      if (isMissingObject(error)) return undefined;
+      throw error;
+    }
+    const current = this.row(id);
+    if (
+      !current ||
+      !canPlayClip(current) ||
+      current.sourceETag !== row.sourceETag ||
+      current.sourceDemo !== row.sourceDemo
+    )
+      return undefined;
+    const creatorName = this.db
+      .prepare(
+        `SELECT CASE WHEN count(*)=1 THEN min(u.name) END
+       FROM account a JOIN user u ON a.userId=u.id
+       WHERE a.providerId='discord' AND a.accountId=?`,
+      )
+      .pluck()
+      .get(row.ownerDiscordId) as string | null;
+    return this.view({ ...current, creatorName });
   }
 
   private row(id: string): ClipRow | undefined {
@@ -231,6 +270,15 @@ export class Clips {
     const timeout = AbortSignal.timeout(30_000);
     return parent ? AbortSignal.any([parent, timeout]) : timeout;
   }
+  countPublicClips(ownerDiscordId: string): number {
+    return this.db
+      .prepare(
+        `SELECT count(*) FROM clip WHERE ownerDiscordId=? AND ${PLAYABLE_CLIP}`,
+      )
+      .pluck()
+      .get(ownerDiscordId) as number;
+  }
+
   private listPage(
     owner: string | null,
     pageNumber: number,

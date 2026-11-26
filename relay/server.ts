@@ -30,6 +30,10 @@ import {
 } from "./appAuth.js";
 import { UserDemoUploads } from "./userDemoUploads.js";
 import { Clips } from "./clips.js";
+import {
+  createLinkPreviewHttpHandler,
+  SERVER_LINK_PREVIEW_TTL_MS,
+} from "./linkPreviewHttp.js";
 import { createRelayDemoProcessing } from "./demoProcessing.js";
 import {
   openAccountDatabase,
@@ -389,6 +393,9 @@ const demoStats =
     : null;
 demoStats?.start();
 
+const linkPreviewSecret = process.env.LINK_PREVIEW_RELAY_SECRET?.trim();
+const linkPreviewSiteUrl =
+  process.env.LINK_PREVIEW_SITE_URL?.trim() || undefined;
 const clips =
   appAuth && appAuthConfig && accountDatabase && demoUploadConfig
     ? new Clips({
@@ -405,8 +412,9 @@ const clips =
     : null;
 clips?.start();
 
-/** HTTP health checks and demo downloads; WebSocket upgrades are separate. */
+/** HTTP API and health checks; WebSocket upgrades are separate. */
 const httpServer = http.createServer(async (req, res) => {
+  if (await linkPreviewHttp?.(req, res)) return;
   if (
     appAuth ? await appAuth.handle(req, res) : handleDisabledAppAuth(req, res)
   )
@@ -552,17 +560,18 @@ let serverListInFlight: Promise<ServerInfo[]> | null = null;
 
 /** How long a master query result satisfies further listServers requests. */
 const SERVER_LIST_TTL_MS = 2_000;
+const SERVER_PREVIEW_REFRESH_MS = SERVER_LINK_PREVIEW_TTL_MS / 2;
 
 /**
  * Master query with coalescing: concurrent listServers requests share one
  * in-flight query, and results within the TTL are served from cache —
  * each refresh otherwise triggers a full UDP sweep of every listed server.
  */
-function getServerList(): Promise<ServerInfo[]> {
-  if (serverListInFlight) return serverListInFlight;
-  if (Date.now() - serverListAt < SERVER_LIST_TTL_MS) {
+function getServerList(maxAgeMs = SERVER_LIST_TTL_MS): Promise<ServerInfo[]> {
+  if (Date.now() - serverListAt < maxAgeMs) {
     return Promise.resolve(cachedServers);
   }
+  if (serverListInFlight) return serverListInFlight;
   serverListInFlight = queryServerList(MASTER_SERVER)
     .then((servers) => {
       for (const s of servers) s.isPatrolled = matchesPatrolName(s.name);
@@ -574,6 +583,12 @@ function getServerList(): Promise<ServerInfo[]> {
       serverListInFlight = null;
     });
   return serverListInFlight;
+}
+
+function refreshServerPreviewSnapshot(): void {
+  void getServerList(SERVER_PREVIEW_REFRESH_MS).catch((err) => {
+    relayLog.warn({ err }, "Could not refresh the server preview snapshot");
+  });
 }
 
 /** All active game connections (for status logging). */
@@ -719,6 +734,25 @@ const userDemoUploads =
       })
     : null;
 await userDemoUploads?.start();
+const linkPreviewHttp = linkPreviewSecret
+  ? createLinkPreviewHttpHandler({
+      secret: linkPreviewSecret,
+      siteUrl: linkPreviewSiteUrl,
+      listServers: () => getServerList(SERVER_LINK_PREVIEW_TTL_MS),
+      readProfile(id) {
+        const profile = appAuth?.getPublicProfile(id);
+        if (!profile) return null;
+        return {
+          profile,
+          demoCount: userDemoUploads?.countPublicUploads(id),
+          clipCount: clips?.countPublicClips(id),
+        };
+      },
+      readDemo: (key, signal, options) =>
+        demoUploader.readLinkPreview(key, signal, options),
+      readClip: async (id, signal) => clips?.readLinkPreview(id, signal),
+    })
+  : undefined;
 if (DEMO_RECORD_ENABLED || demoUploader.enabled) {
   relayLog.info(
     {
@@ -845,6 +879,12 @@ const patroller =
       })
     : null;
 patroller?.start();
+// The master-server UDP sweep can take several seconds. Keep the shared
+// snapshot ready for Cloudflare's short HTML rewrite deadline.
+const serverPreviewTimer = linkPreviewHttp
+  ? setInterval(refreshServerPreviewSnapshot, SERVER_PREVIEW_REFRESH_MS).unref()
+  : undefined;
+if (serverPreviewTimer) refreshServerPreviewSnapshot();
 if (DEMO_PATROL_ENABLED && !patroller) {
   relayLog.warn(
     "DEMO_PATROL_ENABLED is set but patrol is inactive (recording disabled or empty DEMO_PATROL_SERVERS)",
@@ -926,6 +966,7 @@ function drainSessions(timeoutMs: number): Promise<unknown> {
   // Preserve the pre-exit snapshot: teardown must not save an empty server list.
   shuttingDown = true;
   eventLoopMonitor.stop();
+  clearInterval(serverPreviewTimer);
   appAuth?.close();
   demoStats?.stop();
   const userDemosClosing = userDemoUploads?.close();

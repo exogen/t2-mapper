@@ -331,6 +331,15 @@ export class UserDemoUploads {
     return true;
   }
 
+  countPublicUploads(ownerDiscordId: string): number {
+    return this.database
+      .prepare(
+        "SELECT count(*) FROM user_demo_uploads WHERE owner_discord_id = ? AND state = 'ready'",
+      )
+      .pluck()
+      .get(ownerDiscordId) as number;
+  }
+
   private list(owner: string): UserDemoUploadList {
     const rows = this.database
       .prepare(

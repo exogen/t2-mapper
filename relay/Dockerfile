@@ -34,7 +34,9 @@ COPY scripts/lib/r2.ts \
      scripts/lib/backfillClipCheckpoint.ts \
      scripts/lib/demoDeletion.ts \
      scripts/lib/demoDeletionCleanup.ts \
-     scripts/lib/demoDeletionProfiles.ts scripts/lib/
+     scripts/lib/demoDeletionProfiles.ts \
+     scripts/lib/linkPreviewAssets.ts \
+     scripts/lib/linkPreviewGallery.json scripts/lib/
 # Checkpoint workers replay through the same decoder and simulation as playback.
 COPY src/ src/
 

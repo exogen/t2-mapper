@@ -247,6 +247,7 @@ describe("relay browser input", () => {
     vi.stubEnv("RELAY_SUPERADMIN_GUIDS", undefined);
     vi.stubEnv("ALWAYS_ADMIN_PLAYERS", undefined);
     vi.stubEnv("DEMO_DIR", undefined);
+    vi.stubEnv("LINK_PREVIEW_RELAY_SECRET", undefined);
     vi.stubEnv("DEMO_UPLOAD_RETRY_MS", "300000");
     vi.stubEnv("WATCH_STATE_PATH", "/nonexistent/chat-policy-watch-state.json");
     vi.stubEnv("WATCH_LIVE_CAST_ENABLED", undefined);
@@ -591,6 +592,46 @@ describe("relay browser input", () => {
       type: "serverList",
       servers: [],
     });
+    expect(harness.queryServerList).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the shared master snapshot warm for requests from Pages", async () => {
+    vi.stubEnv("LINK_PREVIEW_RELAY_SECRET", "pages-secret");
+    vi.stubEnv("LINK_PREVIEW_SITE_URL", "https://play.example.test/");
+    harness.queryServerList.mockResolvedValue([
+      {
+        address: "192.0.2.4:28000",
+        name: "Listed server",
+        mapName: "Katabatic",
+        gameType: "Capture the Flag",
+        playerCount: 8,
+        maxPlayers: 32,
+      },
+    ]);
+    await connect("idle", "false");
+    expect(harness.queryServerList).toHaveBeenCalledTimes(1);
+
+    const query = new URLSearchParams({
+      url: "https://play.example.test/?name=Listed+server",
+    });
+    const req = {
+      method: "GET",
+      url: `/api/link-preview?${query}`,
+      headers: { authorization: "Bearer pages-secret" },
+    } as IncomingMessage;
+    const response = {
+      setHeader: vi.fn(),
+      writeHead: vi.fn().mockReturnThis(),
+      end: vi.fn(),
+    };
+    await harness.httpHandler!(req, response as unknown as ServerResponse);
+    expect(response.writeHead).toHaveBeenCalledWith(200, expect.anything());
+    expect(response.end).toHaveBeenCalledWith(
+      expect.stringContaining("8/32 players"),
+    );
+    expect(harness.queryServerList).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(harness.queryServerList).toHaveBeenCalledTimes(2);
   });
 

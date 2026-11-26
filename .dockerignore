@@ -29,3 +29,5 @@ scripts/lib/*
 !scripts/lib/demoDeletion.ts
 !scripts/lib/demoDeletionCleanup.ts
 !scripts/lib/demoDeletionProfiles.ts
+!scripts/lib/linkPreviewAssets.ts
+!scripts/lib/linkPreviewGallery.json

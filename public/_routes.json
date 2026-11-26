@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "include": ["/", "/index.html", "/clips", "/clips/", "/clips/index.html"],
+  "exclude": []
+}
