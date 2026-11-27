@@ -45,6 +45,22 @@ vi.mock("../stream/demoStreaming", () => ({
 }));
 
 describe("director evidence across sources", () => {
+  it("stops an in-flight scan at its next yield when canceled", async () => {
+    const controller = new AbortController();
+    const stream = await createDirectorScanStream(new ArrayBuffer(0), {
+      signal: controller.signal,
+    });
+
+    const advance = stream.advanceTo(stream.durationSec);
+    const lastObservation = stream.observedThroughSec;
+    expect(lastObservation).toBeGreaterThan(0);
+    expect(lastObservation).toBeLessThan(stream.durationSec);
+    controller.abort();
+
+    await expect(advance).rejects.toMatchObject({ name: "AbortError" });
+    expect(stream.observedThroughSec).toBe(lastObservation);
+  });
+
   it("emits identical facts from live snapshots, dynamic demo reads, and batch", async () => {
     const options = { factStreamId: "same-match" };
     const live = new DirectorTrackers(options);

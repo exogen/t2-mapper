@@ -22,7 +22,7 @@
 }
 
 @media (max-width: 639px) {
-  .EditButton {
+  .EditButton[data-desktop-only] {
     display: none;
   }
 }

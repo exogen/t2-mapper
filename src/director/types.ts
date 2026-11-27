@@ -629,6 +629,11 @@ export interface ShotPlan {
   contractVersion: CastPlan["contractVersion"];
   gameMode: "ctf" | "rabbit" | "deathmatch" | "landmarks";
   /**
+   * Future information available to each camera decision, in seconds.
+   * Null means the planner saw the whole recording. Absent on older plans.
+   */
+  lookaheadSec?: number | null;
+  /**
    * Dead air at the head of the recording worth jumping over — a long
    * team-picking period before the whistle, where players trickle in
    * and nothing happens. The director seeks here when it starts rather

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createCastStream, runCastPipeline } from "./castPipeline";
 import { directorDataset } from "./directorTestFixtures";
 import * as switcher from "./switcher";
+import { DIRECTOR_LOOKAHEAD_SEC } from "./tunables";
 import type { DirectorDataset, Shot } from "./types";
 
 const facts = vi.hoisted(() => ({
@@ -184,6 +185,33 @@ describe("cast pipeline cadence", () => {
     expect(plan.shots.some((s) => s.topic === "kill")).toBe(false);
   });
 
+  it.each([0, 3.5])(
+    "uses a %s-second lookahead for the scan, camera decisions and final plan",
+    async (lookaheadSec) => {
+      facts.killAt = 81;
+      facts.locatedAt = facts.killAt;
+      const stream = await createCastStream(new ArrayBuffer(0), {
+        lookaheadSec,
+      });
+      expect(stream.plan.lookaheadSec).toBe(lookaheadSec);
+      expect(stream.dataset?.durationSec).toBe(
+        stream.plannedToSec + lookaheadSec,
+      );
+
+      const plan = await stream.finish();
+      expect(plan.lookaheadSec).toBe(lookaheadSec);
+      const kill = plan.shots.find((shot) => shot.topic === "kill");
+      if (lookaheadSec === 0) expect(kill).toBeUndefined();
+      else expect(kill?.startSec).toBeLessThan(facts.killAt);
+    },
+  );
+
+  it.each([-1, Infinity, NaN])("rejects a lookahead of %s", async (value) => {
+    await expect(
+      createCastStream(new ArrayBuffer(0), { lookaheadSec: value }),
+    ).rejects.toThrow("Invalid cast lookahead");
+  });
+
   it.each([81, 81.5])(
     "honors the shared kill-shot deadline when the location arrives at %s",
     async (locatedAt) => {
@@ -208,10 +236,13 @@ describe("cast pipeline cadence", () => {
 
   it("produces the same cameras with irregular playback updates and batch input", async () => {
     const dynamic = await createCastStream(new ArrayBuffer(0));
+    expect(dynamic.plan.lookaheadSec).toBe(DIRECTOR_LOOKAHEAD_SEC);
     for (let t = 0; t < 100; t += 0.7) await dynamic.advanceTo(t);
     const dynamicPlan = await dynamic.finish();
     const { plan } = await runCastPipeline(new ArrayBuffer(0));
     expect(cameras(dynamicPlan.shots)).toEqual(cameras(plan.shots));
+    expect(dynamicPlan.lookaheadSec).toBe(DIRECTOR_LOOKAHEAD_SEC);
+    expect(plan.lookaheadSec).toBe(DIRECTOR_LOOKAHEAD_SEC);
     expect(plan.shots.at(-1)?.endSec).toBe(100.25);
     expect(await dynamic.finish()).toBe(dynamicPlan);
   });

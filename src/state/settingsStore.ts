@@ -104,6 +104,8 @@ export interface Preferences {
   /** Show the commentary's lines as subtitles, scheduled from the cue
    *  file — works with or without the audio track. */
   commentarySubtitles: boolean;
+  /** Browser-generated CastGenius lookahead. Null uses the configured default. */
+  localCastLookaheadMs: number | null;
   /** Adjust sound pitch to match playback speed. */
   adjustAudioSpeed: boolean;
   animationEnabled: boolean;
@@ -184,6 +186,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   audioVolume: 0.5,
   commentaryEnabled: true,
   commentarySubtitles: false,
+  localCastLookaheadMs: null,
   adjustAudioSpeed: true,
   animationEnabled: true,
   shadowsEnabled: true,
@@ -334,6 +337,7 @@ export function restorePreferences(
   copy("audioVolume");
   copy("commentaryEnabled");
   copy("commentarySubtitles");
+  copy("localCastLookaheadMs", (value) => Number.isFinite(value) && value >= 0);
   copy("adjustAudioSpeed");
   copy("invertScroll");
   copy("invertDrag");

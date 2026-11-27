@@ -11,6 +11,7 @@ import {
   readUserClips,
   clipRefetchInterval,
   deleteClip,
+  renameClip,
   saveClip,
 } from "./clipApi";
 afterEach(() => vi.unstubAllGlobals());
@@ -50,7 +51,7 @@ it("preserves the server's clip deletion error", async () => {
   ).rejects.toMatchObject({ status: 401, message: "Sign in to manage clips" });
 });
 
-it("saves only under the expected signed-in account and shares no editable title", async () => {
+it("saves the custom title under the expected signed-in account", async () => {
   const fetch = vi
     .fn()
     .mockResolvedValue(
@@ -59,6 +60,7 @@ it("saves only under the expected signed-in account and shares no editable title
   vi.stubGlobal("fetch", fetch);
   const request = {
     requestId: "request",
+    title: "Flag run",
     take: {},
     trimStartMs: 0,
     trimEndMs: 100,
@@ -71,6 +73,30 @@ it("saves only under the expected signed-in account and shares no editable title
   );
   expect(options.credentials).toBe("include");
   expect(JSON.parse(options.body)).toEqual(request);
+});
+
+it("sends title edits using the authenticated session and relays validation errors", async () => {
+  const fetch = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ error: "Nah – try a different title." }), {
+      status: 400,
+    }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const signal = new AbortController().signal;
+  await expect(
+    renameClip("clip/id", "Test title", signal),
+  ).rejects.toMatchObject({
+    status: 400,
+    message: "Nah – try a different title.",
+  });
+  const [url, options] = fetch.mock.calls[0];
+  expect(String(url)).toBe("https://api.example.com/api/clips/clip%2Fid");
+  expect(options).toMatchObject({
+    method: "PATCH",
+    credentials: "include",
+    signal,
+    body: JSON.stringify({ title: "Test title" }),
+  });
 });
 
 it("allows anonymous clip views without leaking a session", async () => {

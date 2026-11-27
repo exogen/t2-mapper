@@ -63,8 +63,13 @@ export interface LiveCastPlanBatch extends LiveCastIdentity {
 
 export type LiveCastServerMessage =
   | ({ type: "liveCastTick"; tick: number } & LiveCastIdentity)
-  // The shot already playing when the viewer attaches carries no arrival timing.
-  | ({ type: "liveCastShots"; initial?: true } & LiveCastPlanBatch);
+  | ({
+      type: "liveCastShots";
+      /** The shot already playing at attachment carries no arrival timing. */
+      initial?: true;
+      /** Configured planner horizon, sent with the first batch for a picture. */
+      lookaheadMs?: number;
+    } & LiveCastPlanBatch);
 
 /** Ordered raw packets for one relay source tick. */
 export interface LiveCastWorldTick extends LiveCastIdentity {

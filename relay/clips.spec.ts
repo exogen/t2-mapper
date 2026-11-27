@@ -89,7 +89,7 @@ function payload(
     : { ...request, sourceBytes };
 }
 
-async function fixture() {
+async function fixture(blockedTitleWords = "raccoon, spareword\npaper boat") {
   const database = new Database(":memory:");
   database.pragma("foreign_keys=ON");
   database.exec(
@@ -181,6 +181,7 @@ async function fixture() {
       secretAccessKey: "secret",
     },
     assetRoot: "/assets",
+    blockedTitleWords,
     trustedOrigins: [ORIGIN],
     getAccount,
     prepare,
@@ -579,7 +580,7 @@ it.each([
 
 it("trims camera data, generates its own title and serves a ready clip/checkpoint to anonymous viewers", async () => {
   const f = await fixture();
-  const body = { ...payload(), title: "CLIENT TITLE MUST NOT APPEAR" };
+  const body = payload();
   body.take.hud = {
     showChat: false,
     chatHudStyle: "transparent",
@@ -622,7 +623,6 @@ it("trims camera data, generates its own title and serves a ready clip/checkpoin
     [0, 10.25, 250],
     [500, 10.75, 750],
   ]);
-  expect(JSON.stringify(clip)).not.toContain("CLIENT TITLE");
   const presentation = {
     hud: body.take.hud,
     graphicsEffects: body.take.graphicsEffects,
@@ -639,6 +639,131 @@ it("trims camera data, generates its own title and serves a ready clip/checkpoin
     [...f.objects.keys()].filter((key) => key.startsWith("demos/match.rec.")),
   ).toEqual(["demos/match.rec.json"]);
 });
+
+it("accepts ordinary profanity in a title and keeps it through an idempotent retry", async () => {
+  const f = await fixture();
+  const request = {
+    ...payload(),
+    title: "  Holy shit,   what a fucking shot!  ",
+  };
+  const created = await save(f, request);
+  expect(created.title).toBe("Holy shit, what a fucking shot!");
+  expect(
+    (await save(f, { ...request, title: "A different title" })).title,
+  ).toBe(created.title);
+  expect(f.rows()).toHaveLength(1);
+});
+
+it("enforces the same title rules on creation and rename without storing rejected text", async () => {
+  const f = await fixture();
+  const clip = await save(f, { ...payload(), title: "Last-second catch" });
+  const url = `/api/clips/${clip.id}`;
+  const term = "raccoon";
+  const abusive = [
+    term,
+    "r4cc00n",
+    "RACCCOOOOON",
+    term.split("").join("."),
+    term.split("").join(" "),
+    "ra cc oon",
+    "ｒａｃｃｏｏｎ",
+    term.split("").join("\u200b"),
+    "spare-word",
+    "paperboat",
+  ];
+  for (const title of [...abusive, "  ", null, "x".repeat(121)]) {
+    const created = await f.request("POST", "/api/clips", {
+      ...payload(),
+      title,
+    });
+    const renamed = await f.request("PATCH", url, { title });
+    expect(created.status).toBe(400);
+    expect(renamed.status).toBe(400);
+    const error = await created.json();
+    expect(await renamed.json()).toEqual(error);
+    if (title === term) {
+      expect(error).toEqual({ error: "Nah – try a different title." });
+    }
+  }
+  expect(f.rows()).toHaveLength(1);
+  expect(f.rows()[0].title).toBe("Last-second catch");
+
+  const accepted = await f.request("PATCH", url, {
+    title: "Look at my fucking flag run",
+  });
+  expect(accepted.status).toBe(200);
+  expect(await accepted.json()).toEqual({
+    id: clip.id,
+    title: "Look at my fucking flag run",
+  });
+  const publicClip = await f.request("GET", `${url}?summary=1`);
+  expect(await publicClip.json()).toMatchObject({
+    title: "Look at my fucking flag run",
+  });
+});
+
+it("renames only a signed-in user's own clip from a trusted origin", async () => {
+  const f = await fixture();
+  const clip = await save(f);
+  const url = `/api/clips/${clip.id}`;
+  const body = { title: "New title" };
+  const preflight = await f.request("OPTIONS", url);
+  expect(preflight.headers.get("Access-Control-Allow-Methods")).toContain(
+    "PATCH",
+  );
+  expect((await f.request("PATCH", url, body, { Origin: "" })).status).toBe(
+    403,
+  );
+  expect(
+    (await f.request("PATCH", url, body, { Origin: "https://evil.invalid" }))
+      .status,
+  ).toBe(403);
+  f.getAccount.mockResolvedValue(null);
+  expect((await f.request("PATCH", url, body)).status).toBe(401);
+  f.getAccount.mockResolvedValue({
+    ...account,
+    discordId: OTHER,
+    role: "admin",
+  });
+  expect((await f.request("PATCH", url, body)).status).toBe(404);
+  expect(f.rows()[0].title).toBe(clip.title);
+});
+
+it("falls back to the generic title when generated metadata matches the configured list", async () => {
+  const f = await fixture();
+  f.objects.set("demos/match.rec.json", {
+    body: JSON.stringify({
+      filename: "match.rec",
+      mission: "r4cc00n",
+      gameType: "CTF",
+    }),
+    etag: '"metadata"',
+  });
+  expect((await save(f)).title).toBe("Tribes 2 clip");
+});
+
+it.each(["", " , \n "])(
+  "supports automatic and custom titles with an empty blocklist (%j)",
+  async (wordList) => {
+    const f = await fixture(wordList);
+    const automatic = await save(f);
+    expect(automatic.title).toBe(
+      "Clip of S5-Damnation CTF from Sat, Nov 14, 2026",
+    );
+
+    const custom = await save(f, { ...payload(), title: "  Raccoon   run " });
+    expect(custom.title).toBe("Raccoon run");
+
+    const url = `/api/clips/${automatic.id}`;
+    const renamed = await f.request("PATCH", url, { title: "Raccoon catch" });
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toEqual({
+      id: automatic.id,
+      title: "Raccoon catch",
+    });
+    expect((await f.request("PATCH", url, { title: " " })).status).toBe(400);
+  },
+);
 
 it("titles the map at the trimmed start and reuses the stored title on retries", async () => {
   const f = await fixture();

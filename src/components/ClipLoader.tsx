@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useStore } from "zustand";
+import type { ClipView } from "../../relay/clipTypes";
 import { clipStore } from "../state/clipStore";
 import { useDemoLoad } from "../state/demoLoadStore";
 import { useEngineSelector, engineStore } from "../state/engineStore";
@@ -13,6 +14,9 @@ import { useAppNavigation } from "./useAppNavigation";
 import { useClipQuery } from "./useClipQuery";
 import { PlaybackNotice } from "./PlaybackNotice";
 import styles from "./ClipControls.module.css";
+
+// Title edits must not restart clip preparation or seek the replay.
+const playbackView = ({ title: _title, ...clip }: ClipView) => clip;
 
 /** A clip owns the initial seek; ordinary moment links must wait outside this path. */
 export function ClipLoader() {
@@ -42,7 +46,7 @@ export function ClipLoader() {
     id: string;
     recording: typeof recording;
   } | null>(null);
-  const clip = useClipQuery(id);
+  const clip = useClipQuery(id, playbackView);
   const view = clip.data;
 
   useEffect(() => {

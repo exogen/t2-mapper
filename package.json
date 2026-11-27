@@ -66,6 +66,7 @@
     "match-sorter": "^8.3.0",
     "nipplejs": "^1.0.4",
     "nuqs": "^2.10.2",
+    "obscenity": "^0.4.6",
     "openai": "^7.15.0",
     "picomatch": "^4.0.7",
     "pino": "^10.4.0",

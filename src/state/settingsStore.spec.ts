@@ -150,6 +150,32 @@ it("retains the aim correction preference and drops the old smoothing flag on sa
   expect(lastSaved()).not.toHaveProperty("aimSmoothing");
 });
 
+it.each([0, 2_125.5])(
+  "saves and restores a local CastGenius lookahead of %s ms",
+  (lookaheadMs) => {
+    const store = createSettingsStore();
+    expect(store.getState().localCastLookaheadMs).toBeNull();
+    setPreference("localCastLookaheadMs", lookaheadMs, store);
+    vi.advanceTimersByTime(500);
+    stubSaved(lastSaved());
+    const restored = createSettingsStore();
+    expect(restored.getState().localCastLookaheadMs).toBe(lookaheadMs);
+
+    setPreference("localCastLookaheadMs", null, restored);
+    vi.advanceTimersByTime(500);
+    stubSaved(lastSaved());
+    expect(createSettingsStore().getState().localCastLookaheadMs).toBeNull();
+  },
+);
+
+it.each([-1, "2000", true, {}])(
+  "ignores an invalid saved local CastGenius lookahead %j",
+  (lookaheadMs) => {
+    stubSaved({ localCastLookaheadMs: lookaheadMs });
+    expect(createSettingsStore().getState().localCastLookaheadMs).toBeNull();
+  },
+);
+
 it("persists followed team IFF separately for each view mode", () => {
   const store = createSettingsStore();
   expect(store.getState()).toMatchObject({

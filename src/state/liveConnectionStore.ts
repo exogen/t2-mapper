@@ -406,7 +406,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
                   set({ castShotLeadMs });
               }
             }
-            applyLiveDirectorPlan(message);
+            applyLiveDirectorPlan(message, message.lookaheadMs);
           }
           advanceLiveCast(get());
         },

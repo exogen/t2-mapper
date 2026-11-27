@@ -21,6 +21,7 @@ const fixture = vi.hoisted(() => ({
   setAction: vi.fn(),
   cards: [] as Array<{
     clip: ClipView;
+    canEdit?: boolean;
     onDelete?: () => void;
     deleting?: boolean;
   }>,
@@ -173,12 +174,14 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals());
 
-it("offers deletion only on the owner's own clips and honors cancellation", () => {
+it("offers editing and deletion only on the owner's own clips and honors cancellation", () => {
   fixture.data = page([clip()]);
   expect(render()).not.toContain('aria-label="Delete clip:');
   expect(fixture.cards.at(-1)?.onDelete).toBeUndefined();
+  expect(fixture.cards.at(-1)?.canEdit).toBe(false);
   const html = render(OWNER, demos, true);
   expect(html).toContain('aria-label="Delete clip: Clip first"');
+  expect(html).toContain('aria-label="Edit clip title"');
   expect(html.indexOf("</a>")).toBeLessThan(
     html.indexOf('aria-label="Delete clip:'),
   );
@@ -191,6 +194,7 @@ it("offers deletion only on the owner's own clips and honors cancellation", () =
   fixture.data = page([{ ...clip(), ownerDiscordId: OTHER }]);
   render(OWNER, demos, true);
   expect(fixture.cards.at(-1)?.onDelete).toBeUndefined();
+  expect(fixture.cards.at(-1)?.canEdit).toBe(false);
 });
 
 it("guards duplicate deletion requests and refreshes every page for the original creator", async () => {

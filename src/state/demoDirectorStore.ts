@@ -15,8 +15,11 @@ import { DIRECTOR_ORBIT_TARGET_DAMPING } from "../director/cameraRig";
 import { exitToFreeFly } from "./watchFollow";
 import { exitLiveDirector } from "./liveDirectorStore";
 import type { DirectorDataset, ShotPlan } from "../director/types";
+import type { CastStream } from "../director/castPipeline";
 import { planFromSidecar } from "../director/castSidecar";
+import { DIRECTOR_LOOKAHEAD_SEC } from "../director/tunables";
 import { sidecarUrl } from "../stream/demoIndex";
+import { setPreference, settingsStore } from "./settingsStore";
 
 const log = createLogger("demoDirectorStore");
 
@@ -34,6 +37,9 @@ export interface DemoDirectorState {
   scanProgress: number | null;
   dataset: DirectorDataset | null;
   plan: ShotPlan | null;
+  planSource: "local" | "sidecar" | null;
+  localLookaheadPending: boolean;
+  localLookaheadError: string | null;
   /**
    * How far the cast has been planned. The plan GROWS while it plays,
    * so running off the end of `plan.shots` is not the end of the
@@ -49,6 +55,9 @@ export const demoDirectorStore = createStore<DemoDirectorState>()(() => ({
   scanProgress: null,
   dataset: null,
   plan: null,
+  planSource: null,
+  localLookaheadPending: false,
+  localLookaheadError: null,
   plannedToSec: 0,
   planComplete: false,
   error: null,
@@ -70,12 +79,18 @@ export function useDirector<T>(
 let demoBuffer: ArrayBuffer | null = null;
 let scanAbort: AbortController | null = null;
 let scanToken = 0;
+let lookaheadAbort: AbortController | null = null;
 let directorStartToken = 0;
 let startingDirector: number | null = null;
 
 function cancelDirectorStart(): void {
   directorStartToken += 1;
   startingDirector = null;
+}
+
+function cancelLookaheadChange(): void {
+  lookaheadAbort?.abort();
+  lookaheadAbort = null;
 }
 
 /** Called by demoFileLoader when a demo loads, after resetDirector(). */
@@ -86,6 +101,7 @@ export function setDirectorDemoBuffer(buffer: ArrayBuffer): void {
 /** Cancel any scan and clear all director state (demo unload/replace). */
 export function resetDirector(): void {
   cancelDirectorStart();
+  cancelLookaheadChange();
   scanToken += 1;
   scanAbort?.abort();
   scanAbort = null;
@@ -96,6 +112,9 @@ export function resetDirector(): void {
     scanProgress: null,
     dataset: null,
     plan: null,
+    planSource: null,
+    localLookaheadPending: false,
+    localLookaheadError: null,
     plannedToSec: 0,
     planComplete: false,
     error: null,
@@ -107,7 +126,7 @@ export function resetDirector(): void {
  * after), then enter lean-back directing from the current playback time.
  */
 export async function startDirector(): Promise<void> {
-  const { status, plan } = demoDirectorStore.getState();
+  const { status, plan, planSource } = demoDirectorStore.getState();
   if (
     startingDirector !== null ||
     clipStore.getState().active ||
@@ -120,7 +139,11 @@ export async function startDirector(): Promise<void> {
   const token = ++directorStartToken;
   startingDirector = token;
   try {
-    if (!plan) {
+    if (
+      !plan ||
+      (planSource === "local" &&
+        plan.lookaheadSec !== preferredLocalLookaheadSec())
+    ) {
       const ok = await prepareDirector();
       if (!ok) return;
     }
@@ -155,9 +178,14 @@ export function setCommentaryPreload(
  */
 export function exitDirector(): void {
   cancelDirectorStart();
+  cancelLookaheadChange();
   exitLiveDirector();
   if (demoDirectorStore.getState().status !== "playing") return;
-  demoDirectorStore.setState({ status: "ready" });
+  demoDirectorStore.setState({
+    status: "ready",
+    localLookaheadPending: false,
+    localLookaheadError: null,
+  });
   streamPlaybackStore.setState({ orbitTargetDamping: null });
   exitToFreeFly();
 }
@@ -258,6 +286,7 @@ async function adoptPlanSidecar(token: number): Promise<boolean> {
       scanProgress: null,
       dataset: null,
       plan,
+      planSource: "sidecar",
       plannedToSec: plan.shots[plan.shots.length - 1].endSec,
       planComplete: true,
       error: null,
@@ -329,8 +358,148 @@ async function waitForCollisionWorld(signal: AbortSignal): Promise<void> {
   }
 }
 
+function localCastSnapshot(stream: CastStream) {
+  return {
+    plan: stream.plan,
+    dataset: stream.dataset,
+    plannedToSec: stream.plannedToSec,
+    planComplete: stream.complete,
+  };
+}
+
+function localLookaheadSec(ms: number | null): number {
+  return ms === null ? DIRECTOR_LOOKAHEAD_SEC : ms / 1_000;
+}
+
+function preferredLocalLookaheadSec(): number {
+  return localLookaheadSec(settingsStore.getState().localCastLookaheadMs);
+}
+
+/** Plan just ahead of the playhead, pausing the scan when directing stops. */
+async function pumpLocalCast(stream: CastStream, token: number): Promise<void> {
+  const isDirecting = () =>
+    scanToken === token && demoDirectorStore.getState().status === "playing";
+  try {
+    while (scanToken === token) {
+      if (isDirecting()) {
+        await stream.advanceTo(streamClock.time, isDirecting);
+        if (scanToken !== token) return;
+        demoDirectorStore.setState(localCastSnapshot(stream));
+        if (stream.complete) {
+          if (stream.shots.length === 0) {
+            demoDirectorStore.setState({
+              status: "error",
+              scanProgress: null,
+              error: "No director plan for this recording",
+            });
+          } else {
+            log.info(
+              "Cast complete: %d shots planned as it played",
+              stream.shots.length,
+            );
+          }
+          return;
+        }
+      }
+      await new Promise<void>((r) => setTimeout(r, PLAN_AHEAD_POLL_MS));
+    }
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") return;
+    log.error("Cast streaming failed: %o", err);
+  }
+}
+
+/** Save a local horizon, rebuilding at the current playhead if casting. */
+export async function applyLocalCastLookahead(
+  ms: number | null,
+): Promise<void> {
+  const { status, plan, planSource } = demoDirectorStore.getState();
+  if (status === "playing" && planSource !== "local") return;
+  if (ms != null && (!Number.isFinite(ms) || ms < 0)) {
+    demoDirectorStore.setState({
+      localLookaheadError: "Enter a nonnegative lookahead in milliseconds.",
+    });
+    return;
+  }
+  if (status !== "playing") {
+    setPreference("localCastLookaheadMs", ms);
+    demoDirectorStore.setState({ localLookaheadError: null });
+    return;
+  }
+
+  const buffer = demoBuffer;
+  if (!plan || !buffer) return;
+  const lookaheadSec = localLookaheadSec(ms);
+  cancelLookaheadChange();
+  if (lookaheadSec === plan.lookaheadSec) {
+    setPreference("localCastLookaheadMs", ms);
+    demoDirectorStore.setState({
+      localLookaheadPending: false,
+      localLookaheadError: null,
+    });
+    return;
+  }
+
+  const abort = new AbortController();
+  lookaheadAbort = abort;
+  const token = scanToken;
+  const canApply = () =>
+    lookaheadAbort === abort &&
+    scanToken === token &&
+    demoDirectorStore.getState().status === "playing";
+  demoDirectorStore.setState({
+    localLookaheadPending: true,
+    localLookaheadError: null,
+  });
+  try {
+    const { createCastStream } = await import("../director/castPipeline");
+    if (!canApply()) return;
+    // The existing cast has already waited for this demo's collision world.
+    const replacement = await createCastStream(buffer, {
+      lookaheadSec,
+      signal: abort.signal,
+    });
+    if (!canApply()) return;
+    // Replay earlier decisions under the new horizon while the old plan
+    // stays on air. The viewer can still play or seek the demo meanwhile.
+    do {
+      await replacement.advanceTo(streamClock.time, canApply);
+    } while (
+      canApply() &&
+      replacement.plannedToSec <
+        Math.min(streamClock.time, replacement.durationSec)
+    );
+    if (!canApply()) return;
+    if (replacement.complete && !replacement.shots.length)
+      throw new Error("No director plan for this recording");
+
+    const replacementToken = ++scanToken;
+    scanAbort?.abort();
+    scanAbort = abort;
+    lookaheadAbort = null;
+    setPreference("localCastLookaheadMs", ms);
+    demoDirectorStore.setState({
+      ...localCastSnapshot(replacement),
+      localLookaheadPending: false,
+    });
+    void pumpLocalCast(replacement, replacementToken);
+  } catch (err) {
+    if (!canApply()) return;
+    log.error("Cast lookahead change failed: %o", err);
+    demoDirectorStore.setState({
+      localLookaheadError: "Couldn't update lookahead.",
+    });
+  } finally {
+    if (lookaheadAbort === abort) {
+      lookaheadAbort = null;
+      demoDirectorStore.setState({ localLookaheadPending: false });
+    }
+  }
+}
+
 async function prepareDirector(): Promise<boolean> {
-  if (!demoBuffer) {
+  const buffer = demoBuffer;
+  if (!buffer) {
     // Only reachable when a progressive download failed partway (the
     // button QUEUES instead of starting while a download runs): the
     // whole demo never arrived, so neither the scan nor the background
@@ -342,6 +511,7 @@ async function prepareDirector(): Promise<boolean> {
     });
     return false;
   }
+  const wasLocal = demoDirectorStore.getState().planSource === "local";
   const token = ++scanToken;
   scanAbort?.abort();
   const abort = new AbortController();
@@ -359,7 +529,7 @@ async function prepareDirector(): Promise<boolean> {
   // and the sidecar's shot list is never replaced mid-watch.
   if (CAST_LOCAL_PLAN) {
     log.info("CAST_LOCAL_PLAN — ignoring any cast sidecar, planning locally");
-  } else if (await adoptPlanSidecar(token)) {
+  } else if (!wasLocal && (await adoptPlanSidecar(token))) {
     void fillDatasetInBackground(token, abort);
     return true;
   }
@@ -374,82 +544,33 @@ async function prepareDirector(): Promise<boolean> {
     // now + lookahead. Measured on a 25-minute demo: 10.1s to 1.7s,
     // with the resulting plan identical shot for shot.
     const { createCastStream } = await import("../director/castPipeline");
-    const stream = await createCastStream(demoBuffer, {
-      signal: abort.signal,
-      // On a cold start (the backfill's fresh page, a probe) the scan
-      // can outrun the interior DIFs. BOTH the scan and the staging
-      // pass raycast, so wait for the collider registry to go quiet
-      // before either runs — with no world, every death reads as
-      // airborne and every placement is certified against nothing.
-      ensureWorld: () => waitForCollisionWorld(abort.signal),
-    });
     if (scanToken !== token) return false;
-    const plan = stream.plan;
-    const dataset = stream.dataset;
-    // NOT an error if it is empty right now. The director decides each
-    // shot as its moment arrives, so at the two-second mark the opening
-    // shot is still being framed and the plan is legitimately bare.
-    // Treating that as "no cast for this recording" refused every demo.
-    // FOLLOW THE PLAYHEAD, and nothing more.
-    //
-    // The stream can also be walked to the end — that is how a whole
-    // .rec is cast for backfill — but never here. Doing that in the
-    // browser is a batch job running behind a playing demo: it burns
-    // the main thread on a future the viewer has not reached, and it is
-    // what made playback stall for seconds at a time. On demand, the
-    // director is live: it decides each shot as its moment arrives.
-    const isDirecting = () =>
-      scanToken === token && demoDirectorStore.getState().status === "playing";
-    void (async () => {
-      try {
-        while (scanToken === token) {
-          if (!isDirecting()) {
-            await new Promise<void>((r) => setTimeout(r, PLAN_AHEAD_POLL_MS));
-            continue;
-          }
-          await stream.advanceTo(streamClock.time, isDirecting);
-          if (scanToken !== token) return;
-          const done = stream.plannedToSec >= stream.durationSec;
-          demoDirectorStore.setState({
-            plan: stream.plan,
-            dataset: stream.dataset,
-            plannedToSec: stream.plannedToSec,
-            // Only once the playhead has actually reached the end is
-            // running off the plan the end of the broadcast.
-            planComplete: done,
-          });
-          if (done && stream.plan.shots.length === 0) {
-            // Watched to the end and never decided a shot: now it is
-            // fair to say there is no cast here.
-            demoDirectorStore.setState({
-              status: "error",
-              scanProgress: null,
-              error: "No director plan for this recording",
-            });
-            return;
-          }
-          if (done) {
-            log.info(
-              "Cast complete: %d shots planned as it played",
-              stream.plan.shots.length,
-            );
-            return;
-          }
-          await new Promise<void>((r) => setTimeout(r, PLAN_AHEAD_POLL_MS));
-        }
-      } catch (err) {
-        if (err instanceof Error && err.name === "AbortError") return;
-        log.error("Cast streaming failed: %o", err);
-      }
-    })();
+    // Both scanning and staging raycast. A new demo may still be loading its
+    // collider registry. A cached cast or a retry has already waited for it.
+    let ensureWorld = wasLocal
+      ? undefined
+      : () => waitForCollisionWorld(abort.signal);
+    let lookaheadSec: number;
+    let stream: CastStream;
+    do {
+      lookaheadSec = preferredLocalLookaheadSec();
+      stream = await createCastStream(buffer, {
+        lookaheadSec,
+        signal: abort.signal,
+        ensureWorld,
+      });
+      if (scanToken !== token) return false;
+      ensureWorld = undefined;
+    } while (lookaheadSec !== preferredLocalLookaheadSec());
+    // The first few seconds may be legitimately bare. Follow the playhead
+    // instead of scanning the whole recording in the background.
     demoDirectorStore.setState({
+      ...localCastSnapshot(stream),
       status: "ready",
       scanProgress: null,
-      dataset,
-      plan,
-      planComplete: false,
-      plannedToSec: stream.plannedToSec,
+      planSource: "local",
     });
+    void pumpLocalCast(stream, token);
     return true;
   } catch (err) {
     if (scanToken !== token) return false;

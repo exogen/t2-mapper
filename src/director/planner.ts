@@ -59,6 +59,7 @@ export function planShots(dataset: DirectorDataset): ShotPlan {
   const plan: ShotPlan = {
     contractVersion: CAST_CONTRACT_VERSION,
     gameMode,
+    lookaheadSec: null,
     shots,
     coverage: reportCoverage(shots, dataset),
     skipToSec: openingSkip(dataset),

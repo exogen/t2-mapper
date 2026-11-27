@@ -33,6 +33,7 @@ export function GameDetailsButton() {
         <button
           type="button"
           className={editorStyles.EditButton}
+          data-desktop-only
           title="Edit shared game details"
           aria-label="Edit shared game details"
           aria-haspopup="dialog"

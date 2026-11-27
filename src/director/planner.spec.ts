@@ -194,6 +194,7 @@ describe("planShots (degradation)", () => {
     };
     const plan = planShots(dataset);
     expect(plan.gameMode).toBe("rabbit");
+    expect(plan.lookaheadSec).toBeNull();
     expect(plan.shots).toHaveLength(1);
     expect(plan.shots[0]).toMatchObject({
       kind: "followFlag",

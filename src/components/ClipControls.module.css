@@ -19,37 +19,48 @@
 .StopIcon {
   font-size: calc(1em - 4px);
 }
-.Panel {
-  composes: BlueDialog from "./GameDialog.module.css";
-  width: 420px;
-  max-width: calc(100dvw - 32px);
-  max-height: calc(100dvh - 32px);
-  box-sizing: border-box;
-  overflow-y: auto;
-  padding: 18px;
+.DialogBackdrop {
+  composes: Overlay from "./GameDataFields.module.css";
+}
+.DialogBackdrop.DialogBackdrop {
   z-index: 20;
 }
-.Panel.Panel {
+.Dialog {
+  composes: Dialog from "./GameDataFields.module.css";
+}
+.Dialog.Dialog {
   position: fixed;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
+  box-sizing: border-box;
+  overflow-y: auto;
+  padding-block: 16px 20px;
+  z-index: 20;
 }
-.Panel p {
-  margin: 8px 0 14px;
+.TitleField {
+  composes: Field from "./GameDataFields.module.css";
 }
-.Title {
-  margin: 0 0 10px;
-  color: var(--control-text);
-  font-size: 18px;
-  font-weight: 600;
+.TitleError {
+  composes: Error from "./GameDataFields.module.css";
+  display: flex;
+  gap: 6px;
 }
-.SavedPanel {
-  composes: Panel;
-  width: 480px;
+.TitleError > svg {
+  flex: none;
+  width: calc(1em + 2px);
+  height: 1.5em;
 }
-.SavedPanel .Title {
-  padding-right: 30px;
+.TitleField:has(+ .TitleError) {
+  margin-bottom: 0;
+}
+.TitleField + .TitleError {
+  margin-top: 6px;
+  color: #ff765b;
+}
+.SavedTitle {
+  composes: Title from "./GameDataFields.module.css";
+  padding-inline-end: 40px;
   min-height: 2.6em;
   max-height: 2.6em;
   line-height: 1.3;
@@ -59,12 +70,16 @@
   overflow: hidden;
   overflow-wrap: anywhere;
 }
+.Dialog .SavedTitle {
+  margin-bottom: 4px;
+  font-size: 18px;
+}
 .PreparationStatus {
   display: flex;
   align-items: center;
   gap: 8px;
   min-height: 3em;
-  color: var(--control-muted);
+  margin: 0;
 }
 .StatusIcon {
   flex: 0 0 14px;
@@ -76,7 +91,7 @@
   display: block;
   height: 0.8em;
   border-radius: 4px;
-  background: rgba(168, 209, 247, 0.14);
+  background: rgba(176, 213, 201, 0.14);
 }
 .TitleSkeleton {
   display: grid;
@@ -110,52 +125,47 @@
   display: flex;
   align-items: stretch;
   gap: 8px;
-  margin: 14px 0;
+  margin-top: 14px;
 }
 .CopyButton {
-  composes: Button from "./Button.module.css";
+  composes: Cancel from "./GameDataFields.module.css";
+}
+.CopyButton.CopyButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: 0 0 auto;
   width: 36px;
-  min-height: 36px;
-  padding: 4px;
-}
-.SavedActions {
-  display: flex;
-  gap: 8px;
+  padding: 0;
+  font-size: 16px;
 }
 .PlayButton {
-  composes: Button from "./Button.module.css";
-  min-height: 36px;
-  font-size: 14px;
+  composes: Save from "./GameDataFields.module.css";
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
-.SavedActions .UtilityButton {
-  flex: 0 0 auto;
+.PlayButton > svg {
+  font-size: calc(1em - 4px);
 }
 .CloseButton {
-  composes: Button from "./Button.module.css";
+  composes: Reset from "./GameDataFields.module.css";
+}
+.CloseButton.CloseButton {
   position: absolute;
   top: 8px;
   right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 28px;
   min-height: 28px;
-  padding: 3px;
-  border-color: transparent;
-  background: transparent;
-  box-shadow: none;
-  color: var(--control-muted);
-}
-.CloseButton:hover:not(:disabled) {
-  background: var(--control-hover-background);
-  border-color: var(--control-border);
-  color: var(--control-text);
+  padding: 0;
+  font-size: 16px;
 }
 .ShareLink {
-  color: #dcecff;
-  background: #0a1625;
-  border: 1px solid #3b6f9c;
-  border-radius: 3px;
-  padding: 5px;
-  font: inherit;
+  composes: Input from "./GameDataFields.module.css";
+  flex: 1 1 0;
   min-width: 0;
 }
 fieldset.ViewerOptions {
@@ -262,12 +272,6 @@ fieldset.ViewerOptions {
   font-size: 12px;
   white-space: nowrap;
 }
-.ShareLink {
-  flex: 1 1 0;
-  box-sizing: border-box;
-  min-height: 36px;
-  font-size: 12px;
-}
 .Error {
   color: #ffb7ad;
   font-size: 12px;
@@ -297,11 +301,11 @@ fieldset.ViewerOptions {
   }
 }
 @media (pointer: coarse) {
-  .CopyButton {
+  .CopyButton.CopyButton {
     width: 44px;
     min-height: 44px;
   }
-  .CloseButton {
+  .CloseButton.CloseButton {
     top: 4px;
     right: 4px;
     width: 44px;

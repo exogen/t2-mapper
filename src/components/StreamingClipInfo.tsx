@@ -5,6 +5,7 @@ import { IoCalendarNumberOutline } from "react-icons/io5";
 import { BiSolidEject } from "react-icons/bi";
 import { useAppAccount } from "../state/appAccountStore";
 import { DiscordAvatar } from "./DiscordAvatar";
+import { ClipTitleEditButton } from "./ClipTitleEditor";
 import { useClipQuery } from "./useClipQuery";
 import { usePublicProfile } from "./usePublicProfile";
 import { useDemoIndex } from "./useDemoIndex";
@@ -18,6 +19,9 @@ export function StreamingClipInfo({ clipId }: { clipId: string }) {
   const query = useClipQuery(clipId);
   const clip = query.data?.id === clipId ? query.data : undefined;
   const account = useAppAccount((state) => state.user);
+  const verified = useAppAccount(
+    (state) => state.status === "ready" && !state.pending,
+  );
   const owner = !!clip && account?.discordId === clip.ownerDiscordId;
   const profile = usePublicProfile(clip?.ownerDiscordId, !owner);
   const creator = owner ? account : profile.data;
@@ -42,6 +46,7 @@ export function StreamingClipInfo({ clipId }: { clipId: string }) {
           <span className={styles.Title} title={title}>
             {title}
           </span>
+          {clip && owner && verified && <ClipTitleEditButton clip={clip} />}
         </div>
         {clip && details && (
           <div className={styles.Metadata}>

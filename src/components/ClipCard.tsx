@@ -10,6 +10,7 @@ import { clipSummary } from "./clipFormat";
 import { MissionPreviewTileArt } from "./PreviewTileArt";
 import { RecordingMatchDetails } from "./RecordingMatchDetails";
 import { RecordingDeleteButton } from "./RecordingDeleteButton";
+import { ClipTitleEditButton } from "./ClipTitleEditor";
 import cardStyles from "./DemoCard.module.css";
 import tileStyles from "./PreviewTile.module.css";
 import styles from "./ClipCard.module.css";
@@ -18,12 +19,14 @@ export function ClipCard({
   clip,
   demo,
   creatorName = clip.creatorName,
+  canEdit = false,
   onDelete,
   deleting = false,
 }: {
   clip: ClipView;
   demo?: DemoIndexEntry;
   creatorName?: string;
+  canEdit?: boolean;
   onDelete?: () => void;
   deleting?: boolean;
 }) {
@@ -36,7 +39,7 @@ export function ClipCard({
       className={`${tileStyles.Tile} ${cardStyles.Card}`}
       data-clip-card
       data-has-title={!!matchTitle}
-      data-action-count={Number(!!onDelete)}
+      data-action-count={Number(canEdit) + Number(!!onDelete)}
     >
       <a href={clipShareUrl(clip)} className={cardStyles.Link}>
         <MissionPreviewTileArt mission={mission}>
@@ -102,19 +105,29 @@ export function ClipCard({
           )}
         </span>
       </a>
-      {onDelete && (
+      {(canEdit || onDelete) && (
         <div
           className={cardStyles.Actions}
           role="group"
           aria-label="Clip actions"
           aria-busy={deleting}
         >
-          <RecordingDeleteButton
-            kind="clip"
-            label={clip.title}
-            deleting={deleting}
-            onDelete={onDelete}
-          />
+          {canEdit && (
+            <ClipTitleEditButton
+              clip={clip}
+              className={cardStyles.EditButton}
+              iconClassName={cardStyles.EditIcon}
+              disabled={deleting}
+            />
+          )}
+          {onDelete && (
+            <RecordingDeleteButton
+              kind="clip"
+              label={clip.title}
+              deleting={deleting}
+              onDelete={onDelete}
+            />
+          )}
         </div>
       )}
     </div>

@@ -1,13 +1,17 @@
-import { Dialog, DialogHeading, VisuallyHidden } from "@ariakit/react";
+import { DialogHeading, VisuallyHidden } from "@ariakit/react";
 import { LuCheck, LuLink, LuLoaderCircle, LuX } from "react-icons/lu";
 import { GrPlayFill } from "react-icons/gr";
 import type { ClipView } from "../../relay/clipTypes";
 import { clipShareUrl } from "../stream/clipApi";
-import buttonStyles from "./Button.module.css";
+import { ClipDialog } from "./ClipDialog";
+import { ClipTitleEditButton, ClipTitleField } from "./ClipTitleEditor";
+import fieldStyles from "./GameDataFields.module.css";
 import styles from "./ClipControls.module.css";
 
 export function ClipSavedDialog({
   clip,
+  draft,
+  canEdit = false,
   saving,
   error,
   statusError,
@@ -18,6 +22,13 @@ export function ClipSavedDialog({
   retryDisabled = false,
 }: {
   clip: ClipView | null;
+  draft?: {
+    title: string;
+    onChange(title: string): void;
+    onSave(): void;
+    disabled: boolean;
+  };
+  canEdit?: boolean;
   saving: boolean;
   error: string | null;
   statusError: unknown;
@@ -27,6 +38,44 @@ export function ClipSavedDialog({
   onRetry?: () => void;
   retryDisabled?: boolean;
 }) {
+  if (draft && !saving && !clip) {
+    return (
+      <ClipDialog onClose={onClose}>
+        <DialogHeading className={fieldStyles.Title}>Save clip</DialogHeading>
+        <form
+          className={fieldStyles.Form}
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!draft.disabled) draft.onSave();
+          }}
+        >
+          <ClipTitleField
+            title={draft.title}
+            onChange={draft.onChange}
+            optional
+            error={error}
+          />
+          <div className={fieldStyles.Buttons}>
+            <button
+              type="button"
+              className={fieldStyles.Cancel}
+              onClick={onClose}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className={fieldStyles.Save}
+              disabled={draft.disabled}
+            >
+              Save clip
+            </button>
+          </div>
+        </form>
+      </ClipDialog>
+    );
+  }
+
   const preparing = saving || (!statusError && clip?.state === "processing");
   const ready = clip?.state === "ready" && !statusError;
   const message = saving
@@ -40,16 +89,8 @@ export function ClipSavedDialog({
           : (clip?.error ?? "The clip could not be prepared.");
 
   return (
-    <Dialog
-      open
-      hideOnInteractOutside={false}
-      hideOnEscape={!saving}
-      className={styles.SavedPanel}
-      onClose={onClose}
-      aria-label="Saved clip"
-      onKeyDown={(event) => event.stopPropagation()}
-    >
-      <DialogHeading className={styles.Title} title={clip?.title}>
+    <ClipDialog onClose={onClose} saving={saving} label="Saved clip">
+      <DialogHeading className={styles.SavedTitle} title={clip?.title}>
         {clip ? (
           clip.title
         ) : error ? (
@@ -102,14 +143,15 @@ export function ClipSavedDialog({
         </button>
       </div>
       {error && (
-        <p role="alert" className={styles.Error}>
+        <p role="alert" className={fieldStyles.Error}>
           {error}
         </p>
       )}
-      <div className={styles.SavedActions}>
+      <div className={fieldStyles.Buttons}>
+        {canEdit && clip && <ClipTitleEditButton clip={clip} />}
         {onRetry && !saving && (
           <button
-            className={styles.UtilityButton}
+            className={fieldStyles.Cancel}
             type="button"
             onClick={onRetry}
             disabled={retryDisabled}
@@ -124,7 +166,7 @@ export function ClipSavedDialog({
           onClick={() => clip && window.location.assign(clipShareUrl(clip))}
         >
           <GrPlayFill aria-hidden />
-          <span className={buttonStyles.ButtonLabel}>Play clip</span>
+          <span>Play clip</span>
         </button>
       </div>
       <button
@@ -137,6 +179,6 @@ export function ClipSavedDialog({
       >
         <LuX aria-hidden />
       </button>
-    </Dialog>
+    </ClipDialog>
   );
 }

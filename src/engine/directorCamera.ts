@@ -31,6 +31,7 @@ import { subscribeAction } from "../state/inputControls";
 import type {
   DirectorVec3 as DirectorVec3Tuple,
   Shot,
+  ShotPlan,
   ShotSubject,
 } from "../director/types";
 import { demoClock, describeShot } from "../director/shotLog";
@@ -476,6 +477,7 @@ export function installDirectorCamera(engine: GameEngine): () => void {
     return entityId ? resolveSubjectGroup(entityId) : null;
   };
   let liveIdentity: LiveCastIdentity | null = null;
+  let demoPlan: ShotPlan | null = null;
   let previousLiveTime: number | undefined;
   let shotTimeSec = 0;
   let orbitAngle = 0;
@@ -1839,6 +1841,10 @@ export function installDirectorCamera(engine: GameEngine): () => void {
 
   return combineCleanups(
     subscribeAction("directorInterrupt", exitDirector),
+    demoDirectorStore.subscribe((state, previous) => {
+      if (state.status === "playing" && state.plan !== previous.plan)
+        engine.invalidate();
+    }),
     engine.scheduler.add(FramePriority.CameraDirector, (ctx) => {
       const delta = ctx.delta;
       const playbackStatus = engineStore.getState().playback.status;
@@ -1846,15 +1852,17 @@ export function installDirectorCamera(engine: GameEngine): () => void {
       const live = liveDirectorStore.getState();
       const isLive = live.status === "playing";
       const identity = isLive ? live.identity : null;
-      if (liveIdentity !== identity) {
+      const demo = demoDirectorStore.getState();
+      const nextDemoPlan = isLive ? null : demo.plan;
+      if (liveIdentity !== identity || demoPlan !== nextDemoPlan) {
         liveIdentity = identity;
+        demoPlan = nextDemoPlan;
         previousLiveTime = undefined;
         shotIndex = -1;
         appliedShot = null;
         recentOrbits.length = 0;
       }
-      const demo = demoDirectorStore.getState();
-      const shots = isLive ? live.shots : demo.plan?.shots;
+      const shots = isLive ? live.shots : demoPlan?.shots;
       if ((!isLive && demo.status !== "playing") || !shots?.length) {
         shotIndex = -1;
         appliedShot = null;

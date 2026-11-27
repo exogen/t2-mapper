@@ -42,6 +42,7 @@ import { isMissingObject } from "./privateDemoStore.js";
 import { demoLog as log } from "./logger.js";
 import { demoGameIndexAt, readDemoGames } from "./demoMetadata.js";
 import { normalizeMissionType } from "../src/missionType.js";
+import { createClipTitleMatcher, readClipTitle } from "./clipTitle.js";
 
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -49,6 +50,9 @@ const RETRY_MS = 30_000;
 const MAX_CLIPS = 100;
 const MAX_PENDING = 3;
 const SOURCE_UNAVAILABLE = "The clip source has changed or been removed";
+const DEFAULT_TITLE = "Tribes 2 clip";
+const CLIP_METHODS = "GET, POST, PATCH, DELETE, OPTIONS";
+const MAX_TITLE_BODY_BYTES = 4096;
 const TITLE_DATE = new Intl.DateTimeFormat("en-US", {
   weekday: "short",
   month: "short",
@@ -96,6 +100,7 @@ export interface ClipsOptions {
   config: DemoUploadConfig;
   assetRoot: string;
   trustedOrigins: readonly string[];
+  blockedTitleWords?: string;
   getAccount(headers: IncomingHttpHeaders): Promise<AccountUser | null>;
   prepare: typeof prepareClipCheckpoint;
   client?: S3Client;
@@ -116,6 +121,7 @@ export class Clips {
   private readonly db: Database.Database;
   private readonly client: S3Client;
   private readonly now: () => number;
+  private readonly titleMatcher: ReturnType<typeof createClipTitleMatcher>;
   private closed = false;
   private timer?: ReturnType<typeof setInterval>;
   private pumping: Promise<void> | null = null;
@@ -128,6 +134,7 @@ export class Clips {
     this.options = options;
     this.db = options.database;
     this.now = options.now ?? Date.now;
+    this.titleMatcher = createClipTitleMatcher(options.blockedTitleWords);
     this.client =
       options.client ??
       new S3Client({
@@ -407,19 +414,15 @@ export class Clips {
       !url.pathname.startsWith("/api/clips/")
     )
       return false;
-    if (["POST", "DELETE"].includes(req.method ?? "") && !req.headers.origin) {
+    if (
+      ["POST", "PATCH", "DELETE"].includes(req.method ?? "") &&
+      !req.headers.origin
+    ) {
       closeRejectedRequest(req, res);
       json(res, 403, { error: "Origin is not allowed" });
       return true;
     }
-    if (
-      handleAccountCors(
-        req,
-        res,
-        this.options.trustedOrigins,
-        "GET, POST, DELETE, OPTIONS",
-      )
-    )
+    if (handleAccountCors(req, res, this.options.trustedOrigins, CLIP_METHODS))
       return true;
     try {
       if (this.closed)
@@ -569,6 +572,11 @@ export class Clips {
             "Your signed-in account changed. Please try again.",
           );
         const body = await this.readBody(req);
+        const enteredTitle = (body as { title?: unknown } | null)?.title;
+        const customTitle =
+          enteredTitle === undefined
+            ? undefined
+            : this.requireClipTitle(enteredTitle);
         let request: ReturnType<typeof readClipCreateRequest>;
         try {
           request = readClipCreateRequest(body);
@@ -623,10 +631,9 @@ export class Clips {
                 "The downloaded recording size does not match the hosted demo. Please retry the download.",
               );
           }
-          const title = await this.titleFor(
-            take.sourceDemo,
-            take.samples[0].demoTimeSec,
-          );
+          const title =
+            customTitle ??
+            (await this.titleFor(take.sourceDemo, take.samples[0].demoTimeSec));
           row = this.db
             .transaction(() => {
               const prior = this.db
@@ -749,6 +756,24 @@ export class Clips {
         }
         this.kick();
         json(res, 202, this.view(this.visibleRow(row.id)));
+      } else if (req.method === "PATCH" && match && !match[2]) {
+        const user = await this.options.getAccount(req.headers);
+        if (!user) throw new ClipError(401, "Sign in to manage clips");
+        if (!UUID.test(match[1])) throw new ClipError(404, "Clip not found");
+        const row = this.visibleRow(match[1]);
+        if (row.ownerDiscordId !== user.discordId)
+          throw new ClipError(404, "Clip not found");
+        const body = (await this.readBody(req, MAX_TITLE_BODY_BYTES)) as {
+          title?: unknown;
+        } | null;
+        const title = this.requireClipTitle(body?.title);
+        const { changes } = this.db
+          .prepare(
+            "UPDATE clip SET title=? WHERE id=? AND ownerDiscordId=? AND state!='deleting'",
+          )
+          .run(title, row.id, user.discordId);
+        if (!changes) throw new ClipError(404, "Clip not found");
+        json(res, 200, { id: row.id, title });
       } else if (req.method === "DELETE" && match && !match[2]) {
         const user = await this.options.getAccount(req.headers);
         const row = UUID.test(match[1]) ? this.row(match[1]) : undefined;
@@ -763,7 +788,7 @@ export class Clips {
         this.kick();
         json(res, 202, { deleted: true });
       } else {
-        res.setHeader("Allow", "GET, POST, DELETE, OPTIONS");
+        res.setHeader("Allow", CLIP_METHODS);
         throw new ClipError(405, "Method not allowed");
       }
     } catch (error) {
@@ -780,6 +805,15 @@ export class Clips {
     return true;
   }
 
+  private requireClipTitle(value: unknown): string {
+    try {
+      return readClipTitle(value, this.titleMatcher);
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      throw new ClipError(400, error.message);
+    }
+  }
+
   private async titleFor(
     sourceDemo: string,
     startSec: number,
@@ -791,43 +825,52 @@ export class Clips {
           AbortSignal.timeout(5_000),
         ),
       );
-      if (metadata?.filename !== sourceDemo) return "Tribes 2 clip";
+      if (metadata?.filename !== sourceDemo) return DEFAULT_TITLE;
       const games = readDemoGames(metadata);
       const game = games[Math.max(0, demoGameIndexAt(games, startSec * 1000))];
       const mission = game?.mission.trim();
       const gameType = normalizeMissionType(game?.gameType ?? "").trim();
       const title = mission
         ? `Clip of ${mission}${gameType ? ` ${gameType}` : ""}`
-        : "Tribes 2 clip";
+        : DEFAULT_TITLE;
       const date =
         typeof metadata.recordedAt === "string"
           ? Date.parse(metadata.recordedAt)
           : NaN;
-      return Number.isFinite(date)
+      const datedTitle = Number.isFinite(date)
         ? `${title} from ${TITLE_DATE.format(date)}`
         : title;
+      if (!this.titleMatcher) return datedTitle;
+      try {
+        return readClipTitle(datedTitle, this.titleMatcher);
+      } catch {
+        return DEFAULT_TITLE;
+      }
     } catch (error) {
       if (!isMissingObject(error))
         log.warn(
           { err: error, sourceDemo },
           "Could not read clip title metadata",
         );
-      return "Tribes 2 clip";
+      return DEFAULT_TITLE;
     }
   }
-  private async readBody(req: IncomingMessage): Promise<unknown> {
+  private async readBody(
+    req: IncomingMessage,
+    maxBytes = MAX_CLIP_BODY_BYTES,
+  ): Promise<unknown> {
     if (!req.headers["content-type"]?.startsWith("application/json"))
-      throw new ClipError(415, "Send a JSON clip recording");
-    if (Number(req.headers["content-length"]) > MAX_CLIP_BODY_BYTES)
-      throw new ClipError(413, "Clip recording is too large");
+      throw new ClipError(415, "Send a JSON clip request");
+    if (Number(req.headers["content-length"]) > maxBytes)
+      throw new ClipError(413, "Clip request is too large");
     const chunks: Buffer[] = [];
     let size = 0;
     req.setTimeout(30_000, () => req.destroy());
     try {
       for await (const chunk of req) {
         size += chunk.length;
-        if (size > MAX_CLIP_BODY_BYTES)
-          throw new ClipError(413, "Clip recording is too large");
+        if (size > maxBytes)
+          throw new ClipError(413, "Clip request is too large");
         chunks.push(Buffer.from(chunk));
       }
       try {

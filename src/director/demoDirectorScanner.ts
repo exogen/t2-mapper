@@ -31,10 +31,9 @@ export async function scanDemoDirector(
   onProgress?: (progress: number) => void,
   signal?: AbortSignal,
 ): Promise<DirectorDataset> {
-  const stream = await createDirectorScanStream(buffer);
+  const stream = await createDirectorScanStream(buffer, { signal });
   const step = Math.max(YIELD_EVERY_SEC, stream.durationSec / 100);
   for (let t = 0; t < stream.durationSec; t += step) {
-    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
     await stream.advanceTo(Math.min(t + step, stream.durationSec));
     onProgress?.(Math.min(stream.scannedToSec / stream.durationSec, 1));
   }
@@ -63,14 +62,21 @@ export interface DirectorScanStream {
 
 export async function createDirectorScanStream(
   buffer: ArrayBuffer,
-  options: { factStreamId?: string; stateStreamId?: string } = {},
+  options: {
+    factStreamId?: string;
+    stateStreamId?: string;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<DirectorScanStream> {
+  const { signal } = options;
+  signal?.throwIfAborted();
   const recording = await createDemoStreamingRecording(buffer, {
     checkpoints: false,
     groundEffects: false,
     playerViews: false,
     directorImpacts: true,
   });
+  signal?.throwIfAborted();
   const playback = recording.streamingPlayback;
   const durationSec = Number.isFinite(recording.duration)
     ? Math.max(recording.duration, FLAG_STEP_SEC)
@@ -101,6 +107,7 @@ export async function createDirectorScanStream(
       return observedThroughSec;
     },
     async advanceTo(sec: number): Promise<void> {
+      signal?.throwIfAborted();
       const target = Math.min(sec, durationSec);
       let lastYield = cursor;
       while (!exhausted && cursor <= target) {
@@ -116,6 +123,7 @@ export async function createDirectorScanStream(
         if (cursor - lastYield >= YIELD_EVERY_SEC) {
           lastYield = cursor;
           await new Promise<void>((r) => setTimeout(r, 0));
+          signal?.throwIfAborted();
         }
       }
     },

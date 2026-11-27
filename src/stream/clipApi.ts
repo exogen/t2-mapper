@@ -100,6 +100,20 @@ export function saveClip(
   }).then(readClipResponse<ClipView>);
 }
 
+export function renameClip(
+  id: string,
+  title: string,
+  signal: AbortSignal,
+): Promise<Pick<ClipView, "id" | "title">> {
+  return fetch(new URL(`/api/clips/${encodeURIComponent(id)}`, appApiBaseUrl), {
+    method: "PATCH",
+    credentials: "include",
+    signal,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  }).then(readClipResponse<Pick<ClipView, "id" | "title">>);
+}
+
 export async function deleteClip(
   id: string,
   signal: AbortSignal,

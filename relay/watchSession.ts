@@ -899,6 +899,7 @@ export class WatchSession {
       epoch,
       plannedThroughTick: through,
       shots,
+      lookaheadMs: previous ? undefined : this.liveCastLookaheadMs,
       ...(initial && !previous && shots.length ? { initial: true } : {}),
       ended,
     });

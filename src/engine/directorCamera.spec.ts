@@ -17,7 +17,7 @@ import type { GameEngine } from "./gameEngine";
 vi.mock("../state/inputControls", () => ({ subscribeAction: () => () => {} }));
 
 function fixedFlagShot(framing: "establishing" | "room" | "archive") {
-  const shot: Shot = {
+  const shot: Extract<Shot, { kind: "fixedOrbit" }> = {
     kind: "fixedOrbit",
     startSec: 0,
     endSec: 10,
@@ -60,7 +60,9 @@ function fixedFlagShot(framing: "establishing" | "room" | "archive") {
     playback: { ...state.playback, status: "playing", rate: 1 },
   }));
   let frame!: (context: Pick<FrameContext, "camera" | "delta">) => void;
+  const invalidate = vi.fn();
   const dispose = installDirectorCamera({
+    invalidate,
     scheduler: {
       add: (_priority: number, callback: typeof frame) => {
         frame = callback;
@@ -75,7 +77,7 @@ function fixedFlagShot(framing: "establishing" | "room" | "archive") {
   const setStatus = (status: FlagStatus) => {
     setStreamSnapshot({ flags: [{ teamId: 1, status }] } as StreamSnapshot);
   };
-  return { camera, flag, step, setStatus, dispose };
+  return { camera, flag, shot, step, setStatus, dispose, invalidate };
 }
 
 afterEach(() => {
@@ -122,4 +124,38 @@ describe("fixed flag framing", () => {
       }
     },
   );
+});
+
+it("renders a replacement cast with fewer shots at the same playhead", () => {
+  const { camera, shot, step, dispose, invalidate } =
+    fixedFlagShot("establishing");
+  try {
+    const plan = demoDirectorStore.getState().plan!;
+    demoDirectorStore.setState({
+      plan: {
+        ...plan,
+        shots: [
+          { ...shot, endSec: 3 },
+          { ...shot, startSec: 3, endSec: 6 },
+          { ...shot, startSec: 6 },
+        ],
+      },
+    });
+    step(8);
+    const before = camera.position.clone();
+
+    engineStore.getState().setPlaybackStatus("paused");
+    invalidate.mockClear();
+    demoDirectorStore.setState({
+      plan: {
+        ...plan,
+        shots: [{ ...shot, center: [200, 0, 0] }],
+      },
+    });
+    expect(invalidate).toHaveBeenCalledOnce();
+    step(8);
+    expect(camera.position.distanceTo(before)).toBeGreaterThan(100);
+  } finally {
+    dispose();
+  }
 });

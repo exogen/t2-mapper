@@ -402,6 +402,7 @@ const clips =
         database: accountDatabase,
         config: demoUploadConfig,
         assetRoot: GAME_BASE_PATH,
+        blockedTitleWords: process.env.INPUT_BLOCKED_WORDS,
         trustedOrigins: [
           ...appAuthConfig.trustedOrigins,
           appAuthConfig.baseURL,

@@ -114,6 +114,7 @@ it("leads with the clip title and shows its creator, clipped date, duration, and
   expect(markup).not.toContain('aria-label="Players"');
   expect(markup).not.toContain("Download this demo");
   expect(markup).not.toContain("Edit shared game details");
+  expect(markup).not.toContain("Edit clip title");
 });
 
 it("keeps match titles and team names out of the clip toolbar", () => {
@@ -136,6 +137,7 @@ it("uses the signed-in creator's current display name instead of an older public
   const markup = render();
   expect(markup).toContain("Updated creator");
   expect(markup).not.toContain("Clip creator");
+  expect(markup).toContain('aria-label="Edit clip title"');
 });
 
 it("keeps the clip identity available while creator and source metadata are unavailable", () => {

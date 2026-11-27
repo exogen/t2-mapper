@@ -421,7 +421,8 @@ export function planShotsCausal(dataset: DirectorDataset): ShotPlan {
   // minimum holds and contiguity are the switcher's own invariants —
   // every assembler pass behind it was a system fighting its decisions
   // (absorbing pre-grab beats, stretching portraits into stares).
-  return assembleCastPlan(runSwitcher(new CausalView(dataset)), dataset);
+  const view = new CausalView(dataset);
+  return assembleCastPlan(runSwitcher(view), dataset, view.lookaheadSec);
 }
 
 /**
@@ -434,6 +435,7 @@ export function planShotsCausal(dataset: DirectorDataset): ShotPlan {
 export function assembleCastPlan(
   out: Shot[],
   dataset: DirectorDataset,
+  lookaheadSec: number,
 ): ShotPlan {
   // Demo-viewer transport only: the skip must land BEFORE the final
   // pre-match roster block, or the seek jumps the broadcast's opening.
@@ -478,6 +480,7 @@ export function assembleCastPlan(
   const plan: ShotPlan = {
     contractVersion: CAST_CONTRACT_VERSION,
     gameMode: "ctf",
+    lookaheadSec,
     shots: out,
     coverage: reportCoverage(out, dataset),
     skipToSec,

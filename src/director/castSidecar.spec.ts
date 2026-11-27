@@ -25,10 +25,27 @@ const plan = (): ShotPlan => ({
 });
 
 describe("cast sidecar", () => {
-  it("reads back exactly what it writes", () => {
-    const doc = JSON.parse(JSON.stringify(castSidecar(plan(), "x.rec")));
-    expect(planFromSidecar(doc)?.shots).toHaveLength(1);
-  });
+  it.each([undefined, null, 0, 1.25])(
+    "reads back plans with lookahead %s",
+    (lookaheadSec) => {
+      const original = plan();
+      if (lookaheadSec !== undefined) original.lookaheadSec = lookaheadSec;
+      const doc = JSON.parse(JSON.stringify(castSidecar(original, "x.rec")));
+      expect(planFromSidecar(doc)).toStrictEqual(original);
+    },
+  );
+
+  it.each(["2", -1, Infinity, NaN])(
+    "ignores invalid lookahead metadata %s without rejecting the plan",
+    (lookaheadSec) => {
+      const original = plan();
+      const doc = {
+        ...castSidecar(original, "x.rec"),
+        plan: { ...original, lookaheadSec },
+      };
+      expect(planFromSidecar(doc)).toStrictEqual(original);
+    },
+  );
 
   it("refuses a plan from another contract", () => {
     // The backfill, the browser and the headless script each carried

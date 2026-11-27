@@ -99,6 +99,7 @@ export function UserClips({
               clip={clip}
               demo={demos?.find((demo) => demo.filename === clip.sourceDemo)}
               creatorName={creatorName}
+              canEdit={canDelete && clip.ownerDiscordId === userId}
               onDelete={
                 canDelete && clip.ownerDiscordId === userId
                   ? () => void removeClip(clip)

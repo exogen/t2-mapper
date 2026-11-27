@@ -48,6 +48,24 @@ it("keeps the share field and actions present but disabled while the title and l
   expect(markup).toMatch(/aria-label="Close saved clip"[^>]*disabled=""/);
 });
 
+it("offers an optional title before submitting and keeps it after a validation failure", () => {
+  const markup = render({
+    saving: false,
+    draft: {
+      title: "Draft title",
+      onChange: vi.fn(),
+      onSave: vi.fn(),
+      disabled: false,
+    },
+    error: "Nah – try a different title.",
+  });
+  expect(markup).toContain("Clip title");
+  expect(markup).toContain('value="Draft title"');
+  expect(markup).toContain('placeholder="Use automatic title"');
+  expect(markup).toContain('role="alert"');
+  expect(markup).toContain("Nah – try a different title.");
+});
+
 it.each(["processing", "ready"] as const)(
   "fills in the same share field when the clip is %s",
   (state) => {

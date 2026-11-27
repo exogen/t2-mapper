@@ -16,6 +16,7 @@ import { exitToFreeFly } from "./watchFollow";
 interface LiveDirectorState {
   status: "idle" | "loading" | "playing" | "error";
   identity: LiveCastIdentity | null;
+  lookaheadMs: number | null;
   shots: readonly Shot[];
   ended: boolean;
   error: string | null;
@@ -24,6 +25,7 @@ interface LiveDirectorState {
 const EMPTY_DIRECTOR: LiveDirectorState = {
   status: "idle",
   identity: null,
+  lookaheadMs: null,
   shots: [],
   ended: false,
   error: null,
@@ -151,13 +153,24 @@ function renderableShot({ startTick, shot }: LiveCastShotStart): Shot {
 }
 
 /** Apply committed camera instructions for the attached world timeline. */
-export function applyLiveDirectorPlan(batch: LiveCastPlanBatch): void {
+export function applyLiveDirectorPlan(
+  batch: LiveCastPlanBatch,
+  reportedLookaheadMs?: number,
+): void {
   const state = liveDirectorStore.getState();
   if (state.status !== "loading" && state.status !== "playing") return;
   if (state.identity && !sameLiveCast(state.identity, batch)) return;
-  if (!batch.shots.length && !batch.ended) return;
+  const lookaheadMs =
+    reportedLookaheadMs !== undefined &&
+    Number.isSafeInteger(reportedLookaheadMs) &&
+    reportedLookaheadMs >= 0
+      ? reportedLookaheadMs
+      : state.lookaheadMs;
+  if (!batch.shots.length && !batch.ended && lookaheadMs === state.lookaheadMs)
+    return;
   liveDirectorStore.setState({
     identity: state.identity ?? { gameId: batch.gameId, epoch: batch.epoch },
+    lookaheadMs,
     shots: batch.shots.length
       ? mergeShotStarts(state.shots, batch.shots)
       : state.shots,

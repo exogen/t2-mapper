@@ -1,12 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { LuChevronLeft } from "react-icons/lu";
+import { useAppAccount } from "../state/appAccountStore";
 import { readPublicClips } from "../stream/clipApi";
 import { ClipCard } from "./ClipCard";
 import { useDemoIndex } from "./useDemoIndex";
 import styles from "./ClipGallery.module.css";
 
 export function ClipGallery() {
+  const owner = useAppAccount((state) =>
+    state.status === "ready" && !state.pending
+      ? state.user?.discordId
+      : undefined,
+  );
   const { data: demos } = useDemoIndex();
   const demosByFilename = useMemo(
     () => new Map(demos?.map((demo) => [demo.filename, demo])),
@@ -45,6 +51,7 @@ export function ClipGallery() {
                   key={clip.id}
                   clip={clip}
                   demo={demosByFilename.get(clip.sourceDemo)}
+                  canEdit={clip.ownerDiscordId === owner}
                 />
               ))}
             </div>

@@ -126,6 +126,7 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
       ),
   );
   const [saved, setSaved] = useState<ClipView | null>(null);
+  const [draftTitle, setDraftTitle] = useState("");
   const [showSaved, setShowSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -151,6 +152,7 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
     const currentClip = clipStore.getState();
     if (currentClip.recording || currentClip.draft) currentClip.discard();
     setSaved(null);
+    setDraftTitle("");
     setShowSaved(false);
     setShowRecordingHelp(false);
     setError(null);
@@ -194,6 +196,7 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
     if (!recordAvailable) return;
     setError(null);
     setSaved(null);
+    setDraftTitle("");
     setCopied(false);
     if (clip.recording) clip.stop();
     else if (settingsStore.getState().hasSeenClipRecordingHelp)
@@ -225,6 +228,7 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
   function discardClip() {
     transfer.current?.abort();
     clip.discard();
+    setDraftTitle("");
     setError(null);
   }
 
@@ -250,6 +254,7 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
       presentation,
     } = options;
     const take = { ...previewTake, ...presentation };
+    const title = draftTitle.trim();
     const controller = new AbortController();
     transfer.current = controller;
     clip.pause();
@@ -287,6 +292,7 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
       const result = await saveClip(
         {
           requestId,
+          ...(title && { title }),
           take,
           trimStartMs,
           trimEndMs,
@@ -300,6 +306,7 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
         throw new Error(
           "The clip, demo, or account changed. Review the clip before saving.",
         );
+      queryClient.setQueryData(["savedClip", result.id], result);
       setSaved(result);
       clipStore.getState().discard();
     } catch (cause) {
@@ -380,7 +387,11 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
           title={
             !sourceReady ? "Wait for the demo to finish downloading" : undefined
           }
-          onClick={saveDraft}
+          onClick={() => {
+            clip.pause();
+            setError(null);
+            setShowSaved(true);
+          }}
         >
           Save clip
         </button>
@@ -574,6 +585,22 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
       {showSaved && (
         <ClipSavedDialog
           clip={savedClip}
+          draft={
+            draft && !savedClip
+              ? {
+                  title: draftTitle,
+                  onChange: setDraftTitle,
+                  onSave: saveDraft,
+                  disabled: !eligible || !sourceReady,
+                }
+              : undefined
+          }
+          canEdit={
+            !!savedClip &&
+            savedClip.ownerDiscordId === owner &&
+            account.status === "ready" &&
+            !account.pending
+          }
           saving={saving}
           error={error}
           statusError={status.error}

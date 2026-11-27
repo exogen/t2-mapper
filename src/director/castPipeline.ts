@@ -118,6 +118,8 @@ export function describeStaging(staged: StageReport): string {
 export interface CastStreamOptions {
   ensureWorld?: () => Promise<void>;
   signal?: AbortSignal;
+  /** Future demo data available at each decision, in seconds. */
+  lookaheadSec?: number;
   /** Optional evidence recording, independent of camera planning. */
   factStreamId?: string;
   /** Optional fresh state recording. Use the same epoch as factStreamId. */
@@ -173,6 +175,10 @@ export async function createCastStream(
   demoBuffer: ArrayBuffer,
   options: CastStreamOptions = {},
 ): Promise<CastStream> {
+  const lookaheadSec = options.lookaheadSec ?? DIRECTOR_LOOKAHEAD_SEC;
+  if (!Number.isFinite(lookaheadSec) || lookaheadSec < 0)
+    throw new RangeError("Invalid cast lookahead");
+
   // Before anything raycasts — the scan classifies mid-air kills and
   // staging solves sight lines. Same ordering rule as the batch path.
   await options.ensureWorld?.();
@@ -180,8 +186,9 @@ export async function createCastStream(
   const scan = await createDirectorScanStream(demoBuffer, {
     factStreamId: options.factStreamId,
     stateStreamId: options.stateStreamId,
+    signal: options.signal,
   });
-  const planner = createCtfCameraPlanner(0, DIRECTOR_LOOKAHEAD_SEC);
+  const planner = createCtfCameraPlanner(0, lookaheadSec);
   let planned = -DIRECTOR_TICK_SEC;
   const described = new WeakSet<Shot>();
   let complete = false;
@@ -190,6 +197,7 @@ export async function createCastStream(
   const current: ShotPlan = {
     contractVersion: CAST_CONTRACT_VERSION,
     gameMode: "ctf",
+    lookaheadSec,
     shots: [],
     coverage: [],
   };
@@ -200,8 +208,9 @@ export async function createCastStream(
     }
     // Scan a lookahead beyond what we plan, so the causal view has the
     // information it is entitled to.
-    await scan.advanceTo(toSec + DIRECTOR_LOOKAHEAD_SEC);
-    const dataset = scan.datasetTo(toSec + DIRECTOR_LOOKAHEAD_SEC);
+    const horizonSec = toSec + lookaheadSec;
+    await scan.advanceTo(horizonSec);
+    const dataset = scan.datasetTo(horizonSec);
     latestDataset = dataset;
     planned = toSec;
     if (!planner.started) {
@@ -258,7 +267,10 @@ export async function createCastStream(
     // Assemble metadata without restaging or rewriting camera history.
     // In particular, the offline cross-shot audit cannot remove footage
     // or change placements that a dynamic viewer has already seen.
-    Object.assign(current, assembleCastPlan(current.shots, dataset));
+    Object.assign(
+      current,
+      assembleCastPlan(current.shots, dataset, lookaheadSec),
+    );
     complete = true;
     return current;
   };

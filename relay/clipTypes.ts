@@ -18,6 +18,7 @@ export const MAX_CLIP_TRANSITION_MS = 1000;
 export const MAX_CLIP_TRANSITION_AIM_LEAD = 0.25;
 export const MAX_CLIP_SAMPLES = 7_202;
 export const MAX_CLIP_BODY_BYTES = 2 * 1024 * 1024;
+export const MAX_CLIP_TITLE_LENGTH = 120;
 export const CLIPS_PAGE_SIZE = 6;
 export const MAX_PUBLIC_CLIPS = 1_000;
 
@@ -109,6 +110,7 @@ export interface ClipTake {
 
 export type ClipCreateRequest = {
   requestId: string;
+  title?: string;
   take: ClipTake;
   trimStartMs: number;
   trimEndMs: number;

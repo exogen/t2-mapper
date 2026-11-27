@@ -5,7 +5,7 @@ import { ClipApiError, readClipResponse } from "./clipApi";
 import { DEMO_CHECKPOINT_VERSION } from "./demoCheckpoints";
 
 export async function readClipCheckpoint(
-  clip: ClipView,
+  clip: Pick<ClipView, "checkpointUrl">,
   signal: AbortSignal,
 ): Promise<{ text: string; etag: string | null } | null> {
   signal.throwIfAborted();
@@ -36,7 +36,7 @@ export async function readClipCheckpoint(
 const log = createLogger("clipApi");
 
 export async function recoverClipCheckpoint(
-  clip: ClipView,
+  clip: Pick<ClipView, "id" | "checkpointUrl">,
   etag: string | null,
   signal: AbortSignal,
 ): Promise<void> {

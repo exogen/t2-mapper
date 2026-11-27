@@ -9,6 +9,8 @@ import { startClipPlayback } from "./clipPlayback";
 import { getDemoLoadGeneration, loadDemoReference } from "./demoFileLoader";
 import type { StreamRecording } from "./types";
 
+type PlaybackClip = Omit<ClipView, "title">;
+
 class ClipSourceError extends Error {
   constructor(
     message = "The source demo download was interrupted. Please retry the download.",
@@ -18,7 +20,7 @@ class ClipSourceError extends Error {
 }
 
 /** Wait for finalized bytes and the scene binding, in either store order. */
-function waitForClipSource(clip: ClipView, signal: AbortSignal) {
+function waitForClipSource(clip: PlaybackClip, signal: AbortSignal) {
   return new Promise<{
     recording: StreamRecording;
     buffer: ArrayBuffer;
@@ -75,7 +77,7 @@ function waitForClipSource(clip: ClipView, signal: AbortSignal) {
 type ClipSource = Awaited<ReturnType<typeof waitForClipSource>>;
 
 function ensureCurrent(
-  clip: ClipView,
+  clip: PlaybackClip,
   source: ClipSource,
   signal: AbortSignal,
 ) {
@@ -91,7 +93,11 @@ function ensureCurrent(
     throw new DOMException("Clip preparation was interrupted", "AbortError");
 }
 
-function verifySource(clip: ClipView, source: ClipSource, signal: AbortSignal) {
+function verifySource(
+  clip: PlaybackClip,
+  source: ClipSource,
+  signal: AbortSignal,
+) {
   ensureCurrent(clip, source, signal);
   if (source.interrupted) throw new ClipSourceError();
   if (
@@ -104,7 +110,7 @@ function verifySource(clip: ClipView, source: ClipSource, signal: AbortSignal) {
 }
 
 /** One attempt owns at most one replacement source download. */
-async function loadClipSource(clip: ClipView, signal: AbortSignal) {
+async function loadClipSource(clip: PlaybackClip, signal: AbortSignal) {
   let source: ClipSource | undefined;
   try {
     source = await waitForClipSource(clip, signal);
@@ -148,7 +154,7 @@ async function loadClipSource(clip: ClipView, signal: AbortSignal) {
  * installation and EOF. Recording installation itself resets the seek nonce;
  * only a seek on the same recording interrupts preparation. */
 export async function prepareClipPlayback(
-  clip: ClipView,
+  clip: PlaybackClip,
   signal: AbortSignal,
 ): Promise<StreamRecording> {
   const canceled = new AbortController();

@@ -18,3 +18,46 @@
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
+
+.LookaheadLabel,
+.LookaheadValue {
+  align-self: baseline;
+}
+
+.LookaheadValue {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 3px;
+}
+
+.LookaheadValue [role="status"],
+.LookaheadValue [role="alert"] {
+  flex-basis: 100%;
+}
+
+.LookaheadInput {
+  composes: Surface from "./Select.module.css";
+  box-sizing: border-box;
+  width: 7ch;
+  margin: 0;
+  padding: 1px 3px;
+  border-radius: 3px;
+  font: inherit;
+  line-height: 1.2;
+  text-align: right;
+}
+
+.LookaheadInput:hover:not(:disabled) {
+  border-color: var(--control-hover-border);
+  background-color: var(--control-hover-background);
+}
+
+.LookaheadInput:focus-visible {
+  outline: 1px solid var(--control-focus);
+  outline-offset: 1px;
+}
+
+.LookaheadInput:disabled {
+  opacity: 0.5;
+}

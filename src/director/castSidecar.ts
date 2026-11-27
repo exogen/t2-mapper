@@ -92,5 +92,12 @@ export function planFromSidecar(doc: unknown): ShotPlan | null {
     plan.contractVersion == null && (version === 1 || version === 2);
   if (!legacy && plan.contractVersion !== CAST_CONTRACT_VERSION) return null;
   if (!Array.isArray(plan.shots) || plan.shots.length === 0) return null;
+  if (
+    plan.lookaheadSec != null &&
+    (!Number.isFinite(plan.lookaheadSec) || plan.lookaheadSec < 0)
+  ) {
+    const { lookaheadSec: _lookaheadSec, ...validPlan } = plan;
+    return validPlan;
+  }
   return plan;
 }

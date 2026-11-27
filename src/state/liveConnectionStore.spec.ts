@@ -188,8 +188,26 @@ describe("watch connection metadata", () => {
         },
       ],
     };
-    handlers().onLiveCastMessage!({ type: "liveCastShots", ...plan, epoch: 2 });
+    handlers().onLiveCastMessage!({
+      type: "liveCastShots",
+      ...plan,
+      epoch: 2,
+      lookaheadMs: 6_000,
+    });
     expect(liveDirectorStore.getState().status).toBe("loading");
+    expect(liveDirectorStore.getState().lookaheadMs).toBeNull();
+    handlers().onLiveCastMessage!({
+      type: "liveCastShots",
+      ...plan,
+      plannedThroughTick: 198,
+      shots: [],
+      lookaheadMs: 0,
+    });
+    expect(liveDirectorStore.getState()).toMatchObject({
+      status: "loading",
+      lookaheadMs: 0,
+      shots: [],
+    });
     handlers().onLiveCastMessage!({
       type: "liveCastShots",
       ...plan,
@@ -209,6 +227,7 @@ describe("watch connection metadata", () => {
       shots: [],
     });
     expect(liveDirectorStore.getState().status).toBe("playing");
+    expect(liveDirectorStore.getState().lookaheadMs).toBe(0);
     const { shots } = liveDirectorStore.getState();
     // Picture packets outlive the planner's last committed coverage.
     handlers().onGamePacket!(packet);
@@ -234,6 +253,7 @@ describe("watch connection metadata", () => {
     expect(liveDirectorStore.getState().shots[0]).toBe(shots[0]);
     expect(adapter.feedPacket).toHaveBeenCalledTimes(2);
     exitLiveDirector();
+    expect(liveDirectorStore.getState().lookaheadMs).toBeNull();
     expect(relay.setLiveCast).toHaveBeenLastCalledWith(false);
     expect(relay.watchServer).toHaveBeenCalledExactlyOnceWith(
       address,
@@ -253,8 +273,18 @@ describe("watch connection metadata", () => {
     const catchup = { ...testCatchupPayload(), gamePresentation: game };
     handlers().onCatchup!(catchup);
     startLiveDirector();
+    handlers().onLiveCastMessage!({
+      type: "liveCastShots",
+      gameId: game.id,
+      epoch: catchup.epoch,
+      plannedThroughTick: 99,
+      shots: [],
+      lookaheadMs: 4_250,
+    });
+    expect(liveDirectorStore.getState().lookaheadMs).toBe(4_250);
     handlers().onSessionStatus!("syncing", undefined, { address }, 1);
     handlers().onCatchup!(catchup);
+    expect(liveDirectorStore.getState().lookaheadMs).toBeNull();
     expect(state().adapter).toBe(adapter);
     expect(adapter.hydrate).toHaveBeenCalledTimes(2);
     expect(relay.setLiveCast).toHaveBeenCalledExactlyOnceWith(true);
@@ -265,6 +295,7 @@ describe("watch connection metadata", () => {
       gameId: "old-game",
       epoch: 1,
       plannedThroughTick: 100,
+      lookaheadMs: 6_000,
       shots: [],
       ended: true,
     });
@@ -299,6 +330,7 @@ describe("watch connection metadata", () => {
     expect(liveDirectorStore.getState().status).toBe("loading");
     handlers().onSessionStatus!("live", undefined, { address }, 1);
     expect(liveDirectorStore.getState().status).toBe("playing");
+    expect(liveDirectorStore.getState().lookaheadMs).toBeNull();
     expect(liveDirectorTimeAt(0.25)).toBeCloseTo(3.45);
     exitLiveDirector();
     handlers().onSessionStatus!("syncing", undefined, { address }, 1);

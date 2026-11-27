@@ -20,7 +20,10 @@ import { DemoCoordinator } from "./demoCoordinator";
 import { WatchRequest } from "./watchRequest";
 import type { GameConnection } from "./gameConnection";
 import type { ServerMessage } from "./types";
-import type { LiveCastPlanBatch } from "./liveCastTypes";
+import {
+  LIVE_CAST_LOOKAHEAD_MS,
+  type LiveCastPlanBatch,
+} from "./liveCastTypes";
 import { GAME_PROTOCOL_VERSION } from "./shared";
 import { MAX_CATCHUP_COMPRESSED_BYTES } from "./catchupLimits";
 import { VIEWER_BUFFER_BYTES } from "./viewerSocket";
@@ -4011,6 +4014,7 @@ describe("WatchSession delayed transitions", () => {
       tourneyDelayMs: delayMs,
       liveCastDelayMs: castDelayMs,
       liveCastDeliveryMs: 2 * MOVE_TICK_MS,
+      liveCastLookaheadMs: 4_250,
       createLiveCast,
     });
     managers.push(manager);
@@ -4070,6 +4074,7 @@ describe("WatchSession delayed transitions", () => {
         gameId,
         epoch,
         plannedThroughTick: 0,
+        lookaheadMs: 4_250,
         shots: [],
       },
     ]);
@@ -4103,6 +4108,7 @@ describe("WatchSession delayed transitions", () => {
       gameId,
       epoch,
       plannedThroughTick: next.startTick,
+      lookaheadMs: 4_250,
       shots: [next],
       initial: true,
     });
@@ -4388,6 +4394,7 @@ describe("WatchSession delayed transitions", () => {
         gameId,
         epoch: payload.epoch,
         plannedThroughTick: 2,
+        lookaheadMs: LIVE_CAST_LOOKAHEAD_MS,
         shots: [],
         ended: true,
       },
