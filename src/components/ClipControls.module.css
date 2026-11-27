@@ -58,11 +58,23 @@
   margin-top: 6px;
   color: #ff765b;
 }
+.Dialog.SavedDialog {
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+}
+.SavedHeading {
+  display: grid;
+  gap: 6px;
+}
+.SavedHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+}
 .SavedTitle {
   composes: Title from "./GameDataFields.module.css";
-  padding-inline-end: 40px;
-  min-height: 2.6em;
-  max-height: 2.6em;
   line-height: 1.3;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -71,21 +83,21 @@
   overflow-wrap: anywhere;
 }
 .Dialog .SavedTitle {
-  margin-bottom: 4px;
+  margin: 0;
   font-size: 18px;
 }
 .PreparationStatus {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 3em;
+  gap: 6px;
   margin: 0;
+  overflow-wrap: anywhere;
 }
 .StatusIcon {
   flex: 0 0 14px;
   display: flex;
   align-items: center;
-  font-size: 14px;
+  font-size: 16px;
 }
 .SkeletonLine {
   display: block;
@@ -125,7 +137,20 @@
   display: flex;
   align-items: stretch;
   gap: 8px;
-  margin-top: 14px;
+}
+.SavedError {
+  composes: Error from "./GameDataFields.module.css";
+}
+.SavedDialog .SavedError {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.SavedActions {
+  composes: Buttons from "./GameDataFields.module.css";
+}
+.SavedDialog .SavedActions {
+  gap: 8px;
+  margin-top: 0;
 }
 .CopyButton {
   composes: Cancel from "./GameDataFields.module.css";
@@ -152,9 +177,6 @@
   composes: Reset from "./GameDataFields.module.css";
 }
 .CloseButton.CloseButton {
-  position: absolute;
-  top: 8px;
-  right: 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -306,8 +328,6 @@ fieldset.ViewerOptions {
     min-height: 44px;
   }
   .CloseButton.CloseButton {
-    top: 4px;
-    right: 4px;
     width: 44px;
     min-height: 44px;
   }

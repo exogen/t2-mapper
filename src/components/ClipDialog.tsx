@@ -7,11 +7,13 @@ export function ClipDialog({
   onClose,
   saving = false,
   label,
+  className = "",
 }: {
   children: ReactNode;
   onClose(): void;
   saving?: boolean;
   label?: string;
+  className?: string;
 }) {
   return (
     <Dialog
@@ -20,7 +22,7 @@ export function ClipDialog({
       backdrop={<div className={styles.DialogBackdrop} />}
       hideOnInteractOutside={false}
       hideOnEscape={!saving}
-      className={styles.Dialog}
+      className={`${styles.Dialog} ${className}`}
       onClose={onClose}
       aria-label={label}
       onKeyDown={(event) => event.stopPropagation()}

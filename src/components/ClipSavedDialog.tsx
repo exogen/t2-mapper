@@ -1,6 +1,8 @@
 import { DialogHeading, VisuallyHidden } from "@ariakit/react";
-import { LuCheck, LuLink, LuLoaderCircle, LuX } from "react-icons/lu";
+import { BsCheckCircleFill } from "react-icons/bs";
+import { FaClipboardCheck } from "react-icons/fa6";
 import { GrPlayFill } from "react-icons/gr";
+import { LuLink, LuLoaderCircle, LuX } from "react-icons/lu";
 import type { ClipView } from "../../relay/clipTypes";
 import { clipShareUrl } from "../stream/clipApi";
 import { ClipDialog } from "./ClipDialog";
@@ -89,36 +91,55 @@ export function ClipSavedDialog({
           : (clip?.error ?? "The clip could not be prepared.");
 
   return (
-    <ClipDialog onClose={onClose} saving={saving} label="Saved clip">
-      <DialogHeading className={styles.SavedTitle} title={clip?.title}>
-        {clip ? (
-          clip.title
-        ) : error ? (
-          "Save clip"
-        ) : (
-          <>
-            <VisuallyHidden>Saving clip</VisuallyHidden>
-            <span className={styles.TitleSkeleton} aria-hidden>
-              <span className={styles.SkeletonLine} />
-              <span className={styles.SkeletonLine} />
-            </span>
-          </>
-        )}
-      </DialogHeading>
-      <p role="status" className={styles.PreparationStatus}>
-        <span className={styles.StatusIcon} aria-hidden>
-          {preparing ? (
-            <LuLoaderCircle className={styles.Spinner} />
-          ) : ready ? (
-            <LuCheck />
-          ) : null}
-        </span>
-        <span>
-          {error && !clip
-            ? "Your recording is still available. Try saving again."
-            : message}
-        </span>
-      </p>
+    <ClipDialog
+      onClose={onClose}
+      saving={saving}
+      label="Saved clip"
+      className={styles.SavedDialog}
+    >
+      <div className={styles.SavedHeading}>
+        <div className={styles.SavedHeader}>
+          <DialogHeading className={styles.SavedTitle} title={clip?.title}>
+            {clip ? (
+              clip.title
+            ) : error ? (
+              "Save clip"
+            ) : (
+              <>
+                <VisuallyHidden>Saving clip</VisuallyHidden>
+                <span className={styles.TitleSkeleton} aria-hidden>
+                  <span className={styles.SkeletonLine} />
+                  <span className={styles.SkeletonLine} />
+                </span>
+              </>
+            )}
+          </DialogHeading>
+          <button
+            type="button"
+            className={styles.CloseButton}
+            aria-label="Close saved clip"
+            title="Close"
+            disabled={saving}
+            onClick={onClose}
+          >
+            <LuX aria-hidden />
+          </button>
+        </div>
+        <p role="status" className={styles.PreparationStatus}>
+          <span className={styles.StatusIcon} aria-hidden>
+            {preparing ? (
+              <LuLoaderCircle className={styles.Spinner} />
+            ) : ready ? (
+              <BsCheckCircleFill />
+            ) : null}
+          </span>
+          <span>
+            {error && !clip
+              ? "Your recording is still available. Try saving again."
+              : message}
+          </span>
+        </p>
+      </div>
       <div className={styles.ShareRow}>
         <div className={styles.ShareField}>
           <input
@@ -139,15 +160,15 @@ export function ClipSavedDialog({
           aria-label={copied ? "Link copied" : "Copy clip link"}
           title={copied ? "Link copied" : "Copy clip link"}
         >
-          {copied ? <LuCheck aria-hidden /> : <LuLink aria-hidden />}
+          {copied ? <FaClipboardCheck aria-hidden /> : <LuLink aria-hidden />}
         </button>
       </div>
       {error && (
-        <p role="alert" className={fieldStyles.Error}>
+        <p role="alert" className={styles.SavedError}>
           {error}
         </p>
       )}
-      <div className={fieldStyles.Buttons}>
+      <div className={styles.SavedActions}>
         {canEdit && clip && <ClipTitleEditButton clip={clip} />}
         {onRetry && !saving && (
           <button
@@ -169,16 +190,6 @@ export function ClipSavedDialog({
           <span>Play clip</span>
         </button>
       </div>
-      <button
-        type="button"
-        className={styles.CloseButton}
-        aria-label="Close saved clip"
-        title="Close"
-        disabled={saving}
-        onClick={onClose}
-      >
-        <LuX aria-hidden />
-      </button>
     </ClipDialog>
   );
 }
