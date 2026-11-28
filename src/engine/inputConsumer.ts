@@ -20,7 +20,11 @@ import {
   yawPitchToQuaternion,
   MAX_PITCH,
 } from "../stream/streamHelpers";
-import type { StreamRecording, StreamSnapshot } from "../stream/types";
+import type {
+  StreamCamera,
+  StreamRecording,
+  StreamSnapshot,
+} from "../stream/types";
 import type { LiveStreamAdapter } from "../stream/liveStreaming";
 import {
   claimMoveIndex,
@@ -55,6 +59,7 @@ const CAMERA_SPEED = 40;
 const TICK_SEC = 1 / 32;
 
 const M_2PI = 2 * Math.PI;
+const ROTATION_STEPS = 65536;
 
 /**
  * Quantize a rotation delta through Torque's Move clamp/unclamp round-trip.
@@ -63,11 +68,16 @@ const M_2PI = 2 * Math.PI;
  * clamp:   pyaw = (radians / 2π) * 65536, masked to 16 bits
  * unclamp: radians = (short)pyaw * 2π / 65536
  */
-function quantizeRotation(radians: number): number {
-  const packed = Math.round((radians / M_2PI) * 65536) | 0;
+function quantizeRotation(radians: number, remainder: number) {
+  const steps = (radians / M_2PI) * ROTATION_STEPS + remainder;
+  const rounded = Math.round(steps);
   // Sign-extend 16-bit (like C's (short) cast).
-  const signed = (packed << 16) >> 16;
-  return (signed * M_2PI) / 65536;
+  const signed = (rounded << 16) >> 16;
+  return {
+    radians: (signed * M_2PI) / ROTATION_STEPS,
+    // Save the fraction before wrapping so it never includes a full turn.
+    remainder: steps - rounded,
+  };
 }
 
 /**
@@ -230,6 +240,14 @@ export function installInputConsumer(engine: GameEngine): () => void {
   // accumulate until a tick consumes them; the axes hold the current input.
   let tickDeltaYaw = 0;
   let tickDeltaPitch = 0;
+  // Carry fractional Move steps across ticks so small zoomed turns add up.
+  let yawRemainder = 0;
+  let pitchRemainder = 0;
+  let previousLiveCamera: StreamCamera | null = null;
+  const resetRotationRemainders = () => {
+    yawRemainder = 0;
+    pitchRemainder = 0;
+  };
   let tickMoveX = 0;
   let tickMoveY = 0;
   let tickMoveZ = 0;
@@ -239,6 +257,8 @@ export function installInputConsumer(engine: GameEngine): () => void {
   const resetTickInput = () => {
     tickDeltaYaw = 0;
     tickDeltaPitch = 0;
+    resetRotationRemainders();
+    previousLiveCamera = null;
     tickMoveX = 0;
     tickMoveY = 0;
     tickMoveZ = 0;
@@ -360,7 +380,17 @@ export function installInputConsumer(engine: GameEngine): () => void {
       // Only update when the simulation snapshot has actually changed,
       // otherwise prev gets overwritten with current on every useTick, destroying
       // the interpolation endpoints between packets.
-      updateOrbitTarget(liveAdapter.getSnapshot());
+      const snapshot = liveAdapter.getSnapshot();
+      updateOrbitTarget(snapshot);
+      const liveCamera = snapshot.camera;
+      if (
+        liveCamera?.mode !== previousLiveCamera?.mode ||
+        liveCamera?.controlEntityId !== previousLiveCamera?.controlEntityId ||
+        liveCamera?.orbitTargetId !== previousLiveCamera?.orbitTargetId
+      ) {
+        resetRotationRemainders();
+      }
+      previousLiveCamera = liveCamera;
 
       const buffer = moveBuffer;
       const moveIndex = claimMoveIndex(
@@ -398,25 +428,31 @@ export function installInputConsumer(engine: GameEngine): () => void {
       // Quantize rotation to match server's Move::clamp/unclamp round-trip.
       // The frame loop already applied raw deltas for responsiveness; correct to
       // the quantized value the server will actually use.
-      const qYaw = quantizeRotation(yaw);
-      const qPitch = quantizeRotation(pitch);
-      predYaw += qYaw - yaw;
-      predPitch += qPitch - pitch;
+      const posRotYaw = predYaw - yaw;
+      const posRotPitch = predPitch - pitch;
+      const quantizedYaw = quantizeRotation(yaw, yawRemainder);
+      const quantizedPitch = quantizeRotation(pitch, pitchRemainder);
+      const qYaw = quantizedYaw.radians;
+      const qPitch = quantizedPitch.radians;
+      predYaw = posRotYaw + qYaw;
+      const nextPitch = posRotPitch + qPitch;
+      predPitch = clampCameraPitch(nextPitch);
+      yawRemainder = quantizedYaw.remainder;
+      // Keep tiny turns away from the limit and discard clipped rotation.
+      pitchRemainder =
+        predPitch !== nextPitch ||
+        (Math.abs(predPitch) === CAMERA_MAX_PITCH &&
+          predPitch * quantizedPitch.remainder > 0)
+          ? 0
+          : quantizedPitch.remainder;
 
       // Save previous tick position for interpolateTick.
       prevPos = { ...predPos };
 
-      // NOTE: Rotation is NOT re-applied here — the input drain already
-      // applied it (now corrected to quantized).
-
       // Apply position using the PREVIOUS tick's rotation, matching Tribes2.exe:
       // processTick reads the old transform matrix (built at end of previous
       // tick) for position computation, even though mRot is updated first.
-      // Since predYaw/predPitch already include this tick's quantized deltas,
-      // subtract them to get the old rotation.
       const speed = CAMERA_SPEED * 2;
-      const posRotYaw = predYaw - qYaw;
-      const posRotPitch = predPitch - qPitch;
       applyProcessTickPosition(
         predPos,
         posRotYaw,
@@ -624,7 +660,9 @@ export function installInputConsumer(engine: GameEngine): () => void {
 
         // Also add any pending deltas not yet consumed by useTick.
         predYaw += tickDeltaYaw;
-        predPitch = clampCameraPitch(predPitch + tickDeltaPitch);
+        const pitchBefore = predPitch;
+        predPitch = clampCameraPitch(pitchBefore + tickDeltaPitch);
+        tickDeltaPitch = predPitch - pitchBefore;
 
         predInitialized = true;
 

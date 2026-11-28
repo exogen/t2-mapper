@@ -28,7 +28,7 @@ import {
 } from "../state/inputControls";
 import { missionCameraCount, selectMissionCamera } from "./missionCameras";
 import { FramePriority } from "./framePriority";
-import { combineCleanups } from "./storeReaction";
+import { combineCleanups, reaction } from "./storeReaction";
 import type { GameEngine } from "./gameEngine";
 
 export const ARROW_LOOK_SPEED = 1; // radians/sec
@@ -40,6 +40,8 @@ const ORBIT_ZOOM_SENSITIVITY = 0.002;
 
 /** Hardcoded drag sensitivity for non-locked drag (not affected by user setting). */
 const DRAG_SENSITIVITY = 0.002;
+/** Stock Tribes 2 scales mouse turns relative to a 90° horizontal FOV. */
+const MOUSE_REFERENCE_FOV = 90;
 
 /** Keep keyboard movement on the server Move's 16 nonzero axis levels. */
 function quantizeSpeed(speedMultiplier: number): number {
@@ -79,6 +81,28 @@ export function installKeyboardMouseInput(engine: GameEngine): () => void {
 
   return combineCleanups(
     () => touchQuery.removeEventListener("change", onTouchChange),
+    () => {
+      engine.cameras.zoomHeld = false;
+      engine.cameras.clearZoomPreview();
+    },
+    reaction(
+      inputControlsStore,
+      ({ actions }) => actions.zoomCamera,
+      (zoom) => {
+        engine.cameras.zoomHeld =
+          zoom != null &&
+          "pressed" in zoom &&
+          zoom.pressed &&
+          resolveCameraOwner() !== "clip";
+        if (!zoom || engine.cameras.zoomHeld) engine.cameras.clearZoomPreview();
+        engine.invalidate();
+      },
+    ),
+    subscribeAction("cycleCameraZoom", () => {
+      if (resolveCameraOwner() === "clip") return;
+      engine.cameras.cycleZoomLevel();
+      engine.invalidate();
+    }),
     // Exit pointer lock when a tour starts.
     cameraTourStore.subscribe((state) => {
       if (state.animation && document.pointerLockElement) {
@@ -158,7 +182,8 @@ export function installKeyboardMouseInput(engine: GameEngine): () => void {
         return;
       }
 
-      const scrollSign = settingsStore.getState().invertScroll ? -1 : 1;
+      const { invertScroll, speedMultiplier } = settingsStore.getState();
+      const scrollSign = invertScroll ? -1 : 1;
       const direction = (scroll.deltaY > 0 ? -1 : 1) * scrollSign;
       const scaledDeltaY = Math.ceil(Math.log2(Math.abs(scroll.deltaY) + 1));
       const speedDelta =
@@ -167,13 +192,14 @@ export function installKeyboardMouseInput(engine: GameEngine): () => void {
           Math.min(MAX_SPEED_ADJUSTMENT, scaledDeltaY),
         ) * direction;
 
-      setPreference("speedMultiplier", (prev) => {
-        const newSpeed = (Math.round(prev * 100) + speedDelta) / 100;
-        return Math.max(
-          MIN_SPEED_MULTIPLIER,
-          Math.min(MAX_SPEED_MULTIPLIER, newSpeed),
-        );
-      });
+      const adjustedSpeed =
+        (Math.round(speedMultiplier * 100) + speedDelta) / 100;
+      const nextSpeed = Math.max(
+        MIN_SPEED_MULTIPLIER,
+        Math.min(MAX_SPEED_MULTIPLIER, adjustedSpeed),
+      );
+      if (nextSpeed !== speedMultiplier)
+        setPreference("speedMultiplier", nextSpeed);
     }),
     // Number keys 1-9 select mission cameras.
     ...Array.from({ length: 9 }, (_, i) =>
@@ -184,21 +210,108 @@ export function installKeyboardMouseInput(engine: GameEngine): () => void {
       triggerObserve = true;
     }),
     // Build and emit InputFrame each render frame.
-    engine.scheduler.add(FramePriority.InputKeyboardMouse, ({ delta }) => {
-      // Suppress all input while anything but local input owns the camera.
-      // (The director unmounts these bindings anyway — this stops
-      // pointer-locked deltas from accumulating.)
-      const cameraOwner = resolveCameraOwner();
-      if (cameraOwner === "clip") {
-        clearInputDeltas();
-        return;
-      }
-      if (cameraOwner === "tour" || cameraOwner === "director") return;
-      if (cameraOwner === "commandCircuit") {
-        // Camera look/move stays suppressed, but observer triggers (player
-        // cycling from the CC view) must still reach the server via moves.
-        // Deltas are NOT cleared here — the CC rig consumes drag/scroll/
-        // pinch for panning and clears them at the end of its own frame.
+    engine.scheduler.add(
+      FramePriority.InputKeyboardMouse,
+      ({ delta, frame }) => {
+        // Suppress all input while anything but local input owns the camera.
+        // (The director unmounts these bindings anyway — this stops
+        // pointer-locked deltas from accumulating.)
+        const cameraOwner = resolveCameraOwner();
+        if (cameraOwner === "clip") {
+          clearInputDeltas();
+          return;
+        }
+        if (cameraOwner === "tour" || cameraOwner === "director") return;
+        if (cameraOwner === "commandCircuit") {
+          // Camera look/move stays suppressed, but observer triggers (player
+          // cycling from the CC view) must still reach the server via moves.
+          // Deltas are NOT cleared here — the CC rig consumes drag/scroll/
+          // pinch for panning and clears them at the end of its own frame.
+          const triggers = [false, false, false, false, false, false];
+          if (triggerFire) {
+            triggers[0] = true;
+            triggerFire = false;
+          }
+          if (triggerJet) {
+            triggers[3] = true;
+            triggerJet = false;
+          }
+          if (commandCircuitStore.getState().consumeObserverToggle()) {
+            triggers[2] = true;
+          }
+          if (triggers.some(Boolean)) {
+            engine.input.push({
+              deltaYaw: 0,
+              deltaPitch: 0,
+              x: 0,
+              y: 0,
+              z: 0,
+              triggers,
+              delta,
+            });
+          }
+          return;
+        }
+
+        const inputState = inputControlsStore.getState().actions;
+        const { speedMultiplier, mouseSensitivity, invertDrag, invertLookY } =
+          settingsStore.getState();
+
+        // ── Look deltas ──
+        let deltaYaw = 0;
+        let deltaPitch = 0;
+
+        // Pointer-locked mouse movement (raw deltas, user sensitivity).
+        const locked = inputState.lockedLook as DragState | undefined;
+        if (locked && (locked.deltaX !== 0 || locked.deltaY !== 0)) {
+          deltaYaw = locked.deltaX * mouseSensitivity;
+          deltaPitch = locked.deltaY * mouseSensitivity;
+        }
+
+        // Unlocked drag uses its own base sensitivity and flips in follow mode.
+        const drag = inputState.dragLook as DragState | undefined;
+        if (drag?.dragging && (drag.deltaX !== 0 || drag.deltaY !== 0)) {
+          const orbitFlip =
+            inputModeStore.getState().mode === "follow" ? -1 : 1;
+          const dragSign = (invertDrag ? 1 : -1) * orbitFlip;
+          deltaYaw += dragSign * drag.deltaX * DRAG_SENSITIVITY;
+          deltaPitch += dragSign * drag.deltaY * DRAG_SENSITIVITY;
+        }
+
+        if (deltaYaw !== 0 || deltaPitch !== 0) {
+          const mouseScale =
+            engine.cameras.sampleObserverFov(frame) / MOUSE_REFERENCE_FOV;
+          deltaYaw *= mouseScale;
+          deltaPitch *= mouseScale;
+        }
+
+        // Arrow keys contribute to look deltas.
+        if (isPressed(inputState, "lookLeft"))
+          deltaYaw -= ARROW_LOOK_SPEED * delta;
+        if (isPressed(inputState, "lookRight"))
+          deltaYaw += ARROW_LOOK_SPEED * delta;
+        if (isPressed(inputState, "lookUp"))
+          deltaPitch -= ARROW_LOOK_SPEED * delta;
+        if (isPressed(inputState, "lookDown"))
+          deltaPitch += ARROW_LOOK_SPEED * delta;
+
+        // ── Movement axes ──
+        let x = 0;
+        let y = 0;
+        let z = 0;
+        if (isPressed(inputState, "moveLeft")) x -= 1;
+        if (isPressed(inputState, "moveRight")) x += 1;
+        if (isPressed(inputState, "moveForward")) y += 1;
+        if (isPressed(inputState, "moveBackward")) y -= 1;
+        if (isPressed(inputState, "moveUp")) z += 1;
+        if (isPressed(inputState, "moveDown")) z -= 1;
+
+        const quantizedSpeedMultiplier = quantizeSpeed(speedMultiplier);
+        x = Math.max(-1, Math.min(1, x * quantizedSpeedMultiplier));
+        y = Math.max(-1, Math.min(1, y * quantizedSpeedMultiplier));
+        z = Math.max(-1, Math.min(1, z * quantizedSpeedMultiplier));
+
+        // ── Triggers ──
         const triggers = [false, false, false, false, false, false];
         if (triggerFire) {
           triggers[0] = true;
@@ -208,106 +321,30 @@ export function installKeyboardMouseInput(engine: GameEngine): () => void {
           triggers[3] = true;
           triggerJet = false;
         }
-        if (commandCircuitStore.getState().consumeObserverToggle()) {
+        if (triggerObserve) {
           triggers[2] = true;
+          triggerObserve = false;
         }
-        if (triggers.some(Boolean)) {
-          engine.input.push({
-            deltaYaw: 0,
-            deltaPitch: 0,
-            x: 0,
-            y: 0,
-            z: 0,
-            triggers,
-            delta,
-          });
-        }
-        return;
-      }
 
-      const inputState = inputControlsStore.getState().actions;
-      const { speedMultiplier, mouseSensitivity, invertDrag, invertLookY } =
-        settingsStore.getState();
+        // Always clear deltas so stale values don't linger in the store.
+        clearInputDeltas();
 
-      // ── Look deltas ──
-      let deltaYaw = 0;
-      let deltaPitch = 0;
+        // Only emit if there's actual input.
+        const hasLook = deltaYaw !== 0 || deltaPitch !== 0;
+        const hasMove = x !== 0 || y !== 0 || z !== 0;
+        const hasTriggers = triggers.some(Boolean);
+        if (!hasLook && !hasMove && !hasTriggers) return;
 
-      // Pointer-locked mouse movement (raw deltas, user sensitivity).
-      const locked = inputState.lockedLook as DragState | undefined;
-      if (locked && (locked.deltaX !== 0 || locked.deltaY !== 0)) {
-        deltaYaw = locked.deltaX * mouseSensitivity;
-        deltaPitch = locked.deltaY * mouseSensitivity;
-      }
-
-      // Drag-to-look (unlocked, fixed sensitivity, orbit flip in follow mode).
-      const drag = inputState.dragLook as DragState | undefined;
-      if (drag?.dragging && (drag.deltaX !== 0 || drag.deltaY !== 0)) {
-        const orbitFlip = inputModeStore.getState().mode === "follow" ? -1 : 1;
-        const dragSign = (invertDrag ? 1 : -1) * orbitFlip;
-        deltaYaw += dragSign * drag.deltaX * DRAG_SENSITIVITY;
-        deltaPitch += dragSign * drag.deltaY * DRAG_SENSITIVITY;
-      }
-
-      // Arrow keys contribute to look deltas.
-      if (isPressed(inputState, "lookLeft"))
-        deltaYaw -= ARROW_LOOK_SPEED * delta;
-      if (isPressed(inputState, "lookRight"))
-        deltaYaw += ARROW_LOOK_SPEED * delta;
-      if (isPressed(inputState, "lookUp"))
-        deltaPitch -= ARROW_LOOK_SPEED * delta;
-      if (isPressed(inputState, "lookDown"))
-        deltaPitch += ARROW_LOOK_SPEED * delta;
-
-      // ── Movement axes ──
-      let x = 0;
-      let y = 0;
-      let z = 0;
-      if (isPressed(inputState, "moveLeft")) x -= 1;
-      if (isPressed(inputState, "moveRight")) x += 1;
-      if (isPressed(inputState, "moveForward")) y += 1;
-      if (isPressed(inputState, "moveBackward")) y -= 1;
-      if (isPressed(inputState, "moveUp")) z += 1;
-      if (isPressed(inputState, "moveDown")) z -= 1;
-
-      const quantizedSpeedMultiplier = quantizeSpeed(speedMultiplier);
-      x = Math.max(-1, Math.min(1, x * quantizedSpeedMultiplier));
-      y = Math.max(-1, Math.min(1, y * quantizedSpeedMultiplier));
-      z = Math.max(-1, Math.min(1, z * quantizedSpeedMultiplier));
-
-      // ── Triggers ──
-      const triggers = [false, false, false, false, false, false];
-      if (triggerFire) {
-        triggers[0] = true;
-        triggerFire = false;
-      }
-      if (triggerJet) {
-        triggers[3] = true;
-        triggerJet = false;
-      }
-      if (triggerObserve) {
-        triggers[2] = true;
-        triggerObserve = false;
-      }
-
-      // Always clear deltas so stale values don't linger in the store.
-      clearInputDeltas();
-
-      // Only emit if there's actual input.
-      const hasLook = deltaYaw !== 0 || deltaPitch !== 0;
-      const hasMove = x !== 0 || y !== 0 || z !== 0;
-      const hasTriggers = triggers.some(Boolean);
-      if (!hasLook && !hasMove && !hasTriggers) return;
-
-      engine.input.push({
-        deltaYaw,
-        deltaPitch: invertLookY ? -deltaPitch : deltaPitch,
-        x,
-        y,
-        z,
-        triggers,
-        delta,
-      });
-    }),
+        engine.input.push({
+          deltaYaw,
+          deltaPitch: invertLookY ? -deltaPitch : deltaPitch,
+          x,
+          y,
+          z,
+          triggers,
+          delta,
+        });
+      },
+    ),
   );
 }

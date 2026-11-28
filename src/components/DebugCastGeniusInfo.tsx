@@ -54,13 +54,13 @@ function LocalCastLookaheadRow() {
           disabled={pending}
           value={draft ?? lookaheadMs}
           onChange={(event) => setDraft(event.currentTarget.value)}
-          onBlur={async (event) => {
-            const value = event.currentTarget.value.trim();
+          onBlur={async () => {
+            if (draft === null) return;
+            const value = draft.trim();
             const next = Number(value);
             if (
               /^(?:\d+(?:\.\d*)?|\.\d+)$/.test(value) &&
-              Number.isFinite(next) &&
-              next !== lookaheadMs
+              Number.isFinite(next)
             )
               await applyLocalCastLookahead(next);
             setDraft(null);

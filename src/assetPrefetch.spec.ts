@@ -7,11 +7,6 @@ const mocks = vi.hoisted(() => ({
   loadInterior: vi.fn(),
   loadTerrain: vi.fn(async (_name: string) => ({ textureNames: [] })),
   loadHtmlTexture: vi.fn(async () => {}),
-  constrained: false,
-}));
-vi.mock("./deviceConstraints", () => ({
-  readDeviceSignals: () => ({}),
-  classifyDevice: () => ({ constrained: mocks.constrained }),
 }));
 vi.mock("./engine/shapeCache", () => ({
   loadShapeDependencies: mocks.loadShape,
@@ -41,7 +36,6 @@ import {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.constrained = false;
   mocks.loadShape.mockImplementation(async () => {});
 });
 
@@ -59,7 +53,7 @@ it("requests explicit model-and-dependency readiness for prefetch jobs", async (
     { kind: "shape", name: "native-test.dts" },
     { kind: "texture", name: "test" },
   ]);
-  await vi.advanceTimersByTimeAsync(1000);
+  await vi.advanceTimersByTimeAsync(1100);
   expect(mocks.loadInterior).toHaveBeenCalledWith(
     "/interiors/native-test.dif",
     sharedSceneAssets,
@@ -116,7 +110,6 @@ it("starts recorded work and terrain before the generic attach delay", async () 
 
 it("reserves prefetch slots for opening assets ahead of terrain and background work", async () => {
   vi.useFakeTimers();
-  mocks.constrained = true;
   let blockBackground = true;
   let release = () => {};
   const pending = new Promise<void>((resolve) => (release = resolve));
@@ -252,41 +245,34 @@ it("prefetches a shared filename again for a new scene in the same stream", asyn
   second.assets.dispose();
 });
 
-it.each([
-  { constrained: false, limit: 4 },
-  { constrained: true, limit: 2 },
-])(
-  "holds at most $limit unfinished jobs instead of launching a batch every tick",
-  async ({ constrained, limit }) => {
-    vi.useFakeTimers();
-    mocks.constrained = constrained;
-    const releases: Array<() => void> = [];
-    mocks.loadShape.mockImplementation(
-      () => new Promise<void>((resolve) => releases.push(resolve)),
-    );
-    const assets = Array.from({ length: 20 }, (_, i) => ({
-      kind: "shape" as const,
-      name: `model-${i}.dts`,
-    }));
-    try {
-      startAssetPrefetch(() => assets);
-      await vi.advanceTimersByTimeAsync(5000);
-      expect(mocks.loadShape).toHaveBeenCalledTimes(limit);
-      releases[0]();
-      await vi.advanceTimersByTimeAsync(100);
-      expect(mocks.loadShape).toHaveBeenCalledTimes(limit + 1);
-      // Stopping removes interest in everything not already running.
-      stopAssetPrefetch();
-      for (const release of releases) release();
-      await vi.advanceTimersByTimeAsync(5000);
-      expect(mocks.loadShape).toHaveBeenCalledTimes(limit + 1);
-    } finally {
-      stopAssetPrefetch();
-      for (const release of releases) release();
-      await Promise.resolve();
-    }
-  },
-);
+it("holds at most two unfinished jobs instead of launching a batch every tick", async () => {
+  vi.useFakeTimers();
+  const releases: Array<() => void> = [];
+  mocks.loadShape.mockImplementation(
+    () => new Promise<void>((resolve) => releases.push(resolve)),
+  );
+  const assets = Array.from({ length: 20 }, (_, i) => ({
+    kind: "shape" as const,
+    name: `model-${i}.dts`,
+  }));
+  try {
+    startAssetPrefetch(() => assets);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(mocks.loadShape).toHaveBeenCalledTimes(2);
+    releases[0]();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(mocks.loadShape).toHaveBeenCalledTimes(3);
+    // Stopping removes interest in everything not already running.
+    stopAssetPrefetch();
+    for (const release of releases) release();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(mocks.loadShape).toHaveBeenCalledTimes(3);
+  } finally {
+    stopAssetPrefetch();
+    for (const release of releases) release();
+    await Promise.resolve();
+  }
+});
 
 it("counts old in-flight work against the limit after retargeting a stream", async () => {
   vi.useFakeTimers();
@@ -302,17 +288,17 @@ it("counts old in-flight work against the limit after retargeting a stream", asy
       })),
     );
     await vi.advanceTimersByTimeAsync(1000);
-    expect(mocks.loadShape).toHaveBeenCalledTimes(4);
+    expect(mocks.loadShape).toHaveBeenCalledTimes(2);
     startAssetPrefetch(() => [{ kind: "shape", name: "new" }]);
     await vi.advanceTimersByTimeAsync(2000);
-    expect(mocks.loadShape).toHaveBeenCalledTimes(4);
+    expect(mocks.loadShape).toHaveBeenCalledTimes(2);
     releases[0]();
     await vi.advanceTimersByTimeAsync(100);
     expect(mocks.loadShape).toHaveBeenLastCalledWith(
       "new",
       DefaultLoadingManager,
     );
-    expect(mocks.loadShape).toHaveBeenCalledTimes(5);
+    expect(mocks.loadShape).toHaveBeenCalledTimes(3);
   } finally {
     stopAssetPrefetch();
     for (const release of releases) release();

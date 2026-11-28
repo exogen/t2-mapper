@@ -2,6 +2,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { isValidElement, type ReactNode, type ReactElement } from "react";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { TimelineEvent } from "../state/demoTimelineStore";
+import { settingsStore, setPreference } from "../state/settingsStore";
+import { streamClock } from "../state/streamPlaybackStore";
+import { Checkbox } from "./Checkbox";
 import { DemoTimeline } from "./DemoTimeline";
 import { useDemoTimelineFilters } from "./useDemoTimelineFilters";
 import { Select } from "./Select";
@@ -19,11 +22,11 @@ const blueMap = rgbString(IFF_PALETTE.blueMap);
 const neutral = rgbString(IFF_PALETTE.neutral);
 
 const state = vi.hoisted(() => ({
-  events: [] as TimelineEvent[],
+  events: [] as TimelineEvent[] | null,
   players: [] as string[],
   recorderNames: [] as string[],
   playerRawNames: {} as Record<string, string>,
-  scanProgress: null,
+  scanProgress: null as number | null,
   error: null,
   recording: { recorderName: "MapGenius" },
   observerTeamColors: "blueOrange" as TeamColorScheme,
@@ -37,6 +40,7 @@ const hooks = vi.hoisted(() => ({
   stateIndex: 0,
   effectIndex: 0,
   refIndex: 0,
+  subscribe: undefined as ((onChange: () => void) => () => void) | undefined,
 }));
 
 vi.mock("react", async (original) => ({
@@ -52,6 +56,14 @@ vi.mock("react", async (original) => ({
     return [slot.value, slot.set];
   },
   useCallback: (callback: unknown) => callback,
+  useMemo: (create: () => unknown) => create(),
+  useSyncExternalStore: (
+    subscribe: (onChange: () => void) => () => void,
+    read: () => unknown,
+  ) => {
+    hooks.subscribe = subscribe;
+    return read();
+  },
   useId: () => "timeline-player",
   useRef: (initial: unknown) => {
     const index = hooks.refIndex++;
@@ -66,6 +78,11 @@ vi.mock("react", async (original) => ({
   },
 }));
 
+vi.mock("zustand", () => ({
+  useStore: <T, S>(store: { getState: () => S }, selector: (state: S) => T) =>
+    selector(store.getState()),
+}));
+
 vi.mock("../state/demoTimelineStore", () => ({
   useDemoTimeline: (selector: (value: typeof state) => unknown) =>
     selector(state),
@@ -74,10 +91,13 @@ vi.mock("../state/gameEntityStore", () => ({
   useRecorderName: () => "OldName",
 }));
 vi.mock("../state/demoTimelineFollow", () => ({ seekToTimelineEvent() {} }));
+vi.mock("../state/settingsStore", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../state/settingsStore")>()),
+  setPreference: vi.fn(),
+}));
 vi.mock("./usePlayback", () => ({ useRecording: () => state.recording }));
 vi.mock("./SettingsProvider", () => ({
   useSettings: () => ({
-    setSidebarOpen() {},
     observerTeamColors: state.observerTeamColors,
   }),
 }));
@@ -101,9 +121,12 @@ beforeEach(() => {
   state.recording = { recorderName: "MapGenius" };
   state.observerTeamColors = "blueOrange";
   state.events = [];
+  state.scanProgress = null;
   state.players = [];
   state.recorderNames = [];
   state.playerRawNames = {};
+  settingsStore.setState({ timelineNoSpoilers: false });
+  streamClock.time = 0;
 });
 
 function TimelineWithFilters() {
@@ -211,10 +234,83 @@ function render(...events: TimelineEvent[]) {
   return renderMarkup(...events).replace(/<[^>]*>/g, "");
 }
 
+it("shows No spoilers above the timeline filters and saves the choice", () => {
+  const toggle = elements(tree()).find((node) => node.type === Checkbox)!;
+  const html = markup();
+  expect(html.indexOf("No spoilers")).toBeLessThan(
+    html.indexOf("Show events involving"),
+  );
+  expect(html).toContain(`id="${toggle.props["aria-describedby"]}"`);
+  expect(html).toContain(
+    "Don’t reveal timeline events (or markers in the seek bar) until the playhead reaches them.",
+  );
+  expect(playerFilter().props.size).toBeUndefined();
+  expect(toggle.props.checked).toBe(false);
+  toggle.props.onChange({ currentTarget: { checked: true } });
+  expect(setPreference).toHaveBeenCalledWith("timelineNoSpoilers", true);
+});
+
+it("keeps the No spoilers control mounted as timeline results arrive", () => {
+  state.events = null;
+  state.scanProgress = 0.5;
+  const scanning = tree();
+  expect(renderToStaticMarkup(scanning)).toContain("Scanning… 50%");
+
+  state.events = [];
+  state.scanProgress = null;
+  const complete = tree();
+  expect(complete.type).toBe(scanning.type);
+  expect(complete.props.children[0].type).toBe(scanning.props.children[0].type);
+  const checkboxId = (view: ReactNode) =>
+    elements(view).find((node) => node.type === Checkbox)?.props.id;
+  expect(checkboxId(scanning.props.children[0])).toBeTruthy();
+  expect(checkboxId(complete.props.children[0])).toBe(
+    checkboxId(scanning.props.children[0]),
+  );
+});
+
+it("reveals rows and category counts together, notifying only at event boundaries", () => {
+  settingsStore.setState({ timelineNoSpoilers: true });
+  state.events = [
+    { type: "match-start", timeSec: 1, description: "Match begun" },
+    { type: "flag-cap", timeSec: 3.125, description: "First cap" },
+    { type: "flag-cap", timeSec: 3.125, description: "Second cap" },
+    { type: "match-end", timeSec: 30, description: "Match over" },
+  ];
+  streamClock.time = 1.1;
+  expect(markup()).toContain("Caps (0)");
+  const changed = vi.fn();
+  const unsubscribe = hooks.subscribe!(changed);
+  try {
+    streamClock.time = 2;
+    streamClock.time = 3.124;
+    expect(changed).not.toHaveBeenCalled();
+    expect(markup()).not.toContain("First cap");
+    streamClock.time = 3.125;
+    expect(changed).toHaveBeenCalledTimes(1);
+    const afterCap = markup();
+    expect(afterCap).toContain("Caps (2)");
+    expect(afterCap).toContain("First cap");
+    expect(afterCap).toContain("Second cap");
+    expect(afterCap).not.toContain("Match over");
+    streamClock.time = 3.126;
+    streamClock.time = 3.125;
+    expect(changed).toHaveBeenCalledTimes(1);
+    streamClock.time = 3.124;
+    expect(changed).toHaveBeenCalledTimes(2);
+    expect(markup()).not.toContain("First cap");
+    streamClock.time = 30;
+    expect(changed).toHaveBeenCalledTimes(3);
+    expect(markup()).toContain("Match over");
+  } finally {
+    unsubscribe();
+  }
+});
+
 it.each([true, false])(
   "uses only the original message as the whole entry's tooltip (message=%s)",
   (hasMessage) => {
-    state.events = [
+    const events: TimelineEvent[] = [
       {
         type: "kill",
         timeSec: 1,
@@ -251,15 +347,16 @@ it.each([true, false])(
         description: "Storm generator online",
       },
     ];
+    state.events = events;
     category("All").props.onClick();
     const rows = elements(tree()).filter(
       (node) => node.type === "button" && "title" in node.props,
     );
     expect(rows).toHaveLength(4);
     rows.forEach((row, i) => {
-      expect(row.props.title).toBe(state.events[i].originalMessage);
+      expect(row.props.title).toBe(events[i].originalMessage);
       const titles = [...renderToStaticMarkup(row).matchAll(/title="/g)];
-      expect(titles).toHaveLength(state.events[i].originalMessage ? 1 : 0);
+      expect(titles).toHaveLength(events[i].originalMessage ? 1 : 0);
     });
   },
 );

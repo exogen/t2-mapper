@@ -25,23 +25,28 @@ export const DEFAULT_ORBIT_DISTANCE = 8;
 export const MIN_ORBIT_DISTANCE = 2;
 export const MAX_ORBIT_DISTANCE = 60;
 
-/**
- * Store for mutable streaming playback state that needs to be shared between
- * the playback controller (writer) and entity rendering components (readers).
- *
- * These values are updated every frame and read imperatively by engine
- * frame callbacks — they intentionally bypass React's render cycle. Use
- * `streamPlaybackStore.getState()` to read current values.
- */
-/**
- * Current playback time in seconds, written every frame by the streaming
- * controller and read imperatively by engine frame callbacks. A module-scope
- * mutable (not store state) so per-frame clock updates never notify
- * store subscribers.
- */
+let streamTime = 0;
+const streamTimeListeners = new Set<(time: number) => void>();
+
+export function subscribeStreamTime(
+  listener: (time: number) => void,
+): () => void {
+  streamTimeListeners.add(listener);
+  return () => streamTimeListeners.delete(listener);
+}
+
+/** The streaming controller's exact playhead, independent of UI snapshots. */
 export const streamClock = {
   /** Transport/playhead time, including the debrief and mission transition. */
-  time: 0,
+  get time(): number {
+    return streamTime;
+  },
+  set time(time: number) {
+    if (time === streamTime) return;
+    streamTime = time;
+    if (!streamTimeListeners.size) return;
+    for (const listener of streamTimeListeners) listener(time);
+  },
   matchEndedAtSec: null as number | null,
   /** Time used by world animation, held at the match-end boundary. */
   get worldTime(): number {
@@ -143,6 +148,7 @@ export interface StreamPlaybackState {
   projectileFollow: ProjectileFollow | null;
 }
 
+/** Shared streaming camera state, also read imperatively by frame callbacks. */
 export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
   playback: null,
   root: null,

@@ -290,6 +290,29 @@ it("uses the record button's action for R, including stopping during source prep
   expect(fixture.clip.stop).toHaveBeenCalledOnce();
 });
 
+it("opens the sidebar for recording without saving a sidebar preference", () => {
+  vi.useFakeTimers();
+  const setItem = vi.fn();
+  vi.stubGlobal("localStorage", { getItem: () => null, setItem });
+  const { sidebarOpen } = settingsStore.getState();
+  try {
+    settingsStore.setState({
+      hasSeenClipRecordingHelp: true,
+      sidebarOpen: false,
+    });
+    vi.mocked(fixture.clip.start).mockReturnValue(true);
+    render();
+    fixture.actions.get("recordClip")!();
+    expect(settingsStore.getState().sidebarOpen).toBe(true);
+    vi.advanceTimersByTime(500);
+    expect(setItem).not.toHaveBeenCalled();
+  } finally {
+    settingsStore.setState({ sidebarOpen });
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  }
+});
+
 it.each([
   "signed-out",
   "pending",

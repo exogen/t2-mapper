@@ -12,6 +12,7 @@ import { ChatHudControl, MatchHudControl } from "./HudControls";
 import { useCommentaryTracks } from "../state/commentaryTracksStore";
 import {
   MAX_PREFERRED_FOV,
+  MAX_ZOOM_SPEED_MS,
   type FlagReturnCamera,
 } from "../state/settingsStore";
 import { memo } from "react";
@@ -168,6 +169,8 @@ export const InspectorControls = memo(function InspectorControls({
     setFogEnabled,
     fov,
     setFov,
+    zoomSpeedMs,
+    setZoomSpeedMs,
     audioEnabled,
     setAudioEnabled,
     audioVolume,
@@ -251,6 +254,7 @@ export const InspectorControls = memo(function InspectorControls({
   const watching = useIsWatchSpectator();
   const showCasterControls =
     (dataSource === "live" && watching) || recording?.source === "demo";
+  const fullTimelineLocked = viewingClip || clipPlaybackActive;
   return (
     <div id="controls" className={styles.InspectorControls}>
       <div>
@@ -338,7 +342,7 @@ export const InspectorControls = memo(function InspectorControls({
                   value="timeline"
                   label="Timeline"
                   noPadding
-                  disabled={viewingClip}
+                  disabled={fullTimelineLocked}
                   title={
                     viewingClip
                       ? "Exit clip to view the full demo timeline"
@@ -368,7 +372,32 @@ export const InspectorControls = memo(function InspectorControls({
                       max={MAX_PREFERRED_FOV}
                       step={5}
                       value={fov}
+                      disabled={clipPlaybackActive}
                       onValueChange={setFov}
+                    />
+                  </div>
+                </div>
+                <div className={styles.Field}>
+                  <label id="zoomSpeedInput-label" htmlFor="zoomSpeedInput">
+                    Zoom speed
+                  </label>
+                  <div className={styles.Control}>
+                    <RangeSlider
+                      id="zoomSpeedInput"
+                      aria-labelledby="zoomSpeedInput-label"
+                      aria-valuetext={
+                        zoomSpeedMs === 0
+                          ? "Instant"
+                          : `${zoomSpeedMs} milliseconds per 90 degrees`
+                      }
+                      min={0}
+                      max={MAX_ZOOM_SPEED_MS}
+                      step={50}
+                      value={MAX_ZOOM_SPEED_MS - zoomSpeedMs}
+                      disabled={clipPlaybackActive}
+                      onValueChange={(value) =>
+                        setZoomSpeedMs(MAX_ZOOM_SPEED_MS - value)
+                      }
                     />
                   </div>
                 </div>

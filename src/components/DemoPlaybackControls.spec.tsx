@@ -18,6 +18,8 @@ const state = vi.hoisted(() => ({
   setSpeed: vi.fn(),
   events: [] as TimelineEvent[] | null,
   observerTeamColors: "blueOrange" as TeamColorScheme,
+  timelineNoSpoilers: false,
+  streamClock: { time: 0 },
   recording: { duration: 100 },
   clipRoute: null as string | null,
   clip: {
@@ -32,6 +34,7 @@ const state = vi.hoisted(() => ({
   playback: {
     rate: 1,
     status: "paused",
+    seekTime: 0,
     resumeAfterSeek: null,
     downloadStatus: "complete",
     pendingSeekSec: null,
@@ -61,7 +64,10 @@ vi.mock("./usePlayback", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./usePlayback")>()),
   useRecording: () => state.recording,
   useIsSeeking: () => state.playback.status === "seeking",
-  useCurrentTime: () => 0,
+  useCurrentTime: () =>
+    state.playback.status === "seeking"
+      ? state.playback.seekTime
+      : Math.floor(state.streamClock.time),
   useDuration: () => state.recording.duration,
   useSpeed: () => 1,
   SPEED_OPTIONS: [0.5, 1, 2],
@@ -81,6 +87,11 @@ vi.mock("../state/demoTimelineStore", () => ({
   useDemoTimeline: (selector: (value: typeof state) => unknown) =>
     selector(state),
 }));
+vi.mock("../state/streamPlaybackStore", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../state/streamPlaybackStore")>()),
+  streamClock: state.streamClock,
+  subscribeStreamTime: () => () => {},
+}));
 vi.mock("../state/demoDirectorStore", () => ({
   startDirector() {},
   exitDirector() {},
@@ -95,6 +106,20 @@ vi.mock("../state/demoDirectorStore", () => ({
 vi.mock("./SettingsProvider", () => ({
   useSettings: () => ({ observerTeamColors: state.observerTeamColors }),
 }));
+vi.mock("../state/settingsStore", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../state/settingsStore")>();
+  return {
+    ...actual,
+    settingsStore: {
+      ...actual.settingsStore,
+      getInitialState: () => ({
+        ...actual.settingsStore.getInitialState(),
+        timelineNoSpoilers: state.timelineNoSpoilers,
+      }),
+    },
+  };
+});
 
 beforeEach(() => {
   state.actions.clear();
@@ -114,7 +139,10 @@ beforeEach(() => {
   };
 
   state.observerTeamColors = "blueOrange";
+  state.timelineNoSpoilers = false;
+  state.streamClock.time = 0;
   state.playback.status = "paused";
+  state.playback.seekTime = 0;
 });
 
 function clipSample(timeMs: number, jump?: ClipSample["jump"]): ClipSample {
@@ -276,6 +304,58 @@ function markers(...events: TimelineEvent[]) {
     ) ?? []
   );
 }
+
+it("reveals scrubber markers at their exact timestamps, including the end", () => {
+  state.timelineNoSpoilers = true;
+  state.playback.status = "seeking";
+  state.playback.seekTime = 95;
+  const events: TimelineEvent[] = [
+    { type: "match-start", timeSec: 10, description: "Match started" },
+    {
+      type: "flag-cap",
+      timeSec: 25.25,
+      description: "Flag captured",
+      capturer: "First capper",
+    },
+    {
+      type: "flag-cap",
+      timeSec: 25.25,
+      description: "Flag captured",
+      capturer: "Second capper",
+    },
+    {
+      type: "flag-cap",
+      timeSec: state.recording.duration,
+      description: "Flag captured",
+      capturer: "Final capper",
+    },
+  ];
+
+  state.streamClock.time = 9.999;
+  expect(markers(...events)).toEqual([]);
+  state.streamClock.time = 10;
+  expect(markers(...events)).toEqual([
+    expect.stringContaining('data-type="match-start"'),
+  ]);
+
+  state.playback.status = "paused";
+  state.streamClock.time = 25.249;
+  expect(markers(...events)).toHaveLength(1);
+  state.streamClock.time = 25.25;
+  expect(markers(...events)).toEqual([
+    expect.stringContaining('data-type="match-start"'),
+    expect.stringContaining("First capper"),
+    expect.stringContaining("Second capper"),
+  ]);
+
+  state.playback.status = "ending";
+  state.streamClock.time = state.recording.duration;
+  expect(markers(...events)).toHaveLength(4);
+  expect(markers(...events).at(-1)).toContain("Final capper");
+
+  state.streamClock.time = 5;
+  expect(markers(...events)).toEqual([]);
+});
 
 it("adds capture markers with no held time in their labels alongside the match-start tick", () => {
   const result = markers(

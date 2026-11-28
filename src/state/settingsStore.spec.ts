@@ -4,10 +4,12 @@ import {
   createSettingsStore,
   DEFAULT_RESOURCE_LOOKAHEAD_MS,
   MAX_RESOURCE_LOOKAHEAD_MS,
+  MAX_ZOOM_SPEED_MS,
   selectDebugMode,
   selectFogEnabled,
   setPreference,
   updateHudPreference,
+  updatePlayerInterpolationPreference,
   type HudPosition,
   type SettingsStore,
 } from "./settingsStore";
@@ -17,9 +19,12 @@ import {
 } from "../stream/playerInterpolation";
 
 function stubSaved(saved: object) {
+  let stored = JSON.stringify(saved);
   vi.stubGlobal("localStorage", {
-    getItem: () => JSON.stringify(saved),
-    setItem: vi.fn(),
+    getItem: () => stored,
+    setItem: vi.fn((_key: string, value: string) => {
+      stored = value;
+    }),
   });
 }
 
@@ -178,19 +183,43 @@ it.each([-1, "2000", true, {}])(
   },
 );
 
-it.each([0, 12_500, MAX_RESOURCE_LOOKAHEAD_MS])(
-  "saves and restores a resource lookahead of %s ms",
-  (lookaheadMs) => {
-    const store = createSettingsStore();
-    expect(store.getState().resourceLookaheadMs).toBe(
-      DEFAULT_RESOURCE_LOOKAHEAD_MS,
-    );
-    setPreference("resourceLookaheadMs", lookaheadMs, store);
-    vi.advanceTimersByTime(500);
-    stubSaved(lastSaved());
-    expect(createSettingsStore().getState().resourceLookaheadMs).toBe(
-      lookaheadMs,
-    );
+it.each([
+  0,
+  5_000,
+  DEFAULT_RESOURCE_LOOKAHEAD_MS,
+  12_500,
+  MAX_RESOURCE_LOOKAHEAD_MS,
+])("saves and restores a resource lookahead of %s ms", (lookaheadMs) => {
+  const store = createSettingsStore();
+  expect(store.getState().resourceLookaheadMs).toBe(
+    DEFAULT_RESOURCE_LOOKAHEAD_MS,
+  );
+  setPreference("resourceLookaheadMs", lookaheadMs, store);
+  vi.advanceTimersByTime(500);
+  stubSaved(lastSaved());
+  expect(createSettingsStore().getState().resourceLookaheadMs).toBe(
+    lookaheadMs,
+  );
+});
+
+it("upgrades the old resource lookahead default and keeps the new default automatic", () => {
+  stubSaved({ resourceLookaheadMs: 5_000, invertLookY: true });
+  const store = createSettingsStore();
+  expect(store.getState()).toMatchObject({
+    resourceLookaheadMs: 8_000,
+    invertLookY: true,
+  });
+  setPreference("invertLookY", false, store);
+  vi.advanceTimersByTime(500);
+  expect(lastSaved()).not.toHaveProperty("resourceLookaheadMs");
+  expect(lastSaved()).not.toHaveProperty("resourceLookaheadOverrideMs");
+});
+
+it.each([0, 12_500])(
+  "restores an older resource lookahead of %s ms",
+  (value) => {
+    stubSaved({ resourceLookaheadMs: value });
+    expect(createSettingsStore().getState().resourceLookaheadMs).toBe(value);
   },
 );
 
@@ -320,7 +349,9 @@ it("upgrades the previous implicit defaults and remembers an explicit retail ove
   );
   setPreference("playerInterpolation", DEFAULT_PLAYER_INTERPOLATION, store);
   vi.advanceTimersByTime(500);
-  expect(lastSaved()).not.toHaveProperty("playerInterpolationOverride");
+  expect(lastSaved().playerInterpolationOverride).toEqual(
+    DEFAULT_PLAYER_INTERPOLATION,
+  );
   expect(lastSaved()).not.toHaveProperty("playerInterpolation");
 });
 
@@ -376,6 +407,87 @@ it("debounces saves and writes only once preferences change", () => {
   expect(localStorage.setItem).toHaveBeenCalledTimes(1);
 });
 
+it("flushes a pending choice before the save delay elapses", () => {
+  stubSaved({});
+  const store = createSettingsStore();
+  store.flushChoices();
+  expect(localStorage.setItem).not.toHaveBeenCalled();
+  setPreference("fov", 90, store);
+  store.flushChoices();
+  expect(lastSaved()).toEqual({ preferencesVersion: 2, fov: 90 });
+  vi.advanceTimersByTime(500);
+  expect(localStorage.setItem).toHaveBeenCalledOnce();
+});
+
+it("saves exactly the preferences chosen, including defaults and null choices", () => {
+  stubSaved({});
+  const store = createSettingsStore();
+  setPreference("fov", 90, store);
+  setPreference("fpsLimit", null, store);
+  setPreference("localCastLookaheadMs", null, store);
+  setPreference("renderOnDemand", true, store);
+  store.setState({ sidebarOpen: true, followBehindPlayer: true });
+  vi.advanceTimersByTime(500);
+  expect(lastSaved()).toEqual({
+    preferencesVersion: 2,
+    fov: 90,
+    fpsLimit: null,
+    localCastLookaheadMs: null,
+  });
+  setPreference("invertLookY", true, createSettingsStore());
+  vi.advanceTimersByTime(500);
+  expect(lastSaved()).toEqual({
+    preferencesVersion: 2,
+    fov: 90,
+    fpsLimit: null,
+    localCastLookaheadMs: null,
+    invertLookY: true,
+  });
+});
+
+it("drops legacy defaults without dropping identifiable choices and marker-based overrides", () => {
+  stubSaved({
+    fov: 90,
+    fpsLimit: null,
+    renderScale: 1,
+    showChat: false,
+    showQuickCamHud: false,
+    hdTexturesEnabled: true,
+    resourceLookaheadOverrideMs: 5_000,
+  });
+  const store = createSettingsStore();
+  expect(store.getState().resourceLookaheadMs).toBe(5_000);
+  expect(localStorage.setItem).not.toHaveBeenCalled();
+  setPreference("invertLookY", true, store);
+  vi.advanceTimersByTime(500);
+  expect(lastSaved()).toEqual({
+    preferencesVersion: 2,
+    showChat: false,
+    hdTexturesEnabled: true,
+    resourceLookaheadMs: 5_000,
+    invertLookY: true,
+  });
+});
+
+it("persists HUD and interpolation edits at field granularity and merges disjoint choices", () => {
+  stubSaved({});
+  const first = createSettingsStore();
+  const second = createSettingsStore();
+  updateHudPreference("score", { position: "left" }, first);
+  updatePlayerInterpolationPreference({ maxLatencyTicks: 0 }, first);
+  updatePlayerInterpolationPreference({ maxWarpTicks: 8 }, second);
+  vi.advanceTimersByTime(500);
+  expect(lastSaved()).toEqual({
+    preferencesVersion: 2,
+    scoreHudPosition: "left",
+    playerInterpolationOverride: { maxLatencyTicks: 0, maxWarpTicks: 8 },
+  });
+  expect(createSettingsStore().getState().playerInterpolation).toEqual({
+    ...DEFAULT_PLAYER_INTERPOLATION,
+    maxWarpTicks: 8,
+  });
+});
+
 it.each([
   [180, 150],
   [140, 140],
@@ -383,6 +495,30 @@ it.each([
   stubSaved({ fov });
   expect(createSettingsStore().getState().fov).toBe(expected);
 });
+
+it("defaults to instant zoom and saves explicitly chosen speeds", () => {
+  const store = createSettingsStore();
+  expect(store.getState().zoomSpeedMs).toBe(0);
+
+  setPreference("fov", 110, store);
+  store.flushChoices();
+  expect(lastSaved()).not.toHaveProperty("zoomSpeedMs");
+
+  for (const speed of [MAX_ZOOM_SPEED_MS, 0]) {
+    setPreference("zoomSpeedMs", speed, store);
+    store.flushChoices();
+    expect(lastSaved()).toMatchObject({ fov: 110, zoomSpeedMs: speed });
+    expect(createSettingsStore().getState().zoomSpeedMs).toBe(speed);
+  }
+});
+
+it.each([-1, MAX_ZOOM_SPEED_MS + 1, 100.5, "100"])(
+  "ignores invalid saved zoom speed %s",
+  (zoomSpeedMs) => {
+    stubSaved({ zoomSpeedMs });
+    expect(createSettingsStore().getState().zoomSpeedMs).toBe(0);
+  },
+);
 
 it("restores a hidden Broadcast Match HUD without losing its style", () => {
   stubSaved({ showMatchHud: false, matchHudStyle: "broadcast" });
@@ -406,6 +542,24 @@ it("restores the Competition score preference", () => {
   expect(createSettingsStore().getState().scoreStyle).toBe("competition");
 });
 
+it("defaults timeline spoilers to visible and remembers an explicit choice", () => {
+  const store = createSettingsStore();
+  expect(store.getState().timelineNoSpoilers).toBe(false);
+
+  setPreference("fov", 110, store);
+  store.flushChoices();
+  expect(lastSaved()).not.toHaveProperty("timelineNoSpoilers");
+
+  for (const timelineNoSpoilers of [true, false]) {
+    setPreference("timelineNoSpoilers", timelineNoSpoilers, store);
+    store.flushChoices();
+    expect(lastSaved()).toMatchObject({ timelineNoSpoilers });
+    expect(createSettingsStore().getState().timelineNoSpoilers).toBe(
+      timelineNoSpoilers,
+    );
+  }
+});
+
 it("ignores invalid saved values", () => {
   stubSaved({
     scoreStyle: "fancy",
@@ -413,6 +567,7 @@ it("ignores invalid saved values", () => {
     fpsLimit: 29.5,
     speedMultiplier: 5,
     clickToCycle: "yes",
+    timelineNoSpoilers: "yes",
   });
   const state = createSettingsStore().getState();
   expect(state.scoreStyle).toBe("classic");
@@ -420,6 +575,7 @@ it("ignores invalid saved values", () => {
   expect(state.fpsLimit).toBeNull();
   expect(state.speedMultiplier).toBe(1);
   expect(state.clickToCycle).toBe(true);
+  expect(state.timelineNoSpoilers).toBe(false);
 });
 
 it.each([

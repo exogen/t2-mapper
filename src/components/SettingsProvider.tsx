@@ -70,6 +70,8 @@ type SettingsContextType = {
   setHighQualityFog: StateSetter<boolean>;
   fov: number;
   setFov: StateSetter<number>;
+  zoomSpeedMs: number;
+  setZoomSpeedMs: StateSetter<number>;
   audioEnabled: boolean;
   setAudioEnabled: StateSetter<boolean>;
   animationEnabled: boolean;
@@ -185,7 +187,7 @@ type ControlsContextType = {
   setInvertJoystick: StateSetter<boolean>;
 };
 
-function setter<K extends keyof Preferences>(
+function setter<K extends Exclude<keyof Preferences, "hudPreferences">>(
   key: K,
 ): StateSetter<Preferences[K]> {
   return (action) => setPreference(key, action);
@@ -199,6 +201,7 @@ const settingsActions = {
   clearFogEnabledOverride: () => clearFogEnabledOverride(),
   setHighQualityFog: setter("highQualityFog"),
   setFov: setter("fov"),
+  setZoomSpeedMs: setter("zoomSpeedMs"),
   setAudioEnabled: setter("audioEnabled"),
   setAnimationEnabled: setter("animationEnabled"),
   setShadowsEnabled: setter("shadowsEnabled"),
@@ -251,6 +254,7 @@ function selectSettings(
     fogEnabled: selectFogEnabled(state),
     highQualityFog: state.highQualityFog,
     fov: state.fov,
+    zoomSpeedMs: state.zoomSpeedMs,
     audioEnabled: state.audioEnabled,
     animationEnabled: state.animationEnabled,
     shadowsEnabled: state.shadowsEnabled,
@@ -413,7 +417,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (isTouch !== false) return;
     const { sidebarOpen } = readPersistedSettings();
-    if (sidebarOpen != null) setPreference("sidebarOpen", sidebarOpen);
+    if (sidebarOpen != null) settingsStore.setState({ sidebarOpen });
   }, [isTouch]);
 
   return children;

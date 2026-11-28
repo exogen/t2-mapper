@@ -3,6 +3,7 @@ import { isStreamingSource, useDataSource } from "../state/gameEntityStore";
 import { useFeatures } from "./FeaturesProvider";
 import { useRecording } from "./usePlayback";
 import { ThreeCanvas } from "./ThreeCanvas";
+import { ZoomPreviewHUD } from "./ZoomPreviewHUD";
 import { FpsMeter } from "./FpsMeter";
 import { DemoMomentLoader } from "./DemoMomentLoader";
 import { ActiveInputBindings } from "./ActiveInputBindings";
@@ -62,6 +63,7 @@ export const GameView = memo(function GameView({
         </Suspense>
       ) : null}
       <ThreeCanvas engine={engine} dpr={dpr} onCreated={onCreated} />
+      <ZoomPreviewHUD />
       <FpsMeter />
     </EngineContext>
   );

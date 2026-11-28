@@ -21,9 +21,8 @@ import { loadShapeDependencies } from "./engine/shapeCache";
 import { interiorToUrl, textureToUrl, terrainTextureToUrl } from "./loaders";
 import { createLogger } from "./logger";
 import type { PreloadAsset } from "./stream/types";
-import { classifyDevice, readDeviceSignals } from "./deviceConstraints";
 import { registerMetricSource } from "./diagnostics/resourceMetricRegistry";
-import { deviceTierValue, performanceTuning } from "./performanceTuning";
+import { performanceTuning } from "./performanceTuning";
 
 const log = createLogger("assetPrefetch");
 
@@ -42,6 +41,7 @@ interface RecordedAssetBatch {
 
 const RECORDED_RESCAN_MS = 150;
 const RECORDED_SCAN_SLICE_DELAY_MS = 50;
+const concurrency = performanceTuning.assetPrefetch.concurrency;
 let getOwner: (() => PrefetchOwner) | undefined;
 let getPriorityJobs: (() => RecordedAssetBatch | null) | undefined;
 let previousTextures: SceneAssets | undefined;
@@ -51,7 +51,6 @@ let genericStartAt = 0;
 /** In-flight and settled jobs share the same keys across both providers. */
 const jobs = new Map<string, boolean>();
 let generation = 0;
-let concurrency: number = performanceTuning.assetPrefetch.concurrency.desktop;
 let activeJobs = 0;
 let peakActiveJobs = 0;
 let completedJobs = 0;
@@ -142,10 +141,6 @@ export function startAssetPrefetch(
   provider = getAssets;
   getOwner = getSceneOwner;
   getPriorityJobs = priority;
-  concurrency = deviceTierValue(
-    performanceTuning.assetPrefetch.concurrency,
-    classifyDevice(readDeviceSignals()).constrained,
-  );
   // In-flight shared loads from the previous owner still count against the
   // limit. They may serve active views, so do not cancel or forget them.
   const { startDelayMs } = performanceTuning.assetPrefetch;

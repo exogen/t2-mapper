@@ -8,6 +8,7 @@ import {
   defaultDragState,
   defaultTouchState,
   defaultPinchState,
+  isPressed,
   type InputMapEntry,
   type InputBinding,
   type ActionState,
@@ -42,7 +43,10 @@ export function createInputBindingHandlers(map: readonly InputMapEntry[]) {
   }
 
   // Build lookup indices.
-  const keyBindings = new Map<string, BoundAction<"key">[]>();
+  const keyBindings = new Map<
+    string,
+    Extract<InputBinding, { type: "key" }>[]
+  >();
   const clickBindings: BoundAction<"click">[] = [];
   const dragBindings: BoundAction<"drag">[] = [];
   const pointerLockMoveBindings: { action: ParsedAction }[] = [];
@@ -54,12 +58,12 @@ export function createInputBindingHandlers(map: readonly InputMapEntry[]) {
     for (const binding of action.bindings) {
       switch (binding.type) {
         case "key": {
-          let list = keyBindings.get(binding.code);
+          let list = keyBindings.get(action.name);
           if (!list) {
             list = [];
-            keyBindings.set(binding.code, list);
+            keyBindings.set(action.name, list);
           }
-          list.push({ action, binding });
+          list.push(binding);
           break;
         }
         case "click":
@@ -102,20 +106,15 @@ export function createInputBindingHandlers(map: readonly InputMapEntry[]) {
     const { actions } = store.getState();
     const updates: Record<string, ActionState> = {};
 
-    for (const [, entries] of keyBindings) {
-      for (const { action, binding } of entries) {
-        const shouldBePressed =
-          keys.has(binding.code) &&
-          keySetModifiersMatch(keys, binding.modifiers);
-        const prev = actions[action.name] as KeyState | undefined;
-        const wasPressed = prev?.pressed ?? false;
-        if (shouldBePressed && !wasPressed) {
-          updates[action.name] = { pressed: true };
-          if (!previousKeys.has(binding.code)) notifySubscribers(action.name);
-        } else if (!shouldBePressed && wasPressed) {
-          updates[action.name] = { pressed: false };
-        }
-      }
+    for (const [name, bindings] of keyBindings) {
+      const held = bindings.find(
+        ({ code, modifiers }) =>
+          keys.has(code) && keySetModifiersMatch(keys, modifiers),
+      );
+      const pressed = held !== undefined;
+      if (pressed === isPressed(actions, name)) continue;
+      updates[name] = { pressed };
+      if (held && !previousKeys.has(held.code)) notifySubscribers(name);
     }
 
     if (Object.keys(updates).length > 0) {

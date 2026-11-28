@@ -10,14 +10,22 @@ function isValidFov(fov: number | undefined): fov is number {
   return fov !== undefined && Number.isFinite(fov) && fov > 0 && fov < 180;
 }
 
-/** One FOV owner for map, demo and live cameras, including paused playback. */
-export function updateObserverCameraFov(
-  camera: PerspectiveCamera,
-  preferredFov: number,
-): void {
+export function applyVerticalFov(camera: PerspectiveCamera, fov: number): void {
+  if (camera.fov === fov) return;
+  camera.fov = fov;
+  camera.updateProjectionMatrix();
+}
+
+/** Base framing and viewer zoom availability for the current observer mode. */
+export function resolveObserverFov(preferredFov: number) {
   const { recording } = engineStore.getState().playback;
   const stream = streamPlaybackStore.getState();
   const owner = resolveCameraOwner();
+  const isOriginalDemoView =
+    recording?.source === "demo" &&
+    stream.cameraMode === "original" &&
+    owner !== "tour" &&
+    owner !== "director";
   const recordedFov = streamRenderFrame.camera?.fov;
   let fov = isValidFov(preferredFov) ? preferredFov : 90;
   const savedFov = casterStore.getState().fov;
@@ -29,20 +37,23 @@ export function updateObserverCameraFov(
   )
     fov = savedFov!;
   if (
-    recording?.source === "demo" &&
+    isOriginalDemoView &&
     recording.streamingPlayback === stream.playback &&
-    stream.cameraMode === "original" &&
-    owner !== "tour" &&
-    owner !== "director" &&
     isValidFov(recordedFov)
   ) {
     // Tribes2.exe handleRecordedBlock (0x005fb170) restores the captured
     // FOV directly. Samples already contain the recorder's zoom easing.
     fov = recordedFov;
   }
-  const verticalFov = torqueHorizontalFovToThreeVerticalFov(fov, camera.aspect);
-  if (camera.fov !== verticalFov) {
-    camera.fov = verticalFov;
-    camera.updateProjectionMatrix();
-  }
+  return { fov, allowViewerZoom: !isOriginalDemoView };
+}
+
+export function applyHorizontalFov(
+  camera: PerspectiveCamera,
+  fov: number,
+): void {
+  applyVerticalFov(
+    camera,
+    torqueHorizontalFovToThreeVerticalFov(fov, camera.aspect),
+  );
 }

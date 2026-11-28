@@ -10,6 +10,7 @@ import {
 } from "react";
 import { useStore } from "zustand";
 import type { GameEngine } from "../engine/gameEngine";
+import { settingsStore } from "../state/settingsStore";
 import { InspectorControls } from "./InspectorControls";
 import { AccountControls } from "./AccountControls";
 import { MissionSelect } from "./MissionSelect";
@@ -179,10 +180,10 @@ export function MapInspector() {
       navigation.selectMission(mission);
       setChoosingMap(false);
       if (isTouch) {
-        setSidebarOpen(false);
+        settingsStore.setState({ sidebarOpen: false });
       }
     },
-    [clearFogEnabledOverride, navigation, isTouch, setSidebarOpen],
+    [clearFogEnabledOverride, navigation, isTouch],
   );
 
   usePublicWindowAPI({ onChangeMission: changeMission });
@@ -425,37 +426,37 @@ export function MapInspector() {
       setAutoJoin("off");
       setErrorAcknowledged(false);
       navigation.watchServer(address);
-      setSidebarOpen(false);
+      settingsStore.setState({ sidebarOpen: false });
     },
-    [navigation, setSidebarOpen],
+    [navigation],
   );
 
   // Reveal the view when the stream goes live on touch devices.
   useEffect(() => {
     if (watchStatus === "live" && isTouch) {
-      setSidebarOpen(false);
+      settingsStore.setState({ sidebarOpen: false });
     }
-  }, [watchStatus, isTouch, setSidebarOpen]);
+  }, [watchStatus, isTouch]);
 
   // Close the sidebar when a live server connection is established.
   const gameStatus = useLiveSelector((s) => s.gameStatus);
   useEffect(() => {
     if (gameStatus === "connected" && isTouch) {
-      setSidebarOpen(false);
+      settingsStore.setState({ sidebarOpen: false });
     }
-  }, [gameStatus, isTouch, setSidebarOpen]);
+  }, [gameStatus, isTouch]);
 
   useEffect(() => {
     if (recording && isTouch) {
-      setSidebarOpen(false);
+      settingsStore.setState({ sidebarOpen: false });
     }
-  }, [isTouch, recording, setSidebarOpen]);
+  }, [isTouch, recording]);
 
   useEffect(() => {
     if (isTourActive && isTouch) {
-      setSidebarOpen(false);
+      settingsStore.setState({ sidebarOpen: false });
     }
-  }, [isTouch, isTourActive, setSidebarOpen]);
+  }, [isTouch, isTourActive]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -529,8 +530,8 @@ export function MapInspector() {
     setChoosingMap(false);
     // When the sidebar overlays the content it would hide the server
     // browser it just opened; in side-by-side mode leave it be.
-    if (sidebarOverlayMode) setSidebarOpen(false);
-  }, [navigation, sidebarOverlayMode, setSidebarOpen]);
+    if (sidebarOverlayMode) settingsStore.setState({ sidebarOpen: false });
+  }, [navigation, sidebarOverlayMode]);
 
   // The Demo sidebar button enters demo mode: the content area swaps to
   // the drag & drop screen, clearing any live session or loaded stream.
@@ -539,8 +540,8 @@ export function MapInspector() {
     setChoosingMap(false);
     // Same as the server browser: don't leave the drop screen hidden
     // behind the overlay sidebar.
-    if (sidebarOverlayMode) setSidebarOpen(false);
-  }, [navigation, sidebarOverlayMode, setSidebarOpen]);
+    if (sidebarOverlayMode) settingsStore.setState({ sidebarOpen: false });
+  }, [navigation, sidebarOverlayMode]);
   const handleChooseMap = useCallback(() => setChoosingMap(true), []);
   const handleCancelChoosingMap = useCallback(() => {
     setChoosingMap(false);
@@ -715,7 +716,8 @@ export function MapInspector() {
             </div>
             <AccountControls
               onNavigate={() => {
-                if (sidebarOverlayMode) setSidebarOpen(false);
+                if (sidebarOverlayMode)
+                  settingsStore.setState({ sidebarOpen: false });
               }}
             />
           </div>

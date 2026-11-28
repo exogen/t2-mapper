@@ -2,7 +2,13 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Quaternion, Scene, Vector3 } from "three";
 import type { AccountUser } from "../../relay/accountTypes";
 import type { ClipSample, ClipTake } from "../../relay/clipTypes";
-import { MAX_CLIP_DURATION_MS, sampleClipTake } from "../../relay/clipTypes";
+import {
+  MAX_CLIP_BODY_BYTES,
+  MAX_CLIP_DURATION_MS,
+  readClipTake,
+  sampleClipTake,
+  trimClipTake,
+} from "../../relay/clipTypes";
 import { clipStore } from "../state/clipStore";
 import { appAccountStore } from "../state/appAccountStore";
 import { demoLoadStore } from "../state/demoLoadStore";
@@ -21,8 +27,9 @@ import type {
 import { streamRenderFrame } from "../stream/interpolateEntity";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { commandCircuitStore } from "../state/commandCircuitStore";
+import { cameraZoomPreviewStore } from "../state/cameraZoomPreview";
 import { resolveCameraOwner } from "../state/cameraOwner";
-import { updateObserverCameraFov } from "./cameraFov";
+import { applyHorizontalFov } from "./cameraFov";
 import { CameraRig } from "./cameraRig";
 import { FrameScheduler, type FrameContext } from "./frameScheduler";
 import { FramePriority } from "./framePriority";
@@ -352,12 +359,12 @@ it.each([
     streamPlaybackStore.setState({ cameraMode: "freeFly" });
     settingsStore.setState({ pauseClipRecordingWhenDemoPaused: true });
     engineStore.getState().setPlaybackStatus("playing");
-    updateObserverCameraFov(engine.cameras.perspective, 90);
+    applyHorizontalFov(engine.cameras.perspective, 90);
     expect(clipStore.getState().start()).toBe(true);
     engine.scheduler.run(FramePriority.ClipCamera, frame());
     engineStore.getState().setPlaybackStatus("paused");
     engine.cameras.resize(width, 400);
-    updateObserverCameraFov(engine.cameras.perspective, fov);
+    applyHorizontalFov(engine.cameras.perspective, fov);
     engine.scheduler.run(FramePriority.ClipCamera, frame(5));
     engineStore.getState().setPlaybackStatus("playing");
     streamClock.time = 10.04;
@@ -863,6 +870,302 @@ it("owns the final camera and preserves horizontal FOV framing on another aspect
   expect(engine.cameras.perspective.fov).toBeCloseTo(
     (2 * Math.atan((Math.tan((70 * Math.PI) / 360) * 1.5) / 2) * 180) / Math.PI,
   );
+
+  const camera = engine.cameras.perspective;
+  const recordedFov = camera.fov;
+  engine.cameras.zoomHeld = true;
+  engine.scheduler.run(FramePriority.ClipCamera, frame(0));
+  expect(camera.fov).toBe(recordedFov);
+});
+
+it("preserves recorded Original view framing within a clip while zoom is held", () => {
+  const { engine, frame } = fixture();
+  clipStore
+    .getState()
+    .play(
+      take([
+        sample(0, 10, { cameraMode: "original", aspect: 2, fov: 50 }),
+        sample(1000, 11, { cameraMode: "original", aspect: 2, fov: 20 }),
+      ]),
+    );
+  engine.cameras.zoomHeld = true;
+  engine.scheduler.run(FramePriority.ClipCamera, frame(0));
+  expect(engine.cameras.perspective.fov).toBeCloseTo(50);
+  engine.scheduler.run(FramePriority.ClipTransport, frame(1));
+  streamClock.time = 11;
+  engine.scheduler.run(FramePriority.ClipCamera, frame(1));
+  expect(engine.cameras.perspective.fov).toBeCloseTo(20);
+});
+
+it.each([0, 50, 500])(
+  "replays a recorded zoom at the creator's %s ms speed after saving and trimming",
+  (zoomSpeedMs) => {
+    const { engine, frame } = fixture();
+    const preferences = settingsStore.getState();
+    const now = vi.spyOn(performance, "now").mockReturnValue(0);
+    let frameNumber = 0;
+    let timeMs = 0;
+    const capture = (time: number) => {
+      now.mockReturnValue(time);
+      engine.cameras.applyObserverFov(++frameNumber);
+      engine.scheduler.run(
+        FramePriority.ClipCamera,
+        frame((time - timeMs) / 1000),
+      );
+      timeMs = time;
+    };
+    const captureThrough = (end: number) => {
+      while (timeMs + 10 < end) capture(timeMs + 10);
+      capture(end);
+    };
+    settingsStore.setState({ fov: 90, zoomSpeedMs });
+    streamPlaybackStore.setState({ cameraMode: "freeFly" });
+    try {
+      expect(clipStore.getState().start()).toBe(true);
+      capture(0);
+      capture(1000);
+      const pressedAt = 1010;
+      capture(pressedAt);
+      engine.cameras.zoomHeld = true;
+      const releasedAt = pressedAt + (zoomSpeedMs ? zoomSpeedMs / 2 : 10);
+      captureThrough(releasedAt);
+      engine.cameras.zoomHeld = false;
+      captureThrough(releasedAt + (zoomSpeedMs ? zoomSpeedMs / 2 : 10));
+      capture(timeMs + 50);
+      clipStore.getState().stop();
+
+      const draft = clipStore.getState().draft!;
+      const trimStart = 1005;
+      const saved = readClipTake(
+        JSON.parse(JSON.stringify(trimClipTake(draft, trimStart, timeMs))),
+      );
+      clipStore.getState().discard();
+      settingsStore.setState({ fov: 110, zoomSpeedMs: 250 });
+      engine.cameras.resize(400, 400);
+      clipStore.getState().play(saved);
+      clipStore.getState().pause();
+
+      // A one-frame Instant tap survives even though it's shorter than the
+      // ordinary sample interval. A sweep follows the creator's angular rate.
+      const expectations = zoomSpeedMs
+        ? [
+            [pressedAt - 1, 90],
+            [pressedAt + zoomSpeedMs / 4, 67.5],
+            [releasedAt, 45],
+            [releasedAt + zoomSpeedMs / 4, 67.5],
+            [releasedAt + zoomSpeedMs / 2, 90],
+          ]
+        : [
+            [releasedAt - 0.01, 90],
+            [releasedAt, 45],
+            [releasedAt + 9.99, 45],
+            [releasedAt + 10, 90],
+          ];
+      for (const [time, expected] of expectations) {
+        clipStore.setState({ playheadMs: time - trimStart });
+        engine.scheduler.run(FramePriority.ClipCamera, frame(0));
+        expect(engine.cameras.perspective.fov).toBeCloseTo(expected, 5);
+      }
+    } finally {
+      now.mockRestore();
+      const { fov, zoomSpeedMs } = preferences;
+      settingsStore.setState({ fov, zoomSpeedMs });
+    }
+  },
+);
+
+it("keeps lens keyframes when the creator adjusts zoom speed or level mid-sweep", () => {
+  const { engine, frame } = fixture();
+  const preferences = settingsStore.getState();
+  const now = vi.spyOn(performance, "now").mockReturnValue(0);
+  settingsStore.setState({ fov: 90, zoomSpeedMs: 500 });
+  streamPlaybackStore.setState({ cameraMode: "freeFly" });
+  engine.cameras.resize(400, 400);
+  try {
+    expect(clipStore.getState().start()).toBe(true);
+    let previousTime = 0;
+    let frameNumber = 0;
+    const capture = (time: number) => {
+      now.mockReturnValue(time);
+      engine.cameras.applyObserverFov(frameNumber++);
+      engine.scheduler.run(
+        FramePriority.ClipCamera,
+        frame((time - previousTime) / 1000),
+      );
+      previousTime = time;
+    };
+    capture(0);
+    capture(1000);
+    engine.cameras.zoomHeld = true;
+    capture(1010);
+    capture(1020);
+    settingsStore.setState({ zoomSpeedMs: 250 });
+    capture(1030);
+    engine.cameras.cycleZoomLevel();
+    capture(1040);
+    clipStore.getState().stop();
+    const draft = clipStore.getState().draft!;
+    expect(draft.samples.map(({ timeMs }) => timeMs)).toEqual([
+      0, 1000, 1010, 1020, 1030, 1040,
+    ]);
+    expect(sampleClipTake(draft, 1015).fov).toBeCloseTo(87.3);
+    expect(sampleClipTake(draft, 1025).fov).toBeCloseTo(84.6);
+    expect(sampleClipTake(draft, 1035).fov).toBeCloseTo(81);
+  } finally {
+    now.mockRestore();
+    const { fov, zoomSpeedMs } = preferences;
+    settingsStore.setState({ fov, zoomSpeedMs });
+  }
+});
+
+it("keeps a minute of high-refresh zoom sweeps within the clip upload limit", () => {
+  const { engine, frame } = fixture();
+  const preferences = settingsStore.getState();
+  const now = vi.spyOn(performance, "now").mockReturnValue(0);
+  settingsStore.setState({ fov: 90, zoomSpeedMs: 500 });
+  streamPlaybackStore.setState({ cameraMode: "freeFly" });
+  engineStore.getState().setPlaybackStatus("playing");
+  try {
+    expect(clipStore.getState().start()).toBe(true);
+    const fps = 144;
+    const frameCount = (MAX_CLIP_DURATION_MS * fps) / 1000;
+    const camera = engine.cameras.perspective;
+    for (let i = 0; i <= frameCount; i++) {
+      now.mockReturnValue((i * 1000) / fps);
+      streamClock.time = 10 + i / fps;
+      camera.position.set(210 + i / 135, -217 - i / 303, 26 + i / 710);
+      camera.rotation.set(0.15 + i / 1e5, 1.42 + i / 8e4, 0);
+      engine.cameras.applyObserverFov(i);
+      engine.scheduler.run(FramePriority.ClipCamera, frame(1 / fps));
+      // 250 ms zooms from 90° to 45° or back at this speed.
+      if (i % (fps / 4) === 0)
+        engine.cameras.zoomHeld = !engine.cameras.zoomHeld;
+    }
+    const draft = clipStore.getState().draft!;
+    expect(draft.samples.at(-1)?.timeMs).toBe(MAX_CLIP_DURATION_MS);
+    expect(draft.samples.length).toBeLessThan(3000);
+    expect(
+      new TextEncoder().encode(JSON.stringify({ take: draft })).length,
+    ).toBeLessThan(MAX_CLIP_BODY_BYTES);
+    const quarterSweep = sampleClipTake(draft, 62.5);
+    const horizontalFov =
+      (Math.atan(
+        Math.tan((quarterSweep.fov * Math.PI) / 360) * quarterSweep.aspect,
+      ) *
+        360) /
+      Math.PI;
+    expect(horizontalFov).toBeCloseTo(78.75, 4);
+  } finally {
+    now.mockRestore();
+    const { fov, zoomSpeedMs } = preferences;
+    settingsStore.setState({ fov, zoomSpeedMs });
+  }
+});
+
+it("keeps the frame shown when stopping between samples during a smooth zoom", () => {
+  const { engine, frame } = fixture();
+  const preferences = settingsStore.getState();
+  const now = vi.spyOn(performance, "now").mockReturnValue(0);
+  settingsStore.setState({ fov: 90, zoomSpeedMs: 500 });
+  streamPlaybackStore.setState({ cameraMode: "freeFly" });
+  try {
+    expect(clipStore.getState().start()).toBe(true);
+    engine.cameras.applyObserverFov(0);
+    engine.scheduler.run(FramePriority.ClipCamera, frame(0));
+    now.mockReturnValue(1000);
+    engine.cameras.applyObserverFov(1);
+    engine.scheduler.run(FramePriority.ClipCamera, frame(1));
+    engine.cameras.zoomHeld = true;
+    now.mockReturnValue(1010);
+    engine.cameras.applyObserverFov(2);
+    engine.scheduler.run(FramePriority.ClipCamera, frame(0.01));
+    now.mockReturnValue(1020);
+    engine.cameras.applyObserverFov(3);
+    engine.scheduler.run(FramePriority.ClipCamera, frame(0.01));
+    expect(clipStore.getState().elapsedMs).toBe(1010);
+    const finalFov = engine.cameras.perspective.fov;
+    clipStore.getState().stop();
+    expect(clipStore.getState().elapsedMs).toBe(1020);
+    expect(clipStore.getState().draft?.samples.at(-1)).toMatchObject({
+      timeMs: 1020,
+      fov: finalFov,
+      fovInterpolation: "horizontal",
+    });
+  } finally {
+    now.mockRestore();
+    const { fov, zoomSpeedMs } = preferences;
+    settingsStore.setState({ fov, zoomSpeedMs });
+  }
+});
+
+it("starts a clip at its saved FOV during an unfinished viewer zoom-out", () => {
+  const { engine, frame } = fixture();
+  const preferences = settingsStore.getState();
+  const now = vi.spyOn(performance, "now").mockReturnValue(0);
+  settingsStore.setState({ fov: 90, zoomSpeedMs: 500 });
+  streamPlaybackStore.setState({ cameraMode: "freeFly" });
+  engine.cameras.resize(400, 400);
+  try {
+    engine.cameras.zoomHeld = true;
+    now.mockReturnValue(250);
+    engine.cameras.applyObserverFov(1);
+    expect(engine.cameras.perspective.fov).toBeCloseTo(45);
+    engine.cameras.zoomHeld = false;
+    now.mockReturnValue(260);
+    engine.cameras.applyObserverFov(2);
+    expect(engine.cameras.isZoomAnimating).toBe(true);
+
+    clipStore
+      .getState()
+      .play(
+        take([
+          sample(0, 10, { aspect: 1, fov: 80 }),
+          sample(1000, 11, { aspect: 1, fov: 80 }),
+        ]),
+      );
+    engine.scheduler.run(FramePriority.ClipCamera, frame(0));
+    expect(engine.cameras.perspective.fov).toBeCloseTo(80);
+    expect(engine.cameras.isZoomAnimating).toBe(false);
+  } finally {
+    now.mockRestore();
+    const { fov, zoomSpeedMs } = preferences;
+    settingsStore.setState({ fov, zoomSpeedMs });
+  }
+});
+
+it("preserves recorded framing while paused and seeking with zoom held", () => {
+  const { engine, frame } = fixture();
+  engine.cameras.resize(400, 400);
+  clipStore
+    .getState()
+    .play(
+      take([
+        sample(0, 10, { aspect: 1, fov: 80 }),
+        sample(1000, 11, { aspect: 1, fov: 100 }),
+      ]),
+    );
+  clipStore.setState({ playing: false });
+  engine.cameras.zoomHeld = true;
+  engine.scheduler.run(FramePriority.ClipCamera, frame(0));
+  expect(engine.cameras.perspective.fov).toBeCloseTo(80);
+
+  expect(clipStore.getState().seek(1000)).toBe(true);
+  engine.scheduler.run(FramePriority.ClipCamera, frame(0));
+  expect(engine.cameras.perspective.fov).toBeCloseTo(100);
+});
+
+it("clears any zoom preview corners when opening a clip", () => {
+  const { engine } = fixture();
+  const zoomPreview = () => cameraZoomPreviewStore.getState().scale;
+  try {
+    engine.cameras.cycleZoomLevel();
+    engine.cameras.updateZoomPreview();
+    expect(zoomPreview()).not.toBeNull();
+    clipStore.getState().play(take());
+    expect(zoomPreview()).toBeNull();
+  } finally {
+    engine.cameras.clearZoomPreview();
+  }
 });
 
 it("uses the reconstructed follow pose for one frame and falls back when the target disappears", () => {
@@ -1212,6 +1515,7 @@ it("keeps recorded first-person mode through normal follow selection while the c
 
 it("restores orthographic framing and holds the final frame without leaking camera ownership after exit", () => {
   const { engine, frame } = fixture();
+  engine.cameras.zoomHeld = true;
   clipStore.getState().play(
     take([
       sample(0, 10, {

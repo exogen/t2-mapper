@@ -5,11 +5,18 @@ const browser = vi.hoisted(() => {
   // listens on window at import.
   type Listener = (event: unknown) => void;
   const windowListeners = new Map<string, Set<Listener>>();
+  const documentListeners = new Map<string, Set<Listener>>();
   const api = {
     globals: {} as Record<string, unknown>,
     touch: false,
     dispatch(type: string, event: unknown) {
       for (const fn of windowListeners.get(type) ?? []) fn(event);
+    },
+    dispatchDocument(type: string, event: unknown) {
+      for (const fn of documentListeners.get(type) ?? []) fn(event);
+    },
+    setPointerLock(element: object | null) {
+      document.pointerLockElement = element;
     },
   };
   const eventTarget = (listeners: Map<string, Set<Listener>>) => ({
@@ -21,11 +28,11 @@ const browser = vi.hoisted(() => {
     },
   });
   const document = {
-    ...eventTarget(new Map()),
+    ...eventTarget(documentListeners),
     createElement: () => ({ style: {} }),
     activeElement: null,
     body: null,
-    pointerLockElement: null,
+    pointerLockElement: null as object | null,
     exitPointerLock() {},
   };
   const globals = (api.globals = {
@@ -53,6 +60,7 @@ const browser = vi.hoisted(() => {
 
 const preferences = vi.hoisted(() => ({
   followBehindPlayer: false,
+  fov: 90,
   speedMultiplier: 1,
   mouseSensitivity: 0.002,
   invertLookY: false,
@@ -65,13 +73,15 @@ const preferences = vi.hoisted(() => ({
 vi.mock("../state/settingsStore", () => ({
   MIN_SPEED_MULTIPLIER: 0.01,
   MAX_SPEED_MULTIPLIER: 1,
-  setPreference(
-    key: "speedMultiplier",
-    action: number | ((previous: number) => number),
-  ) {
-    preferences[key] =
-      typeof action === "function" ? action(preferences[key]) : action;
-  },
+  setPreference: vi.fn(
+    (
+      key: "speedMultiplier",
+      action: number | ((previous: number) => number),
+    ) => {
+      preferences[key] =
+        typeof action === "function" ? action(preferences[key]) : action;
+    },
+  ),
   settingsStore: {
     getState: () => preferences,
     subscribe: () => () => {},
@@ -85,9 +95,15 @@ import { installInputConsumer } from "../engine/inputConsumer";
 import { installKeyboardMouseInput } from "../engine/keyboardMouseInput";
 import { installTouchInput } from "../engine/touchInput";
 import { combineCleanups } from "../engine/storeReaction";
-import { FREE_FLY_INPUT, MOVABLE_CAMERA_INPUT } from "./inputMap";
+import {
+  CAMERA_ZOOM_INPUT,
+  FREE_FLY_INPUT,
+  MOVABLE_CAMERA_INPUT,
+} from "./inputMap";
 import { inputControlsStore } from "./InputControls";
 import { liveConnectionStore } from "../state/liveConnectionStore";
+import { setPreference } from "../state/settingsStore";
+import { cameraZoomPreviewStore } from "../state/cameraZoomPreview";
 import { joystickState } from "../state/joystickState";
 import {
   MAX_ORBIT_DISTANCE,
@@ -101,9 +117,10 @@ import {
 const unmounts: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const unmount of unmounts.splice(0)) await unmount();
-  for (const code of ["KeyW", "KeyS", "ArrowUp", "ArrowDown"]) {
+  for (const code of ["KeyW", "KeyS", "ArrowUp", "ArrowDown", "KeyX", "KeyZ"]) {
     browser.dispatch("keyup", { code, metaKey: false, preventDefault() {} });
   }
+  browser.setPointerLock(null);
   joystickState.move.force = 0;
   joystickState.look.force = 0;
   resetStreamPlayback();
@@ -148,12 +165,16 @@ interface TestSnapshot {
 async function mountInput({
   touch = false,
   live = true,
+  fov = 90,
   speedMultiplier = 1,
+  mouseSensitivity = 0.002,
   touchMode = "moveLookStick" as typeof preferences.touchMode,
   invertScroll = false,
 } = {}) {
   browser.touch = touch;
+  preferences.fov = fov;
   preferences.speedMultiplier = speedMultiplier;
+  preferences.mouseSensitivity = mouseSensitivity;
   preferences.invertLookY = false;
   preferences.touchMode = touchMode;
   preferences.invertScroll = invertScroll;
@@ -201,10 +222,11 @@ async function mountInput({
   const engine = new GameEngine();
   const scene = new Scene();
   const renderer = { domElement: canvas } as never;
+  const invalidate = vi.fn();
   engine.connect({
     renderer,
     scene,
-    invalidate() {},
+    invalidate,
     assetsLoading: () => false,
   });
   const stopSystems = combineCleanups(
@@ -213,6 +235,7 @@ async function mountInput({
     installInputConsumer(engine),
     installInputBindings(engine, FREE_FLY_INPUT),
     installInputBindings(engine, MOVABLE_CAMERA_INPUT),
+    installInputBindings(engine, CAMERA_ZOOM_INPUT),
   );
   unmounts.push(async () => stopSystems());
 
@@ -220,8 +243,31 @@ async function mountInput({
     sent,
     adapter,
     camera,
+    cameras: engine.cameras,
+    invalidate,
     key(type: "keydown" | "keyup", code: string) {
       browser.dispatch(type, { code, metaKey: false, preventDefault() {} });
+    },
+    startMouseLook(type: "locked" | "drag") {
+      if (type === "locked") {
+        browser.setPointerLock(canvas);
+        browser.dispatchDocument("pointerlockchange", {});
+        browser.dispatchDocument("mousemove", { movementX: 1, movementY: 0 });
+      } else {
+        canvasListeners.get("mousedown")!({
+          button: 0,
+          clientX: 0,
+          clientY: 0,
+        });
+      }
+    },
+    mouseMove(deltaX: number, deltaY: number) {
+      browser.dispatchDocument("mousemove", {
+        clientX: deltaX,
+        clientY: deltaY,
+        movementX: deltaX,
+        movementY: deltaY,
+      });
     },
     wheel(deltaY: number) {
       canvasListeners.get("wheel")!({
@@ -256,6 +302,164 @@ async function mountInput({
     },
   };
 }
+
+it.each(["locked", "drag"] as const)(
+  "scales %s mouse yaw and pitch on the same frame as a zoom change",
+  async (type) => {
+    const local = await mountInput({ live: false, fov: 108 });
+    local.startMouseLook(type);
+    const sign = type === "locked" ? 1 : -1;
+    const expectMouseLook = async (fov: number) => {
+      local.camera.quaternion.identity();
+      local.mouseMove(30, 20);
+      await local.step(1 / 60);
+      const angles = new Euler().setFromQuaternion(
+        local.camera.quaternion,
+        "YXZ",
+      );
+      const scale = (sign * fov) / 90;
+      expect(-angles.y).toBeCloseTo(
+        30 * preferences.mouseSensitivity * scale,
+        8,
+      );
+      expect(-angles.x).toBeCloseTo(
+        20 * preferences.mouseSensitivity * scale,
+        8,
+      );
+    };
+
+    await expectMouseLook(108);
+    local.key("keydown", "KeyX");
+    await expectMouseLook(45);
+    for (const fov of [18, 9, 5]) {
+      local.key("keydown", "KeyZ");
+      local.key("keyup", "KeyZ");
+      await expectMouseLook(fov);
+    }
+    local.key("keyup", "KeyX");
+    await expectMouseLook(108);
+  },
+);
+
+it("preserves keyboard look speed while zoomed", async () => {
+  const local = await mountInput({ live: false, fov: 108 });
+  local.key("keydown", "KeyX");
+  local.key("keydown", "ArrowUp");
+  await local.step(0.1);
+  const angles = new Euler().setFromQuaternion(local.camera.quaternion, "YXZ");
+  expect(angles.x).toBeCloseTo(0.1, 8);
+});
+
+it("wakes rendering on zoom press, step changes, and release without saving a preference", async () => {
+  const { key, cameras, invalidate } = await mountInput({ live: false });
+  vi.mocked(setPreference).mockClear();
+  invalidate.mockClear();
+  key("keydown", "KeyX");
+  expect(cameras.zoomHorizontalFov).toBe(45);
+  for (const fov of [18, 9, 5, 45]) {
+    key("keydown", "KeyZ");
+    expect(cameras.zoomHorizontalFov).toBe(fov);
+    key("keyup", "KeyZ");
+  }
+  key("keyup", "KeyX");
+  expect(cameras.zoomHorizontalFov).toBeUndefined();
+  expect(invalidate).toHaveBeenCalledTimes(6);
+  expect(setPreference).not.toHaveBeenCalled();
+});
+
+it("previews the new zoom framing for five seconds and hides it when zooming", async () => {
+  const { key, cameras, invalidate } = await mountInput({ live: false });
+  const cycle = () => {
+    key("keydown", "KeyZ");
+    key("keyup", "KeyZ");
+    cameras.updateZoomPreview();
+  };
+  const previewScale = () => cameraZoomPreviewStore.getState().scale;
+  cameras.perspective.fov = 90;
+  cameras.perspective.aspect = 1;
+  invalidate.mockClear();
+
+  vi.useFakeTimers();
+  try {
+    cycle();
+    expect(invalidate).toHaveBeenCalledOnce();
+    expect(previewScale()).toBeCloseTo(Math.tan(Math.PI / 20));
+    vi.advanceTimersByTime(4000);
+    cycle();
+    expect(previewScale()).toBeCloseTo(Math.tan(Math.PI / 40));
+    vi.advanceTimersByTime(4999);
+    expect(previewScale()).not.toBeNull();
+    vi.advanceTimersByTime(1);
+    expect(previewScale()).toBeNull();
+
+    cycle();
+    expect(previewScale()).not.toBeNull();
+    key("keydown", "KeyX");
+    expect(previewScale()).toBeNull();
+    cycle();
+    key("keyup", "KeyX");
+    cameras.updateZoomPreview();
+    expect(previewScale()).toBeNull();
+  } finally {
+    cameras.clearZoomPreview();
+    vi.useRealTimers();
+  }
+});
+
+it("carries sub-step mouse yaw and pitch across live move ticks at maximum zoom", async () => {
+  const live = await mountInput({ mouseSensitivity: 1 / 16_000 });
+  await live.step(0.032);
+  live.startMouseLook("locked");
+  live.key("keydown", "KeyX");
+  for (let i = 0; i < 3; i++) {
+    live.key("keydown", "KeyZ");
+    live.key("keyup", "KeyZ");
+  }
+
+  const before = live.sent.length;
+  for (let i = 0; i < 14; i++) {
+    // Agreeing server corrections must leave the unsent fraction intact.
+    if (i % 2 === 0) live.adapter.serverUpdateId++;
+    live.mouseMove(1, -1);
+    await live.step(0.032);
+  }
+  const moves = live.sent.slice(before);
+  expect(moves).toHaveLength(14);
+  expect(moves.slice(0, 13).map(({ yaw, pitch }) => [yaw, pitch])).toEqual(
+    Array.from({ length: 13 }, () => [0, 0]),
+  );
+  const step = (2 * Math.PI) / 65536;
+  expect(moves[13]).toMatchObject({ yaw: step, pitch: -step });
+
+  await live.step(0.032);
+  expect(live.sent.at(-1)).toMatchObject({ yaw: 0, pitch: 0 });
+});
+
+it.each([1, -1])(
+  "accumulates tiny zoomed turns away from the live pitch limit (%s)",
+  async (direction) => {
+    const live = await mountInput({ mouseSensitivity: 1 / 16_000 });
+    live.adapter.snapshot.camera.pitch = direction * 1.3962;
+    await live.step(0.032);
+    live.startMouseLook("locked");
+    live.key("keydown", "KeyX");
+    for (let i = 0; i < 3; i++) {
+      live.key("keydown", "KeyZ");
+      live.key("keyup", "KeyZ");
+    }
+
+    for (let i = 0; i < 14; i++) {
+      live.mouseMove(0, -direction);
+      await live.step(0.032);
+      if (i < 13) {
+        expect(live.sent.at(-1)?.pitch).toBe(0);
+        await live.step(0.032);
+        expect(live.sent.at(-1)?.pitch).toBe(0);
+      }
+    }
+    expect(live.sent.at(-1)?.pitch).toBe((-direction * 2 * Math.PI) / 65536);
+  },
+);
 
 it("moves on every tick of a slow frame while a key is held, and none once released", async () => {
   const live = await mountInput();
@@ -675,6 +879,12 @@ it.each([false, true])(
     preferences.speedMultiplier = 0.95;
     local.wheel(-1_000_000 * scrollSign);
     expect(preferences.speedMultiplier).toBe(1);
+
+    vi.mocked(setPreference).mockClear();
+    local.wheel(-scrollSign);
+    preferences.speedMultiplier = 0.01;
+    local.wheel(scrollSign);
+    expect(setPreference).not.toHaveBeenCalled();
   },
 );
 

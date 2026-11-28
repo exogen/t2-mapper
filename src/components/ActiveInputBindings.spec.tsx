@@ -100,6 +100,26 @@ it.each(["input", "tour", "director", "commandCircuit", "clip"] as const)(
 );
 
 it.each([
+  ["demo", "freeFly", "input", 1],
+  ["demo", "original", "input", 0],
+  ["demo", "original", "tour", 1],
+  ["demo", "original", "director", 1],
+  ["demo", "freeFly", "commandCircuit", 0],
+  ["demo", "freeFly", "clip", 0],
+  ["demo", "original", "clip", 0],
+  ["live", "original", "input", 1],
+  [null, "original", "input", 1],
+] as const)(
+  "binds perspective zoom for %s in %s when %s owns the camera",
+  (source, cameraMode, owner, count) => {
+    Object.assign(fixture, { source, cameraMode, owner });
+    const html = renderToStaticMarkup(<ActiveInputBindings />);
+    expect(html.match(/\bzoomCamera\b/g) ?? []).toHaveLength(count);
+    expect(html.match(/\bcycleCameraZoom\b/g) ?? []).toHaveLength(count);
+  },
+);
+
+it.each([
   ["live", false, false, "follow", "original", 1, false],
   ["live", false, false, "fly", "original", 1, true],
   ["live", false, false, "local", "original", 0, false],

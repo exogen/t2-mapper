@@ -28,6 +28,12 @@ export const MOVABLE_CAMERA_INPUT = [
   { name: "touchLook", keys: [{ type: "touch" }] },
 ] as const satisfies readonly InputMapEntry[];
 
+/** Hold to narrow the perspective FOV, or cycle to the next zoom level. */
+export const CAMERA_ZOOM_INPUT = [
+  { name: "zoomCamera", keys: ["KeyX", "Shift-KeyX"] },
+  { name: "cycleCameraZoom", keys: ["KeyZ"] },
+] as const satisfies readonly InputMapEntry[];
+
 export const POINTER_LOCKABLE_INPUT = [
   {
     name: "canvasClick",
@@ -188,6 +194,7 @@ export type ActionName =
   | (typeof QUICK_CAM_INPUT)[number]["name"]
   | (typeof FREE_FLY_INPUT)[number]["name"]
   | (typeof MOVABLE_CAMERA_INPUT)[number]["name"]
+  | (typeof CAMERA_ZOOM_INPUT)[number]["name"]
   | (typeof POINTER_LOCKABLE_INPUT)[number]["name"]
   | (typeof MAP_MODE_INPUT)[number]["name"]
   | (typeof DEMO_MODE_INPUT)[number]["name"]

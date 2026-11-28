@@ -12,6 +12,7 @@ import { targetFinderStore } from "../state/targetFinderStore";
 import { ClipControlsContext } from "./clipControlsContext";
 import {
   CAMERA_SCROLL_INPUT,
+  CAMERA_ZOOM_INPUT,
   FREE_FLY_INPUT,
   MOVABLE_CAMERA_INPUT,
   POINTER_LOCKABLE_INPUT,
@@ -58,10 +59,7 @@ export function ActiveInputBindings() {
     streamPlaybackStore,
     (s) => s.followFlagSlot != null,
   );
-  const isOrbitFollow = useStore(
-    streamPlaybackStore,
-    (s) => s.cameraMode === "orbitOverride",
-  );
+  const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
   const trackingProjectile = useStore(
     streamPlaybackStore,
     (s) => s.projectileFollow?.kind === "tracking",
@@ -73,7 +71,7 @@ export function ActiveInputBindings() {
   const canFindTarget = isDemo || (isLive && isWatcher);
   const canFollowProjectiles = isDemo || (isLive && spectatorReady);
   const hasOrbitCamera =
-    (canFindTarget && isOrbitFollow) ||
+    (canFindTarget && cameraMode === "orbitOverride") ||
     (isLive && !isWatcher && inputMode === "follow");
   const orbitAvailable = usePlayerOrbitAvailable();
 
@@ -97,10 +95,18 @@ export function ActiveInputBindings() {
     );
   }
 
+  const isCommandCircuit = cameraOwner === "commandCircuit";
+  const isOriginalDemoView =
+    isDemo && cameraMode === "original" && cameraOwner === "input";
+  const cameraZoom = !isCommandCircuit && !isOriginalDemoView && (
+    <InputBindings map={CAMERA_ZOOM_INPUT} />
+  );
+
   // Tours keep manual controls disabled; quick cams can interrupt them.
   if (cameraOwner === "tour") {
     return (
       <>
+        {cameraZoom}
         {recordClip}
         <InputBindings map={TOUR_MODE_INPUT} />
         {canFindTarget && <InputBindings map={QUICK_CAM_INPUT} />}
@@ -115,6 +121,7 @@ export function ActiveInputBindings() {
   if (cameraOwner === "director") {
     return (
       <>
+        {cameraZoom}
         {recordClip}
         <InputBindings map={DIRECTOR_MODE_INPUT} />
         {canFindTarget && <InputBindings map={QUICK_CAM_INPUT} />}
@@ -125,10 +132,6 @@ export function ActiveInputBindings() {
     );
   }
 
-  // Past the two returns above the owner is either the command circuit
-  // or local input.
-  const isCommandCircuit = cameraOwner === "commandCircuit";
-
   // Free-fly movement: map mode, live server-observer fly mode,
   // watch-mode spectating, or demo playback (InputConsumer only acts on
   // WASD when cameraMode is "freeFly", so it's inert otherwise).
@@ -138,6 +141,7 @@ export function ActiveInputBindings() {
 
   return (
     <>
+      {cameraZoom}
       {recordClip}
       {showFreeFly && <InputBindings map={FREE_FLY_INPUT} />}
       {hasOrbitCamera && !showFreeFly && !isCommandCircuit && (

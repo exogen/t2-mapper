@@ -4,6 +4,7 @@ import { getKeyframeAtTime } from "../stream/playbackUtils";
 import { streamClock } from "../state/streamPlaybackStore";
 import { settingsStore } from "../state/settingsStore";
 import { gameEntityStore } from "../state/gameEntityStore";
+import { resolveCameraOwner } from "../state/cameraOwner";
 import { enterWatchFollow, isWatchSpectator } from "../state/watchFollow";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import { getIffView } from "../state/iffView";
@@ -134,6 +135,7 @@ export function createCommandCircuitPlayerMarker(
     // serverCmdObserveClient a real observer uses. Dead players are
     // skipped (no player object to orbit server-side).
     onClick: () => {
+      if (resolveCameraOwner() === "clip") return;
       const entity = readEntity();
       const kf = getKeyframeAtTime(entity.keyframes ?? [], streamClock.time);
       if (kf?.damageState != null && kf.damageState >= 1) return;

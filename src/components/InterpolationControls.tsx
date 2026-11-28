@@ -1,12 +1,11 @@
 import { useState } from "react";
 import { useStore } from "zustand";
 import { clipStore, type ClipState } from "../state/clipStore";
+import { updatePlayerInterpolationPreference } from "../state/settingsStore";
 import {
   DEFAULT_PLAYER_INTERPOLATION,
   RETAIL_PLAYER_INTERPOLATION,
-  normalizePlayerInterpolation,
   PLAYER_INTERPOLATION_RANGES,
-  samePlayerInterpolation,
   type PlayerInterpolationSettings,
 } from "../stream/playerInterpolation";
 import { useDebug } from "./SettingsProvider";
@@ -54,6 +53,7 @@ function InterpolationTickField({
           value={draft ?? value}
           onChange={(event) => setDraft(event.currentTarget.value)}
           onBlur={(event) => {
+            if (draft === null) return;
             const next = event.currentTarget.valueAsNumber;
             setDraft(null);
             if (Number.isFinite(next)) onCommit(next);
@@ -83,17 +83,8 @@ export function InterpolationControls({
   const locked = clipInUse || viewingClip;
   const shownInterpolation = activeInterpolation ?? playerInterpolation;
 
-  function applyInterpolation(
-    getNext: (
-      previous: Readonly<PlayerInterpolationSettings>,
-    ) => Readonly<PlayerInterpolationSettings>,
-  ): boolean {
-    if (viewingClip || isClipInUse(clipStore.getState())) return false;
-    setPlayerInterpolation((previous) => {
-      const next = getNext(previous);
-      return samePlayerInterpolation(previous, next) ? previous : next;
-    });
-    return true;
+  function canEdit() {
+    return !viewingClip && !isClipInUse(clipStore.getState());
   }
 
   return (
@@ -109,9 +100,8 @@ export function InterpolationControls({
           label={label}
           value={shownInterpolation[name]}
           onCommit={(value) => {
-            applyInterpolation((previous) =>
-              normalizePlayerInterpolation({ ...previous, [name]: value }),
-            );
+            if (canEdit())
+              updatePlayerInterpolationPreference({ [name]: value });
           }}
         />
       ))}
@@ -122,8 +112,9 @@ export function InterpolationControls({
             type="button"
             className={styles.InterpolationPreset}
             onClick={() => {
-              if (applyInterpolation(() => preset))
-                setResetCount((count) => count + 1);
+              if (!canEdit()) return;
+              setPlayerInterpolation(preset);
+              setResetCount((count) => count + 1);
             }}
           >
             {label}

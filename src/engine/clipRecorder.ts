@@ -17,6 +17,7 @@ import {
 import {
   clipStore,
   installClipStateGuards,
+  retainFinalClipSample,
   shouldPauseClipRecording,
 } from "../state/clipStore";
 import { engineStore, type PlaybackSliceState } from "../state/engineStore";
@@ -32,6 +33,7 @@ import {
 } from "../state/watchFollow";
 import { exitDirector } from "../state/demoDirectorStore";
 import { cameraTourStore } from "../state/cameraTourStore";
+import { applyVerticalFov } from "./cameraFov";
 import { FramePriority } from "./framePriority";
 import { streamRenderFrame } from "../stream/interpolateEntity";
 import { projectileFollowIdentity } from "../stream/projectileFollowIdentity";
@@ -147,6 +149,13 @@ export function installClipRecorder(engine: GameEngine): () => void {
   let elapsedMs = 0;
   let lastSampleMs = -Infinity;
   let lastSample: ClipSample | null = null;
+  let previousFrame: {
+    sample: ClipSample;
+    zoomed: boolean;
+    zoomDirection: number;
+    zoomSpeedMs: number;
+    zoomTarget: number | undefined;
+  } | null = null;
   let skippedPause: { start: CameraFraming; moved?: boolean } | null = null;
   let lastQuickCamRecallNonce = 0;
   const finishSkippedPause = (pause: NonNullable<typeof skippedPause>) => {
@@ -203,6 +212,8 @@ export function installClipRecorder(engine: GameEngine): () => void {
       if (previous.recording && !state.recording && document.pointerLockElement)
         document.exitPointerLock();
       if (state.active && !previous.active) {
+        engine.cameras.resetZoom();
+        engine.cameras.clearZoomPreview();
         const { recording, rate } = engineStore.getState().playback;
         sourceTransport = { recording, rate };
         plannedMs = state.playheadMs;
@@ -397,13 +408,16 @@ export function installClipRecorder(engine: GameEngine): () => void {
           transition?.from.projection === sample.projection ? transition : null;
         if (camera instanceof PerspectiveCamera) {
           const fov = clipVerticalFov(sample, camera.aspect);
-          camera.fov = matchingProjection
-            ? MathUtils.lerp(
-                clipVerticalFov(matchingProjection.from, camera.aspect),
-                fov,
-                matchingProjection.fraction,
-              )
-            : fov;
+          applyVerticalFov(
+            camera,
+            matchingProjection
+              ? MathUtils.lerp(
+                  clipVerticalFov(matchingProjection.from, camera.aspect),
+                  fov,
+                  matchingProjection.fraction,
+                )
+              : fov,
+          );
         } else {
           const height = matchingProjection
             ? MathUtils.lerp(
@@ -413,8 +427,8 @@ export function installClipRecorder(engine: GameEngine): () => void {
               )
             : sample.viewHeight!;
           camera.zoom = (camera.top - camera.bottom) / height;
+          camera.updateProjectionMatrix();
         }
-        camera.updateProjectionMatrix();
         camera.updateMatrixWorld();
         if (time !== state.playheadMs) clipStore.setState({ playheadMs: time });
         const endMs = state.draft
@@ -453,6 +467,7 @@ export function installClipRecorder(engine: GameEngine): () => void {
         elapsedMs = 0;
         lastSampleMs = -Infinity;
         lastSample = null;
+        previousFrame = null;
       } else
         elapsedMs = Math.min(MAX_CLIP_DURATION_MS, elapsedMs + delta * 1000);
       const camera = engine.cameras.active;
@@ -524,6 +539,32 @@ export function installClipRecorder(engine: GameEngine): () => void {
         rate: playback.rate,
         playing: playback.status === "playing" || playback.status === "ending",
       };
+      const zoomed =
+        sample.projection === "perspective" && engine.cameras.hasViewerZoom;
+      const previousSample = previousFrame?.sample;
+      const capturesZoom =
+        sample.projection === "perspective" &&
+        (zoomed || previousFrame?.zoomed);
+      const zoomDelta =
+        capturesZoom && previousSample?.projection === "perspective"
+          ? sample.fov - clipVerticalFov(previousSample, sample.aspect)
+          : 0;
+      const zoomDirection =
+        Math.abs(zoomDelta) > 1e-6 ? Math.sign(zoomDelta) : 0;
+      const { zoomSpeedMs } = settingsStore.getState();
+      const zoomTarget = engine.cameras.zoomHorizontalFov;
+      // Smooth zoom travels linearly in horizontal FOV. Capture its edges
+      // exactly, then use the ordinary sample rate along each sweep.
+      const zoomBoundary =
+        zoomDirection !== 0 &&
+        (zoomSpeedMs === 0 ||
+          !engine.cameras.isZoomAnimating ||
+          previousFrame?.zoomDirection !== zoomDirection ||
+          previousFrame.zoomSpeedMs !== zoomSpeedMs ||
+          previousFrame.zoomTarget !== zoomTarget);
+      if (capturesZoom)
+        sample.fovInterpolation =
+          zoomDirection !== 0 && zoomSpeedMs === 0 ? "step" : "horizontal";
       let changedView = false;
       if (lastSample) {
         const modeChanged = mode !== lastSample.cameraMode;
@@ -564,11 +605,23 @@ export function installClipRecorder(engine: GameEngine): () => void {
         resumed ||
         sample.cut ||
         changedView ||
+        zoomBoundary ||
         firstPersonPose !== lastSample?.firstPersonPose;
       if (forceSample && lastSample && sample.timeMs <= lastSample.timeMs) {
         // Keep both sides of a jump when two rendered frames share a timestamp.
         elapsedMs = lastSample.timeMs + 0.001;
         sample.timeMs = rounded(elapsedMs, 3);
+      }
+      if (
+        zoomBoundary &&
+        sample.fovInterpolation === "horizontal" &&
+        !sample.cut &&
+        previousSample &&
+        previousSample.timeMs > (lastSample?.timeMs ?? -1) &&
+        previousSample.timeMs < sample.timeMs
+      ) {
+        // Anchor the sweep at the last rendered frame before it changed.
+        state.appendSample(previousSample);
       }
       if (
         elapsedMs - lastSampleMs >= SAMPLE_INTERVAL_MS ||
@@ -580,7 +633,16 @@ export function installClipRecorder(engine: GameEngine): () => void {
         lastSample = sample;
         lastFollowedBodyId = bodyId;
         lastFollowedBodyDead = followedBodyDead;
+      } else if (zoomDirection !== 0) {
+        retainFinalClipSample(sample);
       }
+      previousFrame = {
+        sample,
+        zoomed,
+        zoomDirection,
+        zoomSpeedMs,
+        zoomTarget,
+      };
       if (sample.timeMs === MAX_CLIP_DURATION_MS) state.stop();
     }),
   );

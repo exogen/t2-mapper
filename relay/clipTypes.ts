@@ -22,6 +22,9 @@ export const MAX_CLIP_TITLE_LENGTH = 120;
 export const CLIPS_PAGE_SIZE = 6;
 export const MAX_PUBLIC_CLIPS = 1_000;
 
+const MIN_CLIP_VERTICAL_FOV = 0.01;
+const MAX_CLIP_VERTICAL_FOV = 179;
+
 // Rebasing a transition during a trim can round its two endpoints differently.
 const TRANSITION_BOUNDARY_EPSILON_MS = 1e-6;
 
@@ -42,6 +45,8 @@ export interface ClipSample {
   quaternion: [number, number, number, number];
   /** Effective Three.js vertical FOV, with the recording viewport's aspect. */
   fov: number;
+  /** FOV-only interpolation from the previous sample. */
+  fovInterpolation?: "horizontal" | "step";
   aspect: number;
   projection: "perspective" | "orthographic";
   /** Orthographic vertical span in world units. */
@@ -231,7 +236,7 @@ function validCameraPose(pose: ClipCameraPose): boolean {
     Array.isArray(pose.quaternion) &&
     pose.quaternion.length === 4 &&
     pose.quaternion.every((value) => finite(value, -1, 1)) &&
-    finite(pose.fov, 0.01, 179) &&
+    finite(pose.fov, MIN_CLIP_VERTICAL_FOV, MAX_CLIP_VERTICAL_FOV) &&
     finite(pose.aspect, 0.1, 10) &&
     (pose.projection === "perspective" ||
       (pose.projection === "orthographic" &&
@@ -360,6 +365,10 @@ export function readClipTake(value: unknown): ClipTake {
       !finite(sample.demoTimeSec, 0, 1e8) ||
       sample.demoTimeSec + 1e-6 < previousDemoSec ||
       !validCameraPose(sample) ||
+      (sample.fovInterpolation !== undefined &&
+        (sample.projection !== "perspective" ||
+          (sample.fovInterpolation !== "horizontal" &&
+            sample.fovInterpolation !== "step"))) ||
       (sample.headYaw !== undefined &&
         !finite(sample.headYaw, -Math.PI, Math.PI)) ||
       (sample.firstPersonPose !== undefined &&
@@ -391,6 +400,9 @@ export function readClipTake(value: unknown): ClipTake {
       timeMs: sample.timeMs,
       demoTimeSec: sample.demoTimeSec,
       ...copyCameraPose(sample),
+      ...(sample.fovInterpolation && {
+        fovInterpolation: sample.fovInterpolation,
+      }),
       ...(sample.headYaw !== undefined && { headYaw: sample.headYaw }),
       ...(sample.firstPersonPose !== undefined && {
         firstPersonPose: sample.firstPersonPose,
@@ -482,6 +494,10 @@ function blendQuaternion(
   return result.map((value) => value / length) as ClipSample["quaternion"];
 }
 
+function horizontalHalfFov(pose: Pick<ClipSample, "fov" | "aspect">): number {
+  return Math.atan(Math.tan((pose.fov * Math.PI) / 360) * pose.aspect);
+}
+
 /** Cuts preserve their discontinuity; ordinary movement and zoom interpolate. */
 export function sampleClipTake(take: ClipTake, timeMs: number): ClipSample {
   const samples = take.samples;
@@ -514,6 +530,24 @@ export function sampleClipTake(take: ClipTake, timeMs: number): ClipSample {
     b.cut ||
     a.projection !== b.projection ||
     (anchoredOrbit && !sameClipFollowTarget(a, b));
+  const fovInterpolation = cut ? undefined : b.fovInterpolation;
+  const holdFov = cut || fovInterpolation === "step";
+  const aspect = holdFov ? a.aspect : blend(a.aspect, b.aspect);
+  let fov = a.fov;
+  if (!holdFov) {
+    if (fovInterpolation === "horizontal") {
+      const horizontal = blend(horizontalHalfFov(a), horizontalHalfFov(b));
+      const vertical =
+        (Math.atan(Math.tan(horizontal) / aspect) * 360) / Math.PI;
+      // A trim can save this interpolated framing as an endpoint sample.
+      fov = Math.max(
+        MIN_CLIP_VERTICAL_FOV,
+        Math.min(MAX_CLIP_VERTICAL_FOV, vertical),
+      );
+    } else {
+      fov = blend(a.fov, b.fov);
+    }
+  }
   const leavesEye =
     !cut &&
     a.cameraMode === "firstPersonOverride" &&
@@ -538,8 +572,8 @@ export function sampleClipTake(take: ClipTake, timeMs: number): ClipSample {
     quaternion: cut
       ? [...a.quaternion]
       : blendQuaternion(a.quaternion, b.quaternion, fraction),
-    fov: cut ? a.fov : blend(a.fov, b.fov),
-    aspect: cut ? a.aspect : blend(a.aspect, b.aspect),
+    fov,
+    aspect,
     ...(a.viewHeight !== undefined &&
       b.viewHeight !== undefined && {
         viewHeight: cut ? a.viewHeight : blend(a.viewHeight, b.viewHeight),
@@ -565,6 +599,8 @@ export function sampleClipTake(take: ClipTake, timeMs: number): ClipSample {
   // A cut belongs to its exact sample, not a point interpolated after it.
   delete sample.cut;
   delete sample.jump;
+  if (fovInterpolation === "horizontal") sample.fovInterpolation = "horizontal";
+  else delete sample.fovInterpolation;
   return sample;
 }
 

@@ -14,7 +14,7 @@ import {
   type PlayerInterpolationSettings,
 } from "../stream/playerInterpolation";
 
-export const DEFAULT_RESOURCE_LOOKAHEAD_MS = 5_000;
+export const DEFAULT_RESOURCE_LOOKAHEAD_MS = 8_000;
 export const MAX_RESOURCE_LOOKAHEAD_MS = 30_000;
 
 export function isResourceLookaheadMs(value: unknown): value is number {
@@ -82,6 +82,7 @@ const SERVER_BROWSER_VIEW_VALUES: readonly ServerBrowserView[] = [
 export type TouchMode = "dualStick" | "moveLookStick";
 
 export const MAX_PREFERRED_FOV = 150;
+export const MAX_ZOOM_SPEED_MS = 500;
 
 export const MIN_JOYSTICK_OPACITY = 0.1;
 export const MAX_JOYSTICK_OPACITY = 1;
@@ -108,6 +109,8 @@ export interface Preferences {
   invertLookY: boolean;
   clickToCycle: boolean;
   fov: number;
+  /** Milliseconds to sweep through 90° of zoom. Zero makes it instant. */
+  zoomSpeedMs: number;
   audioEnabled: boolean;
   audioVolume: number;
   /** Play the CastGenius commentary track when a demo has one. Off =
@@ -116,6 +119,7 @@ export interface Preferences {
   /** Show the commentary's lines as subtitles, scheduled from the cue
    *  file — works with or without the audio track. */
   commentarySubtitles: boolean;
+  timelineNoSpoilers: boolean;
   /** Browser-generated CastGenius lookahead. Null uses the configured default. */
   localCastLookaheadMs: number | null;
   /** How far ahead of recorded playback to warm assets. Zero disables it. */
@@ -188,11 +192,12 @@ export interface SettingsState extends Preferences {
   fogEnabledOverride: boolean | null;
 }
 
-export const DEFAULT_PREFERENCES: Preferences = {
+/** Defaults written by the old full-snapshot format. Keep this baseline stable. */
+const LEGACY_DEFAULT_PREFERENCES = {
   fogEnabled: true,
   highQualityFog: false,
   speedMultiplier: 0.15,
-  mouseSensitivity: DEFAULT_MOUSE_SENSITIVITY,
+  mouseSensitivity: 0.002,
   invertLookY: false,
   clickToCycle: true,
   fov: 90,
@@ -201,11 +206,10 @@ export const DEFAULT_PREFERENCES: Preferences = {
   commentaryEnabled: true,
   commentarySubtitles: false,
   localCastLookaheadMs: null,
-  resourceLookaheadMs: DEFAULT_RESOURCE_LOOKAHEAD_MS,
+  resourceLookaheadMs: 5_000,
   adjustAudioSpeed: true,
   animationEnabled: true,
   shadowsEnabled: true,
-  hdTexturesEnabled: true,
   debugMode: false,
   touchMode: "moveLookStick",
   joystickOpacity: 0.9,
@@ -236,38 +240,71 @@ export const DEFAULT_PREFERENCES: Preferences = {
   serverBrowserView: "list",
   showIffs: "always",
   iffMaxDistance: 150,
-  observerTeamColors: DEFAULT_TEAM_COLOR_SCHEME,
+  observerTeamColors: "blueOrange",
   flagColorMode: "matchTeam",
   followTeamIff: false,
   firstPersonTeamIff: false,
   ccPlayerNames: "always",
   followBehindPlayer: false,
   flagReturnCamera: "followHome",
-  renderOnDemand: false,
-  lodEnabled: true,
   showFpsMeter: false,
   aimCorrection: true,
+} as const satisfies Partial<Preferences>;
+
+export const DEFAULT_PREFERENCES: Preferences = {
+  ...LEGACY_DEFAULT_PREFERENCES,
+  mouseSensitivity: DEFAULT_MOUSE_SENSITIVITY,
+  zoomSpeedMs: 0,
+  timelineNoSpoilers: false,
+  resourceLookaheadMs: DEFAULT_RESOURCE_LOOKAHEAD_MS,
+  hdTexturesEnabled: true,
+  observerTeamColors: DEFAULT_TEAM_COLOR_SCHEME,
+  renderOnDemand: false,
+  lodEnabled: true,
   playerInterpolation: DEFAULT_PLAYER_INTERPOLATION,
 };
 
-/** The localStorage shape (flat HUD preferences, no session-only keys). */
-type PersistedSettings = Partial<
-  Omit<Preferences, "hudPreferences" | "renderOnDemand" | "lodEnabled">
+type ScalarPreferences = Omit<
+  Preferences,
+  "hudPreferences" | "playerInterpolation"
+>;
+
+/** Sparse choices, with HUD and interpolation fields saved independently. */
+type PreferenceOverrides = Partial<
+  Omit<ScalarPreferences, "renderOnDemand" | "lodEnabled">
 > & {
-  useHdTexturePack?: boolean;
   showScoreHud?: boolean;
   scoreHudPosition?: HudPosition;
   showQuickCamHud?: boolean;
   quickCamHudPosition?: HudPosition;
-  playerInterpolationOverride?: Readonly<PlayerInterpolationSettings>;
+  playerInterpolationOverride?: Partial<PlayerInterpolationSettings>;
 };
 
+type PersistedSettings = PreferenceOverrides & {
+  preferencesVersion?: number;
+  useHdTexturePack?: boolean;
+  resourceLookaheadOverrideMs?: number;
+  playerInterpolation?: Partial<PlayerInterpolationSettings>;
+};
+
+const PREFERENCES_VERSION = 2;
 const STORAGE_KEY = "settings";
 const SAVE_DEBOUNCE_MS = 500;
 
-export function readPersistedSettings(): PersistedSettings {
+const LEGACY_STORED_DEFAULTS: PreferenceOverrides = {
+  ...LEGACY_DEFAULT_PREFERENCES,
+  showScoreHud: LEGACY_DEFAULT_PREFERENCES.hudPreferences.score.enabled,
+  scoreHudPosition: LEGACY_DEFAULT_PREFERENCES.hudPreferences.score.position,
+  showQuickCamHud: LEGACY_DEFAULT_PREFERENCES.hudPreferences.quickCam.enabled,
+  quickCamHudPosition:
+    LEGACY_DEFAULT_PREFERENCES.hudPreferences.quickCam.position,
+};
+
+export function readPersistedSettings(): PreferenceOverrides {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") || {};
+    return restorePreferenceOverrides(
+      JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") || {},
+    );
   } catch {
     return {};
   }
@@ -276,19 +313,28 @@ export function readPersistedSettings(): PersistedSettings {
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
 
-/**
- * Validated preferences from what was saved. `sidebarOpen` is left out:
- * it's only restored on non-touch devices, once that's known.
- */
-export function restorePreferences(
+/** Old snapshots included defaults. Keep choices we can distinguish. */
+function restorePreferenceOverrides(
   saved: PersistedSettings,
-): Partial<Preferences> {
-  const restored: Partial<Preferences> = {};
-  const copy = <K extends keyof PersistedSettings & keyof Preferences>(
-    key: K,
-    valid: (value: NonNullable<PersistedSettings[K]>) => boolean = () => true,
-  ) => {
+): PreferenceOverrides {
+  const restored: PreferenceOverrides = {};
+  const legacy = saved.preferencesVersion !== PREFERENCES_VERSION;
+  const read = <K extends keyof PreferenceOverrides>(key: K) => {
     const value = saved[key];
+    // HD textures were already saved only when explicitly set.
+    if (
+      legacy &&
+      key !== "hdTexturesEnabled" &&
+      Object.is(value, LEGACY_STORED_DEFAULTS[key])
+    )
+      return undefined;
+    return value;
+  };
+  const copy = <K extends keyof PreferenceOverrides>(
+    key: K,
+    valid: (value: NonNullable<PreferenceOverrides[K]>) => boolean = () => true,
+  ) => {
+    const value = read(key);
     if (value != null && valid(value))
       (restored as Record<string, unknown>)[key] = value;
   };
@@ -297,14 +343,26 @@ export function restorePreferences(
   copy("showFpsMeter");
   copy("aimCorrection", isBoolean);
   // Older saves included the retail defaults even when only another preference changed.
-  const previous = saved.playerInterpolation;
   const legacyOverride =
-    previous && !samePlayerInterpolation(previous, RETAIL_PLAYER_INTERPOLATION)
-      ? previous
+    saved.playerInterpolation &&
+    !samePlayerInterpolation(
+      normalizePlayerInterpolation(saved.playerInterpolation),
+      RETAIL_PLAYER_INTERPOLATION,
+    )
+      ? saved.playerInterpolation
       : undefined;
-  restored.playerInterpolation = normalizePlayerInterpolation(
-    saved.playerInterpolationOverride ?? legacyOverride,
-  );
+  const interpolation = saved.playerInterpolationOverride ?? legacyOverride;
+  if (interpolation && typeof interpolation === "object") {
+    const normalized = normalizePlayerInterpolation(interpolation);
+    const overrides: Partial<PlayerInterpolationSettings> = {};
+    for (const key of Object.keys(
+      normalized,
+    ) as (keyof PlayerInterpolationSettings)[]) {
+      if (Number.isFinite(interpolation[key])) overrides[key] = normalized[key];
+    }
+    if (Object.keys(overrides).length)
+      restored.playerInterpolationOverride = overrides;
+  }
   copy("audioEnabled");
   copy("animationEnabled");
   copy("shadowsEnabled");
@@ -316,35 +374,37 @@ export function restorePreferences(
     restored.hdTexturesEnabled = saved.useHdTexturePack;
   copy("fogEnabled");
   copy("highQualityFog");
-  if (saved.speedMultiplier != null)
+  const speedMultiplier = read("speedMultiplier");
+  if (typeof speedMultiplier === "number" && Number.isFinite(speedMultiplier))
     restored.speedMultiplier = clamp(
       // Keep saved speeds on the same whole-percentage grid as the controls.
-      Math.round(saved.speedMultiplier * 100) / 100,
+      Math.round(speedMultiplier * 100) / 100,
       MIN_SPEED_MULTIPLIER,
       MAX_SPEED_MULTIPLIER,
     );
-  if (saved.mouseSensitivity != null)
+  const mouseSensitivity = read("mouseSensitivity");
+  if (typeof mouseSensitivity === "number" && Number.isFinite(mouseSensitivity))
     restored.mouseSensitivity = clamp(
-      saved.mouseSensitivity,
+      mouseSensitivity,
       MIN_MOUSE_SENSITIVITY,
       MAX_MOUSE_SENSITIVITY,
     );
-  if (
-    typeof saved.fov === "number" &&
-    Number.isFinite(saved.fov) &&
-    saved.fov > 0
-  )
-    restored.fov = Math.min(saved.fov, MAX_PREFERRED_FOV);
+  const fov = read("fov");
+  if (typeof fov === "number" && Number.isFinite(fov) && fov > 0)
+    restored.fov = Math.min(fov, MAX_PREFERRED_FOV);
+  copy(
+    "zoomSpeedMs",
+    (value) =>
+      Number.isInteger(value) && value >= 0 && value <= MAX_ZOOM_SPEED_MS,
+  );
   copy("invertLookY", isBoolean);
   copy("clickToCycle", isBoolean);
   copy("touchMode");
-  if (
-    typeof saved.joystickOpacity === "number" &&
-    Number.isFinite(saved.joystickOpacity)
-  )
+  const joystickOpacity = read("joystickOpacity");
+  if (typeof joystickOpacity === "number" && Number.isFinite(joystickOpacity))
     restored.joystickOpacity = clamp(
       // Keep saved opacity on the same 5% grid as the slider.
-      Math.round(saved.joystickOpacity * 20) / 20,
+      Math.round(joystickOpacity * 20) / 20,
       MIN_JOYSTICK_OPACITY,
       MAX_JOYSTICK_OPACITY,
     );
@@ -352,16 +412,28 @@ export function restorePreferences(
   copy("audioVolume");
   copy("commentaryEnabled");
   copy("commentarySubtitles");
-  copy("localCastLookaheadMs", (value) => Number.isFinite(value) && value >= 0);
-  copy("resourceLookaheadMs", isResourceLookaheadMs);
+  copy("timelineNoSpoilers", isBoolean);
+  const localCastLookaheadMs = read("localCastLookaheadMs");
+  if (
+    localCastLookaheadMs === null ||
+    (typeof localCastLookaheadMs === "number" &&
+      Number.isFinite(localCastLookaheadMs) &&
+      localCastLookaheadMs >= 0)
+  )
+    restored.localCastLookaheadMs = localCastLookaheadMs;
+  if (isResourceLookaheadMs(saved.resourceLookaheadOverrideMs))
+    restored.resourceLookaheadMs = saved.resourceLookaheadOverrideMs;
+  else copy("resourceLookaheadMs", isResourceLookaheadMs);
   copy("adjustAudioSpeed");
   copy("invertScroll");
   copy("invertDrag");
   copy("invertJoystick");
+  copy("sidebarOpen", isBoolean);
   copy("hasSeenClipRecordingHelp", isBoolean);
   copy("pauseClipRecordingWhenDemoPaused", isBoolean);
-  if (saved.fpsLimit === null || Number.isInteger(saved.fpsLimit))
-    restored.fpsLimit = saved.fpsLimit;
+  const fpsLimit = read("fpsLimit");
+  if (fpsLimit === null || Number.isInteger(fpsLimit))
+    restored.fpsLimit = fpsLimit;
   copy("renderScale", (value) => RENDER_SCALE_OPTIONS.includes(value));
   copy("showInputOverlay");
   copy("showChat");
@@ -370,27 +442,21 @@ export function restorePreferences(
   copy("showMatchHud");
   copy("matchHudStyle", (value) => MATCH_HUD_STYLE_VALUES.includes(value));
   copy("scoreStyle", (value) => SCORE_STYLE_VALUES.includes(value));
-  restored.hudPreferences = {
-    score: {
-      position: saved.scoreHudPosition === "right" ? "right" : "left",
-      enabled: saved.showScoreHud ?? false,
-    },
-    quickCam: {
-      position: saved.quickCamHudPosition === "right" ? "right" : "left",
-      enabled: saved.showQuickCamHud ?? false,
-    },
-  };
+  const isHudPosition = (value: string) =>
+    value === "left" || value === "right";
+  copy("showScoreHud", isBoolean);
+  copy("scoreHudPosition", isHudPosition);
+  copy("showQuickCamHud", isBoolean);
+  copy("quickCamHudPosition", isHudPosition);
   copy("quickCamHideUnassignedSlots", isBoolean);
   copy("quickCamDetachOnRecall", isBoolean);
   copy("showReticle");
   copy("showCompass");
   copy("showIffs", (value) => IFF_VISIBILITY_VALUES.includes(value));
-  if (
-    typeof saved.iffMaxDistance === "number" &&
-    Number.isFinite(saved.iffMaxDistance)
-  )
+  const iffMaxDistance = read("iffMaxDistance");
+  if (typeof iffMaxDistance === "number" && Number.isFinite(iffMaxDistance))
     restored.iffMaxDistance = clamp(
-      Math.round(saved.iffMaxDistance / IFF_DISTANCE_STEP) * IFF_DISTANCE_STEP,
+      Math.round(iffMaxDistance / IFF_DISTANCE_STEP) * IFF_DISTANCE_STEP,
       MIN_IFF_DISTANCE,
       MAX_IFF_DISTANCE,
     );
@@ -411,38 +477,20 @@ export function restorePreferences(
   return restored;
 }
 
-function toPersisted(
-  state: Preferences,
-  hdTexturesOverride: boolean | undefined,
-): PersistedSettings {
-  const {
-    hudPreferences,
-    playerInterpolation,
-    renderOnDemand: _renderOnDemand,
-    lodEnabled: _lodEnabled,
-    ...rest
-  } = state;
+function mergeOverrides(
+  previous: PreferenceOverrides,
+  changes: PreferenceOverrides,
+): PreferenceOverrides {
   return {
-    ...rest,
-    hdTexturesEnabled: hdTexturesOverride,
-    playerInterpolationOverride: samePlayerInterpolation(
-      playerInterpolation,
-      DEFAULT_PLAYER_INTERPOLATION,
-    )
-      ? undefined
-      : playerInterpolation,
-    showScoreHud: hudPreferences.score.enabled,
-    scoreHudPosition: hudPreferences.score.position,
-    showQuickCamHud: hudPreferences.quickCam.enabled,
-    quickCamHudPosition: hudPreferences.quickCam.position,
+    ...previous,
+    ...changes,
+    ...(changes.playerInterpolationOverride && {
+      playerInterpolationOverride: {
+        ...previous.playerInterpolationOverride,
+        ...changes.playerInterpolationOverride,
+      },
+    }),
   };
-}
-
-function pickPreferences(state: SettingsState): Preferences {
-  const preferences = {} as Record<string, unknown>;
-  for (const key of Object.keys(DEFAULT_PREFERENCES))
-    preferences[key] = state[key as keyof Preferences];
-  return preferences as unknown as Preferences;
 }
 
 /** Effective fog: forced on where the mode can't disable it, otherwise the
@@ -469,13 +517,35 @@ export type SettingsStore = ReturnType<typeof createSettingsStore>;
 export function createSettingsStore() {
   const hdTexturesDefaultEnabled =
     !classifyDevice(readDeviceSignals()).constrained;
-  const restored = restorePreferences(readPersistedSettings());
-  let hdTexturesOverride = restored.hdTexturesEnabled;
+  const {
+    // The provider restores this on non-touch devices once input is known.
+    sidebarOpen: _sidebarOpen,
+    showScoreHud,
+    scoreHudPosition,
+    showQuickCamHud,
+    quickCamHudPosition,
+    playerInterpolationOverride,
+    ...restored
+  } = readPersistedSettings();
+  const { score, quickCam } = DEFAULT_PREFERENCES.hudPreferences;
   const store = createStore<SettingsState>()(
     subscribeWithSelector((): SettingsState => ({
       ...DEFAULT_PREFERENCES,
       hdTexturesEnabled: hdTexturesDefaultEnabled,
       ...restored,
+      hudPreferences: {
+        score: {
+          enabled: showScoreHud ?? score.enabled,
+          position: scoreHudPosition ?? score.position,
+        },
+        quickCam: {
+          enabled: showQuickCamHud ?? quickCam.enabled,
+          position: quickCamHudPosition ?? quickCam.position,
+        },
+      },
+      playerInterpolation: normalizePlayerInterpolation(
+        playerInterpolationOverride,
+      ),
       hdTexturesDefaultEnabled,
       access: {
         canDisableFog: true,
@@ -486,60 +556,97 @@ export function createSettingsStore() {
     })),
   );
 
+  let pending: PreferenceOverrides = {};
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
-  const save = (preferences: Preferences) => {
+  const flushChoices = () => {
+    if (saveTimer !== null) clearTimeout(saveTimer);
     saveTimer = null;
+    if (!Object.keys(pending).length) return;
     try {
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify(toPersisted(preferences, hdTexturesOverride)),
+        JSON.stringify({
+          preferencesVersion: PREFERENCES_VERSION,
+          ...mergeOverrides(readPersistedSettings(), pending),
+        }),
       );
+      pending = {};
     } catch {
       // Probably forbidden by browser settings.
     }
   };
-  store.subscribe(
-    pickPreferences,
-    (preferences, previous) => {
-      if (saveTimer) clearTimeout(saveTimer);
-      if (preferences.hdTexturesEnabled !== previous.hdTexturesEnabled) {
-        // Save the user's choice before the renderer starts replacing textures.
-        hdTexturesOverride = preferences.hdTexturesEnabled;
-        save(preferences);
-      } else {
-        saveTimer = setTimeout(() => save(preferences), SAVE_DEBOUNCE_MS);
-      }
-    },
-    { equalityFn: shallowEqual },
-  );
+  const saveChoices = (changes: PreferenceOverrides) => {
+    if (!Object.keys(changes).length) return;
+    pending = mergeOverrides(pending, changes);
+    // Save the choice before the renderer starts replacing textures.
+    if (changes.hdTexturesEnabled !== undefined) flushChoices();
+    else {
+      if (saveTimer !== null) clearTimeout(saveTimer);
+      saveTimer = setTimeout(flushChoices, SAVE_DEBOUNCE_MS);
+    }
+  };
 
-  return store;
-}
-
-function shallowEqual(a: object, b: object): boolean {
-  const aRecord = a as Record<string, unknown>;
-  const bRecord = b as Record<string, unknown>;
-  for (const key of Object.keys(aRecord))
-    if (!Object.is(aRecord[key], bRecord[key])) return false;
-  return true;
+  return { ...store, saveChoices, flushChoices };
 }
 
 export const settingsStore = createSettingsStore();
 
+if (typeof window !== "undefined")
+  window.addEventListener("pagehide", settingsStore.flushChoices);
+
 type SetStateAction<T> = T | ((previous: T) => T);
 
+/** Commit only the preferences supplied by the user's action. */
+export function setPreferences(
+  changes: Partial<ScalarPreferences>,
+  store: SettingsStore = settingsStore,
+): void {
+  const {
+    renderOnDemand: _renderOnDemand,
+    lodEnabled: _lodEnabled,
+    ...choices
+  } = changes;
+  store.saveChoices(choices);
+  store.setState(changes);
+}
+
 /** A `useState`-style setter for one preference. */
-export function setPreference<K extends keyof Preferences>(
+export function setPreference<
+  K extends Exclude<keyof Preferences, "hudPreferences">,
+>(
   key: K,
   action: SetStateAction<Preferences[K]>,
   store: SettingsStore = settingsStore,
 ): void {
-  store.setState((state) => ({
-    [key]:
-      typeof action === "function"
-        ? (action as (previous: Preferences[K]) => Preferences[K])(state[key])
-        : action,
-  }));
+  const value =
+    typeof action === "function"
+      ? (action as (previous: Preferences[K]) => Preferences[K])(
+          store.getState()[key],
+        )
+      : action;
+  if (key === "playerInterpolation")
+    updatePlayerInterpolationPreference(
+      value as PlayerInterpolationSettings,
+      store,
+    );
+  else setPreferences({ [key]: value }, store);
+}
+
+export function updatePlayerInterpolationPreference(
+  changes: Partial<PlayerInterpolationSettings>,
+  store: SettingsStore = settingsStore,
+): void {
+  const current = store.getState().playerInterpolation;
+  const next = normalizePlayerInterpolation({ ...current, ...changes });
+  const overrides: Partial<PlayerInterpolationSettings> = {};
+  for (const key of Object.keys(
+    changes,
+  ) as (keyof PlayerInterpolationSettings)[])
+    overrides[key] = next[key];
+  if (Object.keys(overrides).length)
+    store.saveChoices({ playerInterpolationOverride: overrides });
+  if (!samePlayerInterpolation(current, next))
+    store.setState({ playerInterpolation: next });
 }
 
 /** Drop the `?fog=` override so the preference applies again. */
@@ -556,20 +663,31 @@ export function updateHudPreference(
   changes: Partial<HudPreference>,
   store: SettingsStore = settingsStore,
 ): void {
+  const keys = {
+    score: { enabled: "showScoreHud", position: "scoreHudPosition" },
+    quickCam: { enabled: "showQuickCamHud", position: "quickCamHudPosition" },
+  } as const;
   const other = hud === "score" ? "quickCam" : "score";
-  store.setState(({ hudPreferences: previous }) => {
-    const next = { ...previous[hud], ...changes };
-    return {
-      hudPreferences: {
-        ...previous,
-        [hud]: next,
-        [other]:
-          next.enabled &&
-          previous[other].enabled &&
-          previous[other].position === next.position
-            ? { ...previous[other], enabled: false }
-            : previous[other],
-      } as Preferences["hudPreferences"],
-    };
+  const previous = store.getState().hudPreferences;
+  const next = { ...previous[hud], ...changes };
+  const hideOther =
+    next.enabled &&
+    previous[other].enabled &&
+    previous[other].position === next.position;
+  store.saveChoices({
+    ...(changes.enabled !== undefined && {
+      [keys[hud].enabled]: changes.enabled,
+    }),
+    ...(changes.position !== undefined && {
+      [keys[hud].position]: changes.position,
+    }),
+    ...(hideOther && { [keys[other].enabled]: false }),
+  });
+  store.setState({
+    hudPreferences: {
+      ...previous,
+      [hud]: next,
+      ...(hideOther && { [other]: { ...previous[other], enabled: false } }),
+    },
   });
 }

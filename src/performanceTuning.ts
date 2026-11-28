@@ -31,9 +31,8 @@ export const performanceTuning = {
   },
 
   assetPrefetch: {
-    /** Concurrent asset jobs; provisional 2/4 policy, not an optimal cutoff.
-     * Terrain subloads run serially inside their owning job. */
-    concurrency: { constrained: 2, desktop: 4 },
+    /** Concurrent asset jobs. Each job can enqueue multiple image loads. */
+    concurrency: 2,
     /** Positive integer milliseconds. Longer delays reduce background bursts
      * at the cost of slower initial/late asset readiness. */
     startDelayMs: 1000,

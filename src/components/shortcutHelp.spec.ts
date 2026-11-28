@@ -78,6 +78,20 @@ test("shows one range for map camera selection", () => {
   }
 });
 
+test.each([true, false])(
+  "shows whether X and Z are available when their bindings are active: %s",
+  (active) => {
+    const actions = new Set(active ? ["zoomCamera", "cycleCameraZoom"] : []);
+    const shortcuts = rows("demo", { actions });
+    expect(shortcuts.find((row) => row.label === "Zoom (hold)")?.keys).toEqual([
+      { parts: ["X"], active },
+    ]);
+    expect(
+      shortcuts.find((row) => row.label === "Cycle zoom level")?.keys,
+    ).toEqual([{ parts: ["Z"], active }]);
+  },
+);
+
 test.each([
   ["original", "local", false],
   ["firstPersonOverride", "follow", false],

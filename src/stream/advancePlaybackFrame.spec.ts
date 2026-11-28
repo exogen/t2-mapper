@@ -49,17 +49,26 @@ afterEach(() => {
 });
 
 describe("frame publication and transport", () => {
-  it("allows final chat audio only when playing into natural EOF", () => {
+  it("reaches the final tick before entering the natural EOF audio tail", () => {
     step.mockReturnValue(snapshot(0.032, true));
     frame();
     expect(streamSnapshotStore.getState().snapshot?.exhausted).toBe(true);
-    expect(state().playback.status).toBe("ending");
+    expect(state().playback.status).toBe("playing");
     frame();
+    expect(clock.time).toBe(0.032);
     expect(state().playback.status).toBe("ending");
 
     state().seekPlayback(100);
     frame();
     expect(state().playback.status).toBe("paused");
+  });
+
+  it("resumes a playing seek that lands just before the last demo tick", () => {
+    step.mockReturnValue(snapshot(0.032, true));
+    state().seekPlayback(0.02);
+    frame();
+    expect(clock.time).toBe(0.02);
+    expect(state().playback.status).toBe("playing");
   });
 
   it("does not enter the audio tail at an incomplete download frontier", () => {

@@ -3,24 +3,30 @@
   flex-direction: column;
 }
 
-.Filters {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
-  padding: 10px;
+.Controls:has(> .PlayerFilter) {
+  padding-bottom: 8px;
+}
+
+.Controls > .NoSpoilersField {
+  margin-bottom: 12px;
 }
 
 .PlayerFilter {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 10px 10px 0;
-  font-size: 11px;
 }
 
 .PlayerFilter label {
   flex-shrink: 0;
+}
+
+.Filters {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding: 0 12px 10px;
 }
 
 .FilterButton {
@@ -83,8 +89,8 @@
 }
 
 @media (pointer: coarse) {
-  .PlayerFilter {
-    font-size: 13px;
+  .PlayerFilter label {
+    font-size: 15px;
   }
 
   .FilterButton {

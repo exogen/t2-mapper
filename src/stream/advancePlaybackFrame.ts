@@ -76,7 +76,11 @@ export function advancePlaybackFrame(
     }
     publish(frame, playback);
     if (!isCurrentPlayback(recording, nonce)) return;
-    const atEnd = frame.snapshot.exhausted && stream.streamComplete !== false;
+    // Demo interpolation reads one tick ahead of the rendered playhead.
+    const atEnd =
+      frame.snapshot.exhausted &&
+      stream.streamComplete !== false &&
+      (recording.source !== "demo" || clock.time >= frame.snapshot.timeSec);
     if (frame.isSeeking) {
       engineStore
         .getState()

@@ -56,6 +56,32 @@ it("keeps Off exact and leaves the original take untouched at every strength", (
   }
 });
 
+it.each(["horizontal", "step"] as const)(
+  "preserves %s zoom framing while still smoothing motion",
+  (fovInterpolation) => {
+    const input = take([
+      sample(0),
+      sample(100, { position: [10, 2, 3], fov: 20, fovInterpolation }),
+      sample(200, { fov: 20 }),
+      sample(300),
+    ]);
+    const unmarked = take([
+      input.samples[0],
+      sample(100, { position: [10, 2, 3], fov: 20 }),
+      ...input.samples.slice(2),
+    ]);
+    for (const level of [1, 2] as const) {
+      const result = smoothClipTake(input, level);
+      expect(result.samples.map(({ fov }) => fov)).toEqual([75, 20, 20, 75]);
+      expect(result.samples[1].fovInterpolation).toBe(fovInterpolation);
+      expect(result.samples[1].position[0]).toBeLessThan(10);
+      expect(smoothClipTake(unmarked, level).samples[1].fov).toBeGreaterThan(
+        20,
+      );
+    }
+  },
+);
+
 it("progressively damps jitter while preserving endpoint poses and transport", () => {
   const input = take(
     Array.from({ length: 121 }, (_, index) => {

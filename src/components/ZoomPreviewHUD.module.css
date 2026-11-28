@@ -1,0 +1,35 @@
+.ZoomPreviewHUD {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  translate: -50% -50%;
+  z-index: 1;
+  pointer-events: none;
+  display: grid;
+  grid-template-columns: repeat(2, min(18px, 26%));
+  grid-template-rows: repeat(2, min(18px, 26%));
+  place-content: space-between;
+  filter: drop-shadow(0 1px 2px rgba(4, 35, 39, 0.85));
+}
+
+.ZoomPreviewHUD > span {
+  --corner-color: #9bfffd;
+  --stroke: min(1px, 60%);
+  background:
+    linear-gradient(var(--corner-color) 0 0) left top / 100% var(--stroke)
+      no-repeat,
+    linear-gradient(var(--corner-color) 0 0) left top / var(--stroke) 100%
+      no-repeat;
+}
+
+.ZoomPreviewHUD > span:nth-child(2) {
+  scale: -1 1;
+}
+
+.ZoomPreviewHUD > span:nth-child(3) {
+  scale: 1 -1;
+}
+
+.ZoomPreviewHUD > span:nth-child(4) {
+  scale: -1;
+}

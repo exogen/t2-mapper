@@ -9,11 +9,11 @@ function expectPositiveInteger(value: number) {
 }
 
 describe("performance tuning invariants", () => {
-  it("keeps all device-tier resource caps finite, positive and no larger for constrained devices", () => {
+  it("keeps resource caps positive and tiered caps no larger for constrained devices", () => {
+    expectPositiveInteger(performanceTuning.assetPrefetch.concurrency);
     const policies = [
       performanceTuning.worldShadowSize,
       performanceTuning.imageWorkConcurrency,
-      performanceTuning.assetPrefetch.concurrency,
       performanceTuning.audioBufferCache.maximumBytes,
       performanceTuning.audioBufferCache.maximumEntries,
       performanceTuning.browserCheckpoints.sessionEntries,

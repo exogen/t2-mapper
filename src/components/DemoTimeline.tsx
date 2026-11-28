@@ -1,4 +1,6 @@
-import { useCallback, useId } from "react";
+import { useCallback, useId, useMemo } from "react";
+import { useStore } from "zustand";
+import { Checkbox } from "./Checkbox";
 import { Select } from "./Select";
 import { PiFlagBanner, PiFlagBannerFill } from "react-icons/pi";
 import { IoSkullSharp } from "react-icons/io5";
@@ -8,7 +10,12 @@ import type {
   TimelineEventType,
 } from "../state/demoTimelineStore";
 import { seekToTimelineEvent } from "../state/demoTimelineFollow";
+import { setPreference, settingsStore } from "../state/settingsStore";
 import { useRecording } from "./usePlayback";
+import {
+  countTimelineEventsThrough,
+  useVisibleTimelineCount,
+} from "./useVisibleTimelineCount";
 import { BsPlayFill } from "react-icons/bs";
 import { AiFillStop } from "react-icons/ai";
 import { LuCrosshair, LuUserPen } from "react-icons/lu";
@@ -181,80 +188,139 @@ export function DemoTimeline({ filters }: { filters: DemoTimelineFilters }) {
   const scanProgress = useDemoTimeline((s) => s.scanProgress);
   const error = useDemoTimeline((s) => s.error);
   const recording = useRecording();
-  const { setSidebarOpen, observerTeamColors } = useSettings();
+  const { observerTeamColors } = useSettings();
+  const noSpoilers = useStore(settingsStore, (s) => s.timelineNoSpoilers);
   // Match the overlay layout and navigation actions in MapInspector.
   const sidebarOverlayMode = useMediaQuery("(max-width: 899px)") ?? false;
   const { categories, setCategories, player, setPlayer } = filters;
   const playerFilterId = useId();
-  const playerOptions = timelinePlayerOptions(
-    players,
-    events ?? [],
-    recording?.recorderName ?? null,
-    recorderNames,
-    playerRawNames,
+  const noSpoilersId = `${playerFilterId}-no-spoilers`;
+  const recorderName = recording?.recorderName ?? null;
+  const playerOptions = useMemo(
+    () =>
+      timelinePlayerOptions(
+        players,
+        events ?? [],
+        recorderName,
+        recorderNames,
+        playerRawNames,
+      ),
+    [players, events, recorderName, recorderNames, playerRawNames],
   );
 
-  const scopedEvents =
-    events?.filter((event) =>
-      involvesTimelinePlayer(event, player, playerRawNames),
-    ) ?? [];
-  const filtered = scopedEvents.filter(
-    (event) =>
-      isMatchTimelineEvent(event) ||
-      TIMELINE_CATEGORIES.some(
-        (category) =>
-          categories.has(category.value) &&
-          matchesTimelineCategory(event, category, player, playerRawNames),
-      ),
+  const scopedEvents = useMemo(
+    () =>
+      events?.filter((event) =>
+        involvesTimelinePlayer(event, player, playerRawNames),
+      ) ?? [],
+    [events, player, playerRawNames],
   );
+  const eventsByCategory = useMemo(
+    () =>
+      TIMELINE_CATEGORIES.map((category) =>
+        scopedEvents.filter((event) =>
+          matchesTimelineCategory(event, category, player, playerRawNames),
+        ),
+      ),
+    [scopedEvents, player, playerRawNames],
+  );
+  const filtered = useMemo(
+    () =>
+      scopedEvents.filter(
+        (event) =>
+          isMatchTimelineEvent(event) ||
+          TIMELINE_CATEGORIES.some(
+            (category) =>
+              categories.has(category.value) &&
+              matchesTimelineCategory(event, category, player, playerRawNames),
+          ),
+      ),
+    [scopedEvents, categories, player, playerRawNames],
+  );
+  const visibleCount = useVisibleTimelineCount(scopedEvents, noSpoilers);
+  // The filtered list and category counts share the last visible timestamp.
+  const visibleThrough = scopedEvents[visibleCount - 1]?.timeSec ?? -Infinity;
+  const allEventsVisible = visibleCount === scopedEvents.length;
+  const visibleEvents = allEventsVisible
+    ? filtered
+    : filtered.slice(0, countTimelineEventsThrough(filtered, visibleThrough));
   const allSelected = categories.size === TIMELINE_CATEGORIES.length;
 
   const handleClick = useCallback(
     (event: TimelineEvent) => {
       seekToTimelineEvent(recording, event);
-      if (sidebarOverlayMode) setSidebarOpen(false);
+      if (sidebarOverlayMode) settingsStore.setState({ sidebarOpen: false });
       // Blur so focus returns to body — allows spacebar to toggle
       // play/pause instead of re-activating the timeline button.
       if (document.activeElement instanceof HTMLElement) {
         document.activeElement.blur();
       }
     },
-    [recording, sidebarOverlayMode, setSidebarOpen],
+    [recording, sidebarOverlayMode],
   );
 
-  if (error) {
-    return (
-      <div className={accordionStyles.Body}>
-        <p className={controlStyles.ErrorMessage} role="alert">
-          <ImSad2 />
-          <span>{error}</span>
+  const timelineControls = (
+    <div className={`${accordionStyles.Body} ${styles.Controls}`}>
+      <div
+        className={`${controlStyles.CheckboxField} ${styles.NoSpoilersField}`}
+      >
+        <Checkbox
+          id={noSpoilersId}
+          aria-describedby={`${noSpoilersId}-description`}
+          checked={noSpoilers}
+          onChange={(event) =>
+            setPreference("timelineNoSpoilers", event.currentTarget.checked)
+          }
+        />
+        <label className={controlStyles.Label} htmlFor={noSpoilersId}>
+          No spoilers
+        </label>
+        <p
+          id={`${noSpoilersId}-description`}
+          className={controlStyles.Description}
+        >
+          Don’t reveal timeline events (or markers in the seek bar) until the
+          playhead reaches them.
         </p>
+      </div>
+      {events && (
+        <div className={styles.PlayerFilter}>
+          <label id={`${playerFilterId}-label`} htmlFor={playerFilterId}>
+            Show events involving
+          </label>
+          <Select
+            id={playerFilterId}
+            aria-labelledby={`${playerFilterId}-label`}
+            value={player}
+            onChange={setPlayer}
+            options={playerOptions}
+          />
+        </div>
+      )}
+    </div>
+  );
+
+  if (error || !events) {
+    return (
+      <div className={styles.Root}>
+        {timelineControls}
+        {error ? (
+          <div className={accordionStyles.Body}>
+            <p className={controlStyles.ErrorMessage} role="alert">
+              <ImSad2 />
+              <span>{error}</span>
+            </p>
+          </div>
+        ) : scanProgress != null ? (
+          <ScanProgress progress={scanProgress} />
+        ) : null}
       </div>
     );
   }
 
-  // Scanning in progress.
-  if (scanProgress != null && events == null) {
-    return <ScanProgress progress={scanProgress} />;
-  }
-
-  if (!events) return null;
-
   return (
     <div className={styles.Root}>
-      <div className={styles.PlayerFilter}>
-        <label id={`${playerFilterId}-label`} htmlFor={playerFilterId}>
-          Show events involving
-        </label>
-        <Select
-          id={playerFilterId}
-          size="small"
-          aria-labelledby={`${playerFilterId}-label`}
-          value={player}
-          onChange={setPlayer}
-          options={playerOptions}
-        />
-      </div>
+      {timelineControls}
       <div className={styles.Filters}>
         <button
           type="button"
@@ -271,13 +337,14 @@ export function DemoTimeline({ filters }: { filters: DemoTimelineFilters }) {
             )
           }
         >
-          All ({scopedEvents.length})
+          All ({visibleCount})
         </button>
-        {TIMELINE_CATEGORIES.map((category) => {
+        {TIMELINE_CATEGORIES.map((category, index) => {
           const active = categories.has(category.value);
-          const count = scopedEvents.filter((event) =>
-            matchesTimelineCategory(event, category, player, playerRawNames),
-          ).length;
+          const categoryEvents = eventsByCategory[index];
+          const count = allEventsVisible
+            ? categoryEvents.length
+            : countTimelineEventsThrough(categoryEvents, visibleThrough);
           return (
             <button
               key={category.value}
@@ -299,11 +366,11 @@ export function DemoTimeline({ filters }: { filters: DemoTimelineFilters }) {
           );
         })}
       </div>
-      {filtered.length === 0 ? (
+      {visibleEvents.length === 0 ? (
         <div className={styles.Empty}>No events found.</div>
       ) : (
         <div className={styles.EventList}>
-          {filtered.map((event, i) => {
+          {visibleEvents.map((event, i) => {
             const displayType =
               event.type === "kill" &&
               (!categories.has("kill") ||

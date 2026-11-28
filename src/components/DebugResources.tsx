@@ -48,8 +48,9 @@ function ResourceLookahead() {
           aria-describedby={`${inputId}-unit`}
           value={draft ?? lookahead}
           onChange={(event) => setDraft(event.currentTarget.value)}
-          onBlur={(event) => {
-            const value = event.currentTarget.value.trim();
+          onBlur={() => {
+            if (draft === null) return;
+            const value = draft.trim();
             const next = Number(value);
             if (/^\d+$/.test(value) && isResourceLookaheadMs(next)) {
               setPreference("resourceLookaheadMs", next);

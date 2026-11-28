@@ -2,7 +2,7 @@ import {
   commandCircuitStore,
   useCommandCircuit,
 } from "../state/commandCircuitStore";
-import { useSettings } from "./SettingsProvider";
+import { settingsStore } from "../state/settingsStore";
 import { useTouchDevice } from "./useTouchDevice";
 import styles from "./ViewModeToggle.module.css";
 
@@ -11,7 +11,6 @@ import styles from "./ViewModeToggle.module.css";
  */
 export function ViewModeToggle({ className }: { className?: string }) {
   const active = useCommandCircuit((s) => s.active);
-  const { setSidebarOpen } = useSettings();
   const isTouch = useTouchDevice();
 
   const setCommandCircuit = (command: boolean) => {
@@ -23,7 +22,7 @@ export function ViewModeToggle({ className }: { className?: string }) {
     }
     // Close the sidebar to reveal the view, like mission select and tours do.
     if (isTouch) {
-      setSidebarOpen(false);
+      settingsStore.setState({ sidebarOpen: false });
     }
   };
 

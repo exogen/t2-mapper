@@ -61,6 +61,7 @@ export interface ClipState {
 }
 
 let samples: ClipSample[] = [];
+let pendingFinalSample: ClipSample | undefined;
 let sourceDemo: string | null = null;
 let recordingOwner: string | null = null;
 let captureInterpolation = DEFAULT_PLAYER_INTERPOLATION;
@@ -138,6 +139,7 @@ export const clipStore = createStore<ClipState>((set, get) => ({
     )
       return false;
     samples = [];
+    pendingFinalSample = undefined;
     sourceDemo = filename;
     recordingOwner = account.user.discordId;
     captureInterpolation =
@@ -154,6 +156,13 @@ export const clipStore = createStore<ClipState>((set, get) => ({
   },
   stop() {
     if (!get().recording) return;
+    if (
+      pendingFinalSample &&
+      pendingFinalSample.timeMs > (samples.at(-1)?.timeMs ?? 0) &&
+      samples.length < MAX_CLIP_SAMPLES
+    )
+      samples.push(pendingFinalSample);
+    pendingFinalSample = undefined;
     const durationMs = samples.at(-1)?.timeMs ?? 0;
     if (!sourceDemo || samples.length < 2 || durationMs < 1000) {
       get().discard();
@@ -170,6 +179,7 @@ export const clipStore = createStore<ClipState>((set, get) => ({
     recordingOwner = null;
     set({
       recording: false,
+      elapsedMs: durationMs,
       draft,
       active: draft,
       trimStartMs: 0,
@@ -183,6 +193,7 @@ export const clipStore = createStore<ClipState>((set, get) => ({
   discard() {
     releaseCapture();
     samples = [];
+    pendingFinalSample = undefined;
     sourceDemo = null;
     recordingOwner = null;
     set({
@@ -339,6 +350,11 @@ export const clipStore = createStore<ClipState>((set, get) => ({
     set({ elapsedMs: sample.timeMs });
   },
 }));
+
+/** Preserve an in-between zoom frame if recording stops before the next sample. */
+export function retainFinalClipSample(sample: ClipSample): void {
+  if (clipStore.getState().recording) pendingFinalSample = sample;
+}
 
 /** Installed with the engine so discontinuities discard even between rendered frames. */
 export function installClipStateGuards(): () => void {

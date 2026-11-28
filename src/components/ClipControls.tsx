@@ -23,7 +23,11 @@ import {
   captureClipGraphicsEffects,
   graphicsEffectsStore,
 } from "../state/graphicsEffectsStore";
-import { setPreference, settingsStore } from "../state/settingsStore";
+import {
+  setPreference,
+  setPreferences,
+  settingsStore,
+} from "../state/settingsStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import {
   readClipStatus,
@@ -207,14 +211,14 @@ export function ClipControlsProvider({ children }: { children: ReactNode }) {
   function startRecording() {
     if (!clip.start()) return false;
     setIncludeEffects(false);
-    setPreference("sidebarOpen", true);
+    settingsStore.setState({ sidebarOpen: true });
     return true;
   }
 
   useInputAction("recordClip", toggleRecording);
 
   function updateSaveHud(patch: Partial<ClipHudSettings>) {
-    settingsStore.setState(patch);
+    setPreferences(patch);
   }
 
   function closeSaved() {

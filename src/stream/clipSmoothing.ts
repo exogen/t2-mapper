@@ -69,6 +69,9 @@ export function smoothClipTake(
 ): ClipTake {
   if (level === 0) return take;
   const samples = take.samples.map(copySample);
+  const preservePerspectiveFov = take.samples.some(
+    (sample) => sample.fovInterpolation !== undefined,
+  );
   let start = 0;
   for (let end = 1; end <= samples.length; end++) {
     if (
@@ -76,12 +79,14 @@ export function smoothClipTake(
       !startsSegment(take.samples[end - 1], take.samples[end])
     )
       continue;
-    const { cameraMode, firstPersonPose } = take.samples[start];
+    const { cameraMode, firstPersonPose, projection } = take.samples[start];
     if (!canSmoothClipCamera(cameraMode, firstPersonPose)) {
       start = end;
       continue;
     }
     const followOrbit = cameraMode === "orbitOverride";
+    // Averaging the lens would round off authored zoom starts and stops.
+    const smoothFov = !preservePerspectiveFov || projection === "orthographic";
     for (let index = start + 1; index < end - 1; index++) {
       const original = take.samples[index];
       const radius = Math.min(
@@ -109,7 +114,7 @@ export function smoothClipTake(
           for (let axis = 0; axis < 3; axis++)
             position[axis] +=
               (nearby.position[axis] - original.position[axis]) * weight;
-          fov += (nearby.fov - original.fov) * weight;
+          if (smoothFov) fov += (nearby.fov - original.fov) * weight;
           if (original.projection === "orthographic")
             viewHeight += (nearby.viewHeight! - original.viewHeight!) * weight;
         } else if (

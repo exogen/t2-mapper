@@ -367,6 +367,19 @@ it.each([
   { samples: [frame(0, 10), frame(1000, 11, { position: [Infinity, 0, 0] })] },
   { samples: [frame(0, 10), frame(1000, 11, { quaternion: [0, 0, 0, 0] })] },
   { samples: [frame(0, 10), frame(1000, 11, { fov: 180 })] },
+  {
+    samples: [frame(0, 10), { ...frame(1000, 11), fovInterpolation: "linear" }],
+  },
+  {
+    samples: [
+      frame(0, 10),
+      frame(1000, 11, {
+        projection: "orthographic",
+        viewHeight: 100,
+        fovInterpolation: "step",
+      }),
+    ],
+  },
   { samples: [frame(0, 10), frame(1000, 11, { projection: "orthographic" })] },
 ])("rejects invalid clip data (%j)", (overrides) => {
   expect(() => readClipTake({ ...take(), ...overrides })).toThrow(/Invalid/);
@@ -408,6 +421,92 @@ it("keeps camera cuts abrupt and quaternions normalized across the shortest rota
   expect(sampleClipTake(original, 1000).position).toEqual([500, 0, 0]);
   delete original.samples[1].cut;
   expect(sampleClipTake(original, 500).quaternion).toEqual([0, 0, 0, 1]);
+});
+
+it("keeps an instant FOV change separate from camera motion", () => {
+  const original = readClipTake(
+    take([
+      frame(0, 10),
+      frame(1000, 11, {
+        fov: 40,
+        aspect: 2,
+        quaternion: [0, 1, 0, 0],
+        fovInterpolation: "step",
+      }),
+      frame(2000, 12, { fov: 80, aspect: 2 }),
+    ]),
+  );
+  const halfway = sampleClipTake(original, 500);
+  expect(halfway).toMatchObject({
+    fov: 70,
+    aspect: 1.5,
+    position: [500, 2, 3],
+  });
+  expect(halfway.quaternion[1]).toBeCloseTo(Math.SQRT1_2);
+  expect(halfway.quaternion[3]).toBeCloseTo(Math.SQRT1_2);
+  expect(halfway).not.toHaveProperty("fovInterpolation");
+  expect(sampleClipTake(original, 1000)).toMatchObject({
+    fov: 40,
+    aspect: 2,
+    fovInterpolation: "step",
+  });
+  // The step affects its incoming segment; the unmarked segment after it
+  // still uses legacy vertical interpolation.
+  const afterStep = sampleClipTake(original, 1500);
+  expect(afterStep.fov).toBe(60);
+  expect(afterStep).not.toHaveProperty("fovInterpolation");
+
+  const trimmed = trimClipTake(original, 250, 1250);
+  expect(sampleClipTake(trimmed, 749).fov).toBe(70);
+  expect(sampleClipTake(trimmed, 750).fov).toBe(40);
+});
+
+it("keeps a constant angular zoom speed through aspect changes and trimming", () => {
+  const verticalFov = (horizontal: number, aspect: number) =>
+    (Math.atan(Math.tan((horizontal * Math.PI) / 360) / aspect) * 360) /
+    Math.PI;
+  const original = readClipTake(
+    take([
+      frame(0, 10, { fov: verticalFov(90, 2), aspect: 2 }),
+      frame(1000, 11, {
+        fov: verticalFov(45, 1),
+        aspect: 1,
+        fovInterpolation: "horizontal",
+      }),
+    ]),
+  );
+  const halfway = sampleClipTake(original, 500);
+  expect(halfway.aspect).toBe(1.5);
+  expect(halfway.fov).toBeCloseTo(verticalFov(67.5, 1.5), 12);
+  expect(halfway.fovInterpolation).toBe("horizontal");
+
+  const trimmed = readClipTake(
+    JSON.parse(JSON.stringify(trimClipTake(original, 250, 750))),
+  );
+  expect(trimmed.samples.at(-1)?.fovInterpolation).toBe("horizontal");
+  expect(sampleClipTake(trimmed, 250).fov).toBeCloseTo(halfway.fov, 12);
+
+  original.samples[1].cut = true;
+  const beforeCut = sampleClipTake(original, 500);
+  expect(beforeCut.fov).toBe(original.samples[0].fov);
+  expect(beforeCut.aspect).toBe(2);
+  expect(beforeCut.position).toEqual(original.samples[0].position);
+  expect(beforeCut).not.toHaveProperty("fovInterpolation");
+});
+
+it("keeps trimmed zoom samples within the valid FOV range across aspect changes", () => {
+  const original = readClipTake(
+    take([
+      frame(0, 10, { fov: 0.01, aspect: 0.1 }),
+      frame(1000, 11, {
+        fov: 0.01,
+        aspect: 10,
+        fovInterpolation: "horizontal",
+      }),
+    ]),
+  );
+  const trimmed = readClipTake(trimClipTake(original, 250, 750));
+  expect(trimmed.samples.map((sample) => sample.fov)).toEqual([0.01, 0.01]);
 });
 
 it("retains smooth movement when a trim ends after a camera cut", () => {

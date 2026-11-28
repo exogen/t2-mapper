@@ -10,6 +10,7 @@ import { isPlaybackControl } from "../keyboard";
 import { Select } from "./Select";
 import { useInputAction } from "./InputControls";
 import { useNavigationQueryState } from "./useQueryParams";
+import { useVisibleTimelineCount } from "./useVisibleTimelineCount";
 import {
   usePlaybackActions,
   useCurrentTime,
@@ -31,6 +32,7 @@ import {
   type TimelineEvent,
   useDemoTimeline,
 } from "../state/demoTimelineStore";
+import { settingsStore } from "../state/settingsStore";
 import { formatPlayheadTime, formatPlayheadTimeAligned } from "./demoFormat";
 import { PlayPauseIcon } from "./PlayPauseIcon";
 import { useSettings } from "./SettingsProvider";
@@ -281,6 +283,7 @@ export function DemoPlaybackControls() {
   // match descriptions or the scoring team/capper, plus each timestamp.
   const timelineEvents = useDemoTimeline((s) => s.events);
   const { observerTeamColors } = useSettings();
+  const noSpoilers = useStore(settingsStore, (s) => s.timelineNoSpoilers);
   const seekMarkers = useMemo(
     () =>
       (timelineEvents ?? [])
@@ -303,6 +306,43 @@ export function DemoPlaybackControls() {
           return { ...event, description: `${teamName} scores${capper}` };
         }),
     [timelineEvents],
+  );
+  const showDemoSeekMarkers = !activeClip && !draft;
+  const visibleMarkerCount = useVisibleTimelineCount(
+    seekMarkers,
+    noSpoilers && showDemoSeekMarkers,
+  );
+  const markerLayer = useMemo(
+    () =>
+      showDemoSeekMarkers &&
+      visibleMarkerCount > 0 &&
+      duration > 0 && (
+        <TimelineMarkerLayer>
+          {seekMarkers.slice(0, visibleMarkerCount).map((event, i) => (
+            <TimelineMarkerButton
+              key={`${event.type}-${event.timeSec}-${i}`}
+              kind={event.type}
+              position={event.timeSec / duration}
+              color={timelineFlagColor(event, observerTeamColors)}
+              title={`${event.description} – ${formatPlayheadTime(event.timeSec)}`}
+              aria-label={`Seek to ${event.description} – ${formatPlayheadTime(event.timeSec)}`}
+              onActivate={() => {
+                scrubRecording.current = null;
+                // Match timeline clicks with a three-second lead-in.
+                seek(Math.max(0, event.timeSec - 3));
+              }}
+            />
+          ))}
+        </TimelineMarkerLayer>
+      ),
+    [
+      duration,
+      observerTeamColors,
+      seek,
+      seekMarkers,
+      showDemoSeekMarkers,
+      visibleMarkerCount,
+    ],
   );
 
   const directorStatus = useDirector((s) => s.status);
@@ -520,25 +560,7 @@ export function DemoPlaybackControls() {
         {/* Timeline markers sit ABOVE the track (they'd be clipped by
             its overflow: hidden), and AFTER the thumb in the DOM so the
             playhead comes first in the tab order. */}
-        {seekMarkers.length > 0 && duration > 0 && (
-          <TimelineMarkerLayer>
-            {seekMarkers.map((event, i) => (
-              <TimelineMarkerButton
-                key={`${event.type}-${event.timeSec}-${i}`}
-                kind={event.type}
-                position={event.timeSec / duration}
-                color={timelineFlagColor(event, observerTeamColors)}
-                title={`${event.description} – ${formatPlayheadTime(event.timeSec)}`}
-                aria-label={`Seek to ${event.description} – ${formatPlayheadTime(event.timeSec)}`}
-                onActivate={() => {
-                  scrubRecording.current = null;
-                  // Match timeline clicks with a three-second lead-in.
-                  seek(Math.max(0, event.timeSec - 3));
-                }}
-              />
-            ))}
-          </TimelineMarkerLayer>
-        )}
+        {markerLayer}
       </PlaybackSeekBar>
       <div
         className={styles.Field}

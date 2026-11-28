@@ -2,6 +2,7 @@ import { parseBinding, type InputBinding } from "../state/inputControls";
 import { usesOrbitInput, type InputMode } from "../state/inputModeStore";
 import type { DemoCameraMode } from "../state/streamPlaybackStore";
 import {
+  CAMERA_ZOOM_INPUT,
   CLIP_RECORD_INPUT,
   COMMAND_CIRCUIT_EXIT_INPUT,
   COMMAND_CIRCUIT_INPUT,
@@ -77,6 +78,7 @@ const keyLabels: Record<string, string> = {
 const inputEntries = [
   ...FREE_FLY_INPUT,
   ...MOVABLE_CAMERA_INPUT,
+  ...CAMERA_ZOOM_INPUT,
   ...POINTER_LOCKABLE_INPUT,
   ...DEMO_MODE_INPUT,
   ...CLIP_RECORD_INPUT,
@@ -250,6 +252,11 @@ export function buildShortcutHelp(
         canLook,
       ),
       shortcut("Look with mouse", "dragLook", canLook),
+      {
+        label: "Zoom (hold)",
+        keys: actionKey("zoomCamera").slice(0, 1),
+      },
+      shortcut("Cycle zoom level", "cycleCameraZoom"),
       shortcut("Adjust fly speed", "adjustSpeed", !wheelZoom && cameraReady),
       ...(map
         ? []

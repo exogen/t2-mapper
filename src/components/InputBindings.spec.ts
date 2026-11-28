@@ -7,6 +7,7 @@ import {
   type InputMapEntry,
 } from "./InputControls";
 import {
+  CAMERA_ZOOM_INPUT,
   COMMAND_CIRCUIT_STREAM_INPUT,
   CLIP_RECORD_INPUT,
   DEMO_MODE_INPUT,
@@ -123,6 +124,54 @@ it("records with R without handling typing or repeating while the key is held", 
   key("keyup", "KeyR");
   key("keydown", "KeyR");
   expect(record).toHaveBeenCalledTimes(2);
+});
+
+it("holds camera zoom through Shift and releases it on key up or blur", () => {
+  mount(CAMERA_ZOOM_INPUT);
+  const pressed = () => inputControlsStore.getState().actions.zoomCamera;
+
+  key("keydown", "KeyX");
+  expect(pressed()).toEqual({ pressed: true });
+  key("keydown", "ShiftLeft");
+  key("keydown", "KeyW");
+  expect(pressed()).toEqual({ pressed: true });
+  key("keyup", "ShiftLeft");
+  key("keyup", "KeyW");
+  expect(pressed()).toEqual({ pressed: true });
+  key("keyup", "KeyX");
+  expect(pressed()).toEqual({ pressed: false });
+
+  key("keydown", "ShiftLeft");
+  key("keydown", "KeyX");
+  expect(pressed()).toEqual({ pressed: true });
+  window.dispatchEvent(new Event("blur"));
+  expect(pressed()).toEqual({ pressed: false });
+});
+
+it("cycles zoom once per Z press, while zoomed or unzoomed, without interrupting typing", () => {
+  mount(CAMERA_ZOOM_INPUT);
+  const cycle = watch("cycleCameraZoom");
+  Object.assign(document, { activeElement: keyboardElement("TEXTAREA") });
+  key("keydown", "KeyX");
+  key("keydown", "KeyZ");
+  expect(inputControlsStore.getState().actions.zoomCamera).toEqual({
+    pressed: false,
+  });
+  expect(cycle).not.toHaveBeenCalled();
+
+  Object.assign(document, { activeElement: null });
+  key("keydown", "KeyZ");
+  key("keydown", "KeyZ");
+  key("keyup", "KeyZ");
+  expect(cycle).toHaveBeenCalledOnce();
+
+  key("keydown", "KeyX");
+  key("keydown", "KeyZ");
+  key("keydown", "KeyZ");
+  expect(cycle).toHaveBeenCalledTimes(2);
+  expect(inputControlsStore.getState().actions.zoomCamera).toEqual({
+    pressed: true,
+  });
 });
 
 it("cycles in only one direction per F press, even if Shift is released first", () => {
