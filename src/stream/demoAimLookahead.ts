@@ -1,11 +1,14 @@
-import {
-  BlockTypeMove,
-  BlockTypePacket,
-  type DemoParser,
-  type MoveData,
-  type PacketData,
-  type ParsedData,
+import type {
+  DemoParser,
+  MoveData,
+  PacketData,
+  ParsedData,
 } from "t2-demo-parser";
+import {
+  forkDemoLookahead,
+  readDemoLookaheadBlock,
+  type DemoLookaheadFork,
+} from "./demoLookaheadParser";
 import { DEMO_AIM_LOOKAHEAD_TICKS, type DemoAimTick } from "./demoAimFit";
 import { GhostMessage } from "./entityClassification";
 import { unclampMove } from "./playerPrediction";
@@ -91,11 +94,7 @@ function readPacket(cursor: Cursor, frame: AimFrame, packet: PacketData): void {
 
 /** Read only the next few complete demo ticks without moving the main parser. */
 export class DemoAimLookahead {
-  private fork?: {
-    source: DemoParser;
-    parser: DemoParser;
-    owner: ReturnType<DemoParser["createCheckpoint"]>["owner"];
-  };
+  private fork?: DemoLookaheadFork;
   private cursor?: Cursor;
   private failedSource?: DemoParser;
 
@@ -110,16 +109,16 @@ export class DemoAimLookahead {
     ghostIndex: number,
     controlGhostIndex?: number,
   ): DemoAimTick[] {
+    if (this.fork && this.fork.source !== source) {
+      this.fork = undefined;
+      this.cursor = undefined;
+    }
+    if (this.failedSource !== source) this.failedSource = undefined;
     // Progressive parsers can fork once their download has finished.
     if (!source.isComplete || this.failedSource === source) return [];
     try {
-      if (this.fork?.source !== source) {
-        if (typeof source.fork !== "function") return [];
-        const parser = source.fork();
-        this.fork = { source, parser, owner: parser.createCheckpoint().owner };
-        this.cursor = undefined;
-      }
-      const { parser, owner } = this.fork;
+      const fork = (this.fork ??= forkDemoLookahead(source));
+      if (!fork) return [];
       let cursor = this.cursor;
       if (
         !cursor ||
@@ -127,7 +126,8 @@ export class DemoAimLookahead {
         tick - cursor.tick > MAX_ROLLING_CATCHUP_TICKS ||
         (cursor.stopped && tick > cursor.tick && tick > cursor.requestedTick)
       ) {
-        parser.restoreCheckpoint({ ...source.createCheckpoint(), owner });
+        this.cursor = undefined;
+        fork.rebase();
         cursor = {
           tick,
           requestedTick: tick,
@@ -140,7 +140,7 @@ export class DemoAimLookahead {
       cursor.requestedTick = tick;
       while (cursor.frames.length && cursor.frames[0].tick <= tick)
         cursor.frames.shift();
-      this.advance(parser, cursor, tick + DEMO_AIM_LOOKAHEAD_TICKS);
+      this.advance(fork.parser, cursor, tick + DEMO_AIM_LOOKAHEAD_TICKS);
       const result: DemoAimTick[] = [];
       for (const frame of cursor.frames) {
         if (frame.worldCut || frame.cuts.has(ghostIndex)) {
@@ -174,25 +174,14 @@ export class DemoAimLookahead {
     let frame = nextFrame();
     try {
       for (let count = 0; count < MAX_LOOKAHEAD_BLOCKS; count++) {
-        const { protocolRejected, protocolNoDispatch } = protocol;
-        const block = parser.nextBlock();
-        if (!block || block.parseError) break;
-        if (block.type === BlockTypePacket) {
-          const packet = block.parsed as PacketData | undefined;
-          if (packet?.parseFault) break;
-          if (
-            !packet ||
-            protocol.protocolRejected > protocolRejected ||
-            protocol.protocolNoDispatch > protocolNoDispatch
-          )
-            continue;
-          readPacket(cursor, frame, packet);
-        } else if (block.type === BlockTypeMove) {
+        const block = readDemoLookaheadBlock(parser, protocol);
+        if (block === "stop") break;
+        if (block === "move") {
           cursor.tick++;
           if (cursor.tick > cursor.requestedTick) cursor.frames.push(frame);
           if (cursor.tick >= throughTick) return;
           frame = nextFrame();
-        }
+        } else if (block !== "skip") readPacket(cursor, frame, block);
       }
     } catch {
       // A speculative read must not surface faults ahead of normal playback.

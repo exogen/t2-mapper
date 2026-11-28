@@ -68,6 +68,7 @@ import { DebugCastGeniusInfo } from "./DebugCastGeniusInfo";
 import { DebugEntityList } from "./DebugEntityList";
 import { DebugNetworkInfo } from "./DebugNetworkInfo";
 import { DebugRendererInfo } from "./DebugRendererInfo";
+import { DebugResources } from "./DebugResources";
 import type { GameEngine } from "../engine/gameEngine";
 import buttonStyles from "./Button.module.css";
 import styles from "./InspectorControls.module.css";
@@ -1020,6 +1021,7 @@ export const InspectorControls = memo(function InspectorControls({
                   </p>
                 </div>
                 {engine && <DebugRendererInfo engine={engine} />}
+                <DebugResources showLookahead={mode === "demo"} />
                 {recording?.source === "demo" && (
                   <InterpolationControls viewingClip={viewingClip} />
                 )}

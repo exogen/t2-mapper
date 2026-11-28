@@ -14,6 +14,18 @@ import {
   type PlayerInterpolationSettings,
 } from "../stream/playerInterpolation";
 
+export const DEFAULT_RESOURCE_LOOKAHEAD_MS = 5_000;
+export const MAX_RESOURCE_LOOKAHEAD_MS = 30_000;
+
+export function isResourceLookaheadMs(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= MAX_RESOURCE_LOOKAHEAD_MS
+  );
+}
+
 /** When to show player names under command circuit dot markers. */
 export type CcPlayerNames = "always" | "hover" | "never";
 const CC_PLAYER_NAMES_VALUES: readonly CcPlayerNames[] = [
@@ -106,6 +118,8 @@ export interface Preferences {
   commentarySubtitles: boolean;
   /** Browser-generated CastGenius lookahead. Null uses the configured default. */
   localCastLookaheadMs: number | null;
+  /** How far ahead of recorded playback to warm assets. Zero disables it. */
+  resourceLookaheadMs: number;
   /** Adjust sound pitch to match playback speed. */
   adjustAudioSpeed: boolean;
   animationEnabled: boolean;
@@ -187,6 +201,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   commentaryEnabled: true,
   commentarySubtitles: false,
   localCastLookaheadMs: null,
+  resourceLookaheadMs: DEFAULT_RESOURCE_LOOKAHEAD_MS,
   adjustAudioSpeed: true,
   animationEnabled: true,
   shadowsEnabled: true,
@@ -338,6 +353,7 @@ export function restorePreferences(
   copy("commentaryEnabled");
   copy("commentarySubtitles");
   copy("localCastLookaheadMs", (value) => Number.isFinite(value) && value >= 0);
+  copy("resourceLookaheadMs", isResourceLookaheadMs);
   copy("adjustAudioSpeed");
   copy("invertScroll");
   copy("invertDrag");

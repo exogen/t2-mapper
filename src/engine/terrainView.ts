@@ -27,6 +27,7 @@ import {
   terrainHeightToWorld,
   type TerrainFile,
 } from "../terrain";
+import { createTerrainDetail } from "../terrainMaterial";
 import { packMasksRGB } from "../textureUtils";
 import {
   bakeTerrainLightmap,
@@ -61,6 +62,8 @@ import {
   createBlendedTerrainMaterial,
   createTerrainFallbackMaterial,
   loadTerrainTextures,
+  terrainBaseTextureUrls,
+  terrainDetailTextureUrls,
   type BlendedTerrainMaterial,
 } from "./terrainTileMaterial";
 import type { EntityView } from "./entityViews";
@@ -132,6 +135,9 @@ export function createTerrainView(
   const terrainFile = scene.terrFileName;
   const squareSize = scene.squareSize || DEFAULT_TERRAIN_SQUARE_SIZE;
   const detailTextureName = scene.detailTextureName || undefined;
+  const detail = detailTextureName
+    ? createTerrainDetail(squareSize)
+    : undefined;
   const blockSize = squareSize * TERRAIN_SIZE;
   // Torque ignores the mission's terrain position and always uses a fixed formula:
   // setPosition(Point3F(-squareSize * (BlockSize >> 1), -squareSize * (BlockSize >> 1), 0));
@@ -343,15 +349,10 @@ export function createTerrainView(
 
     rebake();
 
-    const stopTextures = engine.prepareTextureWithHost(
+    const baseUrls = () => terrainBaseTextureUrls(loaded.textureNames);
+    const stopBaseTextures = engine.prepareTextureWithHost(
       ({ renderer }, signal, textureAssets) =>
-        loadTerrainTextures(
-          loaded.textureNames,
-          detailTextureName,
-          renderer,
-          signal,
-          textureAssets,
-        ),
+        loadTerrainTextures(baseUrls(), renderer, signal, textureAssets),
       (textures) => {
         const debugMode = selectDebugMode(settingsStore.getState());
         const lightmap = bake!.texture;
@@ -360,6 +361,7 @@ export function createTerrainView(
           alphaTextures,
           squareSize,
           detailViewportHeight,
+          detail: detail?.uniforms,
           lightmap,
           debugMode,
         });
@@ -368,6 +370,7 @@ export function createTerrainView(
           alphaTextures,
           squareSize,
           detailViewportHeight,
+          detail: detail?.uniforms,
           lightmap,
           debugMode,
         });
@@ -397,7 +400,31 @@ export function createTerrainView(
       },
       (error: unknown) =>
         log.error("Failed to load textures for %s: %o", terrainFile, error),
+      baseUrls,
     );
+    // A detail-only change leaves the blended layers and shadow casters
+    // installed. The shared uniforms disable the detail pass until it loads.
+    let stopDetailTexture: Cleanup;
+    if (detail && detailTextureName) {
+      const detailUrls = () => terrainDetailTextureUrls(detailTextureName);
+      stopDetailTexture = engine.prepareTextureWithHost(
+        ({ renderer }, signal, textureAssets) =>
+          loadTerrainTextures(detailUrls(), renderer, signal, textureAssets),
+        ([texture]) => {
+          if (!texture) return;
+          detail.setTexture(texture);
+          engine.invalidate();
+          return () => detail.setTexture(null);
+        },
+        (error: unknown) =>
+          log.warn(
+            "Failed to load terrain detail %s: %o",
+            detailTextureName,
+            error,
+          ),
+        detailUrls,
+      );
+    }
 
     engine.invalidate();
 
@@ -431,7 +458,8 @@ export function createTerrainView(
         );
         return lines;
       }),
-      stopTextures,
+      stopBaseTextures,
+      stopDetailTexture,
     );
   }
 

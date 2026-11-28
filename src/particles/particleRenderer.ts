@@ -12,15 +12,20 @@ import {
   RepeatWrapping,
   RGBAFormat,
   ShaderMaterial,
-  Source,
   Texture,
+  TextureSource,
   UnsignedByteType,
 } from "three";
 import { textureToUrl } from "../loaders";
-import { loadBitmapTexture } from "../assets/bitmapTextures";
+import type { AssetLoadPriority } from "../assets/assetLoadQueue";
+import {
+  loadBitmapTexture,
+  loadBitmapTextureAsync,
+  retainBitmapTexture,
+} from "../assets/bitmapTextures";
 import { sharedSceneAssets, type SceneAssets } from "../assets/sceneAssets";
 import { setupEffectTexture } from "../stream/playbackUtils";
-import { markTextureSamplerUpdate } from "../textureUtils";
+import { markTextureSamplerUpdate, transparentTexture } from "../textureUtils";
 import { particleVertexShader, particleFragmentShader } from "./shaders";
 import type { EmitterInstance } from "./ParticleSystem";
 export interface ParticleBuffers {
@@ -46,15 +51,15 @@ const textureCacheKey = {};
 /** Set of textures whose image data has finished loading. */
 export const particleTexturesReady = new WeakSet<Texture>();
 
-/** 1×1 white placeholder so particles are visible before async textures load. */
-const _placeholderTexture = new DataTexture(
+/** Particles with no authored texture render in their datablock color. */
+const untexturedParticle = new DataTexture(
   new Uint8Array([255, 255, 255, 255]),
   1,
   1,
   RGBAFormat,
   UnsignedByteType,
 );
-_placeholderTexture.needsUpdate = true;
+untexturedParticle.needsUpdate = true;
 
 /**
  * ParticleData::preload loads its texture as type 4 (TextureManager
@@ -76,7 +81,32 @@ export function getParticleTexture(
   textureName: string,
   assets: SceneAssets = sharedSceneAssets,
 ): Texture {
-  if (!textureName) return _placeholderTexture;
+  return textureName
+    ? getParticleSampler(textureName, assets)
+    : untexturedParticle;
+}
+
+/** Decode and bind the same sampler particle draws use. */
+export async function warmParticleTexture(
+  textureName: string,
+  assets: SceneAssets,
+  priority: AssetLoadPriority,
+): Promise<Texture> {
+  const images = assets.textures;
+  const loaded = await loadBitmapTextureAsync(
+    textureToUrl(textureName, null),
+    images,
+    priority,
+  );
+  images.signal.throwIfAborted();
+  return getParticleSampler(textureName, assets, loaded);
+}
+
+function getParticleSampler(
+  textureName: string,
+  assets: SceneAssets,
+  loaded?: Texture,
+): Texture {
   const textureCache = assets.cache<string, ParticleTextureEntry>(
     textureCacheKey,
     ({ texture }) => {
@@ -85,13 +115,13 @@ export function getParticleTexture(
     },
   );
   const cached = textureCache.get(textureName);
-  if (
-    cached &&
-    (cached.retryAfter === undefined || performance.now() < cached.retryAfter)
-  )
-    return cached.texture;
   if (cached) {
-    loadParticleTexture(textureName, cached, assets);
+    if (loaded) bindParticleSampler(cached, loaded);
+    else if (
+      cached.retryAfter !== undefined &&
+      performance.now() >= cached.retryAfter
+    )
+      loadParticleTexture(textureName, cached, assets);
     return cached.texture;
   }
   // Share decoded pixels, not sampler/color-space settings with other effects.
@@ -102,8 +132,21 @@ export function getParticleTexture(
   assets.onTexturesChanged(() =>
     loadParticleTexture(textureName, entry, assets),
   );
-  loadParticleTexture(textureName, entry, assets);
+  if (loaded) bindParticleSampler(entry, loaded);
+  else loadParticleTexture(textureName, entry, assets);
   return texture;
+}
+
+function bindParticleSampler(entry: ParticleTextureEntry, loaded: Texture) {
+  const { texture } = entry;
+  entry.retryAfter = undefined;
+  if (particleTexturesReady.has(texture)) {
+    if (texture.source === loaded.source) return;
+    texture.dispose();
+  }
+  texture.source = loaded.source;
+  markTextureSamplerUpdate(texture);
+  particleTexturesReady.add(texture);
 }
 
 function loadParticleTexture(
@@ -114,31 +157,39 @@ function loadParticleTexture(
   const { texture } = entry;
   const images = assets.textures;
   entry.retryAfter = undefined;
-  if (particleTexturesReady.delete(texture)) {
+  const clear = () => {
+    if (!particleTexturesReady.delete(texture)) return;
     // Remove GL storage while it still belongs to the previous Source. Effects
     // keep this sampler in their material uniforms throughout the refresh.
     texture.dispose();
-    texture.source = new Source(null);
+    texture.source = new TextureSource(null);
     // Bind the renderer's empty texture until the new pixels arrive.
     texture.version = 0;
-  }
+  };
+  const isCurrent = () => !assets.disposed && images === assets.textures;
   const failed = () => {
-    if (!images.disposed)
+    if (isCurrent())
       entry.retryAfter = performance.now() + PARTICLE_TEXTURE_RETRY_MS;
   };
   try {
+    const url = textureToUrl(textureName, null);
+    if (
+      particleTexturesReady.has(texture) &&
+      retainBitmapTexture(url, images, texture.source)
+    )
+      return;
+    clear();
     const source = loadBitmapTexture(
-      textureToUrl(textureName),
+      url,
       (loaded) => {
-        texture.source = loaded.source;
-        markTextureSamplerUpdate(texture);
-        particleTexturesReady.add(texture);
+        if (isCurrent()) bindParticleSampler(entry, loaded);
       },
       failed,
       images,
     );
     texture.source = source.source;
   } catch {
+    clear();
     failed();
   }
 }
@@ -186,14 +237,14 @@ export function createParticleMaterial(
   orientParticles = false,
   interpolate = false,
 ): ShaderMaterial {
-  // Use the placeholder until the real texture's image data is ready.
-  const ready = particleTexturesReady.has(texture);
+  const ready =
+    texture === untexturedParticle || particleTexturesReady.has(texture);
   return new ShaderMaterial({
     defines: interpolate ? { INTERPOLATE_PARTICLES: 1 } : {},
     vertexShader: particleVertexShader,
     fragmentShader: particleFragmentShader,
     uniforms: {
-      particleTexture: { value: ready ? texture : _placeholderTexture },
+      particleTexture: { value: ready ? texture : transparentTexture },
       hasTexture: { value: true },
       debugOpacity: { value: 1.0 },
       uOrientParticles: { value: orientParticles },

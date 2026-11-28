@@ -49,6 +49,7 @@ it("keeps parse pure and starts referenced images alongside embedded decoding", 
   expect(loadHtmlTexture).toHaveBeenCalledExactlyOnceWith(
     "/textures/test.png",
     assets.textures,
+    "speculative",
   );
   embeddedReady(model);
   await expect(ready).resolves.toBe(model);

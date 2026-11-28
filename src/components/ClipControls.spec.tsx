@@ -115,6 +115,7 @@ beforeEach(() => {
     elapsedMs: 0,
     active: null,
     playbackEffects: null,
+    awaitingResources: false,
     playheadMs: 0,
     playing: false,
     start: vi.fn(),

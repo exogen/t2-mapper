@@ -4,9 +4,11 @@ import {
   loadBitmapTexture,
   loadBitmapTextureAsync,
   loadBitmapTextureInstance,
+  promoteBitmapTexture,
 } from "./bitmapTextures";
 import { readResourceMetrics } from "../diagnostics/resourceMetricRegistry";
 import { setupTexture } from "../textureUtils";
+import { imageWorkQueue } from "./imageWorkQueue";
 import { SceneAssets } from "./sceneAssets";
 
 vi.mock("../logger", () => ({
@@ -87,6 +89,145 @@ async function fetchSucceeded() {
 }
 
 describe("shared shape texture images", () => {
+  it("keeps decoded pixels and samplers when their resolved URL is unchanged", async () => {
+    const assets = new SceneAssets();
+    const name = url();
+    const first = loadBitmapTextureInstance(
+      () => [name],
+      undefined,
+      [],
+      assets,
+    );
+    const second = loadBitmapTextureInstance(
+      () => [name],
+      undefined,
+      [],
+      assets,
+    );
+    await fetchSucceeded();
+    const bitmap = { width: 8, height: 8, close: vi.fn() };
+    decodes[0].resolve(bitmap as unknown as ImageBitmap);
+    await vi.waitFor(() => expect(second.image).toBe(bitmap));
+    const source = first.source;
+    const version = first.version;
+    const disposed = vi.fn();
+    first.addEventListener("dispose", disposed);
+    second.addEventListener("dispose", disposed);
+
+    assets.refreshTextures();
+    expect(fetchImage).toHaveBeenCalledOnce();
+    expect(bitmap.close).not.toHaveBeenCalled();
+    expect(disposed).not.toHaveBeenCalled();
+    expect(first.source).toBe(source);
+    expect(second.source).toBe(source);
+    expect(first.version).toBe(version);
+    expect(
+      loadBitmapTexture(name, undefined, undefined, assets.textures).source,
+    ).toBe(source);
+
+    first.dispose();
+    second.dispose();
+    assets.dispose();
+    expect(bitmap.close).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a loaded fallback when no new candidate takes priority", async () => {
+    const assets = new SceneAssets();
+    const preferred = `${url()}?preferred`;
+    const fallback = `${url()}?fallback`;
+    let candidates = [preferred, fallback, `${url()}?hd`];
+    const sampler = loadBitmapTextureInstance(
+      () => candidates,
+      undefined,
+      [],
+      assets,
+    );
+
+    requests[0].resolve(new Response(png, { status: 404 }));
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    requests[1].resolve(new Response(png));
+    await vi.waitFor(() => expect(decodes).toHaveLength(1));
+    const original = { width: 8, height: 8, close: vi.fn() };
+    decodes[0].resolve(original as unknown as ImageBitmap);
+    await vi.waitFor(() => expect(sampler.image).toBe(original));
+
+    candidates = [preferred, fallback, `${url()}?sd`];
+    assets.refreshTextures();
+    expect(sampler.image).toBe(original);
+
+    candidates = [fallback];
+    assets.refreshTextures();
+    expect(sampler.image).toBe(original);
+    expect(original.close).not.toHaveBeenCalled();
+    expect(fetchImage).toHaveBeenCalledTimes(2);
+
+    candidates = [preferred, fallback];
+    assets.refreshTextures();
+    expect(fetchImage.mock.calls[2][0]).toBe(preferred);
+    expect(original.close).toHaveBeenCalledOnce();
+    requests[2].resolve(new Response(png));
+    await vi.waitFor(() => expect(decodes).toHaveLength(2));
+    const replacement = { width: 16, height: 16, close: vi.fn() };
+    decodes[1].resolve(replacement as unknown as ImageBitmap);
+    await vi.waitFor(() => expect(sampler.image).toBe(replacement));
+
+    sampler.dispose();
+    assets.dispose();
+    expect(replacement.close).toHaveBeenCalledOnce();
+  });
+
+  it.each(["settled", "pending"])(
+    "handles a %s retry of a preferred texture when quality changes",
+    async (retryState) => {
+      const assets = new SceneAssets();
+      const preferred = `${url()}?preferred`;
+      const fallback = `${url()}?fallback`;
+      const sampler = loadBitmapTextureInstance(
+        () => [preferred, fallback],
+        undefined,
+        [],
+        assets,
+      );
+      requests[0].resolve(new Response(png, { status: 404 }));
+      await vi.waitFor(() => expect(requests).toHaveLength(2));
+      requests[1].resolve(new Response(png));
+      await vi.waitFor(() => expect(decodes).toHaveLength(1));
+      const fallbackImage = { width: 8, height: 8, close: vi.fn() };
+      decodes[0].resolve(fallbackImage as unknown as ImageBitmap);
+      await vi.waitFor(() => expect(sampler.image).toBe(fallbackImage));
+
+      const retry = loadBitmapTextureAsync(
+        preferred,
+        assets.textures,
+        "speculative",
+      );
+      const restoredImage = { width: 16, height: 16, close: vi.fn() };
+      if (retryState === "settled") {
+        requests[2].resolve(new Response(png));
+        await vi.waitFor(() => expect(decodes).toHaveLength(2));
+        decodes[1].resolve(restoredImage as unknown as ImageBitmap);
+        await retry;
+        assets.refreshTextures();
+        expect(sampler.image).toBe(restoredImage);
+        expect(fallbackImage.close).toHaveBeenCalledOnce();
+      } else {
+        const canceled = expect(retry).rejects.toThrow(preferred);
+        assets.refreshTextures();
+        requests[2].resolve(new Response(png));
+        await canceled;
+        expect(sampler.image).toBe(fallbackImage);
+        expect(decodeImage).toHaveBeenCalledOnce();
+      }
+      expect(fetchImage.mock.calls.map(([url]) => url)).toEqual([
+        preferred,
+        fallback,
+        preferred,
+      ]);
+      sampler.dispose();
+      assets.dispose();
+    },
+  );
+
   it("rebinds a live sampler through rapid texture changes and ignores stale decodes", async () => {
     const assets = new SceneAssets();
     let name = `${url()}?size=large`;
@@ -109,9 +250,9 @@ describe("shared shape texture images", () => {
     name = `${url()}?size=intermediate`;
     assets.refreshTextures();
     expect(evicted).toHaveReturnedWith(firstSource);
-    expect(firstBitmap.close).toHaveBeenCalledOnce();
     expect(sampler.image).toBeNull();
     expect(sampler.version).toBe(0);
+    expect(firstBitmap.close).toHaveBeenCalledOnce();
     requests[1].resolve(new Response(png));
     await vi.waitFor(() => expect(decodes).toHaveLength(2));
 
@@ -194,6 +335,85 @@ describe("shared shape texture images", () => {
     expect(original.source.version).toBe(1);
     expect(fetchImage).toHaveBeenCalledOnce();
     expect(decodeImage).toHaveBeenCalledOnce();
+  });
+
+  it("promotes a queued bitmap when a renderer sampler asks for it", async () => {
+    const assets = new SceneAssets();
+    const blocked = deferred<void>();
+    const running = Array.from({ length: imageWorkQueue.concurrency }, () =>
+      imageWorkQueue.run(() => blocked.promise),
+    );
+    const optionalUrl = `${url()}?optional`;
+    const visibleUrl = `${url()}?visible`;
+    const optional = loadBitmapTextureAsync(
+      optionalUrl,
+      assets.textures,
+      "speculative",
+    );
+    const prefetched = loadBitmapTextureAsync(
+      visibleUrl,
+      assets.textures,
+      "speculative",
+    );
+    const visible = loadBitmapTextureInstance(
+      () => [visibleUrl],
+      undefined,
+      [],
+      assets,
+    );
+    expect(fetchImage).not.toHaveBeenCalled();
+
+    blocked.resolve();
+    await Promise.all(running);
+    expect(fetchImage.mock.calls.map(([url]) => url)).toEqual([
+      visibleUrl,
+      optionalUrl,
+    ]);
+    for (const request of requests) request.resolve(new Response(png));
+    await vi.waitFor(() => expect(decodes).toHaveLength(2));
+    for (const decode of decodes) decode.resolve(image);
+    const [, loaded] = await Promise.all([optional, prefetched]);
+    expect(visible.source).toBe(loaded.source);
+    expect(visible.image).toBe(image);
+  });
+
+  it("prioritizes the existing bitmap request for an imminent effect", async () => {
+    const assets = new SceneAssets();
+    const blocked = deferred<void>();
+    const running = Array.from({ length: imageWorkQueue.concurrency }, () =>
+      imageWorkQueue.run(() => blocked.promise),
+    );
+    const geometryUrl = `${url()}?geometry`;
+    const effectUrl = `${url()}?effect`;
+    const geometry = loadBitmapTextureAsync(geometryUrl, assets.textures);
+    const effect = loadBitmapTextureAsync(effectUrl, assets.textures);
+    promoteBitmapTexture(effectUrl, assets.textures, "critical");
+    const sameEffect = loadBitmapTextureAsync(
+      effectUrl,
+      assets.textures,
+      "critical",
+    );
+    expect(readResourceMetrics()).toMatchObject({
+      "imageWorkQueue.queuedCritical": 1,
+      "imageWorkQueue.queuedDemand": 1,
+      "imageWorkQueue.queuedSpeculative": 0,
+    });
+
+    blocked.resolve();
+    await Promise.all(running);
+    expect(fetchImage.mock.calls.map(([url]) => url)).toEqual([
+      effectUrl,
+      geometryUrl,
+    ]);
+    for (const request of requests) request.resolve(new Response(png));
+    await vi.waitFor(() => expect(decodes).toHaveLength(2));
+    for (const decode of decodes) decode.resolve(image);
+    const [, loaded, reused] = await Promise.all([
+      geometry,
+      effect,
+      sameEffect,
+    ]);
+    expect(reused).toBe(loaded);
   });
 
   it.each(["HTTP 404", "network", "decode"] as const)(

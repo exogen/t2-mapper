@@ -10,6 +10,7 @@ export class SceneAssets {
     { entries: Map<unknown, unknown>; release: (errors: unknown[]) => void }
   >();
   private textureAssets?: SceneAssets;
+  private reusableFrom?: SceneAssets;
   private readonly textureListeners = new Set<() => void>();
 
   get signal(): AbortSignal {
@@ -35,9 +36,11 @@ export class SceneAssets {
   /** Release each binding before its old image scope is disposed. */
   bindTextures(
     start: (textures: SceneAssets) => (() => void) | void,
+    reuse?: (textures: SceneAssets) => boolean,
   ): () => void {
     let cleanup = start(this.textures);
     const unsubscribe = this.onTexturesChanged(() => {
+      if (reuse?.(this.textures)) return;
       cleanup?.();
       cleanup = start(this.textures);
     });
@@ -51,13 +54,40 @@ export class SceneAssets {
   refreshTextures(): void {
     if (this.disposed) return;
     const previous = this.textureAssets;
-    this.textureAssets = undefined;
+    const current = (this.textureAssets = new SceneAssets());
+    current.reusableFrom = previous;
     runOwnedCleanups([
       ...Array.from(this.textureListeners, (reload) => () => {
         if (this.textureListeners.has(reload)) reload();
       }),
-      () => previous?.dispose(),
+      () => {
+        current.reusableFrom = undefined;
+        previous?.dispose();
+      },
     ]);
+  }
+
+  /** Transfer a settled entry to this scope after its consumer resolves the
+   * same source again. The old scope still cancels any unfinished loads. */
+  adoptCached<K, V>(
+    cacheKey: object,
+    key: K,
+    canReuse: (value: V) => boolean,
+  ): V | undefined {
+    this.signal.throwIfAborted();
+    const entries = this.caches.get(cacheKey)?.entries;
+    if (!entries) return;
+    const cached = entries.get(key) as V | undefined;
+    if (cached !== undefined) return canReuse(cached) ? cached : undefined;
+    for (let prior = this.reusableFrom; prior; prior = prior.reusableFrom) {
+      const oldEntries = prior.caches.get(cacheKey)?.entries;
+      if (!oldEntries) continue;
+      const value = oldEntries.get(key) as V | undefined;
+      if (value === undefined || !canReuse(value)) continue;
+      oldEntries.delete(key);
+      entries.set(key, value);
+      return value;
+    }
   }
 
   cache<K, V>(key: object, dispose?: (value: V) => void): Map<K, V> {

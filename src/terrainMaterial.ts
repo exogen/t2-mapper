@@ -33,6 +33,34 @@ import { TERRAIN_SIZE } from "./terrain";
 /** TerrainRender::renderBlock (Tribes2.exe 0x5a62c0): texels per world unit. */
 export const TERRAIN_DETAIL_TEXELS_PER_UNIT = 62;
 
+export function createTerrainDetail(squareSize: number) {
+  const uniforms = {
+    detailTexture: { value: null as Texture | null },
+    detailTiling: { value: new Vector2(1, 1) },
+    detailEnabled: { value: false },
+  };
+  const texelsPerTile =
+    squareSize * TERRAIN_SIZE * TERRAIN_DETAIL_TEXELS_PER_UNIT;
+  return {
+    uniforms,
+    setTexture(texture: Texture | null) {
+      const image = texture?.image as
+        { width: number; height: number } | undefined;
+      uniforms.detailTexture.value = texture;
+      uniforms.detailEnabled.value = !!image?.width && !!image.height;
+      if (image?.width && image.height)
+        uniforms.detailTiling.value.set(
+          texelsPerTile / image.width,
+          texelsPerTile / image.height,
+        );
+    },
+  };
+}
+
+export type TerrainDetailUniforms = ReturnType<
+  typeof createTerrainDetail
+>["uniforms"];
+
 export function updateTerrainTextureShader({
   shader,
   baseTextures,
@@ -41,7 +69,7 @@ export function updateTerrainTextureShader({
   tiling,
   squareSize,
   detailViewportHeight,
-  detailTexture = null,
+  detail,
   lightmap = null,
 }: {
   shader: ShaderSource;
@@ -51,7 +79,7 @@ export function updateTerrainTextureShader({
   tiling: Record<number, number>;
   squareSize: number;
   detailViewportHeight: { value: number };
-  detailTexture?: Texture | null;
+  detail?: TerrainDetailUniforms;
   lightmap?: Texture | null;
 }) {
   // Add global sun uniform (shared reference - value updates automatically)
@@ -85,16 +113,8 @@ export function updateTerrainTextureShader({
     shader.uniforms.terrainLightmap = { value: lightmap };
   }
 
-  if (detailTexture) {
-    const image = detailTexture.image as { width: number; height: number };
-    const blockSize = squareSize * TERRAIN_SIZE;
-    shader.uniforms.detailTexture = { value: detailTexture };
-    shader.uniforms.detailTiling = {
-      value: new Vector2(
-        (blockSize * TERRAIN_DETAIL_TEXELS_PER_UNIT) / image.width,
-        (blockSize * TERRAIN_DETAIL_TEXELS_PER_UNIT) / image.height,
-      ),
-    };
+  if (detail) {
+    Object.assign(shader.uniforms, detail);
     shader.uniforms.terrainSquareSize = { value: squareSize };
     shader.uniforms.detailViewportHeight = detailViewportHeight;
     shader.vertexShader = insertAfterChunk(
@@ -155,9 +175,11 @@ vTerrainDetailFade = floor(detailFade * 255.0 + 0.5) / 255.0;`,
       shader.fragmentShader,
       "premultiplied_alpha_fragment",
       `// The engine draws detail AFTER fog with DST_COLOR, ONE_MINUS_SRC_ALPHA.
-vec4 terrainDetail = texture2D(detailTexture, vTerrainUv * detailTiling);
-gl_FragColor.rgb *= terrainDetail.rgb * vTerrainDetailFade
-  + vec3(1.0 - terrainDetail.a * vTerrainDetailFade);`,
+if (detailEnabled) {
+  vec4 terrainDetail = texture2D(detailTexture, vTerrainUv * detailTiling);
+  gl_FragColor.rgb *= terrainDetail.rgb * vTerrainDetailFade
+    + vec3(1.0 - terrainDetail.a * vTerrainDetailFade);
+}`,
     );
   }
 
@@ -186,9 +208,10 @@ ${visibilityMask ? "uniform sampler2D visibilityMask;" : ""}
 ${lightmap ? "uniform sampler2D terrainLightmap;" : ""}
 uniform bool sunLightPointsDown;
 ${
-  detailTexture
+  detail
     ? `uniform sampler2D detailTexture;
 uniform vec2 detailTiling;
+uniform bool detailEnabled;
 varying float vTerrainDetailFade;`
     : ""
 }

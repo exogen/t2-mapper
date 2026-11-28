@@ -37,7 +37,8 @@ export function installDTSRendering(engine: GameEngine): () => void {
           const stopSceneRelease = engine.onSceneAssetsRelease(clear);
           const stopTextureChange = settingsStore.subscribe(
             (state) => state.hdTexturesEnabled,
-            clear,
+            // Entity views refresh the shared texture owner first.
+            () => instances?.pool.retireReleasedTextures(),
           );
           // Loaded on demand, like the rest of the shape pipeline. It wraps
           // the engine's render hooks, so it prepares after them and

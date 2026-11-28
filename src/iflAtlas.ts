@@ -14,14 +14,31 @@ import {
   type DTSImageFrames,
 } from "./dts/dtsTextures";
 import type { DTSModel } from "./dts/dtsModel";
-import { DTSMaterialFlags } from "./dts/dtsTypes";
+import { DTSMaterialFlags, type DTSIflMaterial } from "./dts/dtsTypes";
 import { iflTextureToUrl, loadImageFrameList } from "./loaders";
-import { loadBitmapTextureAsync } from "./assets/bitmapTextures";
+import {
+  loadBitmapTextureAsync,
+  promoteBitmapTexture,
+  retainBitmapTexture,
+} from "./assets/bitmapTextures";
+import type { AssetLoadPriority } from "./assets/assetLoadQueue";
 import { normalizePath } from "./stringUtils";
 import { sharedSceneAssets, type SceneAssets } from "./assets/sceneAssets";
 
 // Cache in-flight work too: simultaneous spawns must not build duplicate atlases.
 const iflCache = {};
+type FrameList = Awaited<ReturnType<typeof loadImageFrameList>>;
+interface AtlasSources {
+  entries: FrameList;
+  urls: Map<string, string>;
+}
+interface AtlasEntry {
+  pending: Promise<DTSImageFrames>;
+  priority: AssetLoadPriority;
+  sources?: AtlasSources;
+  frames?: DTSImageFrames;
+}
+
 const samplerFlags =
   DTSMaterialFlags.SWrap |
   DTSMaterialFlags.TWrap |
@@ -77,20 +94,25 @@ function packFrames(textures: Texture[]): Texture[] {
   });
 }
 
+function atlasSources(iflPath: string, entries: FrameList): AtlasSources {
+  const urls = new Map<string, string>();
+  for (const { name } of entries) {
+    if (!urls.has(name)) urls.set(name, iflTextureToUrl(name, iflPath));
+  }
+  return { entries, urls };
+}
+
 async function buildFrames(
-  iflPath: string,
+  { entries, urls }: AtlasSources,
   flags: number,
   assets: SceneAssets,
+  priority: AssetLoadPriority,
 ): Promise<DTSImageFrames> {
-  const entries = (await loadImageFrameList(iflPath, assets.signal)).filter(
-    (e) => e.frameCount > 0,
-  );
   assets.signal.throwIfAborted();
   if (!entries.length) return { frames: [], duration: 0 };
-  const names = [...new Set(entries.map((entry) => entry.name))];
   const textures = await Promise.all(
-    names.map((name) =>
-      loadBitmapTextureAsync(iflTextureToUrl(name, iflPath), assets),
+    Array.from(urls.values(), (url) =>
+      loadBitmapTextureAsync(url, assets, priority),
     ),
   );
   assets.signal.throwIfAborted();
@@ -110,7 +132,9 @@ async function buildFrames(
         configureDTSImageTexture(frameTexture(texture), flags),
       )
     : packFrames(textures);
-  const byName = new Map(names.map((name, i) => [name, frames[i]]));
+  const byName = new Map(
+    Array.from(urls.keys(), (name, i) => [name, frames[i]]),
+  );
   return createDTSImageFrames(entries, (name) => byName.get(name)!);
 }
 
@@ -123,25 +147,109 @@ function disposeIflFrames({ frames }: DTSImageFrames): void {
   }
 }
 
+function getIflCache(assets: SceneAssets) {
+  return assets.cache<string, AtlasEntry>(iflCache, ({ frames }) => {
+    if (frames) disposeIflFrames(frames);
+  });
+}
+
+function iflKey(path: string, flags: number): string {
+  return `${normalizePath(path).toLowerCase()}:${flags & samplerFlags}`;
+}
+
+function promoteIflAtlas(entry: AtlasEntry, assets: SceneAssets): void {
+  if (entry.priority === "critical" || entry.frames) return;
+  entry.priority = "critical";
+  entry.sources?.urls.forEach((url) =>
+    promoteBitmapTexture(url, assets, "critical"),
+  );
+}
+
 export function loadIflAtlas(
   iflPath: string,
   flags = 0,
   assets: SceneAssets = sharedSceneAssets,
+  priority: AssetLoadPriority = "demand",
 ): Promise<DTSImageFrames> {
-  const atlasCache = assets.cache<string, Promise<DTSImageFrames>>(
-    iflCache,
-    (pending) => void pending.then(disposeIflFrames, () => {}),
-  );
-  const key = `${normalizePath(iflPath).toLowerCase()}:${flags & samplerFlags}`;
-  let pending = atlasCache.get(key);
-  if (!pending) {
-    pending = buildFrames(iflPath, flags, assets).catch((error) => {
-      if (atlasCache.get(key) === pending) atlasCache.delete(key);
-      throw error;
-    });
-    atlasCache.set(key, pending);
+  const atlasCache = getIflCache(assets);
+  const key = iflKey(iflPath, flags);
+  const cached = atlasCache.get(key);
+  if (cached) {
+    if (priority === "critical") promoteIflAtlas(cached, assets);
+    return cached.pending;
   }
-  return pending;
+
+  let nextSources: AtlasSources | undefined;
+  const sameAtlas = assets.adoptCached<string, AtlasEntry>(
+    iflCache,
+    key,
+    (old) => {
+      const previousSources = old.sources;
+      if (!previousSources) return false;
+      nextSources = atlasSources(iflPath, previousSources.entries);
+      return (
+        old.frames !== undefined &&
+        Array.from(
+          nextSources.urls,
+          ([name, url]) =>
+            url === previousSources.urls.get(name) &&
+            retainBitmapTexture(url, assets),
+        ).every(Boolean)
+      );
+    },
+  );
+  if (sameAtlas) return sameAtlas.pending;
+
+  // Start known frame URLs now, while settled bitmaps can still transfer
+  // from the retiring owner. Remember newly parsed URLs during decoding too.
+  const loading = nextSources
+    ? buildFrames(nextSources, flags, assets, priority)
+    : loadImageFrameList(iflPath, assets.signal).then((entries) => {
+        const sources = atlasSources(
+          iflPath,
+          entries.filter(({ frameCount }) => frameCount > 0),
+        );
+        entry.sources = sources;
+        return buildFrames(sources, flags, assets, entry.priority);
+      });
+  const entry: AtlasEntry = {
+    priority,
+    sources: nextSources,
+    pending: loading
+      .then((frames) => {
+        if (assets.disposed) {
+          disposeIflFrames(frames);
+          assets.signal.throwIfAborted();
+        }
+        entry.frames = frames;
+        return frames;
+      })
+      .catch((error) => {
+        if (atlasCache.get(key) === entry) atlasCache.delete(key);
+        throw error;
+      }),
+  };
+  atlasCache.set(key, entry);
+  return entry.pending;
+}
+
+function shapeImageList(model: DTSModel, ifl: DTSIflMaterial) {
+  const material = model.data.materials[ifl.materialSlot];
+  if (!material || !(material.flags & DTSMaterialFlags.IflMaterial)) return;
+  const name = model.data.names[ifl.nameIndex] || `${material.name}.ifl`;
+  const path = `textures/${normalizePath(name).replace(/\.ifl$/i, "")}.ifl`;
+  return { path, flags: material.flags };
+}
+
+/** An upcoming effect can need frames already queued by a background job. */
+export function promoteShapeImageLists(model: DTSModel, assets: SceneAssets) {
+  const cache = getIflCache(assets);
+  for (const ifl of model.data.iflMaterials) {
+    const list = shapeImageList(model, ifl);
+    if (!list) continue;
+    const entry = cache.get(iflKey(list.path, list.flags));
+    if (entry) promoteIflAtlas(entry, assets);
+  }
 }
 
 /** Publish into a shared list so clones made before decoding finishes receive
@@ -149,17 +257,21 @@ export function loadIflAtlas(
 export async function loadShapeImageLists(
   model: DTSModel,
   assets: SceneAssets = sharedSceneAssets,
+  priority: AssetLoadPriority = "demand",
 ): Promise<void> {
   // Clones share this array. Retrying a failed atlas must update the same list,
   // including successful lists from an earlier partial attempt.
   const animations = model.scene.imageAnimations as DTSImageAnimation[];
   const results = await Promise.allSettled(
     model.data.iflMaterials.map(async (ifl, iflIndex) => {
-      const material = model.data.materials[ifl.materialSlot];
-      if (!material || !(material.flags & DTSMaterialFlags.IflMaterial)) return;
-      const name = model.data.names[ifl.nameIndex] || `${material.name}.ifl`;
-      const path = `textures/${normalizePath(name).replace(/\.ifl$/i, "")}.ifl`;
-      const frames = await loadIflAtlas(path, material.flags, assets);
+      const list = shapeImageList(model, ifl);
+      if (!list) return;
+      const frames = await loadIflAtlas(
+        list.path,
+        list.flags,
+        assets,
+        priority,
+      );
       assets.signal.throwIfAborted();
       const animation = createDTSImageAnimation(model.data, iflIndex, frames);
       const index = animations.findIndex(

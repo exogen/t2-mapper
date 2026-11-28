@@ -83,4 +83,70 @@ describe("asset load concurrency", () => {
     expect(await Promise.all([active, next])).toEqual([1, 2]);
     expect(queue.active).toBe(0);
   });
+
+  it("starts waiting demand before speculative jobs while preserving demand order", async () => {
+    const queue = new AssetLoadQueue(1);
+    const blocker = deferred<void>();
+    const running = queue.run(() => blocker.promise);
+    const order: string[] = [];
+    const start = (label: string) => () => order.push(label);
+    const key = {};
+    const speculative = queue.run(start("speculative"), undefined, {
+      priority: "speculative",
+    });
+    const promoted = queue.run(start("promoted"), undefined, {
+      priority: "speculative",
+      key,
+    });
+    const firstDemand = queue.run(start("first demand"));
+    expect(queue.queuedDemand).toBe(1);
+    expect(queue.queuedSpeculative).toBe(2);
+    queue.promote(key);
+    const lastDemand = queue.run(start("last demand"));
+    expect(queue.active).toBe(1);
+    expect(queue.queued).toBe(4);
+    expect(queue.queuedDemand).toBe(3);
+    expect(queue.queuedSpeculative).toBe(1);
+
+    blocker.resolve();
+    await Promise.all([
+      running,
+      speculative,
+      promoted,
+      firstDemand,
+      lastDemand,
+    ]);
+    expect(order).toEqual([
+      "first demand",
+      "promoted",
+      "last demand",
+      "speculative",
+    ]);
+    expect(queue.peakActive).toBe(1);
+    expect(queue.queuedDemand).toBe(0);
+    expect(queue.queuedSpeculative).toBe(0);
+  });
+
+  it("starts critical work ahead of demand in FIFO order and never lowers priority", async () => {
+    const queue = new AssetLoadQueue(1);
+    const blocker = deferred<void>();
+    const running = queue.run(() => blocker.promise);
+    const order: string[] = [];
+    const start = (label: string) => () => order.push(label);
+    const key = {};
+    const demand = queue.run(start("demand"));
+    const promoted = queue.run(start("promoted"), undefined, { key });
+    const firstCritical = queue.run(start("first critical"), undefined, {
+      priority: "critical",
+    });
+    queue.promote(key, "critical");
+    queue.promote(key, "demand");
+    expect(queue.queuedCritical).toBe(2);
+    expect(queue.queuedDemand).toBe(1);
+
+    blocker.resolve();
+    await Promise.all([running, demand, promoted, firstCritical]);
+    expect(order).toEqual(["first critical", "promoted", "demand"]);
+    expect(queue.queued).toBe(0);
+  });
 });

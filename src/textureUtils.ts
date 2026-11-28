@@ -13,6 +13,10 @@ import {
   UnsignedByteType,
 } from "three";
 
+/** Keep an effect invisible while its authored texture is pending. */
+export const transparentTexture = new DataTexture(new Uint8Array(4), 1, 1);
+transparentTexture.needsUpdate = true;
+
 /** Recheck the sampler's GPU cache key while preserving the shared pixels'
  * revision. Three uploads new sampler variants and reuses resident ones.
  * An upload hook, such as DTS zero-border mipmap generation, needs to run

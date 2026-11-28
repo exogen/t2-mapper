@@ -1,5 +1,6 @@
 import { DefaultLoadingManager } from "three";
 import { createLogger } from "../logger";
+import type { AssetLoadPriority } from "./assetLoadQueue";
 import { imageWorkQueue } from "./imageWorkQueue";
 
 const log = createLogger("imageLoading");
@@ -53,6 +54,14 @@ export function loadHtmlImage(
   });
 }
 
+/** Increase the priority of an existing cache miss that has yet to start. */
+export function promoteQueuedImage(
+  key: object,
+  priority: AssetLoadPriority,
+): void {
+  imageWorkQueue.promote(key, priority);
+}
+
 /** Own global progress for queue wait, fetching and decoding. */
 export function loadQueuedImage<T>(
   url: string,
@@ -61,15 +70,19 @@ export function loadQueuedImage<T>(
     signal,
     onLoad,
     onError,
+    priority,
+    key,
   }: {
     signal: AbortSignal;
     onLoad?: (value: T) => void;
     onError?: (error: unknown) => void;
+    priority?: AssetLoadPriority;
+    key?: object;
   },
 ): Promise<T> {
   notify(() => DefaultLoadingManager.itemStart(url));
   return imageWorkQueue
-    .run(start, signal)
+    .run(start, signal, { priority, key })
     .then(
       (value) => {
         onLoad?.(value);

@@ -16,6 +16,7 @@ import type { ImageAnimationState } from "./imageAnimation";
 import type { WheelState } from "./vehicleWheels";
 import type { EmitterDataResolved } from "../particles/types";
 import type { LightningConfig, PrecipitationConfig } from "../weather/types";
+import type { DemoResourceScanResult } from "./demoResourceLookahead";
 
 export type { ServerLoadInfo };
 
@@ -1013,6 +1014,8 @@ export interface StreamingPlayback {
    * front; everything else loads on demand at first sight.
    */
   getPreloadAssets(): PreloadAsset[];
+  /** Future resource dependencies from a separate recorded packet cursor. */
+  getResourceLookahead?(targetTimeSec: number): DemoResourceScanResult;
   /** Resolve a datablock by its numeric ID. */
   getDataBlockData(id: number): ParsedData | undefined;
   /** A client target's chosen skin, from its target info (no model needed). */

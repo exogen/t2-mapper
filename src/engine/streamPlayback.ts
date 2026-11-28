@@ -11,7 +11,8 @@ import { MathUtils, Quaternion, Vector3 } from "three";
 import type { Group, Object3D } from "three";
 import { DEFAULT_EYE_HEIGHT, STREAM_TICK_SEC } from "../stream/playbackUtils";
 import { readEyePosition, readWorldCameraNodes } from "./eyePositions";
-import { startAssetPrefetch, stopAssetPrefetch } from "../assetPrefetch";
+import { startAssetPrefetch } from "../assetPrefetch";
+import { startRecordedAssetPrefetch } from "./recordedAssetPrefetch";
 import { isRelayRecording } from "../stream/demoDate";
 import { stopAllTrackedSounds } from "./soundEffects";
 import {
@@ -674,20 +675,6 @@ export class StreamPlaybackSession {
       return;
     }
 
-    // Prefetch what this session is certain to render — scene geometry
-    // (terrain, interiors) first, then category shapes — re-polled as
-    // more state arrives. On-demand loads cover the rest at first sight.
-    startAssetPrefetch(
-      () =>
-        engineStore.getState().playback.status === "seeking"
-          ? []
-          : stream.getPreloadAssets(),
-      () => ({
-        assets: this.engine.sceneAssets,
-        manager: this.engine.assetLoadingManager,
-      }),
-    );
-
     // Update gameEntityStore when mission info arrives via server messages
     // (MsgMissionDropInfo, MsgLoadInfo, MsgClientReady).
     const onMissionInfoChange = () => {
@@ -783,6 +770,21 @@ export class StreamPlaybackSession {
     setStreamSnapshot(snapshot);
     this.publishedSnapshot = snapshot;
 
+    // Start background work once playback has a scene and can own its cleanup.
+    const stopPrefetch =
+      this.recording.source === "demo" && stream.getResourceLookahead
+        ? startRecordedAssetPrefetch(this.engine, stream)
+        : startAssetPrefetch(
+            () =>
+              engineStore.getState().playback.status === "seeking"
+                ? []
+                : stream.getPreloadAssets(),
+            () => ({
+              assets: this.engine.sceneAssets,
+              manager: this.engine.assetLoadingManager,
+            }),
+          ).stop;
+
     // A paused on-demand canvas needs its first seek frame before lazy
     // checkpoint loading can start and register a completion wake-up.
     const unsubscribeSeek = engineStore.subscribe(
@@ -817,7 +819,7 @@ export class StreamPlaybackSession {
       this.projectileAssetWait = undefined;
       this.renderFrame = null;
       stopAllTrackedSounds();
-      stopAssetPrefetch();
+      stopPrefetch();
       // Null out the stream so the frame passes stop syncing entities.
       this.stream = null;
       // Don't call endStreaming() or clear the snapshot — leave entities,

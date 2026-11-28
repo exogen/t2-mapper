@@ -102,7 +102,11 @@ describe("shared shape sources", () => {
     expect(await old).toBe(oldAssets.signal.reason);
     expect(await loaded).toBe(newModel);
     expect(dispose).toHaveBeenCalledOnce();
-    expect(warm).toHaveBeenCalledExactlyOnceWith(newModel, newAssets.textures);
+    expect(warm).toHaveBeenCalledExactlyOnceWith(
+      newModel,
+      newAssets.textures,
+      "demand",
+    );
     expect(getGroundEffectShape(url, newAssets)?.model.data).toBe(
       newModel.data,
     );

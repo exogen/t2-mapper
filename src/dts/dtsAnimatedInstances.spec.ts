@@ -20,6 +20,7 @@ import {
   Scene,
   ShaderLib,
   SRGBColorSpace,
+  TextureSource,
   Vector3,
   type InstancedMesh,
   type Material,
@@ -163,6 +164,46 @@ function project(
 }
 
 describe("animated DTS instancing", () => {
+  it.each(["released", "retargeted"] as const)(
+    "retires only the pages using a %s texture source",
+    (change) => {
+      const { pool, bodies, renderer, prepare } = fixture(4);
+      for (const body of bodies.slice(2)) {
+        (body.material as MeshLambertMaterial).map = new DataTexture(
+          new Uint8Array(16),
+          2,
+          2,
+        );
+      }
+      prepare();
+      const pages = pool.root.children as InstancedMesh<
+        BoxGeometry,
+        MeshLambertMaterial
+      >[];
+      expect(pages).toHaveLength(2);
+      const retired = pages.find(
+        ({ material: { map } }) =>
+          map instanceof DataTexture && map.image.width === 1,
+      )!;
+      const retained = pages.find((page) => page !== retired)!;
+      const disposed = vi.fn();
+      retired.addEventListener("dispose", disposed);
+      const map = retired.material.map!;
+      if (change === "released") map.image = null;
+      else map.source = new TextureSource(null);
+
+      pool.retireReleasedTextures();
+      expect(pool.root.children).toEqual([retained]);
+      expect(disposed).toHaveBeenCalledOnce();
+      expect(pool.getMemoryMetrics().pages).toBe(1);
+
+      prepare();
+      expect(pool.root.children).toEqual([retained]);
+      expect(renderer.copyTextureToTexture).toHaveBeenCalledTimes(4);
+      pool.dispose();
+    },
+  );
+
   it("retires a full unused skin page while its bucket continues rendering new skins", () => {
     const { pool, bodies, prepare } = fixture(2, 2);
     prepare();

@@ -268,15 +268,16 @@ export function createWaterView(
     for (const mesh of fallbackMeshes) group.remove(mesh);
   };
 
+  const textureUrls = () => [
+    textureToUrl(scene.surfaceName || "liquidTiles/BlueWater"),
+    textureToUrl(scene.envMapName || "special/lush_env"),
+  ];
   const stopTextures = engine.prepareTextureWithHost(
     ({ renderer }, signal, textureAssets) => {
       showFallback();
       const anisotropy = renderer.capabilities.getMaxAnisotropy();
       return loadTextures(
-        [
-          textureToUrl(scene.surfaceName || "liquidTiles/BlueWater"),
-          textureToUrl(scene.envMapName || "special/lush_env"),
-        ],
+        textureUrls(),
         renderer,
         (texture) => setupWaterTexture(texture, anisotropy),
         signal,
@@ -313,6 +314,7 @@ export function createWaterView(
       removeFallback();
       engine.invalidate();
     },
+    textureUrls,
   );
 
   return {

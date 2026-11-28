@@ -11,6 +11,7 @@ import {
   type Camera,
   type IUniform,
   type Object3D,
+  type Texture,
 } from "three";
 import { FALLBACK_TEXTURE_URL, textureToUrl } from "../loaders";
 import { createLogger } from "../logger";
@@ -31,8 +32,11 @@ import {
   selectFogEnabled,
   settingsStore,
 } from "../state/settingsStore";
-import { loadBitmapTexture } from "../assets/bitmapTextures";
-import { loadHtmlTexture } from "../assets/htmlTextures";
+import {
+  loadBitmapTexture,
+  retainBitmapTexture,
+} from "../assets/bitmapTextures";
+import { loadHtmlTexture, retainHtmlTexture } from "../assets/htmlTextures";
 import type { SceneAssets } from "../assets/sceneAssets";
 import { setupTexture } from "../textureUtils";
 import { startCloudLayers } from "./cloudLayers";
@@ -107,6 +111,18 @@ function selectSceneFog(mode: SkyMode): boolean {
 
 const cubeCacheKey = {};
 
+function cubeTextureCache(assets: SceneAssets) {
+  return assets.cache<string, Promise<CubeTexture>>(cubeCacheKey, (loading) => {
+    void loading.then(
+      (texture) => {
+        texture.dispose();
+        texture.images.length = 0;
+      },
+      () => {},
+    );
+  });
+}
+
 /**
  * Load a sky box's cube map once per face list and share it.
  * Face images share the same cancellable queue as other scene textures.
@@ -115,18 +131,7 @@ function loadSharedCubeTexture(
   files: readonly string[],
   assets: SceneAssets,
 ): Promise<CubeTexture> {
-  const cubeTextures = assets.cache<string, Promise<CubeTexture>>(
-    cubeCacheKey,
-    (loading) => {
-      void loading.then(
-        (texture) => {
-          texture.dispose();
-          texture.images.length = 0;
-        },
-        () => {},
-      );
-    },
-  );
+  const cubeTextures = cubeTextureCache(assets);
   const key = files.join("\n");
   let promise = cubeTextures.get(key);
   if (!promise) {
@@ -342,32 +347,45 @@ function updateDomeEachFrame(
  * Some maps have broken emap paths (e.g. Katabatic references desert/skies/
  * but file is at ice/skies/) — skip if the texture doesn't resolve.
  */
-function startShapeEnvMap(
+function bindShapeEnvMap(
   emapName: string | undefined,
   assets: SceneAssets,
-): () => void {
-  if (!emapName) return () => {};
-  const url = textureToUrl(emapName);
-  // textureToUrl returns the fallback URL for missing textures (e.g.
-  // Katabatic's DML has a broken emap path). Don't set a fallback as envmap.
-  if (url === FALLBACK_TEXTURE_URL) return () => {};
-  // The reflection shader blends raw sRGB samples with the lit base color.
-  let active = true;
-  loadBitmapTexture(
-    url,
-    (loaded) => {
-      // A previous map's pending load must not replace the current sky.
-      if (!active) return;
-      setupTexture(loaded, { noColorSpace: true });
-      setShapeEnvMap(loaded);
+): Cleanup {
+  if (!emapName) return;
+  let binding: { url: string; texture: Texture } | undefined;
+  return assets.bindTextures(
+    (textures) => {
+      const url = textureToUrl(emapName);
+      // Some maps' DML contains an invalid path. A white fallback is not an
+      // environment map.
+      if (url === FALLBACK_TEXTURE_URL) return;
+      let active = true;
+      const texture = loadBitmapTexture(
+        url,
+        (loaded) => {
+          if (!active) return;
+          // The shader blends raw sRGB samples with the lit base color.
+          setupTexture(loaded, { noColorSpace: true });
+          setShapeEnvMap(loaded);
+        },
+        undefined,
+        textures,
+      );
+      binding = { url, texture };
+      return () => {
+        active = false;
+        binding = undefined;
+        resetShapeEnvMap();
+      };
     },
-    undefined,
-    assets,
+    (textures) => {
+      const url = textureToUrl(emapName);
+      return binding
+        ? binding.url === url &&
+            retainBitmapTexture(url, textures, binding.texture.source)
+        : url === FALLBACK_TEXTURE_URL;
+    },
   );
-  return () => {
-    active = false;
-    resetShapeEnvMap();
-  };
 }
 
 /**
@@ -389,40 +407,56 @@ function startSkyBox(
   void loadSharedDetailMapList(materialList, assets).then(
     (detailMapList) => {
       if (!active) return;
-      stopTextures = assets.bindTextures((textures) => {
-        let current = true;
-        const stopEnvMap = startShapeEnvMap(detailMapList[6], textures);
-        // Cube faces are in +X, -X, +Y, -Y, +Z, -Z order.
-        const skyBoxFiles = [1, 3, 4, 5, 0, 2].map((index) =>
-          textureToUrl(detailMapList[index]!),
-        );
-        void loadSharedCubeTexture(skyBoxFiles, textures).then(
-          (skyBox) => {
-            if (!current) return;
-            dome = createSkyDome(
-              skyBoxFragmentShader,
-              { skybox: { value: skyBox } },
-              engine.cameras.active,
-              currentFog(),
+      // Cube faces are in +X, -X, +Y, -Y, +Z, -Z order.
+      const urls = () =>
+        [1, 3, 4, 5, 0, 2].map((index) => textureToUrl(detailMapList[index]!));
+      let installedKey: string | undefined;
+      stopTextures = combineCleanups(
+        bindShapeEnvMap(detailMapList[6], assets),
+        assets.bindTextures(
+          (textures) => {
+            let current = true;
+            const files = urls();
+            void loadSharedCubeTexture(files, textures).then(
+              (skyBox) => {
+                if (!current) return;
+                dome = createSkyDome(
+                  skyBoxFragmentShader,
+                  { skybox: { value: skyBox } },
+                  engine.cameras.active,
+                  currentFog(),
+                );
+                parent.add(dome.mesh);
+                installedKey = files.join("\n");
+                engine.invalidate();
+              },
+              (error: unknown) => {
+                if (!current) return;
+                log.warn("sky box %s failed: %o", materialList, error);
+              },
             );
-            parent.add(dome.mesh);
-            engine.invalidate();
+            return () => {
+              current = false;
+              installedKey = undefined;
+              if (dome) {
+                parent.remove(dome.mesh);
+                dome.dispose();
+                dome = null;
+              }
+            };
           },
-          (error: unknown) => {
-            if (!current) return;
-            log.warn("sky box %s failed: %o", materialList, error);
+          (textures) => {
+            const files = urls();
+            const key = files.join("\n");
+            const retained = files
+              .map((url) => retainHtmlTexture(url, textures))
+              .every(Boolean);
+            if (key !== installedKey || !retained) return false;
+            cubeTextureCache(textures);
+            return !!textures.adoptCached(cubeCacheKey, key, () => true);
           },
-        );
-        return () => {
-          current = false;
-          stopEnvMap();
-          if (dome) {
-            parent.remove(dome.mesh);
-            dome.dispose();
-            dome = null;
-          }
-        };
-      });
+        ),
+      );
     },
     // No list, no sky box (the failure is logged where it's loaded).
     () => {},

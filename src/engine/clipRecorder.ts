@@ -44,6 +44,8 @@ import { combineCleanups } from "./storeReaction";
 
 const SAMPLE_INTERVAL_MS = 1000 / 30;
 const MAX_CLIP_EFFECTS_WAIT_SEC = 8;
+const MAX_CLIP_RESOURCE_WAIT_SEC = 10;
+const CLIP_RESOURCE_NOTICE_DELAY_SEC = 0.15;
 const rounded = (value: number, places = 6) => Number(value.toFixed(places));
 
 // Preserve horizontal framing on viewports with a different aspect ratio.
@@ -157,6 +159,14 @@ export function installClipRecorder(engine: GameEngine): () => void {
   let lastFollowedBodyDead = false;
   let plannedMs = 0;
   let effectsDeadline: number | undefined;
+  let resourcesWaitStartedAt: number | undefined;
+  let resourcesReadyToRender = false;
+  let resourcesRendered = false;
+  const resetResourceWait = () => {
+    resourcesWaitStartedAt = undefined;
+    resourcesReadyToRender = false;
+    resourcesRendered = false;
+  };
   let planned: { take: ClipTake; sample: ClipSample } | null = null;
   const plannedSample = (take: ClipTake): ClipSample => {
     if (planned?.take !== take || planned.sample.timeMs !== plannedMs)
@@ -176,8 +186,14 @@ export function installClipRecorder(engine: GameEngine): () => void {
     null;
   return combineCleanups(
     installClipStateGuards(),
+    engine.onAfterRender?.(() => {
+      if (resourcesReadyToRender) resourcesRendered = true;
+    }),
     clipStore.subscribe((state, previous) => {
-      if (state.active !== previous.active) engine.clipCameraSample = null;
+      if (state.active !== previous.active) {
+        engine.clipCameraSample = null;
+        resetResourceWait();
+      }
       if (state.playbackEffects !== previous.playbackEffects)
         effectsDeadline = undefined;
       if (state.recording && !previous.recording) {
@@ -213,6 +229,17 @@ export function installClipRecorder(engine: GameEngine): () => void {
       engine.invalidate();
     }),
     engineStore.subscribe(
+      (state) => state.playback.seekNonce,
+      () => {
+        // A reconstruction can finish later in the same frame.
+        resetResourceWait();
+        const clip = clipStore.getState();
+        if (clip.active) plannedMs = clip.playheadMs;
+        if (clip.awaitingResources)
+          clipStore.setState({ awaitingResources: false });
+      },
+    ),
+    engineStore.subscribe(
       (state) => state.playback.status,
       (status) => {
         if (!clipStore.getState().recording) return;
@@ -233,6 +260,7 @@ export function installClipRecorder(engine: GameEngine): () => void {
       else clip.stopPlayback();
     },
     engine.scheduler.add(FramePriority.ClipTransport, ({ delta, elapsed }) => {
+      resourcesReadyToRender = false;
       const clip = clipStore.getState();
       if (!clip.active) return;
       if (engineStore.getState().playback.status === "seeking") {
@@ -242,17 +270,39 @@ export function installClipRecorder(engine: GameEngine): () => void {
       engine.input.clear();
       const endMs = clip.draft ? clip.trimEndMs : clipDurationMs(clip.active);
       let playing = clip.playing;
+      let awaitingResources = false;
+      // The same demo lookahead runs for ordinary recordings and clips.
+      // Give brief clips time to draw their prepared opening view at zero.
+      if (
+        playing &&
+        !clip.draft &&
+        clip.playheadMs === 0 &&
+        engine.recordedResourcesReady &&
+        settingsStore.getState().resourceLookaheadMs > 0
+      ) {
+        const waitingSec = elapsed - (resourcesWaitStartedAt ??= elapsed);
+        if (waitingSec < MAX_CLIP_RESOURCE_WAIT_SEC) {
+          resourcesReadyToRender = engine.recordedResourcesReady();
+          if (!resourcesReadyToRender) resourcesRendered = false;
+          playing = resourcesRendered;
+          awaitingResources =
+            !playing && waitingSec >= CLIP_RESOURCE_NOTICE_DELAY_SEC;
+        }
+      }
+      if (awaitingResources !== clip.awaitingResources)
+        clipStore.setState({ awaitingResources });
       // Let the renderer draw the starting view while its pipeline and LUT
       // load. Slow or failed effects must not prevent watching the clip.
       const effects = clip.playbackEffects;
       if (
-        playing &&
+        clip.playing &&
         clip.playheadMs === 0 &&
         effects?.getState().awaitingFirstFrame
       ) {
         effectsDeadline ??= elapsed + MAX_CLIP_EFFECTS_WAIT_SEC;
-        playing = elapsed >= effectsDeadline;
-        if (playing) effects.setState({ awaitingFirstFrame: false });
+        const effectsTimedOut = elapsed >= effectsDeadline;
+        if (effectsTimedOut) effects.setState({ awaitingFirstFrame: false });
+        playing &&= effectsTimedOut;
       }
       plannedMs = Math.min(
         endMs,

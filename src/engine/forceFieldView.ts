@@ -35,6 +35,7 @@ import { createPositionedRoot, type EntityView } from "./entityViews";
 import { FramePriority } from "./framePriority";
 import { loadTextures } from "./textures";
 import { combineCleanups } from "./storeReaction";
+import { markTextureSamplerUpdate } from "../textureUtils";
 import type { GameEngine } from "./gameEngine";
 
 const log = createLogger("ForceField");
@@ -45,7 +46,7 @@ function setupForceFieldTexture(texture: Texture) {
   texture.wrapS = texture.wrapT = RepeatWrapping;
   texture.colorSpace = NoColorSpace;
   texture.flipY = false;
-  texture.needsUpdate = true;
+  markTextureSamplerUpdate(texture);
 }
 
 function cornerBoxGeometry([x, y, z]: readonly [number, number, number]) {
@@ -112,13 +113,14 @@ export function createForceFieldView(
   } | null = null;
   let elapsed = 0;
 
+  const textureUrls = () => data.textures.map((name) => textureToUrl(name));
   const stopTextures =
     data.textures.length > 0
       ? engine.prepareTextureWithHost(
           ({ renderer }, signal, textureAssets) => {
             if (!fallback.parent) model.add(fallback);
             return loadTextures(
-              data.textures.map((t) => textureToUrl(t)),
+              textureUrls(),
               renderer,
               setupForceFieldTexture,
               signal,
@@ -154,6 +156,7 @@ export function createForceFieldView(
             log.warn("force field textures failed: %o", error);
             model.remove(fallback);
           },
+          textureUrls,
         )
       : undefined;
 

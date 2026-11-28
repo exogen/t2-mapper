@@ -20,7 +20,10 @@ export function createEffectShape(
   } = {},
 ) {
   const scene = SkeletonUtils.clone(model.scene) as DTSShape;
-  processShapeScene(scene, shapeName, options);
+  processShapeScene(scene, shapeName, {
+    ...options,
+    hidePendingImageLists: options.transparent,
+  });
   observeShapeMeshes(scene, (child) => {
     child.frustumCulled = false;
     if (options.transparent)

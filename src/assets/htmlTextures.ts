@@ -1,11 +1,17 @@
 import { Texture } from "three";
 import { estimateDecodedImageBytes } from "../diagnostics/resourceEstimates";
 import { registerMetricSource } from "../diagnostics/resourceMetricRegistry";
-import { loadHtmlImage, loadQueuedImage } from "./imageLoading";
+import type { AssetLoadPriority } from "./assetLoadQueue";
+import {
+  loadHtmlImage,
+  loadQueuedImage,
+  promoteQueuedImage,
+} from "./imageLoading";
 import { sharedSceneAssets, type SceneAssets } from "./sceneAssets";
 
 const cacheKey = {};
 interface Entry {
+  key?: object;
   promise: Promise<Texture>;
   texture?: Texture;
 }
@@ -30,13 +36,8 @@ export function recordSkippedHtmlTextureUpload(): void {
   skippedUploads++;
 }
 
-/** Share view textures per URL with the original HTML decoder defaults.
- * Bitmap textures have independent source ownership and decoder semantics. */
-export function loadHtmlTexture(
-  url: string,
-  assets: SceneAssets = sharedSceneAssets,
-): Promise<Texture> {
-  const cache = assets.cache<string, Entry>(cacheKey, (entry) => {
+function htmlTextures(assets: SceneAssets): Map<string, Entry> {
+  return assets.cache<string, Entry>(cacheKey, (entry) => {
     cacheEntries--;
     const { texture } = entry;
     if (!texture) return;
@@ -45,7 +46,31 @@ export function loadHtmlTexture(
     texture.dispose();
     texture.image = null;
   });
-  let entry = cache.get(url);
+}
+
+function adoptHtmlTexture(url: string, assets: SceneAssets): Entry | undefined {
+  return assets.adoptCached<string, Entry>(
+    cacheKey,
+    url,
+    (entry) => !!entry.texture,
+  );
+}
+
+/** Keep the installed texture resident when its resolved image URL matches. */
+export function retainHtmlTexture(url: string, assets: SceneAssets): boolean {
+  htmlTextures(assets);
+  return !!adoptHtmlTexture(url, assets);
+}
+
+/** Share view textures per URL with the original HTML decoder defaults.
+ * Bitmap textures have independent source ownership and decoder semantics. */
+export function loadHtmlTexture(
+  url: string,
+  assets: SceneAssets = sharedSceneAssets,
+  priority: AssetLoadPriority = "demand",
+): Promise<Texture> {
+  const cache = htmlTextures(assets);
+  let entry = cache.get(url) ?? adoptHtmlTexture(url, assets);
   if (!entry) {
     pendingEntries++;
     const forget = () => {
@@ -54,9 +79,12 @@ export function loadHtmlTexture(
       cacheEntries--;
     };
     const { signal } = assets;
+    const key = priority === "critical" ? undefined : {};
     const promise = loadQueuedImage(url, () => loadHtmlImage(url, signal), {
       signal,
       onError: forget,
+      priority,
+      key,
     })
       .then((image) => {
         signal.throwIfAborted();
@@ -75,10 +103,14 @@ export function loadHtmlTexture(
       .finally(() => {
         pendingEntries--;
       });
-    const created: Entry = { promise };
+    const created: Entry = { key, promise };
     entry = created;
     cache.set(url, created);
     cacheEntries++;
-  } else cacheHits++;
+  } else {
+    cacheHits++;
+    if (!entry.texture && entry.key && priority !== "speculative")
+      promoteQueuedImage(entry.key, priority);
+  }
   return entry.promise;
 }

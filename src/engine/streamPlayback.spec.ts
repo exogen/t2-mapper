@@ -4,6 +4,7 @@ import {
   registerInteriorCollider,
   unregisterInteriorCollider,
 } from "../collision/worldCollision";
+import { performanceTuning } from "../performanceTuning";
 import { engineStore } from "../state/engineStore";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { liveConnectionStore } from "../state/liveConnectionStore";
@@ -18,10 +19,34 @@ import type { StreamRecording } from "../stream/types";
 import { FramePriority } from "./framePriority";
 import { GameEngine } from "./gameEngine";
 import { installEntityViews } from "./entityViews";
+import * as shapeCache from "./shapeCache";
 import { StreamPlaybackSession } from "./streamPlayback";
 import { createRecordingFromParser } from "../stream/demoStreaming";
 import { fakeDemoParser } from "../stream/streamTestFixtures";
 import { settingsStore } from "../state/settingsStore";
+
+it("leaves prefetch stopped when a demo fails to initialize", () => {
+  const recording = createRecordingFromParser(fakeDemoParser(), {
+    checkpoints: false,
+  });
+  const engine = new GameEngine();
+  const reset = vi
+    .spyOn(recording.streamingPlayback, "reset")
+    .mockImplementation(() => {
+      throw new Error("Failed demo initialization");
+    });
+  engineStore.getState().setRecording(recording);
+  try {
+    expect(() => new StreamPlaybackSession(engine, recording)).toThrow(
+      "Failed demo initialization",
+    );
+    expect(engine.recordedResourcesReady).toBeUndefined();
+  } finally {
+    reset.mockRestore();
+    engineStore.getState().setRecording(null);
+    gameEntityStore.getState().endStreaming();
+  }
+});
 
 it("wakes an idle on-demand seek and ignores obsolete or disposed sessions", () => {
   const recording = createRecordingFromParser(fakeDemoParser(), {
@@ -62,7 +87,7 @@ it("wakes an idle on-demand seek and ignores obsolete or disposed sessions", () 
   }
 });
 
-it("keeps the live world across rehydration and texture changes, and releases it on mission change", () => {
+it("keeps the live world and its prefetch across rehydration, and renews them on mission change", async () => {
   const stream = new LiveStreamAdapter({} as RelayClient, { mode: "watch" });
   stream.missionName = "Harvester";
   let generation = stream.worldGeneration;
@@ -76,6 +101,14 @@ it("keeps the live world across rehydration and texture changes, and releases it
   );
   vi.spyOn(stream, "getSnapshot").mockImplementation(readSnapshot);
   vi.spyOn(stream, "stepToTime").mockImplementation(readSnapshot);
+  const sharedShape = { kind: "shape", name: "shared.dts" } as const;
+  const lateShape = { kind: "shape", name: "late.dts" } as const;
+  const getPreloadAssets = vi
+    .spyOn(stream, "getPreloadAssets")
+    .mockReturnValue([sharedShape]);
+  const loadDependencies = vi
+    .spyOn(shapeCache, "loadShapeDependencies")
+    .mockResolvedValue(undefined);
   const recording: StreamRecording = {
     source: "live",
     duration: Infinity,
@@ -89,6 +122,7 @@ it("keeps the live world across rehydration and texture changes, and releases it
   const engine = new GameEngine();
   const stopViews = installEntityViews(engine);
   engineStore.getState().setRecording(recording);
+  vi.useFakeTimers();
   const session = new StreamPlaybackSession(engine, recording);
   const { hdTexturesEnabled } = settingsStore.getState();
   let frame = 0;
@@ -104,6 +138,13 @@ it("keeps the live world across rehydration and texture changes, and releases it
   try {
     const assets = engine.sceneAssets;
     const textures = assets.textures;
+    const manager = engine.assetLoadingManager;
+    const { startDelayMs, refillDelayMs, rescanDelayMs } =
+      performanceTuning.assetPrefetch;
+    expect(getPreloadAssets).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(startDelayMs + refillDelayMs);
+    expect(loadDependencies.mock.calls).toEqual([[sharedShape.name, manager]]);
+
     const release = vi.fn();
     engine.onSceneAssetsRelease(release);
     generation++;
@@ -111,6 +152,12 @@ it("keeps the live world across rehydration and texture changes, and releases it
     stream.missionSequence = "1";
     draw();
     expect(engine.sceneAssets).toBe(assets);
+    getPreloadAssets.mockReturnValue([sharedShape, lateShape]);
+    await vi.advanceTimersByTimeAsync(rescanDelayMs);
+    expect(loadDependencies.mock.calls).toEqual([
+      [sharedShape.name, manager],
+      [lateShape.name, manager],
+    ]);
 
     settingsStore.setState({ hdTexturesEnabled: !hdTexturesEnabled });
     draw();
@@ -131,13 +178,29 @@ it("keeps the live world across rehydration and texture changes, and releases it
     expect(release).toHaveBeenCalledOnce();
     const nextAssets = engine.sceneAssets;
     expect(nextAssets).not.toBe(assets);
+    const nextManager = engine.assetLoadingManager;
+    expect(nextManager).not.toBe(manager);
+    getPreloadAssets.mockReturnValue([sharedShape]);
+    await vi.advanceTimersByTimeAsync(rescanDelayMs);
+    expect(loadDependencies).toHaveBeenCalledTimes(3);
+    expect(loadDependencies).toHaveBeenLastCalledWith(
+      sharedShape.name,
+      nextManager,
+    );
 
     engineStore.getState().setRecording(null);
     draw();
     expect(engine.sceneAssets).toBe(nextAssets);
     expect(nextAssets.disposed).toBe(false);
+    session.dispose();
+    getPreloadAssets.mockClear();
+    await vi.advanceTimersByTimeAsync(rescanDelayMs * 2);
+    expect(getPreloadAssets).not.toHaveBeenCalled();
+    expect(loadDependencies).toHaveBeenCalledTimes(3);
   } finally {
     session.dispose();
+    loadDependencies.mockRestore();
+    vi.useRealTimers();
     engineStore.getState().setRecording(null);
     stopViews();
     settingsStore.setState({ hdTexturesEnabled });

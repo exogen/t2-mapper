@@ -26,6 +26,10 @@ export function ClipLoader() {
   const clipEffects = useStore(clipStore, (state) =>
     state.playheadMs === 0 ? state.playbackEffects : null,
   );
+  const awaitingResources = useStore(
+    clipStore,
+    (state) => state.awaitingResources,
+  );
   const applyingEffects = useStore(
     clipEffects ?? graphicsEffectsStore,
     (effects) => effects.awaitingFirstFrame,
@@ -151,7 +155,9 @@ export function ClipLoader() {
             ? "Restoring the clip’s starting view…"
             : applyingEffects
               ? "Applying the clip’s graphics effects…"
-              : "";
+              : awaitingResources
+                ? "Preloading clip assets…"
+                : "";
   if (!message) return null;
   return (
     <PlaybackNotice failed={!!failed}>

@@ -40,6 +40,7 @@ export interface ClipState {
   elapsedMs: number;
   active: ClipTake | null;
   playbackEffects: GraphicsEffectsStore | null;
+  awaitingResources: boolean;
   playheadMs: number;
   playing: boolean;
   smoothingLevel: ClipSmoothingLevel;
@@ -116,6 +117,7 @@ export const clipStore = createStore<ClipState>((set, get) => ({
   elapsedMs: 0,
   active: null,
   playbackEffects: null,
+  awaitingResources: false,
   playheadMs: 0,
   playing: false,
   smoothingLevel: 0,
@@ -188,6 +190,7 @@ export const clipStore = createStore<ClipState>((set, get) => ({
       draft: null,
       active: null,
       playbackEffects: null,
+      awaitingResources: false,
       trimStartMs: 0,
       trimEndMs: 0,
       elapsedMs: 0,
@@ -209,13 +212,14 @@ export const clipStore = createStore<ClipState>((set, get) => ({
       playbackEffects: active.graphicsEffects
         ? createClipGraphicsEffectsStore(active.graphicsEffects)
         : null,
+      awaitingResources: false,
       playheadMs: 0,
       playing: true,
       smoothingLevel: 0,
     });
   },
   pause() {
-    set({ playing: false });
+    set({ playing: false, awaitingResources: false });
   },
   resume() {
     const state = get();
@@ -228,12 +232,13 @@ export const clipStore = createStore<ClipState>((set, get) => ({
   },
   stopPlayback() {
     if (get().draft) {
-      set({ playing: false });
+      get().pause();
       return;
     }
     set({
       active: null,
       playbackEffects: null,
+      awaitingResources: false,
       playing: false,
       playheadMs: 0,
       smoothingLevel: 0,
@@ -313,7 +318,7 @@ export const clipStore = createStore<ClipState>((set, get) => ({
     const end = state.draft ? state.trimEndMs : clipDurationMs(state.active);
     const time = Math.max(start, Math.min(end, timeMs));
     const target = sampleClipTake(state.active, time);
-    set({ playing: !state.draft && state.playing });
+    set({ playing: !state.draft && state.playing, awaitingResources: false });
     engineStore.getState().setPlaybackStatus("paused");
     if (!seekClipSource(target.demoTimeSec)) return false;
     set({ playheadMs: time });

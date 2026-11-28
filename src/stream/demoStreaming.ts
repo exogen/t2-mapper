@@ -68,6 +68,7 @@ import {
   isDemoAimCut,
   readDemoAimSample,
 } from "./demoAimLookahead";
+import { DemoResourceLookahead } from "./demoResourceLookahead";
 import {
   DEFAULT_PLAYER_INTERPOLATION,
   normalizePlayerInterpolation,
@@ -148,6 +149,7 @@ export class DemoStreamAdapter extends StreamEngine {
   private pendingAimObservations = new Map<string, DemoAimObservations>();
   private readonly aimHistory: DemoAimFrame[] = [];
   private readonly aimLookahead = new DemoAimLookahead();
+  private readonly resourceLookahead = new DemoResourceLookahead();
   private aimResult?: { tick: number; entityId: string; view: DemoPlayerAim };
   private readonly checkpointRepository: DemoCheckpointRepository;
   private checkpointCaptures = 0;
@@ -468,6 +470,7 @@ export class DemoStreamAdapter extends StreamEngine {
   private restoreCheckpoint(
     checkpoint: ReturnType<DemoStreamAdapter["captureCheckpoint"]>,
   ): void {
+    this.resourceLookahead.reset();
     this.snapshotBeforePendingTick = null;
     this.pendingProjectileEvents = undefined;
     this.previousPlayerViews = this.pendingPlayerViews = undefined;
@@ -797,6 +800,7 @@ export class DemoStreamAdapter extends StreamEngine {
   }
 
   private resetToStart(): void {
+    this.resourceLookahead.reset();
     this.snapshotBeforePendingTick = null;
     this.pendingProjectileEvents = undefined;
     this.previousPlayerViews = this.pendingPlayerViews = undefined;
@@ -1227,6 +1231,23 @@ export class DemoStreamAdapter extends StreamEngine {
     // Initial block only: the parser keeps no class names for datablocks
     // that arrive in packets (from-connect recordings).
     return collectPreloadShapeNames(this.initialBlock.dataBlocks.values());
+  }
+
+  getResourceLookahead(targetTimeSec: number) {
+    const targetTick =
+      Number.isFinite(targetTimeSec) && !this.snapshotBeforePendingTick
+        ? streamTimeToTick(targetTimeSec)
+        : this.moveTicks;
+    return this.resourceLookahead.read(
+      this.parser,
+      this.moveTicks,
+      targetTick,
+      () => ({
+        netStrings: this.conn.netStrings,
+        targets: this.conn.targets,
+        entities: this.entities.values(),
+      }),
+    );
   }
 
   // A cold seek can precede collision asset loading. Allow one repair after

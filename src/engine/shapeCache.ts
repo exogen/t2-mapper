@@ -1,4 +1,5 @@
 import type { DTSModel } from "../dts/dtsModel";
+import type { AssetLoadPriority } from "../assets/assetLoadQueue";
 import type { DTSShapeData } from "../dts/dtsTypes";
 import { shapeToUrl } from "../loaders";
 import { ShapeLoader } from "../shapeLoader";
@@ -39,8 +40,9 @@ export async function loadShape(
 export function loadShapeDependencies(
   shapeName: string,
   manager = DefaultLoadingManager,
+  priority?: AssetLoadPriority,
 ): Promise<void> {
-  return getLoader(manager).loadDependencies(shapeToUrl(shapeName));
+  return getLoader(manager).loadDependencies(shapeToUrl(shapeName), priority);
 }
 
 /**

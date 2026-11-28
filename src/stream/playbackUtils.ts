@@ -36,7 +36,11 @@ import {
   playerSkinUrls,
   type PlayerSkinSelection,
 } from "../engine/playerSkins";
-import { markTextureSamplerUpdate, setupTexture } from "../textureUtils";
+import {
+  markTextureSamplerUpdate,
+  setupTexture,
+  transparentTexture,
+} from "../textureUtils";
 import { textureToUrl } from "../loaders";
 import type { Keyframe } from "./types";
 
@@ -221,6 +225,7 @@ export function replaceWithShapeMaterial(
     playerSkin?: PlayerSkinSelection;
     skinUrl?: string;
     skinName?: string;
+    hidePendingImageLists?: boolean;
   } = {},
 ): ShapeMaterialResult {
   const resourcePath =
@@ -248,7 +253,7 @@ export function replaceWithShapeMaterial(
   if (flagNames.has("IflMaterial")) {
     const result = createMaterialFromFlags(
       mat,
-      null,
+      options.hidePendingImageLists ? transparentTexture : null,
       flagNames,
       vis,
       false,
@@ -341,6 +346,7 @@ export function processShapeScene(
     playerSkin?: PlayerSkinSelection;
     skinUrl?: string;
     skinName?: string;
+    hidePendingImageLists?: boolean;
     /**
      * Render meshes in negative-size detail levels. Explosion shapes put
      * their meshes in a "Detail-1" level: Explosion::renderObject never

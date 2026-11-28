@@ -8,8 +8,8 @@
  * T2 servers send the mod's entire datablock set at connect regardless
  * of map, so only selected categories are prefetched. A bounded number of
  * jobs runs at once, with a small delay before starting their replacements.
- * Completion includes model data and dependent images/atlases, never renderer
- * uploads. Visible views can consume model data before those images are ready.
+ * Ordinary shape jobs include model data and dependent images/atlases.
+ * Recorded playback can provide jobs that also warm renderer resources.
  */
 
 import { loadInteriorDependencies } from "./assets/interiorAssets";
@@ -29,27 +29,50 @@ const log = createLogger("assetPrefetch");
 
 let provider: (() => PreloadAsset[]) | null = null;
 type PrefetchOwner = { assets: SceneAssets; manager: LoadingManager };
+interface PriorityAssetJob {
+  key: string;
+  load(): Promise<void>;
+}
+interface RecordedAssetBatch {
+  jobs: readonly PriorityAssetJob[];
+  scanning: boolean;
+  /** Give the opening recording window slots ahead of background discovery. */
+  blockBackground?: boolean;
+}
+
+const RECORDED_RESCAN_MS = 150;
+const RECORDED_SCAN_SLICE_DELAY_MS = 50;
 let getOwner: (() => PrefetchOwner) | undefined;
+let getPriorityJobs: (() => RecordedAssetBatch | null) | undefined;
 let previousTextures: SceneAssets | undefined;
 let timer: ReturnType<typeof setTimeout> | null = null;
-let startDelayPending = false;
-/** Session bookkeeping, keyed kind:name. The asset caches deduplicate loads. */
-const preloaded = new Set<string>();
+let scheduledAt = 0;
+let genericStartAt = 0;
+/** In-flight and settled jobs share the same keys across both providers. */
+const jobs = new Map<string, boolean>();
 let generation = 0;
 let concurrency: number = performanceTuning.assetPrefetch.concurrency.desktop;
 let activeJobs = 0;
 let peakActiveJobs = 0;
 let completedJobs = 0;
 let failedJobs = 0;
+let recordedWaitingJobs: number | null = null;
+let recordedScanning = false;
 
-registerMetricSource("assetPrefetch", () => ({
-  activeJobs,
-  peakActiveJobs,
-  concurrency,
-  sessionEntries: preloaded.size,
-  completedJobs,
-  failedJobs,
-}));
+export function readAssetPrefetchMetrics() {
+  return {
+    activeJobs,
+    peakActiveJobs,
+    concurrency,
+    sessionEntries: jobs.size,
+    completedJobs,
+    failedJobs,
+    recordedWaitingJobs,
+    recordedScanning: Number(recordedScanning),
+  };
+}
+
+registerMetricSource("assetPrefetch", readAssetPrefetchMetrics);
 
 async function prefetch(
   asset: PreloadAsset,
@@ -59,7 +82,7 @@ async function prefetch(
 ): Promise<void> {
   switch (asset.kind) {
     case "texture":
-      await loadHtmlTexture(textureToUrl(asset.name), textures);
+      await loadHtmlTexture(textureToUrl(asset.name), textures, "speculative");
       break;
     case "shape":
       await loadShapeDependencies(asset.name, manager);
@@ -75,7 +98,11 @@ async function prefetch(
       const ter = await loadTerrainAsset(asset.name, assets);
       for (const name of ter.textureNames) {
         if (owner !== generation || textures.disposed) return;
-        await loadHtmlTexture(terrainTextureToUrl(name), textures);
+        await loadHtmlTexture(
+          terrainTextureToUrl(name),
+          textures,
+          "speculative",
+        );
       }
       break;
     }
@@ -84,7 +111,12 @@ async function prefetch(
 
 function schedule(delay: number): void {
   if (!provider) return;
-  if (timer != null) clearTimeout(timer);
+  const at = performance.now() + delay;
+  if (timer != null) {
+    if (scheduledAt <= at) return;
+    clearTimeout(timer);
+  }
+  scheduledAt = at;
   timer = setTimeout(tick, delay);
 }
 
@@ -99,29 +131,55 @@ export function startAssetPrefetch(
     assets: sharedSceneAssets,
     manager: DefaultLoadingManager,
   }),
-): void {
-  generation++;
-  preloaded.clear();
+  priority?: () => RecordedAssetBatch | null,
+) {
+  const owner = ++generation;
+  jobs.clear();
+  recordedWaitingJobs = null;
+  recordedScanning = false;
+  if (timer != null) clearTimeout(timer);
+  timer = null;
   provider = getAssets;
   getOwner = getSceneOwner;
+  getPriorityJobs = priority;
   concurrency = deviceTierValue(
     performanceTuning.assetPrefetch.concurrency,
     classifyDevice(readDeviceSignals()).constrained,
   );
   // In-flight shared loads from the previous owner still count against the
   // limit. They may serve active views, so do not cancel or forget them.
-  startDelayPending = true;
-  schedule(performanceTuning.assetPrefetch.startDelayMs);
+  const { startDelayMs } = performanceTuning.assetPrefetch;
+  genericStartAt = performance.now() + startDelayMs;
+  schedule(priority ? 0 : startDelayMs);
+  return {
+    refresh() {
+      if (owner === generation) schedule(0);
+    },
+    stop() {
+      if (owner === generation) stopAssetPrefetch();
+    },
+    prioritySettled(keys: readonly string[]) {
+      if (owner !== generation) return false;
+      const { assets } = getSceneOwner();
+      return (
+        !assets.disposed &&
+        assets.textures === previousTextures &&
+        keys.every((key) => jobs.get(key) === true)
+      );
+    },
+  };
 }
 
 /** Detach the active provider. The scene owns the prefetched resources. */
 export function stopAssetPrefetch(): void {
   generation++;
-  preloaded.clear();
+  jobs.clear();
+  recordedWaitingJobs = null;
+  recordedScanning = false;
   provider = null;
   getOwner = undefined;
+  getPriorityJobs = undefined;
   previousTextures = undefined;
-  startDelayPending = false;
   if (timer != null) {
     clearTimeout(timer);
     timer = null;
@@ -130,48 +188,111 @@ export function stopAssetPrefetch(): void {
 
 function tick(): void {
   timer = null;
-  startDelayPending = false;
   if (!provider) return;
   const currentProvider = provider;
   const owner = generation;
-  let assets: PreloadAsset[];
+  const genericReady = performance.now() >= genericStartAt;
+  const schedulePoll = (delay: number) => {
+    if (owner !== generation) return;
+    schedule(
+      genericReady
+        ? delay
+        : Math.min(delay, Math.max(0, genericStartAt - performance.now())),
+    );
+  };
+  let priority: RecordedAssetBatch | null = null;
   try {
-    assets = currentProvider();
+    priority = getPriorityJobs?.() ?? null;
   } catch (e) {
-    log.warn("preload asset provider failed: %o", e);
-    assets = [];
+    log.warn("recorded asset provider failed: %o", e);
   }
   // Providers and synchronous cache callbacks can stop/retarget this work.
   // Leave the replacement's timer and bookkeeping to its own generation.
-  if (owner !== generation || provider !== currentProvider || !getOwner) return;
+  if (owner !== generation) return;
+  let assets: PreloadAsset[] = [];
+  // A recorded batch can start its leading terrain job during the attach delay.
+  if (genericReady || priority) {
+    try {
+      assets = currentProvider();
+    } catch (e) {
+      log.warn("preload asset provider failed: %o", e);
+    }
+  }
+  if (owner !== generation || !getOwner) return;
   const scene = getOwner();
+  if (owner !== generation) return;
+  if (scene.assets.disposed) {
+    recordedWaitingJobs = null;
+    recordedScanning = false;
+    schedulePoll(performanceTuning.assetPrefetch.rescanDelayMs);
+    return;
+  }
   const textures = scene.assets.textures;
   if (textures !== previousTextures) {
-    preloaded.clear();
+    jobs.clear();
     previousTextures = textures;
   }
-  for (const asset of assets) {
-    if (owner !== generation || provider !== currentProvider) return;
-    if (activeJobs >= concurrency) break;
-    if (!asset.name) continue;
-    const key = `${asset.kind}:${asset.name}`;
-    if (preloaded.has(key)) continue;
-    preloaded.add(key);
+  const launch = (key: string, load: () => Promise<void>) => {
+    if (owner !== generation || provider !== currentProvider) return false;
+    if (activeJobs >= concurrency) return false;
+    if (jobs.has(key)) return true;
+    jobs.set(key, false);
     activeJobs++;
     peakActiveJobs = Math.max(peakActiveJobs, activeJobs);
-    void prefetch(asset, owner, scene, textures)
+    const work = (async () => load())();
+    void work
       .catch((error: unknown) => {
         if (textures.disposed) return;
         failedJobs++;
-        log.debug("%s prefetch failed: %o", asset.kind, error);
+        log.debug("%s prefetch failed: %o", key, error);
       })
       .finally(() => {
+        if (owner === generation && textures === previousTextures)
+          jobs.set(key, true);
         activeJobs--;
         completedJobs++;
-        // Old work may finish during a new owner's initial render delay.
-        if (provider && !startDelayPending)
+        // Recorded work can fill a slot immediately after the old owner frees it.
+        if (getPriorityJobs || performance.now() >= genericStartAt)
           schedule(performanceTuning.assetPrefetch.refillDelayMs);
       });
+    return true;
+  };
+  const launchAsset = (asset: PreloadAsset) =>
+    !asset.name ||
+    launch(`${asset.kind}:${asset.name}`, () =>
+      prefetch(asset, owner, scene, textures),
+    );
+  const launchTerrain = () => {
+    for (const asset of assets) {
+      if (asset.kind === "terrain" && !launchAsset(asset)) break;
+    }
+  };
+  if (priority) {
+    // Before a clip starts, put effects ahead of ordinary scene prefetch.
+    if (!priority.blockBackground) launchTerrain();
+    for (const job of priority.jobs) {
+      if (!launch(job.key, job.load)) break;
+    }
+    if (priority.blockBackground) launchTerrain();
   }
-  if (timer == null) schedule(performanceTuning.assetPrefetch.rescanDelayMs);
+  if (genericReady && !priority?.blockBackground) {
+    for (const asset of assets) {
+      if (!launchAsset(asset)) break;
+    }
+  }
+  if (owner === generation) {
+    recordedScanning = priority?.scanning ?? false;
+    recordedWaitingJobs =
+      priority?.jobs.reduce(
+        (waiting, { key }) => waiting + Number(!jobs.has(key)),
+        0,
+      ) ?? null;
+  }
+  schedulePoll(
+    !priority
+      ? performanceTuning.assetPrefetch.rescanDelayMs
+      : priority.scanning
+        ? RECORDED_SCAN_SLICE_DELAY_MS
+        : RECORDED_RESCAN_MS,
+  );
 }

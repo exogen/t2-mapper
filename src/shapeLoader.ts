@@ -6,7 +6,9 @@ import { getUrlForPath, textureToUrl } from "./loaders";
 import {
   loadBitmapTextureAsync,
   loadBitmapTextureInstance,
+  promoteBitmapTexture,
 } from "./assets/bitmapTextures";
+import type { AssetLoadPriority } from "./assets/assetLoadQueue";
 import { DTSMaterialFlags, type DTSShapeData } from "./dts/dtsTypes";
 import { registerShapeSequences } from "./stream/shapeSequences";
 import { registerShapeBounds } from "./stream/shapeBounds";
@@ -15,7 +17,7 @@ import {
   batchDTSRigidMeshes,
   getDTSRigidBatchSources,
 } from "./dts/dtsRigidBatch";
-import { loadShapeImageLists } from "./iflAtlas";
+import { loadShapeImageLists, promoteShapeImageLists } from "./iflAtlas";
 import { repairBitmapSource } from "./assets/bitmapSourceRecovery";
 import { markTextureSamplerUpdate } from "./textureUtils";
 import {
@@ -31,7 +33,11 @@ interface ShapeSource {
   data?: Promise<DTSShapeData>;
   resolvedModel?: DTSModel;
   model?: Promise<DTSModel>;
-  dependencies?: { textures: SceneAssets; pending: Promise<void> };
+  dependencies?: {
+    textures: SceneAssets;
+    pending: Promise<void>;
+    priority: AssetLoadPriority;
+  };
 }
 const shapeSourceCache = {};
 const standaloneSources = new WeakMap<
@@ -139,21 +145,39 @@ export class ShapeLoader extends DTSLoader {
 
   /** Model readiness remains progressive. Prefetch can explicitly wait for
    * ordinary images and IFL atlases without blocking model consumers. */
-  async loadDependencies(url: string): Promise<void> {
+  async loadDependencies(
+    url: string,
+    priority: AssetLoadPriority = "demand",
+  ): Promise<void> {
     const source = this.getSource(url);
     const model = await this.loadAsync(url);
-    await this.prepareDependencies(source, model, url);
+    await this.prepareDependencies(source, model, url, priority);
   }
 
   private prepareDependencies(
     source: ShapeSource,
     model: DTSModel,
     url: string,
+    priority: AssetLoadPriority = "demand",
   ): Promise<void> {
     this.assets.signal.throwIfAborted();
     const textures = this.assets.textures;
-    if (source.dependencies?.textures === textures)
-      return source.dependencies.pending;
+    const current = source.dependencies;
+    if (current?.textures === textures) {
+      if (priority === "critical" && current.priority !== "critical") {
+        current.priority = priority;
+        for (const material of model.data.materials) {
+          if (!(material.flags & DTSMaterialFlags.IflMaterial))
+            promoteBitmapTexture(
+              textureToUrl(material.name),
+              textures,
+              priority,
+            );
+        }
+        promoteShapeImageLists(model, textures);
+      }
+      return current.pending;
+    }
     const pending = Promise.allSettled([
       ...model.data.materials
         .map((material, index) => ({ material, index }))
@@ -167,6 +191,7 @@ export class ShapeLoader extends DTSLoader {
               return loadBitmapTextureAsync(
                 textureToUrl(material.name),
                 textures,
+                source.dependencies?.priority ?? priority,
               );
             })
             .then((loaded) => {
@@ -184,7 +209,7 @@ export class ShapeLoader extends DTSLoader {
               }
             }),
         ),
-      loadShapeImageLists(model, textures),
+      loadShapeImageLists(model, textures, priority),
     ])
       .then((results) => {
         const failure = results.find((result) => result.status === "rejected");
@@ -195,7 +220,7 @@ export class ShapeLoader extends DTSLoader {
           source.dependencies = undefined;
         throw error;
       });
-    source.dependencies = { textures, pending };
+    source.dependencies = { textures, pending, priority };
     void pending.catch((error) => {
       if (!textures.disposed)
         console.warn(`Failed to load shape textures for ${url}`, error);

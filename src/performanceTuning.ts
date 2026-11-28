@@ -21,10 +21,14 @@ export const performanceTuning = {
    * Existing explicit benchmark URL overrides take precedence. */
   worldShadowSize: { constrained: 1024, desktop: 4096 },
 
-  /** Concurrent fetch/decode jobs, shared by URL images and embedded DIF PNGs.
-   * Provisional 2/4 policy: lower values reduce simultaneous image work but can
-   * increase loading time; this is not an empirically optimal device cutoff. */
-  imageWorkConcurrency: { constrained: 2, desktop: 4 },
+  /** Concurrent image fetch/decode jobs, with separate resource cutoffs for
+   * the two-slot tier. The lower limit reduces simultaneous allocations. */
+  imageWorkConcurrency: {
+    constrained: 2,
+    desktop: 4,
+    maximumConstrainedMemoryGiB: 4,
+    maximumConstrainedLogicalCpuThreads: 4,
+  },
 
   assetPrefetch: {
     /** Concurrent asset jobs; provisional 2/4 policy, not an optimal cutoff.

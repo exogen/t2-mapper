@@ -11,8 +11,11 @@ type ExitListener = (
 ) => void;
 const fixture = vi.hoisted(() => ({
   effects: [] as Array<() => void | (() => void)>,
+  stateValues: [] as unknown[],
   listeners: new Set<ExitListener>(),
   active: null as ClipTake | null,
+  awaitingResources: false,
+  applyingEffects: false,
   status: "paused",
   view: undefined as ClipView | undefined,
   error: null as Error | null,
@@ -39,7 +42,7 @@ vi.mock("react", async (original) => ({
   useEffect: (effect: () => void | (() => void)) =>
     fixture.effects.push(effect),
   useState: (initial: unknown) => [
-    initial,
+    fixture.stateValues.length ? fixture.stateValues.shift() : initial,
     typeof initial === "number" ? fixture.retry : vi.fn(),
   ],
 }));
@@ -61,7 +64,15 @@ vi.mock("zustand", () => ({
 }));
 vi.mock("../state/clipStore", () => ({
   clipStore: {
-    getState: () => ({ active: fixture.active, stopPlayback: fixture.stop }),
+    getState: () => ({
+      active: fixture.active,
+      awaitingResources: fixture.awaitingResources,
+      playheadMs: 0,
+      playbackEffects: fixture.applyingEffects
+        ? { getState: () => ({ awaitingFirstFrame: true }) }
+        : null,
+      stopPlayback: fixture.stop,
+    }),
     subscribe: (listener: ExitListener) => {
       fixture.listeners.add(listener);
       return () => fixture.listeners.delete(listener);
@@ -124,6 +135,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   fixture.status = "paused";
   fixture.active = null;
+  fixture.awaitingResources = false;
+  fixture.applyingEffects = false;
+  fixture.stateValues.length = 0;
   fixture.view = undefined;
   fixture.error = null;
   fixture.effects.length = 0;
@@ -281,4 +295,32 @@ it("prepares once after a metadata retry clears the error with the same cached d
   fixture.error = null;
   mountLoader();
   expect(prepareClipPlayback).toHaveBeenCalledOnce();
+});
+
+it("shows the resource hold in the playback notice after restoring the clip", () => {
+  fixture.source = "test.rec";
+  fixture.downloadStatus = "complete";
+  fixture.recording = { streamingPlayback: {} } as StreamRecording;
+  fixture.view = {
+    id: "clip-one",
+    sourceDemo: "test.rec",
+    state: "ready",
+    timeline: { sourceDemo: "test.rec" },
+  } as ClipView;
+  const renderPrepared = () => {
+    fixture.stateValues.push(false, null, 0, {
+      id: "clip-one",
+      recording: fixture.recording,
+    });
+    return renderToStaticMarkup(ClipLoader());
+  };
+
+  fixture.awaitingResources = true;
+  expect(renderPrepared()).toContain('role="status"');
+  expect(renderPrepared()).toContain("Preloading clip assets…");
+  fixture.applyingEffects = true;
+  expect(renderPrepared()).toContain("Applying the clip’s graphics effects…");
+  fixture.applyingEffects = false;
+  fixture.awaitingResources = false;
+  expect(renderPrepared()).toBe("");
 });

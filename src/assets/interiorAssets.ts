@@ -19,8 +19,9 @@ async function warmTextures(
   const urls = new Set(
     model.surfaceMeshes.map((mesh) => textureToUrl(mesh.material.resourcePath)),
   );
+  // A surface view can promote a queued image when it requests the same URL.
   const results = await Promise.allSettled(
-    [...urls].map((url) => loadHtmlTexture(url, assets)),
+    [...urls].map((url) => loadHtmlTexture(url, assets, "speculative")),
   );
   const failure = results.find((result) => result.status === "rejected");
   if (failure?.status === "rejected") throw failure.reason;

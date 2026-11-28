@@ -7,19 +7,31 @@ import {
 } from "three";
 import { clone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { loadImageFrameList } from "./loaders";
-import { loadBitmapTextureAsync } from "./assets/bitmapTextures";
-import { loadIflAtlas, loadShapeImageLists } from "./iflAtlas";
+import {
+  loadBitmapTextureAsync,
+  promoteBitmapTexture,
+  retainBitmapTexture,
+} from "./assets/bitmapTextures";
+import {
+  loadIflAtlas,
+  loadShapeImageLists,
+  promoteShapeImageLists,
+} from "./iflAtlas";
 import { buildDTS } from "./dts/dtsBuilder";
 import { createDTSTestShape } from "./dts/dtsTestFixtures";
 import type { DTSShape } from "./dts/dtsModel";
 import { DTSMaterialFlags } from "./dts/dtsTypes";
-import { SceneAssets } from "./assets/sceneAssets";
+import { SceneAssets, sharedSceneAssets } from "./assets/sceneAssets";
 
 vi.mock("./loaders", () => ({
   loadImageFrameList: vi.fn(),
   iflTextureToUrl: (name: string) => name,
 }));
-vi.mock("./assets/bitmapTextures", () => ({ loadBitmapTextureAsync: vi.fn() }));
+vi.mock("./assets/bitmapTextures", () => ({
+  loadBitmapTextureAsync: vi.fn(),
+  promoteBitmapTexture: vi.fn(),
+  retainBitmapTexture: vi.fn(() => true),
+}));
 const drawImage = vi.fn();
 const images = new Map<string, Texture>();
 
@@ -47,6 +59,79 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("shared DTS IFL resources", () => {
+  it("keeps a settled atlas when every frame resolves to the same URL", async () => {
+    const assets = new SceneAssets();
+    const url = "retain.ifl";
+    const original = await loadIflAtlas(url, 0, assets.textures);
+    let refreshed: Promise<unknown> | undefined;
+    assets.onTexturesChanged(() => {
+      refreshed = loadIflAtlas(url, 0, assets.textures);
+    });
+    assets.refreshTextures();
+
+    expect(await refreshed).toBe(original);
+    expect(loadImageFrameList).toHaveBeenCalledOnce();
+    expect(loadBitmapTextureAsync).toHaveBeenCalledTimes(2);
+    expect(retainBitmapTexture).toHaveBeenCalledTimes(2);
+    expect(drawImage).toHaveBeenCalledTimes(2);
+    expect(original.frames[0].texture.image).not.toBeNull();
+    assets.dispose();
+  });
+
+  it("keeps settled frame pixels when quality changes during atlas loading", async () => {
+    const bitmapTextures = await vi.importActual<
+      typeof import("./assets/bitmapTextures")
+    >("./assets/bitmapTextures");
+    vi.mocked(loadBitmapTextureAsync).mockImplementation(
+      bitmapTextures.loadBitmapTextureAsync,
+    );
+    let firstSlowFrame = true;
+    const fetchImage = vi.fn<typeof fetch>(async (url, options) => {
+      if (url === "b" && firstSlowFrame) {
+        firstSlowFrame = false;
+        const signal = options!.signal!;
+        return new Promise<Response>((_, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        });
+      }
+      return new Response(String(url));
+    });
+    const firstFrame = { width: 16, height: 16, close: vi.fn() };
+    vi.stubGlobal("fetch", fetchImage);
+    vi.stubGlobal("createImageBitmap", async (blob: Blob) =>
+      (await blob.text()) === "a"
+        ? firstFrame
+        : { width: 16, height: 16, close: vi.fn() },
+    );
+
+    const assets = new SceneAssets();
+    const oldImages = assets.textures;
+    const path = "partial.ifl";
+    const flags = DTSMaterialFlags.SWrap;
+    const original = loadIflAtlas(path, flags, oldImages);
+    await vi.waitFor(() => expect(fetchImage).toHaveBeenCalledTimes(2));
+    const source = await bitmapTextures.loadBitmapTextureAsync("a", oldImages);
+    const retired = expect(original).rejects.toThrow(
+      "Failed to load texture: b",
+    );
+
+    let refreshed: ReturnType<typeof loadIflAtlas> | undefined;
+    assets.onTexturesChanged(() => {
+      refreshed = loadIflAtlas(path, flags, assets.textures);
+    });
+    assets.refreshTextures();
+
+    await retired;
+    expect((await refreshed)?.frames[0].texture.source).toBe(source.source);
+    expect(loadImageFrameList).toHaveBeenCalledOnce();
+    expect(fetchImage.mock.calls.map(([url]) => url)).toEqual(["a", "b", "b"]);
+    expect(firstFrame.close).not.toHaveBeenCalled();
+    assets.dispose();
+    expect(firstFrame.close).toHaveBeenCalledOnce();
+  });
+
   it("retires unique frame samplers while preserving the replacement scene's frames", async () => {
     const oldAssets = new SceneAssets();
     const newAssets = new SceneAssets();
@@ -58,8 +143,16 @@ describe("shared DTS IFL resources", () => {
     expect(old.frames[0].texture).toBe(old.frames[2].texture);
     old.frames[0].texture.addEventListener("dispose", disposed);
     next.frames[0].texture.addEventListener("dispose", stillLive);
-    expect(loadBitmapTextureAsync).toHaveBeenCalledWith("a", oldAssets);
-    expect(loadBitmapTextureAsync).toHaveBeenCalledWith("a", newAssets);
+    expect(loadBitmapTextureAsync).toHaveBeenCalledWith(
+      "a",
+      oldAssets,
+      "demand",
+    );
+    expect(loadBitmapTextureAsync).toHaveBeenCalledWith(
+      "a",
+      newAssets,
+      "demand",
+    );
     oldAssets.dispose();
     await Promise.resolve();
     expect(disposed).toHaveBeenCalledOnce();
@@ -149,6 +242,39 @@ describe("shared DTS IFL resources", () => {
     );
   });
 
+  it("promotes an effect's already queued image-list frames without restarting them", async () => {
+    const assets = new SceneAssets();
+    const data = createDTSTestShape();
+    data.materials[0].flags |= DTSMaterialFlags.IflMaterial;
+    data.iflMaterials = [
+      {
+        nameIndex: data.names.push("queued.ifl") - 1,
+        materialSlot: 0,
+        firstFrame: 0,
+        firstFrameOffTimeIndex: 0,
+        numFrames: 2,
+      },
+    ];
+    const model = buildDTS(data);
+    let finish!: (texture: Texture) => void;
+    const pending = new Promise<Texture>((resolve) => (finish = resolve));
+    vi.mocked(loadBitmapTextureAsync).mockReturnValue(pending);
+    const ready = loadShapeImageLists(model, assets);
+    await vi.waitFor(() =>
+      expect(loadBitmapTextureAsync).toHaveBeenCalledTimes(2),
+    );
+
+    promoteShapeImageLists(model, assets);
+    expect(promoteBitmapTexture).toHaveBeenCalledWith("a", assets, "critical");
+    expect(promoteBitmapTexture).toHaveBeenCalledWith("b", assets, "critical");
+    expect(loadBitmapTextureAsync).toHaveBeenCalledTimes(2);
+
+    finish(new Texture({ width: 16, height: 16 }));
+    await ready;
+    expect(model.scene.imageAnimations).toHaveLength(1);
+    assets.dispose();
+  });
+
   it("publishes late resources to clones made before loading completes", async () => {
     let resolve!: (frames: { name: string; frameCount: number }[]) => void;
     vi.mocked(loadImageFrameList).mockImplementationOnce(
@@ -176,8 +302,14 @@ describe("shared DTS IFL resources", () => {
     );
     const instance = clone(model.scene) as DTSShape;
     expect(instance.imageAnimations).toHaveLength(0);
+    promoteShapeImageLists(model, sharedSceneAssets);
     resolve([{ name: "a", frameCount: 1 }]);
     await ready;
+    expect(loadBitmapTextureAsync).toHaveBeenCalledWith(
+      "a",
+      sharedSceneAssets,
+      "critical",
+    );
     expect(instance.imageAnimations).toBe(model.scene.imageAnimations);
     expect(instance.imageAnimations).toHaveLength(1);
     expect(instance.imageAnimations[0].frames[0].texture).toBeTruthy();

@@ -185,8 +185,9 @@ export function createInteriorView(
       ...[...textureGroups].map(([path, materials]) =>
         engine.prepareTextureWithHost(
           async ({ renderer }, signal, textureAssets) => {
+            const url = textureToUrl(path);
             const [texture] = await loadTextures(
-              [textureToUrl(path)],
+              [url],
               renderer,
               (texture: Texture) =>
                 setupTexture(texture, {
@@ -195,9 +196,9 @@ export function createInteriorView(
               signal,
               textureAssets,
             );
-            return { texture, textureAssets };
+            return { texture, url };
           },
-          ({ texture, textureAssets }) => {
+          ({ texture, url }) => {
             for (const material of materials) {
               const outsideVisible = material.outsideVisible;
               material.map = texture;
@@ -221,8 +222,9 @@ export function createInteriorView(
             engine.invalidate();
             return () => {
               // Static DIF instances share cached materials and CPU textures.
-              // Remove the map only when the shared texture scope changes.
-              const retiringTextures = textureAssets !== assets.textures;
+              // A quality change can leave this binding on its original cache
+              // when the source is unchanged. Only clear replaced maps.
+              const retiringTextures = url !== textureToUrl(path);
               for (const material of materials) {
                 textured.delete(material);
                 if (retiringTextures && material.map === texture) {
@@ -235,6 +237,7 @@ export function createInteriorView(
           },
           (error: unknown) =>
             log.warn("texture failed for %s: %o", interiorFile, error),
+          () => [textureToUrl(path)],
         ),
       ),
     );

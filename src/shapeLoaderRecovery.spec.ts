@@ -1,13 +1,15 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { LoadingManager, Mesh, Texture, type Object3D } from "three";
 import { loadBitmapTextureInstance } from "./assets/bitmapTextures";
+import { SceneAssets } from "./assets/sceneAssets";
 import { buildDTS } from "./dts/dtsBuilder";
 import { DTSLoader } from "./dts/dtsLoader";
 import { createDTSTestShape } from "./dts/dtsTestFixtures";
 import { createShapeInstance } from "./engine/shapeInstance";
-import { getPlayerSkinSelection } from "./engine/playerSkins";
+import { getPlayerSkinSelection, loadSkinManifest } from "./engine/playerSkins";
 import * as loaders from "./loaders";
 import { ShapeLoader } from "./shapeLoader";
+import { settingsStore } from "./state/settingsStore";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -27,6 +29,81 @@ function samplers(scene: Object3D): Texture[] {
   });
   return textures;
 }
+
+it("switches a mounted custom skin with paired resolutions and keeps a single-resolution skin", async () => {
+  const paired = "ResolutionTest";
+  const originalOnly = "OriginalOnly";
+  const base = "https://assets.tribes2.online/skins/files/";
+  const stockUrl = `${base}${paired}.lmale@1x.png`;
+  const hdUrl = `${base}${paired}.lmale.png`;
+  const originalUrl = `${base}${originalOnly}.lmale.png`;
+  const images = new Map([
+    [stockUrl, { width: 512, height: 512, close: vi.fn() }],
+    [hdUrl, { width: 1024, height: 1024, close: vi.fn() }],
+    [originalUrl, { width: 512, height: 512, close: vi.fn() }],
+  ]);
+  const fetch = vi.fn(async (url: string) =>
+    url.endsWith("/manifest.json")
+      ? Response.json({
+          customSkins: { lmale: [paired, originalOnly] },
+          sizeMultiplier: { [`${paired}.lmale.png`]: 2 },
+        })
+      : new Response(new Blob([url])),
+  );
+  vi.stubGlobal("fetch", fetch);
+  vi.stubGlobal("createImageBitmap", async (blob: Blob) => {
+    const url = await blob.text();
+    const image = images.get(url);
+    if (!image) throw new Error(`Unexpected skin URL: ${url}`);
+    return { ...image };
+  });
+  const assets = new SceneAssets();
+  const previous = settingsStore.getState().hdTexturesEnabled;
+  settingsStore.setState({ hdTexturesEnabled: false });
+  await loadSkinManifest();
+  const data = createDTSTestShape();
+  data.materials[0].name = "skins/base.lmale";
+  const model = buildDTS(data);
+  const createPlayer = (name: string) =>
+    createShapeInstance({
+      model,
+      assets,
+      playerSkin: getPlayerSkinSelection("light_male.dts", name),
+    });
+  const player = createPlayer(paired);
+  const stockOnly = createPlayer(originalOnly);
+  try {
+    const [map] = samplers(player.scene);
+    const [original] = samplers(stockOnly.scene);
+    await vi.waitFor(() => {
+      expect(map.image).toMatchObject({ width: 512 });
+      expect(original.image).toMatchObject({ width: 512 });
+    });
+    const originalSource = original.source;
+    settingsStore.setState({ hdTexturesEnabled: true });
+    assets.refreshTextures();
+    await vi.waitFor(() => expect(map.image).toMatchObject({ width: 1024 }));
+    expect(images.get(stockUrl)?.close).toHaveBeenCalledOnce();
+    expect(samplers(player.scene)[0]).toBe(map);
+    settingsStore.setState({ hdTexturesEnabled: false });
+    assets.refreshTextures();
+    await vi.waitFor(() => expect(map.image).toMatchObject({ width: 512 }));
+    expect(images.get(hdUrl)?.close).toHaveBeenCalledOnce();
+    expect(original.source).toBe(originalSource);
+    expect(
+      fetch.mock.calls.filter(([url]) => url === originalUrl),
+    ).toHaveLength(1);
+    expect(fetch).not.toHaveBeenCalledWith(
+      `${base}${originalOnly}.lmale@1x.png`,
+      expect.anything(),
+    );
+  } finally {
+    player.dispose();
+    stockOnly.dispose();
+    assets.dispose();
+    settingsStore.setState({ hdTexturesEnabled: previous });
+  }
+});
 
 it("tries regular, team and authored skins after hi-res fetch and regular decode failures", async () => {
   const path = (name: string) => loaders.textureToUrl(`skins/${name}`, null);

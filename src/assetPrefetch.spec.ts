@@ -5,6 +5,7 @@ import { SceneAssets, sharedSceneAssets } from "./assets/sceneAssets";
 const mocks = vi.hoisted(() => ({
   loadShape: vi.fn(async (_name: string) => {}),
   loadInterior: vi.fn(),
+  loadTerrain: vi.fn(async (_name: string) => ({ textureNames: [] })),
   loadHtmlTexture: vi.fn(async () => {}),
   constrained: false,
 }));
@@ -14,6 +15,9 @@ vi.mock("./deviceConstraints", () => ({
 }));
 vi.mock("./engine/shapeCache", () => ({
   loadShapeDependencies: mocks.loadShape,
+}));
+vi.mock("./engine/terrainCache", () => ({
+  loadTerrainAsset: mocks.loadTerrain,
 }));
 vi.mock("./loaders", () => ({
   interiorToUrl: (name: string) => `/interiors/${name}`,
@@ -29,7 +33,11 @@ vi.mock("./assets/htmlTextures", () => ({
   loadHtmlTexture: mocks.loadHtmlTexture,
 }));
 
-import { startAssetPrefetch, stopAssetPrefetch } from "./assetPrefetch";
+import {
+  readAssetPrefetchMetrics,
+  startAssetPrefetch,
+  stopAssetPrefetch,
+} from "./assetPrefetch";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -63,6 +71,159 @@ it("requests explicit model-and-dependency readiness for prefetch jobs", async (
   expect(mocks.loadHtmlTexture).toHaveBeenCalledWith(
     "/textures/test.png",
     sharedSceneAssets.textures,
+    "speculative",
+  );
+});
+
+it("starts recorded work and terrain before the generic attach delay", async () => {
+  vi.useFakeTimers();
+  const first = { assets: new SceneAssets(), manager: new LoadingManager() };
+  const second = { assets: new SceneAssets(), manager: new LoadingManager() };
+  let owner = first;
+  let finish = () => {};
+  const load = vi.fn(() => new Promise<void>((resolve) => (finish = resolve)));
+  const queue = startAssetPrefetch(
+    () => [
+      { kind: "shape", name: "background.dts" },
+      { kind: "terrain", name: "ground.ter" },
+    ],
+    () => owner,
+    () => ({ jobs: [{ key: "opening", load }], scanning: false }),
+  );
+  await vi.advanceTimersByTimeAsync(1);
+  expect(load).toHaveBeenCalledOnce();
+  expect(mocks.loadTerrain).toHaveBeenCalledExactlyOnceWith(
+    "ground.ter",
+    first.assets,
+  );
+  expect(mocks.loadShape).not.toHaveBeenCalled();
+  expect(queue.prioritySettled(["opening"])).toBe(false);
+  finish();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(queue.prioritySettled(["opening"])).toBe(true);
+  owner = second;
+  first.assets.dispose();
+  expect(queue.prioritySettled(["opening"])).toBe(false);
+  queue.refresh();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(load).toHaveBeenCalledTimes(2);
+  expect(queue.prioritySettled(["opening"])).toBe(false);
+  finish();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(queue.prioritySettled(["opening"])).toBe(true);
+  second.assets.dispose();
+});
+
+it("reserves prefetch slots for opening assets ahead of terrain and background work", async () => {
+  vi.useFakeTimers();
+  mocks.constrained = true;
+  let blockBackground = true;
+  let release = () => {};
+  const pending = new Promise<void>((resolve) => (release = resolve));
+  const opening = ["mortar", "explosion", "debris"].map((key) => ({
+    key,
+    load: vi.fn(() => pending),
+  }));
+  const queue = startAssetPrefetch(
+    () => [
+      { kind: "shape", name: "background.dts" },
+      { kind: "terrain", name: "ground.ter" },
+    ],
+    undefined,
+    () => ({ jobs: opening, scanning: false, blockBackground }),
+  );
+
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(opening[0].load).toHaveBeenCalledOnce();
+  expect(opening[1].load).toHaveBeenCalledOnce();
+  expect(opening[2].load).not.toHaveBeenCalled();
+  expect(mocks.loadTerrain).not.toHaveBeenCalled();
+  expect(mocks.loadShape).not.toHaveBeenCalled();
+  expect(readAssetPrefetchMetrics()).toMatchObject({
+    activeJobs: 2,
+    concurrency: 2,
+    recordedWaitingJobs: 1,
+  });
+
+  release();
+  await vi.advanceTimersByTimeAsync(300);
+  expect(opening[2].load).toHaveBeenCalledOnce();
+  expect(mocks.loadTerrain).toHaveBeenCalledOnce();
+  expect(mocks.loadShape).not.toHaveBeenCalled();
+  expect(readAssetPrefetchMetrics().recordedWaitingJobs).toBe(0);
+
+  blockBackground = false;
+  queue.refresh();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(mocks.loadShape).toHaveBeenCalledExactlyOnceWith(
+    "background.dts",
+    DefaultLoadingManager,
+  );
+  queue.stop();
+  expect(readAssetPrefetchMetrics().recordedWaitingJobs).toBeNull();
+});
+
+it("keeps the attach delay when recorded lookahead is off or awaiting a snapshot", async () => {
+  vi.useFakeTimers();
+  const getAssets = vi.fn(() => [
+    { kind: "shape" as const, name: "later.dts" },
+  ]);
+  const getPriority = vi.fn(() => null);
+  const queue = startAssetPrefetch(getAssets, undefined, getPriority);
+  await vi.advanceTimersByTimeAsync(300);
+  expect(getPriority).toHaveBeenCalledOnce();
+  expect(getAssets).not.toHaveBeenCalled();
+
+  queue.refresh();
+  await vi.advanceTimersByTimeAsync(699);
+  expect(getPriority).toHaveBeenCalledTimes(2);
+  expect(getAssets).not.toHaveBeenCalled();
+  expect(mocks.loadShape).not.toHaveBeenCalled();
+
+  await vi.advanceTimersByTimeAsync(1);
+  expect(mocks.loadShape).toHaveBeenCalledExactlyOnceWith(
+    "later.dts",
+    DefaultLoadingManager,
+  );
+});
+
+it("shares an in-flight shape between ordinary prefetch and recorded priorities", async () => {
+  vi.useFakeTimers();
+  let resolveShape = () => {};
+  mocks.loadShape.mockImplementationOnce(
+    () => new Promise<void>((resolve) => (resolveShape = resolve)),
+  );
+  let recorded = false;
+  const load = vi.fn(async () => {});
+  const queue = startAssetPrefetch(
+    () => [{ kind: "shape", name: "shared.dts" }],
+    undefined,
+    () =>
+      recorded
+        ? { jobs: [{ key: "shape:shared.dts", load }], scanning: false }
+        : null,
+  );
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(mocks.loadShape).toHaveBeenCalledOnce();
+  recorded = true;
+  queue.refresh();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(load).not.toHaveBeenCalled();
+  expect(queue.prioritySettled(["shape:shared.dts"])).toBe(false);
+  resolveShape();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(queue.prioritySettled(["shape:shared.dts"])).toBe(true);
+});
+
+it("leaves replacement prefetch running when the old owner stops", async () => {
+  vi.useFakeTimers();
+  const old = startAssetPrefetch(() => []);
+  startAssetPrefetch(() => [{ kind: "shape", name: "replacement.dts" }]);
+  old.stop();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(mocks.loadShape).toHaveBeenCalledExactlyOnceWith(
+    "replacement.dts",
+    DefaultLoadingManager,
   );
 });
 

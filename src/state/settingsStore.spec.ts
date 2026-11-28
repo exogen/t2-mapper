@@ -2,6 +2,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   clearFogEnabledOverride,
   createSettingsStore,
+  DEFAULT_RESOURCE_LOOKAHEAD_MS,
+  MAX_RESOURCE_LOOKAHEAD_MS,
   selectDebugMode,
   selectFogEnabled,
   setPreference,
@@ -173,6 +175,32 @@ it.each([-1, "2000", true, {}])(
   (lookaheadMs) => {
     stubSaved({ localCastLookaheadMs: lookaheadMs });
     expect(createSettingsStore().getState().localCastLookaheadMs).toBeNull();
+  },
+);
+
+it.each([0, 12_500, MAX_RESOURCE_LOOKAHEAD_MS])(
+  "saves and restores a resource lookahead of %s ms",
+  (lookaheadMs) => {
+    const store = createSettingsStore();
+    expect(store.getState().resourceLookaheadMs).toBe(
+      DEFAULT_RESOURCE_LOOKAHEAD_MS,
+    );
+    setPreference("resourceLookaheadMs", lookaheadMs, store);
+    vi.advanceTimersByTime(500);
+    stubSaved(lastSaved());
+    expect(createSettingsStore().getState().resourceLookaheadMs).toBe(
+      lookaheadMs,
+    );
+  },
+);
+
+it.each([-1, 0.5, MAX_RESOURCE_LOOKAHEAD_MS + 1, "5000", true, {}])(
+  "ignores an invalid saved resource lookahead %j",
+  (lookaheadMs) => {
+    stubSaved({ resourceLookaheadMs: lookaheadMs });
+    expect(createSettingsStore().getState().resourceLookaheadMs).toBe(
+      DEFAULT_RESOURCE_LOOKAHEAD_MS,
+    );
   },
 );
 

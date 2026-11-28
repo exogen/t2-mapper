@@ -33,6 +33,7 @@ import type { ClipCameraTransition, ClipSample } from "../../relay/clipTypes";
 import { renderShapeRaycast } from "../collision/renderShapeRaycast";
 import { createLogger } from "../logger";
 import { runOwnedCleanups } from "./runOwnedCleanups";
+import { retainHtmlTexture } from "../assets/htmlTextures";
 import { bindSceneAssets, SceneAssets } from "../assets/sceneAssets";
 
 const log = createLogger("GameEngine");
@@ -136,6 +137,8 @@ export class GameEngine {
   readonly streamSnapshot: { current: StreamSnapshot | null } = {
     current: null,
   };
+  /** Readiness of the recorded source's opening resource window. */
+  recordedResourcesReady?: () => boolean;
   private frameCount = 0;
   private host: EngineHost | null = null;
   private connection?: HostConnection;
@@ -348,7 +351,7 @@ export class GameEngine {
     });
   }
 
-  /** Prepare the view's image binding again when the texture quality changes. */
+  /** Reuse installed image bindings when their resolved sources stay the same. */
   prepareTextureWithHost<T>(
     load: (
       host: EngineHost,
@@ -357,13 +360,45 @@ export class GameEngine {
     ) => T | PromiseLike<T>,
     install: (value: T, host: EngineHost) => Cleanup,
     onError?: (error: unknown) => void,
+    getUrls?: () => readonly string[],
   ): () => void {
-    return this.sceneAssets.bindTextures((textures) =>
-      this.prepareWithHost(
-        (host, signal) => load(host, signal, textures),
-        install,
-        onError,
-      ),
+    let currentAssets: SceneAssets;
+    let currentUrls: readonly string[] | undefined;
+    let ready = false;
+    return this.sceneAssets.bindTextures(
+      (textures) => {
+        currentAssets = textures;
+        currentUrls = getUrls?.();
+        return this.prepareWithHost(
+          (host, signal) => load(host, signal, currentAssets),
+          (value, host) => {
+            const cleanup = install(value, host);
+            ready = true;
+            return () => {
+              ready = false;
+              cleanup?.();
+            };
+          },
+          onError,
+        );
+      },
+      getUrls &&
+        ((nextAssets) => {
+          const nextUrls = getUrls();
+          const retained = nextUrls
+            .map((url) => retainHtmlTexture(url, nextAssets))
+            .every(Boolean);
+          if (
+            !ready ||
+            !retained ||
+            !currentUrls ||
+            nextUrls.length !== currentUrls.length ||
+            nextUrls.some((url, index) => url !== currentUrls?.[index])
+          )
+            return false;
+          currentAssets = nextAssets;
+          return true;
+        }),
     );
   }
 

@@ -13,7 +13,10 @@ import {
   textureToUrl,
 } from "../loaders";
 import { setupTexture } from "../textureUtils";
-import { updateTerrainTextureShader } from "../terrainMaterial";
+import {
+  updateTerrainTextureShader,
+  type TerrainDetailUniforms,
+} from "../terrainMaterial";
 import { injectCustomFog } from "../fogShader";
 import { globalFogUniforms } from "../globalFogUniforms";
 import { loadTextures } from "./textures";
@@ -29,39 +32,25 @@ const TILING: Record<number, number> = {
   5: 32,
 };
 
-/**
- * A terrain block's layer textures and detail texture, loaded and set up.
- */
-export interface TerrainTextures {
-  textureNames: string[];
-  baseTextures: Texture[];
-  /**
-   * Without a detail texture, the (unused) fallback texture.
-   */
-  detailTexture: Texture;
-  detailTextureUrl: string | null;
+export function terrainBaseTextureUrls(textureNames: string[]): string[] {
+  return textureNames.map((name) => terrainTextureToUrl(name));
 }
 
-/**
- * Load the layer textures and the detail texture (or, without one, the
- * fallback texture) and configure them before upload.
- */
-export async function loadTerrainTextures(
-  textureNames: string[],
-  detailTextureName: string | undefined,
+export function terrainDetailTextureUrls(name: string): string[] {
+  const url = textureToUrl(name);
+  return url === FALLBACK_TEXTURE_URL ? [] : [url];
+}
+
+/** Load and configure a terrain's color-byte textures before upload. */
+export function loadTerrainTextures(
+  urls: readonly string[],
   renderer: WebGLRenderer,
   signal?: AbortSignal,
   assets?: SceneAssets,
-): Promise<TerrainTextures> {
+): Promise<Texture[]> {
   const anisotropy = renderer.capabilities.getMaxAnisotropy();
-  const detailTextureUrl = detailTextureName
-    ? textureToUrl(detailTextureName)
-    : null;
-  const textures = await loadTextures(
-    [
-      ...textureNames.map((name) => terrainTextureToUrl(name)),
-      detailTextureUrl ?? FALLBACK_TEXTURE_URL,
-    ],
+  return loadTextures(
+    urls,
     renderer,
     (tex) => {
       tex.colorSpace = NoColorSpace;
@@ -70,13 +59,6 @@ export async function loadTerrainTextures(
     signal,
     assets,
   );
-  const detailTexture = textures.pop()!;
-  return {
-    textureNames,
-    baseTextures: textures,
-    detailTexture,
-    detailTextureUrl,
-  };
 }
 
 /**
@@ -105,17 +87,13 @@ export interface BlendedTerrainMaterial {
  * unused `map` sampler that would waste a texture unit.
  */
 export function createBlendedTerrainMaterial(
-  {
-    textureNames,
-    baseTextures,
-    detailTexture,
-    detailTextureUrl,
-  }: TerrainTextures,
+  baseTextures: Texture[],
   {
     visibilityMask,
     alphaTextures,
     squareSize,
     detailViewportHeight,
+    detail,
     lightmap: initialLightmap,
     debugMode,
   }: {
@@ -123,6 +101,7 @@ export function createBlendedTerrainMaterial(
     alphaTextures: DataTexture[];
     squareSize: number;
     detailViewportHeight: { value: number };
+    detail?: TerrainDetailUniforms;
     lightmap: DataTexture;
     debugMode: boolean;
   },
@@ -142,7 +121,7 @@ export function createBlendedTerrainMaterial(
       tiling: TILING,
       squareSize,
       detailViewportHeight,
-      detailTexture: detailTextureUrl ? detailTexture : null,
+      detail,
       lightmap,
     });
 
@@ -154,12 +133,7 @@ export function createBlendedTerrainMaterial(
   // called because the program cache hash is identical.
   const textureIds = baseTextures.map((t) => t.id).join(",");
   material.customProgramCacheKey = () =>
-    [
-      textureNames.join(","),
-      detailTextureUrl ?? "none",
-      lightmap.id,
-      textureIds,
-    ].join("|");
+    [textureIds, lightmap.id, detail ? "detail" : "none"].join("|");
 
   return {
     material,

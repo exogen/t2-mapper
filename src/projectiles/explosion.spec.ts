@@ -1,14 +1,73 @@
 import fs from "node:fs/promises";
 import { afterEach, expect, it } from "vitest";
-import { PerspectiveCamera, Triangle, Vector3, type Mesh } from "three";
+import {
+  PerspectiveCamera,
+  Texture,
+  Triangle,
+  Vector3,
+  type Mesh,
+  type MeshBasicMaterial,
+} from "three";
 import { DTSLoader } from "../dts/dtsLoader";
 import type { DTSShape } from "../dts/dtsModel";
+import {
+  createDTSImageAnimation,
+  type DTSImageAnimation,
+} from "../dts/dtsTextures";
 import type { ExplosionEntity } from "../state/gameEntityTypes";
 import { streamClock } from "../state/streamPlaybackStore";
+import { transparentTexture } from "../textureUtils";
 import { createExplosionView } from "./explosion";
 
 afterEach(() => {
   streamClock.time = 0;
+});
+
+it("keeps a mortar explosion transparent until its animated textures are ready", async () => {
+  const name = "mortar_explosion.dts";
+  const bytes = await fs.readFile(`docs/base/@vl2/shapes.vl2/shapes/${name}`);
+  const model = new DTSLoader().parse(
+    bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+  );
+  const view = createExplosionView(model, name, undefined, 1);
+  const scene = view.root.children[0].children[0].children[0] as DTSShape;
+  const camera = new PerspectiveCamera();
+  camera.position.z = 10;
+  camera.updateMatrixWorld();
+  const mapValues = () => {
+    const maps = new Set<Texture>();
+    scene.traverse((node) => {
+      const mesh = node as Mesh;
+      if (!mesh.isMesh) return;
+      const materials = Array.isArray(mesh.material)
+        ? mesh.material
+        : [mesh.material];
+      for (const material of materials) {
+        const map = (material as MeshBasicMaterial).map;
+        if (map) maps.add(map);
+      }
+    });
+    return maps;
+  };
+  const loaded = new Texture();
+  try {
+    scene.update(camera);
+    expect(mapValues()).toEqual(new Set([transparentTexture]));
+
+    const animations = model.scene.imageAnimations as DTSImageAnimation[];
+    for (const index of model.data.iflMaterials.keys())
+      animations.push(
+        createDTSImageAnimation(model.data, index, {
+          frames: [{ texture: loaded, endTime: 1 }],
+          duration: 1,
+        }),
+      );
+    scene.update(camera);
+    expect(mapValues()).toContain(loaded);
+  } finally {
+    view.dispose();
+    loaded.dispose();
+  }
 });
 
 it("keeps plasma explosion surfaces front-facing using the engine's opposite-to-projectiles orientation", async () => {

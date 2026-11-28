@@ -13,17 +13,21 @@ import {
   unregisterInteriorCollider,
 } from "../collision/worldCollision";
 
+const textureUrl = vi.hoisted(() =>
+  vi.fn((name: string) => `/textures/${name}`),
+);
 vi.mock("./ambientParticles", () => ({ AmbientParticles: class {} }));
 vi.mock("./lightningEffects", () => ({ LightningEffects: class {} }));
 vi.mock("../assets/interiorAssets", () => ({ loadInterior: vi.fn() }));
 vi.mock("../assets/htmlTextures", () => ({
   loadHtmlTexture: vi.fn(),
   recordSkippedHtmlTextureUpload: vi.fn(),
+  retainHtmlTexture: vi.fn(() => true),
 }));
 vi.mock("../loaders", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../loaders")>()),
   interiorToUrl: (name: string) => `/interiors/${name}`,
-  textureToUrl: (name: string) => `/textures/${name}`,
+  textureToUrl: textureUrl,
 }));
 vi.mock("../collision/worldCollision", () => ({
   registerInteriorCollider: vi.fn(),
@@ -122,6 +126,11 @@ it("preserves a surviving static interior's shared texture when another instance
     const registered = vi.mocked(registerInteriorCollider).mock.calls.length;
     const unregistered = vi.mocked(unregisterInteriorCollider).mock.calls
       .length;
+    engine.sceneAssets.refreshTextures();
+    for (const material of secondMaterials) expect(material.map).toBe(texture);
+    await Promise.resolve();
+    expect(secondHost.renderer.initTexture).toHaveBeenCalledOnce();
+    textureUrl.mockImplementation((name) => `/textures/hd/${name}`);
     const nextTexture = new Texture({ width: 4, height: 4 });
     vi.mocked(loadHtmlTexture).mockResolvedValue(nextTexture);
     engine.sceneAssets.refreshTextures();

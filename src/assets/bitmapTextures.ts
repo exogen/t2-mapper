@@ -1,9 +1,10 @@
-import { DefaultLoadingManager, Source, Texture } from "three";
+import { DefaultLoadingManager, Texture, TextureSource } from "three";
 import { estimateDecodedImageBytes } from "../diagnostics/resourceEstimates";
 import { registerMetricSource } from "../diagnostics/resourceMetricRegistry";
 import { createLogger } from "../logger";
 import { markTextureSamplerUpdate } from "../textureUtils";
-import { loadQueuedImage } from "./imageLoading";
+import type { AssetLoadPriority } from "./assetLoadQueue";
+import { loadQueuedImage, promoteQueuedImage } from "./imageLoading";
 import { PendingRequests } from "./pendingRequests";
 import { observeFailedBitmapTexture } from "./bitmapSourceRecovery";
 import { sharedSceneAssets, type SceneAssets } from "./sceneAssets";
@@ -40,6 +41,8 @@ registerMetricSource("textureSourceLoads", () => {
 function loadBitmap(
   url: string,
   signal: AbortSignal,
+  priority: AssetLoadPriority,
+  key: Texture,
   onLoad: (bitmap: ImageBitmap) => void,
   onError: () => void,
 ): Promise<ImageBitmap> {
@@ -63,7 +66,7 @@ function loadBitmap(
         colorSpaceConversion: "none",
       });
     },
-    { signal, onLoad, onError },
+    { signal, priority, key, onLoad, onError },
   );
 }
 
@@ -79,6 +82,42 @@ function disposeBitmapTexture(texture: Texture): void {
   texture.dispose();
 }
 
+function getCachedBitmapTexture(
+  url: string,
+  assets: SceneAssets,
+  cache: Map<string, Texture>,
+): Texture | undefined {
+  return (
+    cache.get(url) ??
+    assets.adoptCached<string, Texture>(cacheKey, url, (texture) =>
+      Boolean(texture.image),
+    )
+  );
+}
+
+/** Retain a finished image from the preceding texture scope by its exact URL. */
+export function retainBitmapTexture(
+  url: string,
+  assets: SceneAssets,
+  source?: Texture["source"],
+): boolean {
+  const cache = assets.cache<string, Texture>(cacheKey, disposeBitmapTexture);
+  const texture = getCachedBitmapTexture(url, assets, cache);
+  return Boolean(texture?.image && (!source || texture.source === source));
+}
+
+/** Raise the priority of a queued source without starting another request. */
+export function promoteBitmapTexture(
+  url: string,
+  assets: SceneAssets,
+  priority: AssetLoadPriority,
+): void {
+  const texture = assets
+    .cache<string, Texture>(cacheKey, disposeBitmapTexture)
+    .get(url);
+  if (texture && !texture.image) promoteQueuedImage(texture, priority);
+}
+
 /** A cached immediate placeholder; ready cache hits notify synchronously.
  * Shape and particle bitmap decoding deliberately differs from HTML images. */
 export function loadBitmapTexture(
@@ -86,16 +125,18 @@ export function loadBitmapTexture(
   onLoad?: (texture: Texture) => void,
   onError?: (url: string) => void,
   assets: SceneAssets = sharedSceneAssets,
+  priority: AssetLoadPriority = "demand",
 ): Texture {
   const cache = assets.cache<string, Texture>(cacheKey, disposeBitmapTexture);
   requests++;
-  let texture = cache.get(url);
+  let texture = getCachedBitmapTexture(url, assets, cache);
   if (texture) {
     cacheHits++;
     if (texture.image) {
       onLoad?.(texture);
       return texture;
     }
+    if (priority !== "speculative") promoteQueuedImage(texture, priority);
   } else {
     texture = new Texture();
     // ImageBitmap ignores UNPACK_FLIP_Y_WEBGL.
@@ -110,6 +151,8 @@ export function loadBitmapTexture(
       void loadBitmap(
         url,
         assets.signal,
+        priority,
+        target,
         (bitmap) => {
           if (assets.disposed) {
             bitmap.close();
@@ -157,6 +200,7 @@ export function loadBitmapTextureInstance(
   texture.flipY = false;
   const resolveUrls = typeof url === "function" ? url : undefined;
   let disposed = false;
+  let selected: readonly string[] | undefined;
   let unsubscribe: (() => void) | undefined;
   const markDisposed = () => {
     disposed = true;
@@ -165,18 +209,14 @@ export function loadBitmapTextureInstance(
     unsubscribe = undefined;
   };
   texture.addEventListener("dispose", markDisposed);
-  function start(
-    first: string,
-    fallbacks: readonly string[],
-    owner: SceneAssets,
-  ) {
-    let nextFallback = 0;
+  function start(candidates: readonly string[], owner: SceneAssets, index = 0) {
     const isCurrent = () =>
       !owner.disposed &&
       (!resolveUrls || (!assets.disposed && owner === assets.textures));
-    function load(candidate: string) {
+    function load() {
+      if (resolveUrls) selected = candidates.slice(0, index + 1);
       const source = loadBitmapTexture(
-        candidate,
+        candidates[index],
         (loaded) => {
           if (!resolveUrls)
             texture.removeEventListener("dispose", markDisposed);
@@ -186,8 +226,9 @@ export function loadBitmapTextureInstance(
         },
         (failedUrl) => {
           if (!isCurrent()) return;
-          if (!disposed && nextFallback < fallbacks.length) {
-            load(fallbacks[nextFallback++]);
+          if (!disposed && index + 1 < candidates.length) {
+            index++;
+            load();
             return;
           }
           if (!resolveUrls)
@@ -199,29 +240,63 @@ export function loadBitmapTextureInstance(
       );
       if (!disposed && isCurrent()) texture.source = source.source;
     }
-    load(first);
+    load();
   }
 
   if (typeof url === "string") {
-    start(url, fallbackUrls, assets);
+    start([url, ...fallbackUrls], assets);
   } else {
     const reload = () => {
-      const [first, ...fallbacks] = url();
-      if (first !== undefined) start(first, fallbacks, assets.textures);
+      const candidates = [...url()];
+      if (candidates.length) start(candidates, assets.textures);
     };
-    unsubscribe = assets.onTexturesChanged(() => {
-      if (disposed) return;
+    const resetSource = () => {
       // Three keys GPU storage by the attached Source. Evict it before
       // replacing the Source while keeping this sampler bound to the scene.
+      selected = undefined;
       texture.removeEventListener("dispose", markDisposed);
       try {
         texture.dispose();
       } finally {
         texture.addEventListener("dispose", markDisposed);
         texture.version = 0;
-        texture.source = new Source(null);
+        texture.source = new TextureSource(null);
       }
-      reload();
+    };
+    unsubscribe = assets.onTexturesChanged(() => {
+      if (disposed) return;
+      const owner = assets.textures;
+      let candidates: readonly string[];
+      try {
+        candidates = [...url()];
+      } catch (error) {
+        resetSource();
+        throw error;
+      }
+      const previous = selected;
+      const chosen = previous?.at(-1);
+      let first = 0;
+      if (previous && chosen !== undefined) {
+        const index = candidates.indexOf(chosen);
+        if (index >= 0) {
+          // New candidates and already-decoded recoveries can supersede a
+          // loaded fallback. Pending retries do not change the selection.
+          const preferred = candidates
+            .slice(0, index)
+            .findIndex(
+              (candidate) =>
+                !previous.includes(candidate) ||
+                retainBitmapTexture(candidate, owner),
+            );
+          if (preferred >= 0) first = preferred;
+          else if (retainBitmapTexture(chosen, owner, texture.source)) {
+            selected = candidates.slice(0, index + 1);
+            return;
+          }
+        }
+      }
+      resetSource();
+      if (candidates.length) start(candidates, owner, first);
     });
     try {
       reload();
@@ -236,6 +311,7 @@ export function loadBitmapTextureInstance(
 export function loadBitmapTextureAsync(
   url: string,
   assets: SceneAssets = sharedSceneAssets,
+  priority: AssetLoadPriority = "demand",
 ): Promise<Texture> {
   return new Promise((resolve, reject) => {
     loadBitmapTexture(
@@ -248,6 +324,7 @@ export function loadBitmapTextureAsync(
           }),
         ),
       assets,
+      priority,
     );
   });
 }

@@ -126,11 +126,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 function fixture() {
+  let afterRender = () => {};
   const engine = {
     scheduler: new FrameScheduler(),
     cameras: new CameraRig(),
     input: new InputQueue(),
     invalidate: vi.fn(),
+    onAfterRender: (callback: () => void) => {
+      afterRender = callback;
+      return () => {};
+    },
   } as unknown as GameEngine;
   engine.cameras.resize(800, 400);
   cleanups.push(installClipRecorder(engine));
@@ -149,7 +154,7 @@ function fixture() {
     engine.scheduler.run(FramePriority.ClipCamera, frame(1));
     clipStore.getState().stop();
   };
-  return { engine, frame, stopWithFinalHold };
+  return { engine, frame, stopWithFinalHold, rendered: () => afterRender() };
 }
 
 it("replays recorded source rates and camera movement through deliberate pauses", () => {
@@ -943,6 +948,7 @@ it.each(["ready", "timeout"])(
     engine.scheduler.run(FramePriority.ClipCamera, frame(0.1));
     expect(engineStore.getState().playback.status).toBe("paused");
     expect(clipStore.getState().playheadMs).toBe(0);
+    expect(clipStore.getState().awaitingResources).toBe(false);
 
     if (resume === "ready") effects.setState({ awaitingFirstFrame: false });
     const next = { ...frame(0.1), elapsed: resume === "ready" ? 0.2 : 10 };
@@ -952,6 +958,109 @@ it.each(["ready", "timeout"])(
     streamClock.time = 10.1;
     engine.scheduler.run(FramePriority.ClipCamera, next);
     expect(clipStore.getState().playheadMs).toBe(100);
+  },
+);
+
+it.each(["rendered", "timeout"])(
+  "holds the opening clip for the shared resource queue until %s",
+  (resume) => {
+    const { engine, frame, rendered } = fixture();
+    let ready = false;
+    engine.recordedResourcesReady = () => ready;
+    clipStore.getState().play(take());
+
+    engine.scheduler.run(FramePriority.ClipTransport, frame(0.1));
+    rendered();
+    expect(engineStore.getState().playback.status).toBe("paused");
+    expect(clipStore.getState().playheadMs).toBe(0);
+    expect(clipStore.getState().awaitingResources).toBe(false);
+    engine.scheduler.run(FramePriority.ClipTransport, {
+      ...frame(0.1),
+      elapsed: 0.2,
+    });
+    expect(clipStore.getState().awaitingResources).toBe(true);
+    engine.scheduler.run(FramePriority.ClipTransport, {
+      ...frame(0.1),
+      elapsed: 3,
+    });
+    expect(engineStore.getState().playback.status).toBe("paused");
+    expect(clipStore.getState().awaitingResources).toBe(true);
+
+    if (resume === "rendered") {
+      ready = true;
+      engine.scheduler.run(FramePriority.ClipTransport, {
+        ...frame(0.1),
+        elapsed: 3.1,
+      });
+      expect(engineStore.getState().playback.status).toBe("paused");
+      expect(clipStore.getState().awaitingResources).toBe(true);
+      rendered();
+    }
+    engine.scheduler.run(FramePriority.ClipTransport, {
+      ...frame(0.1),
+      elapsed: resume === "rendered" ? 3.2 : 10,
+    });
+    expect(engineStore.getState().playback.status).toBe("playing");
+    expect(clipStore.getState().awaitingResources).toBe(false);
+  },
+);
+
+it.each(["pause", "seek", "switch", "unmount"] as const)(
+  "clears the resource notice immediately on %s",
+  (action) => {
+    const { engine, frame } = fixture();
+    engine.recordedResourcesReady = () => false;
+    clipStore.getState().play(take());
+    engine.scheduler.run(FramePriority.ClipTransport, frame());
+    engine.scheduler.run(FramePriority.ClipTransport, {
+      ...frame(),
+      elapsed: 0.2,
+    });
+    expect(clipStore.getState().awaitingResources).toBe(true);
+
+    const clip = clipStore.getState();
+    const interrupt = {
+      pause: () => clip.pause(),
+      seek: () => expect(clip.seek(250)).toBe(true),
+      switch: () => clip.play(take()),
+      unmount: () => cleanups.pop()!(),
+    };
+    interrupt[action]();
+    expect(clipStore.getState().awaitingResources).toBe(false);
+  },
+);
+
+it.each([0.1, 3])(
+  "waits for a fresh render after a reconstruction completes between clip transport frames at %ss",
+  (elapsed) => {
+    const { engine, frame, rendered } = fixture();
+    engine.recordedResourcesReady = () => true;
+    clipStore.getState().play(take());
+    engine.scheduler.run(FramePriority.ClipTransport, frame());
+    rendered();
+    engine.scheduler.run(FramePriority.ClipTransport, {
+      ...frame(0.01),
+      elapsed: 0.05,
+    });
+    expect(engineStore.getState().playback.status).toBe("playing");
+
+    const state = engineStore.getState();
+    expect(state.seekPlayback(streamClock.time, "reconstruction")).toBe(true);
+    const seek = engineStore.getState().playback;
+    state.completePlaybackSeek(seek.recording!, seek.seekNonce, "paused");
+    engine.scheduler.run(FramePriority.ClipCamera, frame());
+    expect(clipStore.getState().playheadMs).toBe(0);
+    rendered();
+
+    engine.scheduler.run(FramePriority.ClipTransport, { ...frame(), elapsed });
+    expect(engineStore.getState().playback.status).toBe("paused");
+    expect(clipStore.getState().playheadMs).toBe(0);
+    rendered();
+    engine.scheduler.run(FramePriority.ClipTransport, {
+      ...frame(),
+      elapsed: elapsed + 0.05,
+    });
+    expect(engineStore.getState().playback.status).toBe("playing");
   },
 );
 

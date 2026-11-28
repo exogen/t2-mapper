@@ -341,6 +341,21 @@ export class DTSAnimatedInstancePool {
         for (const draw of pages) draw.invalidateSkinUploads();
   }
 
+  /** Release pages that still contain pixels from a retired texture source. */
+  retireReleasedTextures(): void {
+    for (const bucket of this.buckets.values()) {
+      for (const [run, pages] of bucket.pages) {
+        for (let index = pages.length - 1; index >= 0; index--) {
+          const draw = pages[index];
+          if (!draw.hasReleasedTextures()) continue;
+          draw.dispose();
+          pages.splice(index, 1);
+        }
+        if (!pages.length) bucket.pages.delete(run);
+      }
+    }
+  }
+
   /** Drop draw pages before their scene's shared model and skin assets. */
   clear(): void {
     this.restore();
@@ -455,6 +470,7 @@ class AnimatedDraw {
   >();
   private skinCapacity = 0;
   private activeSkins = new Set<Texture["source"]>();
+  private mapSource?: Texture["source"];
   private matrix = new Matrix4();
   private copyPosition = new Vector3();
   private renderer: WebGLRenderer;
@@ -496,6 +512,19 @@ class AnimatedDraw {
     for (const entry of this.skinEntries.values()) entry.version = -1;
   }
 
+  hasReleasedTextures(): boolean {
+    if (
+      this.mapSource &&
+      (this.mapSource.data == null ||
+        this.mesh.material.map?.source !== this.mapSource)
+    )
+      return true;
+    for (const [source, { texture }] of this.skinEntries) {
+      if (source.data == null || texture.source !== source) return true;
+    }
+    return false;
+  }
+
   constructor(
     source: InstanceSource,
     renderer: WebGLRenderer,
@@ -508,6 +537,7 @@ class AnimatedDraw {
     this.renderer = renderer;
     this.maxInstances = maxInstances;
     const map = material.map;
+    this.mapSource = map?.source;
     const image = map?.image as { width: number; height: number } | undefined;
     this.maxLayers = Math.max(
       1,
@@ -707,6 +737,7 @@ class AnimatedDraw {
       this.mesh.material.needsUpdate = true;
     }
     this.mesh.material.map = this.sources[0].material.map;
+    this.mapSource = this.mesh.material.map?.source;
     if (this.arrayMode) this.updateSkins();
     this.mesh.count = this.capacity;
     const palette = this.bonePalette;

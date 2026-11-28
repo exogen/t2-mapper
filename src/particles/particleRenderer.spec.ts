@@ -13,12 +13,15 @@ import { loadBitmapTexture } from "../assets/bitmapTextures";
 import { SceneAssets, sharedSceneAssets } from "../assets/sceneAssets";
 import {
   getParticleTexture,
+  createParticleMaterial,
   particleTexturesReady,
+  warmParticleTexture,
   createParticleGeometry,
   syncBuffers,
   type ParticleBuffers,
 } from "./particleRenderer";
 import { EmitterInstance, resolveEmitterData } from "./ParticleSystem";
+import { transparentTexture } from "../textureUtils";
 
 const pending = new Map<string, (image: unknown) => void>();
 const failed = new Map<string, (error: Error) => void>();
@@ -92,6 +95,33 @@ it("makes an already-decoded particle texture ready immediately", async () => {
   expect(source.source.version).toBe(1);
 });
 
+it("hides a pending named particle texture and warms the sampler its material uses", async () => {
+  const assets = new SceneAssets();
+  const texture = getParticleTexture("mortar-smoke", assets);
+  const pendingMaterial = createParticleMaterial(texture, true);
+  const solid = getParticleTexture("", assets);
+  const solidMaterial = createParticleMaterial(solid, true);
+  try {
+    expect(pendingMaterial.uniforms.particleTexture.value).toBe(
+      transparentTexture,
+    );
+    expect(solidMaterial.uniforms.particleTexture.value).toBe(solid);
+
+    const warmed = warmParticleTexture("mortar-smoke", assets, "critical");
+    const image = { width: 128, height: 128, close: vi.fn() };
+    pending.get("/mortar-smoke.png")!(image);
+    expect(await warmed).toBe(texture);
+    expect(texture.image).toBe(image);
+    const material = createParticleMaterial(texture, true);
+    expect(material.uniforms.particleTexture.value).toBe(texture);
+    material.dispose();
+  } finally {
+    solidMaterial.dispose();
+    pendingMaterial.dispose();
+    assets.dispose();
+  }
+});
+
 it("retries a failed bitmap on later demand and updates existing particle samplers", async () => {
   const path = "/retry-dust.png";
   const clock = vi.spyOn(performance, "now").mockReturnValue(100);
@@ -145,11 +175,11 @@ it("reuses the particle sampler and releases its old pixels on a graphics change
     assets.refreshTextures();
     expect(freeGpuTexture).toHaveBeenCalledOnce();
     sampler.removeEventListener("dispose", freeGpuTexture);
-    expect(oldImage.close).toHaveBeenCalledOnce();
     expect(sampler.image).toBeNull();
     expect(sampler.version).toBe(0);
     expect(particleTexturesReady.has(sampler)).toBe(false);
     expect(getParticleTexture("refresh-dust", assets)).toBe(sampler);
+    expect(oldImage.close).toHaveBeenCalledOnce();
 
     const image = { width: 16, height: 16, close: vi.fn() };
     pending.get("/stock-refresh-dust.png")!(image);
@@ -158,6 +188,39 @@ it("reuses the particle sampler and releases its old pixels on a graphics change
     expect(particleTexturesReady.has(sampler)).toBe(true);
     expect(sampler.wrapS).toBe(RepeatWrapping);
     expect(sampler.colorSpace).toBe(NoColorSpace);
+  } finally {
+    quality.hd = true;
+    assets.dispose();
+  }
+});
+
+it("keeps the particle sampler ready when graphics quality selects the same image", async () => {
+  const assets = new SceneAssets();
+  const path = "/unmodified-dust.png";
+  try {
+    const sampler = getParticleTexture("unmodified-dust", assets);
+    const request = pending.get(path)!;
+    const image = { width: 64, height: 64, close: vi.fn() };
+    request(image);
+    await vi.waitFor(() => expect(sampler.image).toBe(image));
+    const source = sampler.source;
+    const version = sampler.version;
+    const disposed = vi.fn();
+    sampler.addEventListener("dispose", disposed);
+
+    quality.hd = false;
+    assets.refreshTextures();
+    expect(pending.get(path)).toBe(request);
+    expect(sampler.source).toBe(source);
+    expect(sampler.image).toBe(image);
+    expect(sampler.version).toBe(version);
+    expect(particleTexturesReady.has(sampler)).toBe(true);
+    expect(disposed).not.toHaveBeenCalled();
+    expect(image.close).not.toHaveBeenCalled();
+
+    assets.dispose();
+    expect(disposed).toHaveBeenCalledOnce();
+    expect(image.close).toHaveBeenCalledOnce();
   } finally {
     quality.hd = true;
     assets.dispose();

@@ -26,15 +26,20 @@ function positiveFinite(value: number | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
-/** Mobile, Safari, and touch hints take priority over reported resources. */
-export function classifyDevice(signals: DeviceSignals): DeviceClassification {
+export function hasMobileIdentity(signals: DeviceSignals): boolean {
   const ua = signals.userAgent ?? "";
-  if (
+  return (
     signals.mobile === true ||
     /Android|iPhone|iPad|iPod|Mobile/i.test(ua) ||
     /\b(?:CriOS|FxiOS|EdgiOS|OPiOS)\//i.test(ua)
-  )
+  );
+}
+
+/** Mobile, Safari, and touch hints take priority over reported resources. */
+export function classifyDevice(signals: DeviceSignals): DeviceClassification {
+  if (hasMobileIdentity(signals))
     return { constrained: true, reason: "mobile" };
+  const ua = signals.userAgent ?? "";
   // Chromium user agents also contain Safari/. Safari pairs it with Version/.
   if (/\bVersion\/[\d.]+\s+Safari\//i.test(ua))
     return { constrained: true, reason: "safari" };
